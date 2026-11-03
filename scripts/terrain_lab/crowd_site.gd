@@ -494,7 +494,9 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 				toward += centres[other]
 				enemies += 1
 		var face := (toward / enemies - centres[slot]).angle() if enemies else 0.0
-		var formation: int = crowd.add_formation(faction, centres[slot].x, centres[slot].y, face, maxi(1, int(ceil(sqrt(count)))), 1.0, troop, float(side.get("training", 0)))
+		var native_faction := _native_faction(faction)
+		if native_faction < 0: return _deployment_failed(before, SiteRuntime.fail("NO_SPACE", "群眾原生陣營槽已滿"))
+		var formation: int = crowd.add_formation(native_faction, centres[slot].x, centres[slot].y, face, maxi(1, int(ceil(sqrt(count)))), 1.0, troop, float(side.get("training", 0)))
 		var ids: Array[int] = lab._allocate_army_person_ids(count)
 		var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": next_team + slot,
 			"faction_id": faction, "crowd_formation": formation, "units": [], "officer_service": [], "formal_commander": 0}
@@ -540,7 +542,7 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		crowd.set_start_positions(first, starts)
 		rosters.append(roster)
 		teams.append({"slot": slot, "team_id": next_team + slot, "formation": formation, "faction": faction,
-			"troop": troop, "person_ids": ids, "solo": false})
+			"native_faction": native_faction, "troop": troop, "person_ids": ids, "solo": false})
 	return _finish_admission(sides, prepared, before, total, "群眾模式：已部署 %d 隊、%d 人" % [sides.size(), total])
 
 
@@ -796,7 +798,9 @@ func _append_actor(actor: TerrainTestCharacter, runtime: bool = true) -> Diction
 			"ammo_keys": _ammo_keys.duplicate(), "kit_ids": _kit_ids.duplicate()}
 	if not _prepare_contact_appearance(projected, actor.person_id):
 		return SiteRuntime.fail("MISSING_ASSET", "原 actor 同 body 接觸資源未備妥")
-	var formation: int = crowd.add_formation(actor.faction_id, position.x, position.y, Vector2(actor.facing).angle(), 1, 1.0, troop, actor.training)
+	var native_faction := _native_faction(actor.faction_id)
+	if native_faction < 0: return SiteRuntime.fail("NO_SPACE", "群眾原生陣營槽已滿")
+	var formation: int = crowd.add_formation(native_faction, position.x, position.y, Vector2(actor.facing).angle(), 1, 1.0, troop, actor.training)
 	var cargo: Dictionary = lab.terrain.site.manual.cargo if actor == lab.character else lab.terrain.site.worker.cargo
 	var index: int = crowd.add_soldiers(formation, PackedInt64Array([actor.person_id]), PackedInt32Array([_packed_equip(projected)]), PackedByteArray([1]), PackedInt32Array([int(cargo.get("arrow" if troop == 1 else "bolt", 0)) if troop else 0]))
 	if index < 0: return _append_actor_failed(before, SiteRuntime.fail("INVALID", "繼承人匯入失敗"))
@@ -804,7 +808,7 @@ func _append_actor(actor: TerrainTestCharacter, runtime: bool = true) -> Diction
 		return _append_actor_failed(before, SiteRuntime.fail("INVALID_ROLE", "原人物軍官資格匯入失敗"))
 	_actors[actor.person_id] = actor
 	teams.append({"slot": -1, "team_id": _solo_team_id(), "formation": formation, "faction": actor.faction_id,
-		"troop": troop, "person_ids": [actor.person_id], "solo": true})
+		"native_faction": native_faction, "troop": troop, "person_ids": [actor.person_id], "solo": true})
 	crowd.set_order_owner(formation, false)
 	if runtime:
 		_index_by_id[actor.person_id] = index
@@ -2668,7 +2672,9 @@ func native_empty_formation(team_id: int, faction: int) -> Dictionary:
 # A new native formation of `faction` with its GD roster and team record. Formations are never removed.
 func native_add_team(team_id: int, faction: int, troop: int, training: float, cell: Vector2, garrison_feature_id: String) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
-	var formation: int = crowd.add_formation(faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)
+	var native_faction := _native_faction(faction)
+	if native_faction < 0: return SiteRuntime.fail("NO_SPACE", "群眾原生陣營槽已滿")
+	var formation: int = crowd.add_formation(native_faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)
 	if formation < 0: return SiteRuntime.fail("NO_SPACE", "原生群眾無法新增隊伍")
 	crowd.set_order_owner(formation, false)
 	var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": team_id, "faction_id": faction,
@@ -2677,7 +2683,7 @@ func native_add_team(team_id: int, faction: int, troop: int, training: float, ce
 	var slot := 0
 	for team: Dictionary in teams: slot = maxi(slot, int(team.get("slot", 0)) + 1)
 	teams.append({"slot": slot, "team_id": team_id, "formation": formation, "faction": faction,
-		"troop": troop, "person_ids": [], "solo": false})
+		"native_faction": native_faction, "troop": troop, "person_ids": [], "solo": false})
 	rosters.append(roster)
 	lab.terrain.site.armies.append(roster)
 	lab.terrain.site["army_next_team"] = maxi(int(lab.terrain.site.get("army_next_team", 0)), team_id + 1)
@@ -3447,6 +3453,26 @@ func activate_loaded() -> void:
 	_prewarm_captivity_atlases.call_deferred()
 
 
+## Per-Site native faction slot (Nekki 2026-11-03: local mapping, native unchanged). Global faction ids are unbounded;
+## native hostility indexes 0..255 (a & 255), with a slot never its own enemy. Each teams entry records its slot
+## ("native_faction"; older entries used the global id). A faction keeps one slot on the Site; every neutral team gets
+## a slot of its own, so native fights two neutral teams as it fights any two factions. -1: no free slot.
+func _native_faction(faction: int) -> int:
+	var used := {}
+	for team: Dictionary in teams:
+		var slot := native_faction_of(team)
+		used[slot] = true
+		if faction != RegionFactionQuery.NEUTRAL_FACTION_ID and int(team.faction) == faction: return slot
+	if faction >= 0 and faction < RegionFactionQuery.NEUTRAL_FACTION_ID and not used.has(faction): return faction
+	for slot in range(RegionFactionQuery.NEUTRAL_FACTION_ID, -1, -1):
+		if not used.has(slot): return slot
+	return -1
+
+
+static func native_faction_of(team: Dictionary) -> int:
+	return int(team.get("native_faction", team.get("faction", -1)))
+
+
 func discard_on_replace() -> void:
 	_dispose()
 
@@ -3817,7 +3843,9 @@ static func d5_append_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 		var snapshot: Dictionary = plan.snapshot
 		var initial_family: int = crowd_site._packed_equip(plan.units[0].appearance) & 255
 		var initial_troop := 1 if initial_family == 7 else 2 if initial_family == 8 else 0
-		var formation: int = crowd_site.crowd.add_formation(int(snapshot.faction_id), plan.centre.x, plan.centre.y,
+		var native_faction: int = crowd_site._native_faction(int(snapshot.faction_id))
+		if native_faction < 0: return D5Runtime.fail("NO_SPACE", "群眾原生陣營槽已滿")
+		var formation: int = crowd_site.crowd.add_formation(native_faction, plan.centre.x, plan.centre.y,
 			float(plan.facing), int(plan.width), 1.0, initial_troop, float(snapshot.training))
 		if formation < 0:
 			return D5Runtime.fail("INVALID", "原隊伍無法加入群眾")
@@ -3867,7 +3895,7 @@ static func d5_append_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 		plan.roster = roster
 		crowd_site.rosters.append(roster)
 		crowd_site.teams.append({"slot": crowd_site.teams.size(), "team_id": int(snapshot.team_id),
-			"formation": formation, "faction": int(snapshot.faction_id),
+			"formation": formation, "faction": int(snapshot.faction_id), "native_faction": native_faction,
 			"troop": maxi(0, troop), "person_ids": Array(ids), "solo": false})
 	return D5Runtime.ok()
 
