@@ -17271,7 +17271,7 @@ func advance_frame(delta: float) -> void:
 		last_frame_cpu_usec = Time.get_ticks_usec() - frame_start_usec
 		combat_render_usec += last_frame_cpu_usec
 		return # All combat/movement time comes from TerrainLab's action step.
-	if grid_simulation_retired("TerrainArmy.advance_frame"): return # Non-combat grid movement (_simulate_step) is retired.
+	if has_army() and grid_simulation_retired("TerrainArmy.advance_frame"): return # Non-combat grid movement (_simulate_step) is retired.
 	var structure_before := structure_search_expansions
 	var local_before := local_search_expansions
 	var push_before := push_search_expansions
