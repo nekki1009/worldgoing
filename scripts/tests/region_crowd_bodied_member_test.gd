@@ -76,6 +76,21 @@ func _live_body_nodes() -> int:
 		if str(child.name).begins_with("CrowdBody_") and not child.is_queued_for_deletion(): count += 1
 	return count
 
+## A copy of `base` with another face or hair that the editor accepts but the soldier atlas cannot draw; {} if none.
+func _created_look(base: Dictionary) -> Dictionary:
+	for slot: Dictionary in HumanCharacter3DEditor.PART_SLOTS:
+		if not str(slot.id) in ["face", "hair"]: continue
+		var options: Array = HumanCharacter3DEditor.HAIR_OPTIONS[int(base.body)] if slot.id == &"hair" else slot.options
+		for option: Dictionary in options:
+			for dyed: bool in [false, true]:
+				var look: Dictionary = base.duplicate(true)
+				look.parts[str(slot.id)] = str(option.id)
+				if dyed:
+					look.hair_dyed = true
+					look.hair_dye = "8a3324ff"
+				if look != base and HumanCharacter3DEditor.valid_appearance(look) and CrowdSiteScript.atlas_cannot_draw(look): return look
+	return {}
+
 ## Renders until every bodied person has its presenter (display) or once (headless); bodies are created a few per frame.
 func _settle(crowd: Variant) -> void:
 	for frame in range(12):
@@ -93,7 +108,9 @@ func _bodies_match(crowd: Variant, expected: Array[int], phase: String) -> bool:
 	if not _check(kits.size() == crowd._kit_ids.size(), phase + ": one submitted kit per soldier"): return false
 	for identity: int in expected:
 		var index := int(crowd._index_by_id[identity])
-		if not _check(int(crowd._kit_ids[index]) >= 0, phase + ": a bodied person keeps its atlas kit as the fallback", identity): return false
+		if crowd._no_atlas.has(identity):
+			if not _check(int(crowd._kit_ids[index]) == -1, phase + ": a created look has no atlas kit and no substitute (kit -1)", identity): return false
+		elif not _check(int(crowd._kit_ids[index]) >= 0, phase + ": a bodied person keeps its atlas kit as the fallback", identity): return false
 		if display:
 			var body: Variant = crowd._bodies.get(identity)
 			if not _check(is_instance_valid(body) and body.is_inside_tree() and body.get_parent() == lab and body.editor != null, phase + ": a display build gives the bodied person one presenter", identity): return false
@@ -173,6 +190,34 @@ func _run() -> void:
 	await _settle(crowd)
 	if not _bodies_match(crowd, cadre, "demotion"): return
 	if not _check(int(crowd.render_kit_ids()[soldier_index]) == atlas_kit, "the demoted soldier is drawn by his atlas kit again"): return
+
+	# 2b. S2 sticky rule: an ordinary soldier given a created look (one the atlas cannot draw) is admitted, bodied, and has
+	# kit -1; promoted and demoted again, he keeps the body because no atlas kit can draw him.
+	var created_id := int(roster.units[6].person_id)
+	var created_index := int(crowd._index_by_id[created_id])
+	var record: Dictionary = crowd._records[created_id]
+	var look: Dictionary = _created_look(record.appearance)
+	if not _check(not look.is_empty(), "a valid created face/hair look the atlas cannot draw exists", record.appearance): return
+	var guard: Dictionary = crowd.equipment_recipe_guard(created_id, look)
+	if not _check(guard.ok, "the recipe guard admits a created look instead of MISSING_ASSET", guard): return
+	record.appearance = look
+	crowd.equipment_changed(created_id)
+	if not _check(crowd.last_event_error.is_empty() or str(crowd.last_event_error.get("code", "")) != "MISSING_ASSET", "the created look is not refused", crowd.last_event_error): return
+	await _settle(crowd)
+	var unatlased: Array[int] = crowd.unatlased_people()
+	if not _check(unatlased.size() == 1 and unatlased[0] == created_id, "the created look is recorded as unatlased", unatlased): return
+	var with_created: Array[int] = []
+	with_created.append_array(cadre)
+	with_created.append(created_id)
+	with_created.sort()
+	if not _bodies_match(crowd, with_created, "created look"): return
+	if not _check(crowd.native_set_military_role(created_id, "officer").ok, "the created-look soldier is promoted"): return
+	await _settle(crowd)
+	if not _check(crowd.native_set_military_role(created_id, "soldier").ok, "and demoted again"): return
+	await _settle(crowd)
+	if not _bodies_match(crowd, with_created, "sticky demotion"): return
+	if not _check(int(crowd.render_kit_ids()[created_index]) == -1, "the demoted created look keeps kit -1 (no substitute)"): return
+	cadre = with_created # The sticky person stays bodied through save/load and the split below.
 
 	# 3. Save and load: the same bodied set comes back from the rosters, control and native refs alone.
 	var saved: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)

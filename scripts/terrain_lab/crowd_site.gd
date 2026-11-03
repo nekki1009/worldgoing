@@ -101,6 +101,7 @@ var _bodies: Dictionary = {} # person_id -> TerrainTestCharacter presenter (disp
 var _body_set: Dictionary = {} # person_id -> true: the bodied people within budget (bookkeeping, headless too).
 var _body_overflow: Array[int] = [] # Bodied people beyond BODY_BUDGET; the atlas keeps drawing them.
 var _body_failed: Dictionary = {} # person_id -> true: presenter preparation failed; the atlas keeps drawing them.
+var _no_atlas: Dictionary = {} # person_id -> true: a look the soldier atlas cannot draw; kit -1, bodied (S2 sticky rule).
 var _body_slots: Dictionary = {} # Pose clocks of bodies, as _actor_slots for actors.
 var _body_sig := PackedInt64Array()
 var _body_pending := false
@@ -1128,9 +1129,14 @@ func _sample_prepared_actor_contact(actor: TerrainTestCharacter, appearance: Dic
 func _refresh_kits() -> bool:
 	var appearances: Array = []
 	var audio_mounts := PackedByteArray()
+	_no_atlas.clear()
 	for identity in crowd.person_ids():
 		var appearance: Dictionary = _appearance(int(identity))
-		appearances.append(null if _actors.has(int(identity)) else appearance)
+		var drawn: Variant = null if _actors.has(int(identity)) else appearance
+		if drawn != null and atlas_cannot_draw(appearance):
+			_no_atlas[int(identity)] = true # Kit -1: the person's body draws it, never a substitute look.
+			drawn = null
+		appearances.append(drawn)
 		audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
 	_kit_appearances = appearances
 	return _register_kits(appearances, audio_mounts)
@@ -1189,6 +1195,7 @@ func _dispose() -> void:
 	_host_fire_active = false
 	_fire_visual_dirty = false
 	_kit_ids_dirty = false
+	_no_atlas.clear()
 	for node: Node in nodes.values(): node.queue_free()
 	nodes.clear()
 	caps.clear()
@@ -2035,7 +2042,8 @@ func equipment_recipe_guard(identity: int, appearance: Dictionary) -> Dictionary
 	if bool(appearance.get("mounted", false)):
 		if not SiteMountedSoldierAtlas.available(appearance): return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；原裝與物品保留")
 		if not TerrainArmy.prepare_contact_source_for(appearance): return SiteRuntime.fail("MISSING_ASSET", "騎乘接觸資源未備妥；原裝與物品保留")
-	if view != null and view._describe(appearance).is_empty(): return SiteRuntime.fail("MISSING_ASSET", "士兵外觀不被圖集接受")
+	# S2: a look the atlas cannot draw is admitted; its person becomes bodied (kit -1) instead of being refused.
+	if view != null and not atlas_cannot_draw(appearance) and view._describe(appearance).is_empty(): return SiteRuntime.fail("MISSING_ASSET", "士兵外觀不被圖集接受")
 	return SiteRuntime.ok()
 
 
@@ -2055,7 +2063,7 @@ func equipment_changed(identity: int) -> void:
 		if actor.editor != null: actor.editor.restore_appearance(appearance)
 		_audio_mount_update(int(_index_by_id[identity]), bool(appearance.get("mounted", false)))
 	elif not _building:
-		_update_kit(int(_index_by_id[identity]), appearance) # The atlas kit stays current as a bodied person's fallback.
+		_update_kit(int(_index_by_id[identity]), appearance, identity) # The atlas kit stays current as a bodied person's fallback.
 		_redress_body(identity, appearance)
 	_sync_native_mount(identity, appearance)
 
@@ -3364,6 +3372,7 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 	player_index = int(data.site.crowd.player.soldier_index)
 	rosters.clear()
 	_records.clear()
+	_no_atlas.clear()
 	var appearances: Array = []
 	var audio_mounts := PackedByteArray()
 	var actor_ids := {}
@@ -3387,7 +3396,11 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 		else:
 			var appearance := _appearance(int(identity))
 			if not _prepare_contact_appearance(appearance, int(identity)): return SiteRuntime.fail("MISSING_ASSET", "存檔原士兵同 body 接觸資源未備妥")
-			appearances.append(appearance)
+			if atlas_cannot_draw(appearance):
+				_no_atlas[int(identity)] = true # S2: the loaded created look is drawn by its body (activate_loaded).
+				appearances.append(null)
+			else:
+				appearances.append(appearance)
 			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
 	if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
 	_host_fire_active = candidate_host_fire
@@ -3453,12 +3466,25 @@ func _ensure_kit(appearance: Dictionary) -> int:
 	return kit
 
 
-func _update_kit(index: int, appearance: Dictionary) -> void:
+func _update_kit(index: int, appearance: Dictionary, identity: int = 0) -> void:
 	if view == null: return
+	var was_unatlased := _no_atlas.has(identity)
+	if identity > 0 and atlas_cannot_draw(appearance):
+		# S2 sticky rule: the person keeps (or gains) a body; native draws nothing at this index.
+		_no_atlas[identity] = true
+		_audio_mount_update(index, false)
+		if _kit_ids[index] != -1:
+			_kit_ids[index] = -1
+			_kit_ids_dirty = true
+		if not was_unatlased: _refresh_bodies()
+		return
 	var kit := _ensure_kit(appearance)
 	if kit < 0:
 		last_event_error = SiteRuntime.fail("MISSING_ASSET", "士兵實物外觀不被圖集接受")
 		return
+	if was_unatlased:
+		_no_atlas.erase(identity)
+		_refresh_bodies() # Drawable again: a person who is not otherwise bodied returns to the atlas.
 	_audio_mount_update(index, bool(appearance.get("mounted", false)))
 	if _kit_ids[index] == kit: return
 	_kit_ids[index] = kit
@@ -3500,8 +3526,9 @@ func bodied_people() -> Array[int]:
 ## The bodied people of a Site, the one rule shared by live admission and load (nothing is saved for it). A person is
 ## bodied when controlled, the formal commander, a cadre (officers, officer_service, a non-head office seat), a military
 ## officer, or named by the native formation refs (formal, acting, current commander, officers). Keys keep the budget
-## order: the controlled person first, then each roster in order. S2 adds the sticky created-look branch.
-static func bodied_ids(site_rosters: Array, controlled_id: int, native: Variant = null) -> Dictionary:
+## order: the controlled person first, then each roster in order. S2 sticky rule: a person whose look the atlas cannot
+## draw (no_atlas, kit -1) is always bodied, so a demoted cadre with a created look keeps the body and is never refused.
+static func bodied_ids(site_rosters: Array, controlled_id: int, native: Variant = null, no_atlas: Dictionary = {}) -> Dictionary:
 	var result := {}
 	if controlled_id > 0: result[controlled_id] = true
 	for roster: Dictionary in site_rosters:
@@ -3524,12 +3551,25 @@ static func bodied_ids(site_rosters: Array, controlled_id: int, native: Variant 
 			var identity := int(row.get("person_id", 0))
 			if identity <= 0: continue
 			members[identity] = true
-			if marked.has(at) or holders.has(identity) or str(row.get("military_role", "")) == "officer": result[identity] = true
+			if marked.has(at) or holders.has(identity) or no_atlas.has(identity) or str(row.get("military_role", "")) == "officer": result[identity] = true
 		if native != null and roster.has("crowd_formation") and native.has_method("formation_refs"):
 			var refs: PackedInt64Array = native.formation_refs(int(roster.crowd_formation))
 			for at in range(refs.size()):
 				if at == 3: continue # target_person is a target, not a commander.
 				if members.has(int(refs[at])): result[int(refs[at])] = true
+	return result
+
+
+## S2: a valid foot look the soldier atlas cannot draw (a created face, hair or civilian clothes). Such a person is bodied
+## and native draws nothing at its index (kit -1), never a substitute atlas look. Riders keep the mounted atlas rules.
+static func atlas_cannot_draw(appearance: Dictionary) -> bool:
+	return not appearance.is_empty() and not bool(appearance.get("mounted", false)) \
+		and HumanCharacter3DEditor.valid_appearance(appearance) and not Atlas.supports(appearance)
+
+
+func unatlased_people() -> Array[int]:
+	var result: Array[int] = []
+	for identity: int in _no_atlas: result.append(identity)
 	return result
 
 
@@ -3567,7 +3607,7 @@ func _refresh_bodies(controlled: int = 0) -> void:
 	_body_pending = false
 	var wanted := {}
 	_body_overflow.clear()
-	for identity: int in bodied_ids(rosters, controlled, crowd):
+	for identity: int in bodied_ids(rosters, controlled, crowd, _no_atlas):
 		if not _index_by_id.has(identity) or _actors.has(identity) or _rider_ids.has(identity): continue
 		if wanted.size() >= BODY_BUDGET:
 			_body_overflow.append(identity)
