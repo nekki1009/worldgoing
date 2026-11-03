@@ -888,8 +888,7 @@ func _stable_save_clear(context: Dictionary) -> bool:
 	var saved_gd: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)
 	if not _check(saved_gd.ok, "returned ordinary siege saves through original owners", saved_gd): return false
 	var loaded_gd: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
-	# Option C: a grid save reloaded under crowd opens as crowd again, with the same gameplay.
-	if not _check(loaded_gd.ok and lab.crowd_site.active and _same_gameplay(before, _canonical()), "ordinary reload converts back to crowd and keeps returned IDs/items/HP/cargo/parts/RNG/sequence", loaded_gd.get("code", "")): return false
+	if not _check(loaded_gd.ok and not lab.crowd_site.active and _same_gameplay(before, _canonical()), "ordinary reload keeps returned IDs/items/HP/cargo/parts/RNG/sequence", loaded_gd.get("code", "")): return false
 	if not _assert_nonzero_hit_counters(context, 8, "original GD save/load preserves returned nonzero counters"): return false
 	if str(context.key).is_empty():
 		return _check(lab.site_controller.person_actions.save_guard().ok and lab.site_controller.work_team.active_ids().is_empty(), "completed ladder occupations remain settled after both original handoffs")

@@ -83,14 +83,13 @@ func _run() -> void:
 	check(FileAccess.get_sha256(save_path) == digest, "load under crowd leaves the original save byte-identical")
 	await _discard(crowd_lab)
 
-	# Phase 4 (option C): an ordinary grid save from this version reloaded under crowd also converts; its bytes stay.
+	# Phase 4: an ordinary save from this version reloaded under crowd is not converted and keeps its bytes.
 	var ordinary_lab := _new_lab(true)
 	var loaded_ordinary: Dictionary = ordinary_lab.site_controller.load_from(marked_path)
 	if not check(loaded_ordinary.ok, "ordinary save loads with crowd requested", loaded_ordinary): return
 	check(not ordinary_lab.terrain.get_meta(&"legacy_grid_save", false), "ordinary save is not flagged legacy")
-	check(ordinary_lab.crowd_site != null and ordinary_lab.crowd_site.active, "ordinary grid reload under crowd becomes a live crowd")
-	check(_diff(_crowd_census(ordinary_lab.crowd_site, ordinary_lab), expected) == "", "ordinary reload preserves roster, positions and items", _diff(_crowd_census(ordinary_lab.crowd_site, ordinary_lab), expected))
-	check(_no_grid_live(ordinary_lab), "ordinary reload: no grid team keeps authority")
+	check(not (ordinary_lab.crowd_site != null and ordinary_lab.crowd_site.active), "ordinary reload under crowd stays grid")
+	check(_diff(_grid_census(ordinary_lab), expected) == "", "ordinary reload keeps grid identity", _diff(_grid_census(ordinary_lab), expected))
 	check(FileAccess.get_sha256(marked_path) == marked_digest, "ordinary reload leaves its save byte-identical")
 	await _discard(ordinary_lab)
 

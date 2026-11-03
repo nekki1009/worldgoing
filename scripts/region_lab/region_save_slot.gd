@@ -6288,7 +6288,7 @@ func finish_initial_birth(receipt: Dictionary) -> Dictionary:
 	if not initialization_pending(): return {"ok": true}
 	var checked := _check_initial_record(_marker)
 	if not checked.ok: return checked
-	if receipt.get("complete") != true or receipt.get("owner") != str(control.active_site_id) or int(receipt.get("generation", -1)) != 1 or receipt.get("mode") != "live" or not (receipt.get("backend") in ["gd", "native"]): return fail("COMMITTED_UNBOUND") # Option C: the start Site may open as crowd.
+	if receipt.get("complete") != true or receipt.get("owner") != str(control.active_site_id) or int(receipt.get("generation", -1)) != 1 or receipt.get("mode") != "live" or receipt.get("backend") != "gd": return fail("COMMITTED_UNBOUND")
 	var manifested := _finish_initial_manifest()
 	if not manifested.ok: return manifested
 	var path := folder.path_join("manifest.initialized.json")
