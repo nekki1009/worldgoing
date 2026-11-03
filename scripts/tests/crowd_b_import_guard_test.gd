@@ -242,23 +242,31 @@ func _b8_independent_sources(actor: TerrainTestCharacter) -> bool:
 	var original_equipped: Dictionary = actor.item_state.equipped.duplicate()
 	var original_ids: Array = actor.item_state.item_ids.duplicate()
 	var original_cargo_value: Dictionary = actor.ammo_inventory.duplicate(true)
-	# Option C: ordinary action time cannot step after clear, so the five-second
-	# personal equipment job is retired from this crowd-clear path. The owned bow
-	# is committed through the real holder and the real equipment-change owner.
-	actor.item_state.equipped.weapon = bow_id
-	actor.item_state.version = int(actor.item_state.version) + 1
-	lab.site_controller.equipment_changed(actor.person_id)
+	var actions: SitePersonActions = lab.site_controller.person_actions
+	var begun: Dictionary = lab.site_controller.equipment_orders.begin_personal(actor.person_id, "weapon", bow_id)
+	if not _check(begun.ok and actions.is_busy(actor.person_id) and actor.item_state.equipped == original_equipped
+		and Store._crowd_actor_solo_current(actor.capture_state(), equipment_before.handoff),
+		"original personal equipment job starts from a fresh hash without early equipment mutation", begun): return false
+	var progressed := false
+	var ticks := 0
+	for tick in range(300):
+		lab._advance_action_time(DT)
+		ticks += 1
+		var job: Dictionary = actions.job_for(actor.person_id)
+		progressed = progressed or not job.is_empty() and float(job.elapsed) > 0.0
+		if not actions.is_busy(actor.person_id): break
+		if tick % 30 == 0: await process_frame
 	var equipped: Dictionary = actor.capture_state()
 	var item_only: Dictionary = equipment_source.duplicate(true)
 	item_only.appearance = equipped.appearance.duplicate(true)
 	item_only.item_state = equipped.item_state.duplicate(true)
-	if not _check(str(actor.item_state.equipped.get("weapon", "")) == bow_id
+	if not _check(progressed and not actions.is_busy(actor.person_id) and str(actor.item_state.equipped.get("weapon", "")) == bow_id
 		and str(equipped.appearance.parts.weapon) == "bow_01" and actor.item_state.item_ids == original_ids
 		and actor.ammo_inventory == original_cargo_value and actor.terrain_cell == start_cell and actor.position == start_position
 		and not actor.is_moving() and not Store._crowd_actor_solo_current(equipped, equipment_before.handoff)
 		and not Store._crowd_actor_solo_current(item_only, equipment_before.handoff),
-		"authored owned bow commit through the real equipment owner invalidates the fresh metadata",
-		{"bow": bow_id, "parts": equipped.appearance.parts}): return false
+		"real five-second equipment work commits the owned bow and gear alone invalidates the fresh metadata",
+		{"ticks": ticks, "bow": bow_id, "job": actions.job_for(actor.person_id), "parts": equipped.appearance.parts}): return false
 	if not _b8_keeps_originals(actor, equipment_before, equipment_metadata_bytes, "ordinary equipment commit"): return false
 	var gear_deployed: Dictionary = _deploy_one()
 	if not _check(gear_deployed.ok and site.active and site.crowd.validate(), "actual D5 imports the completed original equipment job", gear_deployed): return false
@@ -278,7 +286,7 @@ func _b8_independent_sources(actor: TerrainTestCharacter) -> bool:
 		and float(gear_hot.py) == start_position.y / Crowd.CELL,
 		"actual native weapon, ammunition, position and facing match current ordinary equipment without altering the live native state"): return false
 	if not _b8_keeps_originals(actor, equipment_before, equipment_metadata_bytes, "equipment D5"): return false
-	roundtrip_evidence.B8_equipment = {"bow_id": bow_id, "before_equipped": original_equipped,
+	roundtrip_evidence.B8_equipment = {"bow_id": bow_id, "job_ticks": ticks, "before_equipped": original_equipped,
 		"after_equipped": actor.item_state.equipped.duplicate(), "native_packed": packed, "native_ammo": gear_hot.ammo,
 		"metadata_sha": equipment_before.handoff.solo_source_sha256,
 		"isolation": "Live work preserves its legitimate fatigue changes; the detached gear-only source probe substitutes only the real committed appearance and item_state into the pre-job capture, without signing or changing any live metadata."}
