@@ -91,8 +91,20 @@ var _rider_ids: Array[int] = [] # CAV-2: identities natively mounted. Derived fr
 var _prepared_live_contact_actor_ids: Dictionary = {} # Candidate preparation only.
 var _live_contact_actor_ids: Dictionary = {} # Adopted original live resources; retain after original dismount.
 var _draw_actors: Array[Node] = []
-var _kit_ids := PackedInt32Array()
+var _kit_ids := PackedInt32Array() # Atlas truth per soldier; bodied people keep their atlas kit here as the fallback.
 var _kit_ids_dirty := false
+# Bodied roster members (S1, design bodied_roster_members_design_20261103): presenter-only live bodies for cadre,
+# officers, commanders and the controlled roster member. Display only: never truth, never saved, never in _actors.
+const BODY_BUDGET := 64
+const BODY_GAINS_PER_REFRESH := 8 # Body creation loads a rig; spread a large admission over a few frames.
+var _bodies: Dictionary = {} # person_id -> TerrainTestCharacter presenter (display builds only).
+var _body_set: Dictionary = {} # person_id -> true: the bodied people within budget (bookkeeping, headless too).
+var _body_overflow: Array[int] = [] # Bodied people beyond BODY_BUDGET; the atlas keeps drawing them.
+var _body_failed: Dictionary = {} # person_id -> true: presenter preparation failed; the atlas keeps drawing them.
+var _body_slots: Dictionary = {} # Pose clocks of bodies, as _actor_slots for actors.
+var _body_sig := PackedInt64Array()
+var _body_pending := false
+var _body_kits_dirty := false
 var _ammo_keys := {}
 var _host_fire_active := false
 var _fire_visual_dirty := false
@@ -617,6 +629,7 @@ func _finish_admission(sides: Array, prepared: Dictionary, before: Dictionary, t
 	_original_team_plans = prepared.plans
 	data.site.armies.append_array(rosters)
 	data.site["army_next_team"] = _solo_team_id()
+	_refresh_bodies() # Presentation only, after every admission check; a body that cannot be prepared keeps the atlas.
 	_begin_player()
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
@@ -810,6 +823,7 @@ func _append_actor(actor: TerrainTestCharacter, runtime: bool = true) -> Diction
 			return _append_actor_failed(before, SiteRuntime.fail("MISSING_ASSET", "繼承人外觀匯入失敗"))
 		_kit_ids = ids
 		_kit_ids_dirty = false # The append installed all pending indices as well.
+		_body_kits_dirty = not _bodies.is_empty() # The raw atlas submission dropped the body overlay.
 		_kit_appearances.append(null)
 		_adopt_mounted_contact_visuals()
 	_audio_mount_update(index, bool(projected.get("mounted", false)))
@@ -833,6 +847,7 @@ func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary
 	# Native load preserves atlas tracks/kits, but resets per-person kit indices.
 	var kits_restored := bool(crowd.render_set_kits(_kit_ids))
 	_kit_ids_dirty = not kits_restored
+	_body_kits_dirty = not _bodies.is_empty()
 	assert(kits_restored, "Original native kit indices must match the restored snapshot")
 	if kits_restored: _audio_mount_install(_audio_mounted_rows)
 	return failure if kits_restored else SiteRuntime.fail("INVALID", "原群眾外觀索引無法回復")
@@ -1160,11 +1175,14 @@ func _clear_mounted_contact_visuals() -> void:
 
 func _notification(what: int) -> void:
 	# Detached load candidates are freed directly by the original Lab guard.
-	if what == NOTIFICATION_PREDELETE: _clear_mounted_contact_visuals()
+	if what == NOTIFICATION_PREDELETE:
+		_clear_mounted_contact_visuals()
+		_clear_bodies(false) # The lab may be freeing its children now; queue only.
 
 func _dispose() -> void:
 	_audio_mounted_rows.clear()
 	_clear_mounted_contact_visuals()
+	_clear_bodies()
 	_live_contact_actor_ids.clear()
 	_clear_siege_work_sprites()
 	active = false
@@ -1337,12 +1355,15 @@ func render(frame_dt: float) -> void:
 		return
 	if not sync_terrain(): return
 	var p0 := Time.get_ticks_usec()
+	# Native acting/current commander changes, new teams and rider changes have no hook; the cheap signature finds them.
+	if _body_pending or _body_signature() != _body_sig: _refresh_bodies()
 	if not _flush_kit_ids(): return
 	_prepare_actor_rows()
 	var buf: PackedFloat32Array = crowd.pack_frame(CELL, frame_dt)
 	var spans: PackedInt32Array = crowd.row_spans()
 	var bounds: PackedFloat32Array = crowd.row_bounds()
 	_present_player(frame_dt)
+	_present_bodies(frame_dt)
 	var p1 := Time.get_ticks_usec()
 	var used := {}
 	var rows_now := {}
@@ -1493,6 +1514,21 @@ func _prepare_actor_rows() -> void:
 		var state := soldier_state(index)
 		points.append_array(PackedFloat32Array([float(state.px) * CELL, float(state.py) * CELL]))
 		_draw_actors.append(actor)
+	# Bodied roster members insert their presenter at their native ground, as actors do. An absent body is not drawn.
+	for identity: int in _bodies:
+		var body: TerrainTestCharacter = _bodies[identity]
+		var index := int(_index_by_id.get(identity, -1))
+		if index < 0 or not is_instance_valid(body): continue
+		# S1: the original siege work sprite keeps presenting a working person; the body waits hidden meanwhile.
+		var shown: bool = _absent_kind(index) == 0 and lab.site_controller.vehicles.siege_work_pose(identity).is_empty()
+		body.visible = shown
+		if not shown: continue
+		if index == player_index:
+			controlled_actor = body
+			continue
+		var state := soldier_state(index)
+		points.append_array(PackedFloat32Array([float(state.px) * CELL, float(state.py) * CELL]))
+		_draw_actors.append(body)
 	points.append_array(_prepare_siege_work_rows())
 	crowd.render_set_actors(points)
 	if controlled_actor != null: _draw_actors.append(controlled_actor)
@@ -1553,7 +1589,7 @@ func _prepare_siege_work_rows() -> PackedFloat32Array:
 	if not work_indices.is_empty() or _siege_work_kit_override:
 		# ponytail: the existing full kit submission is copied only while work
 		# is visible; optimize sparse kit updates after an actual large-crowd test.
-		var render_ids := _kit_ids.duplicate()
+		var render_ids := _render_kit_ids().duplicate()
 		for index: int in work_indices: render_ids[index] = -1
 		if not bool(crowd.render_set_kits(render_ids)):
 			last_event_error = SiteRuntime.fail("INVALID_WORK_RENDER", "原工作圖集索引尚未完整接入")
@@ -1562,73 +1598,88 @@ func _prepare_siege_work_rows() -> PackedFloat32Array:
 
 func _present_player(dt: float) -> void:
 	for identity: int in _actors:
-		var actor: TerrainTestCharacter = _actors[identity]
-		var index := int(_index_by_id[identity])
-		var state := soldier_state(index)
-		var slot := int(state.vis_kind)
-		var age := float(state.vis_age)
-		var ground := Vector2(float(state.px), float(state.py)) * CELL
-		var angle := float(state.face)
-		var dir := posmod(int(round(angle / (PI * 0.5))) + 1, 4)
-		if index == player_index:
-			var v: PackedFloat32Array = crowd.soldier_view(index)
-			ground = Vector2(v[0], v[1])
-			slot = int(v[3])
-			age = v[4]
-			dir = int(v[2])
+		_present_pose(_actors[identity], identity, int(_index_by_id[identity]), dt, _actor_slots, true)
+
+
+## S1: bodied roster members take the same pose presentation as actors, one-way from native. No truth is written back:
+## only display fields (hp and stun bars, position, pose) change on the presenter.
+func _present_bodies(dt: float) -> void:
+	for identity: int in _bodies:
+		var body: TerrainTestCharacter = _bodies[identity]
+		var index := int(_index_by_id.get(identity, -1))
+		if index < 0 or not is_instance_valid(body) or not body.visible: continue
+		_present_pose(body, identity, index, dt, _body_slots, false)
+
+
+func _present_pose(actor: TerrainTestCharacter, identity: int, index: int, dt: float, slots: Dictionary, is_actor: bool) -> void:
+	var state := soldier_state(index)
+	var slot := int(state.vis_kind)
+	var age := float(state.vis_age)
+	var ground := Vector2(float(state.px), float(state.py)) * CELL
+	var angle := float(state.face)
+	var dir := posmod(int(round(angle / (PI * 0.5))) + 1, 4)
+	if index == player_index:
+		var v: PackedFloat32Array = crowd.soldier_view(index)
+		ground = Vector2(v[0], v[1])
+		slot = int(v[3])
+		age = v[4]
+		dir = int(v[2])
+	else:
+		if float(state.hp) <= 0.0 or float(state.ko) > 0.0: slot = 9 if age < 2.875 else 10
+		elif float(state.getup) > 0.0: slot = 11
+		elif slot < 3 or slot > 8 or age >= ExchangeTimings.duration(StringName(_clip_for(SLOTS[clampi(slot, 0, SLOTS.size() - 1)], actor._saved_appearance))):
+			slot = 1 if Vector2(float(state.vx), float(state.vy)).length_squared() > 0.01 else 0
+	if is_actor: _sync_actor(identity, false)
+	else:
+		actor.hp = float(state.hp) # Display bars only; the roster row stays the truth.
+		actor.stun = float(state.stun)
+	actor.position = ground
+	actor.z_index = 10 + int(ground.y / CELL)
+	actor.queue_redraw()
+	var work: Dictionary = lab.site_controller.vehicles.siege_work_pose(identity)
+	if not work.is_empty() and actor.editor != null:
+		if SiegeWorkClips.sample(actor.editor, str(work.clip), float(work.time), Vector2i(work.facing)):
+			actor.visual_state.animation_id = StringName(str(work.clip))
+			actor.visual_state.animation_time = fposmod(float(work.time), float(SiegeWorkClips.DURATIONS[str(work.clip)]))
+			actor.set("_exchange_pose_dirty", true)
+			actor.editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+		slots.erase(identity) # Ordinary poses alone restart the existing visual timer.
+		return
+	if _live_contact_actor_ids.has(identity):
+		var values: PackedFloat64Array = crowd.get_soldier_state(index)
+		var native: PackedFloat64Array = crowd.contact_pose_state(index)
+		if _sample_prepared_actor_contact(actor, _appearance(identity), values, native).is_empty():
+			last_event_error = SiteRuntime.fail("MISSING_ASSET", "Original mounted Actor pose unavailable")
 		else:
-			if float(state.hp) <= 0.0 or float(state.ko) > 0.0: slot = 9 if age < 2.875 else 10
-			elif float(state.getup) > 0.0: slot = 11
-			elif slot < 3 or slot > 8 or age >= ExchangeTimings.duration(StringName(_clip_for(SLOTS[clampi(slot, 0, SLOTS.size() - 1)], actor._saved_appearance))):
-				slot = 1 if Vector2(float(state.vx), float(state.vy)).length_squared() > 0.01 else 0
-		_sync_actor(identity, false)
-		actor.position = ground
-		actor.z_index = 10 + int(ground.y / CELL)
-		actor.queue_redraw()
-		var work: Dictionary = lab.site_controller.vehicles.siege_work_pose(identity)
-		if not work.is_empty() and actor.editor != null:
-			if SiegeWorkClips.sample(actor.editor, str(work.clip), float(work.time), Vector2i(work.facing)):
-				actor.visual_state.animation_id = StringName(str(work.clip))
-				actor.visual_state.animation_time = fposmod(float(work.time), float(SiegeWorkClips.DURATIONS[str(work.clip)]))
-				actor.set("_exchange_pose_dirty", true)
-				actor.editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-			_actor_slots.erase(identity) # Ordinary poses alone restart the existing visual timer.
-			continue
-		if _live_contact_actor_ids.has(identity):
-			var values: PackedFloat64Array = crowd.get_soldier_state(index)
-			var native: PackedFloat64Array = crowd.contact_pose_state(index)
-			if _sample_prepared_actor_contact(actor, _appearance(identity), values, native).is_empty():
-				last_event_error = SiteRuntime.fail("MISSING_ASSET", "Original mounted Actor pose unavailable")
-			else:
-				actor.set("_exchange_pose_dirty", true)
-				actor.editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-			continue
-		if actor.editor != null and SiegeWorkClips.DURATIONS.has(str(actor.editor.selected_animation)):
-			actor.editor.combat_ready = actor.combat_ready
-			actor.editor.visual_state.combat_ready = actor.combat_ready
-			actor.editor._update_weapon_sheath_state()
-		var appearance: Dictionary = actor._saved_appearance
-		var clip: StringName = StringName(_clip_for(SLOTS[clampi(slot, 0, SLOTS.size() - 1)], appearance))
-		if clip in [&"combat_idle", &"combat_walk", &"combat_run"]: clip = StringName(str(clip).trim_prefix("combat_"))
-		var previous: Dictionary = _actor_slots.get(identity, {"slot": -1, "age": 0.0, "time": 0.0})
-		if slot != int(previous.slot) or slot >= 3 and slot <= 8 and age + 0.001 < float(previous.age):
-			actor.play_pose(clip)
-			previous["time"] = 0.0
-		else: previous["time"] = float(previous.time) + dt
-		previous["slot"] = slot
-		previous.age = age
-		_actor_slots[identity] = previous
-		if actor.editor == null: continue
-		actor.editor.set_preview_yaw_degrees(YAW[clampi(dir, 0, 3)])
-		var animation: Animation = actor.editor.animation_player.get_animation(actor.editor.selected_animation)
-		if animation == null or animation.length <= 0.0: continue
-		var sample := float(previous.time)
-		if slot >= 3 and slot <= 8 and ExchangeTimings.duration(clip) > 0.0:
-			sample = ExchangeTimings.sample_time(clip, age, animation.length)
-		elif animation.loop_mode != Animation.LOOP_NONE: sample = fposmod(sample, animation.length)
-		else: sample = minf(sample, animation.length)
-		actor.visual_state.animation_time = sample
-		actor.set("_exchange_pose_dirty", true)
+			actor.set("_exchange_pose_dirty", true)
+			actor.editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+		return
+	if actor.editor != null and SiegeWorkClips.DURATIONS.has(str(actor.editor.selected_animation)):
+		actor.editor.combat_ready = actor.combat_ready
+		actor.editor.visual_state.combat_ready = actor.combat_ready
+		actor.editor._update_weapon_sheath_state()
+	var appearance: Dictionary = actor._saved_appearance
+	var clip: StringName = StringName(_clip_for(SLOTS[clampi(slot, 0, SLOTS.size() - 1)], appearance))
+	if clip in [&"combat_idle", &"combat_walk", &"combat_run"]: clip = StringName(str(clip).trim_prefix("combat_"))
+	var previous: Dictionary = slots.get(identity, {"slot": -1, "age": 0.0, "time": 0.0})
+	if slot != int(previous.slot) or slot >= 3 and slot <= 8 and age + 0.001 < float(previous.age):
+		actor.play_pose(clip)
+		previous["time"] = 0.0
+	else: previous["time"] = float(previous.time) + dt
+	previous["slot"] = slot
+	previous.age = age
+	slots[identity] = previous
+	if actor.editor == null: return
+	actor.editor.set_preview_yaw_degrees(YAW[clampi(dir, 0, 3)])
+	var animation: Animation = actor.editor.animation_player.get_animation(actor.editor.selected_animation)
+	if animation == null or animation.length <= 0.0: return
+	var sample := float(previous.time)
+	if slot >= 3 and slot <= 8 and ExchangeTimings.duration(clip) > 0.0:
+		sample = ExchangeTimings.sample_time(clip, age, animation.length)
+	elif animation.loop_mode != Animation.LOOP_NONE: sample = fposmod(sample, animation.length)
+	else: sample = minf(sample, animation.length)
+	actor.visual_state.animation_time = sample
+	actor.set("_exchange_pose_dirty", true)
 
 
 # ---------------------------------------------------------------- appearance kits (as in the P2 benches)
@@ -1727,6 +1778,7 @@ func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteA
 	_prewarm_captivity_atlases(required if reuse else kit_keys, false)
 	var installed := bool(crowd.render_set_kits(kit_ids))
 	_kit_ids_dirty = not installed
+	_body_kits_dirty = not _bodies.is_empty() # Bodies overlay -1 on the next flush; the atlas kit stays their fallback.
 	if installed: _audio_mount_install(audio_mounts)
 	return installed
 
@@ -1958,6 +2010,7 @@ func on_control_changed(old_identity: int, identity: int) -> Dictionary:
 	running = false
 	engage = false
 	_begin_player()
+	_refresh_bodies(identity) # The controlled roster member is bodied; the old one keeps a body only by rank.
 	return SiteRuntime.ok()
 
 
@@ -2002,7 +2055,8 @@ func equipment_changed(identity: int) -> void:
 		if actor.editor != null: actor.editor.restore_appearance(appearance)
 		_audio_mount_update(int(_index_by_id[identity]), bool(appearance.get("mounted", false)))
 	elif not _building:
-		_update_kit(int(_index_by_id[identity]), appearance)
+		_update_kit(int(_index_by_id[identity]), appearance) # The atlas kit stays current as a bodied person's fallback.
+		_redress_body(identity, appearance)
 	_sync_native_mount(identity, appearance)
 
 
@@ -2562,6 +2616,7 @@ func commit_team_personnel(team_id: int, holder: Variant, before_posts: Dictiona
 		if identity > 0: officers.append(identity)
 	if not set_formation_fields(int(owner.formation_index), {"officer_persons": officers}):
 		return SiteRuntime.fail("INVALID_ROLE", "原生軍官列表寫入失敗")
+	_refresh_bodies()
 	return SiteRuntime.ok()
 
 
@@ -2845,6 +2900,7 @@ func native_set_military_role(identity: int, role: String) -> Dictionary:
 	if index < 0 or record.is_empty() or _actors.has(identity) or not bool(crowd.set_military_role(index, military_role_code(role))):
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕更改軍職")
 	record["military_role"] = role
+	_refresh_bodies() # Promotion gains a body; demotion back to an atlas look loses it.
 	return SiteRuntime.ok()
 
 
@@ -2961,6 +3017,7 @@ func departure_release(plan: Dictionary) -> Dictionary:
 	for row: Dictionary in rosters:
 		if not is_same(row, roster): kept_rosters.append(row)
 	rosters = kept_rosters
+	_refresh_bodies() # Released people leave no presenter behind.
 	return SiteRuntime.ok("", {"roster": roster, "released": released.size(), "army": army_conversion.snapshot})
 
 
@@ -3152,6 +3209,7 @@ func split_departure_release(plan: Dictionary, team_id: int) -> Dictionary:
 		team["departed_person_ids"] = gone
 	# The live roster becomes the remaining team (renumbered in place); the party itself is the converted army above.
 	split_roster(roster, group, team_id)
+	_refresh_bodies() # The party leaves no presenter; the renumbered remaining roster keeps its cadre bodies.
 	return SiteRuntime.ok("", {"roster": roster, "army": army_conversion.snapshot, "released": released.size()})
 
 
@@ -3368,6 +3426,9 @@ func activate_loaded() -> void:
 		last_event_error = SiteRuntime.fail("INVALID_FIRE_VISUAL", "原 Native 火體外觀投影失敗")
 		return
 	for identity: int in _actors: _sync_actor(identity)
+	# Nothing about bodies is saved: the loaded rosters, control and native refs give the same bodied set.
+	_clear_bodies()
+	_refresh_bodies()
 	_begin_player()
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
@@ -3405,12 +3466,197 @@ func _update_kit(index: int, appearance: Dictionary) -> void:
 
 
 func _flush_kit_ids() -> bool:
-	if not _kit_ids_dirty: return true
-	if crowd != null and bool(crowd.render_set_kits(_kit_ids)):
+	if not _kit_ids_dirty and not _body_kits_dirty: return true
+	if crowd != null and bool(crowd.render_set_kits(_render_kit_ids())):
 		_kit_ids_dirty = false
+		_body_kits_dirty = false
 		return true
 	last_event_error = SiteRuntime.fail("INVALID", "群眾外觀索引未完整提交")
 	return false
+
+
+# ---------------------------------------------------------------- bodied roster members (S1)
+## The per-soldier kits submitted to native: the atlas truth with -1 ("not drawn") at every live body.
+func _render_kit_ids() -> PackedInt32Array:
+	if _bodies.is_empty(): return _kit_ids
+	var ids := _kit_ids.duplicate()
+	for identity: int in _bodies:
+		var index := int(_index_by_id.get(identity, -1))
+		if index >= 0 and index < ids.size(): ids[index] = -1
+	return ids
+
+
+## Read-only copies for tests and tools.
+func render_kit_ids() -> PackedInt32Array:
+	return _render_kit_ids().duplicate()
+
+
+func bodied_people() -> Array[int]:
+	var result: Array[int] = []
+	for identity: int in _body_set: result.append(identity)
+	return result
+
+
+## The bodied people of a Site, the one rule shared by live admission and load (nothing is saved for it). A person is
+## bodied when controlled, the formal commander, a cadre (officers, officer_service, a non-head office seat), a military
+## officer, or named by the native formation refs (formal, acting, current commander, officers). Keys keep the budget
+## order: the controlled person first, then each roster in order. S2 adds the sticky created-look branch.
+static func bodied_ids(site_rosters: Array, controlled_id: int, native: Variant = null) -> Dictionary:
+	var result := {}
+	if controlled_id > 0: result[controlled_id] = true
+	for roster: Dictionary in site_rosters:
+		var units: Array = roster.get("units", [])
+		var marked := {}
+		var formal := int(roster.get("formal_commander", -1))
+		if formal >= 0 and formal < units.size(): marked[formal] = true
+		for field: String in ["officers", "officer_service"]:
+			for entry: Variant in roster.get(field, []):
+				var at := int(entry)
+				if at >= 0 and at < units.size(): marked[at] = true
+		var holders := {}
+		var offices: Variant = roster.get("offices", {})
+		if offices is Dictionary:
+			for seat: Variant in offices.get("positions", []):
+				if seat is Dictionary and not bool(seat.get("head", false)) and int(seat.get("holder", 0)) > 0: holders[int(seat.holder)] = true
+		var members := {}
+		for at in range(units.size()):
+			var row: Dictionary = units[at]
+			var identity := int(row.get("person_id", 0))
+			if identity <= 0: continue
+			members[identity] = true
+			if marked.has(at) or holders.has(identity) or str(row.get("military_role", "")) == "officer": result[identity] = true
+		if native != null and roster.has("crowd_formation") and native.has_method("formation_refs"):
+			var refs: PackedInt64Array = native.formation_refs(int(roster.crowd_formation))
+			for at in range(refs.size()):
+				if at == 3: continue # target_person is a target, not a commander.
+				if members.has(int(refs[at])): result[int(refs[at])] = true
+	return result
+
+
+## Cheap per-frame change detector for what has no hook: native commander refs, new teams, riders, control.
+func _body_signature() -> PackedInt64Array:
+	var sig := PackedInt64Array([_body_controlled_id(), rosters.size(), _index_by_id.size()])
+	sig.append_array(PackedInt64Array(_rider_ids))
+	if crowd == null or not crowd.has_method("formation_refs"): return sig
+	for roster: Dictionary in rosters:
+		if not roster.has("crowd_formation"): continue
+		var refs: PackedInt64Array = crowd.formation_refs(int(roster.crowd_formation))
+		sig.append(-1)
+		sig.append_array(refs.slice(0, 3))
+		if refs.size() > 4: sig.append_array(refs.slice(4))
+	return sig
+
+
+func _body_controlled_id() -> int:
+	# Unit fixtures may host a CrowdSite on a bare lab without control.
+	return int(lab.controlled_person_id()) if is_instance_valid(lab) and lab.has_method("controlled_person_id") else 0
+
+
+## Bodies exist only where a presenter can draw; headless keeps the bookkeeping and the atlas.
+static func bodies_display() -> bool:
+	return DisplayServer.get_name() != "headless"
+
+
+## Diffs bodied_ids against the live bodies. Gains create a presenter and overlay kit -1; losses free it, and the atlas
+## kit (always kept current in _kit_ids) draws the person again. Beyond BODY_BUDGET, or when a presenter cannot be
+## prepared, the person keeps the atlas. Riders keep the mounted atlas in S1. Never fails, never touches truth.
+func _refresh_bodies(controlled: int = 0) -> void:
+	if not active or crowd == null or not is_instance_valid(lab): return
+	if controlled <= 0: controlled = _body_controlled_id()
+	_body_sig = _body_signature()
+	_body_pending = false
+	var wanted := {}
+	_body_overflow.clear()
+	for identity: int in bodied_ids(rosters, controlled, crowd):
+		if not _index_by_id.has(identity) or _actors.has(identity) or _rider_ids.has(identity): continue
+		if wanted.size() >= BODY_BUDGET:
+			_body_overflow.append(identity)
+			continue
+		wanted[identity] = true
+	_body_set = wanted
+	for identity: int in _bodies.keys():
+		if not wanted.has(identity): _drop_body(identity)
+	for identity: int in _body_failed.keys():
+		if not wanted.has(identity): _body_failed.erase(identity)
+	if not bodies_display(): return
+	var gained := 0
+	for identity: int in wanted:
+		if _bodies.has(identity) or _body_failed.has(identity): continue
+		if gained >= BODY_GAINS_PER_REFRESH:
+			_body_pending = true # render continues next frame; the atlas draws the person meanwhile.
+			break
+		gained += 1
+		if not _gain_body(identity): _body_failed[identity] = true
+
+
+func _gain_body(identity: int) -> bool:
+	var appearance := _appearance(identity)
+	if appearance.is_empty() or bool(appearance.get("mounted", false)): return false
+	var body := TerrainTestCharacter.new()
+	body.name = "CrowdBody_%d" % identity
+	body.person_id = identity # Pose lookups only (siege work); a body is never registered as a person.
+	body.data = lab.terrain
+	body.combat_driven_by_lab = true # No advance_combat: the presenter never simulates.
+	body.exchange_enabled = true # The exchange presenter seeks one pose per rendered frame, as actors under crowd.
+	lab.add_child(body)
+	if not body.prepare_contact_visual(appearance):
+		lab.remove_child(body)
+		body.free()
+		return false
+	body._saved_appearance = appearance.duplicate(true)
+	body.set_process(true)
+	_bodies[identity] = body
+	_body_slots.erase(identity)
+	_body_kits_dirty = true
+	return true
+
+
+func _drop_body(identity: int) -> void:
+	var body: Variant = _bodies.get(identity)
+	_bodies.erase(identity)
+	_body_slots.erase(identity)
+	_body_kits_dirty = crowd != null
+	_free_body_node(body)
+
+
+## equipment_changed for a bodied person: the presenter is re-dressed from the projected look.
+func _redress_body(identity: int, appearance: Dictionary) -> void:
+	_body_failed.erase(identity) # A new look may prepare; the next refresh retries.
+	if not _bodies.has(identity):
+		if _body_set.has(identity): _body_pending = true
+		return
+	var body: TerrainTestCharacter = _bodies[identity]
+	if bool(appearance.get("mounted", false)) or not is_instance_valid(body) or body.editor == null:
+		_drop_body(identity)
+		return
+	body._saved_appearance = appearance.duplicate(true)
+	if not body.editor.restore_appearance(appearance):
+		_drop_body(identity)
+		_body_failed[identity] = true
+		return
+	_body_slots.erase(identity)
+
+
+## A dropped presenter gives up its CrowdBody_<id> name at once: a queued node would keep it until the frame ends, and
+## a body created meanwhile for the same person (a load re-creates every body in activate_loaded) would be renamed.
+## It stays in the tree until freed, because the editor's deferred _open_when_run_as_scene needs get_tree().
+static func _free_body_node(body: Variant, release_name: bool = true) -> void:
+	if not is_instance_valid(body): return
+	if release_name: body.name = "CrowdBodyFreed_%d" % body.get_instance_id()
+	body.queue_free()
+
+
+func _clear_bodies(release_names: bool = true) -> void:
+	var had := not _bodies.is_empty()
+	for body: Variant in _bodies.values(): _free_body_node(body, release_names)
+	_bodies.clear()
+	_body_set.clear()
+	_body_overflow.clear()
+	_body_failed.clear()
+	_body_slots.clear()
+	_body_sig = PackedInt64Array()
+	_body_pending = false
+	_body_kits_dirty = had and crowd != null
 
 
 ## D5 helper fragment. Pure prepare, native append/import, then one commit.
@@ -4546,6 +4792,7 @@ func set_rider(identity: int, on: bool) -> Dictionary:
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘狀態；原人物未變更")
 	_rebuild_rider_ids()
 	_update_kit(index, _appearance(identity))
+	_refresh_bodies() # S1: a rider is drawn by the mounted atlas, so a bodied rider returns to it.
 	return SiteRuntime.ok()
 
 # Write-back of native dismounts and deaths. A native dismount or a death empties the mount slot and the horse is lost
