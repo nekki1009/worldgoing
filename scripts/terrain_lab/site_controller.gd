@@ -10169,6 +10169,11 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 		else: state.personality = packet
 	if not TerrainTestCharacter.valid_state(state, lab.terrain): return Runtime.fail("INVALID", "建立的人物資料不合法")
 	actor.restore_state(state)
+	# A crowd start Site already admitted this Actor; native owns its abilities and syncs them back each step.
+	if lab.crowd_site != null and lab.crowd_site.active and not actor.command_abilities.is_empty():
+		var index := int(lab.crowd_site.crowd.soldier_index(actor.person_id))
+		var abilities := {"tactics": int(actor.command_abilities.get("tactics", 0)), "leadership": int(actor.command_abilities.get("leadership", 0)), "coach": int(actor.command_abilities.get("coach", 0))}
+		if index >= 0 and not lab.crowd_site.set_soldier_fields(index, abilities): return Runtime.fail("INVALID", "建立的人物能力無法寫入群眾模擬")
 	return save_to(save_path)
 
 func _record_world(world_name: String = "") -> void:
