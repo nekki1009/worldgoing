@@ -110,7 +110,7 @@ static func _siege_ai_target(lab: TerrainLab, team: Variant, vehicle: Dictionary
 	if str(vehicle.kind) == "ballista":
 		for other: Dictionary in lab.terrain.site.get("vehicles", {}).values():
 			var other_team: Variant = lab.site_controller.vehicles._siege_team(other)
-			if other_team == null or other_team.faction_id == team.faction_id: continue
+			if other_team == null or other_team == team or RegionFactionQuery.same_side(other_team.faction_id, team.faction_id): continue
 			for identity: int in other.get("crew_slots", {}).values():
 				var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
 				if person.is_empty() or not person.owner.combat_can_act(int(person.unit)): continue
@@ -255,7 +255,7 @@ static func _decide(lab: TerrainLab, team: TerrainArmy, own: Dictionary, summari
 		if other == own or other.people.is_empty():
 			continue
 		var gap := _gap(own, other)
-		if int(other.faction) == team.faction_id:
+		if RegionFactionQuery.same_side(int(other.faction), team.faction_id):
 			if gap <= THREAT_DISTANCE:
 				support += float(other.power) * 0.5
 			continue

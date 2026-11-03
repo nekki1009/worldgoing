@@ -1121,10 +1121,10 @@ func _selected_enemy_identity(source: Variant) -> int:
 	if source == null:
 		return -1
 	for actor: TerrainTestCharacter in lab.combat_actors:
-		if is_instance_valid(actor) and actor.faction_id != source.faction_id and actor.terrain_cell == selected and actor.can_act():
+		if is_instance_valid(actor) and actor != source and not RegionFactionQuery.same_side(actor.faction_id, source.faction_id) and actor.terrain_cell == selected and actor.can_act():
 			return actor.person_id
 	for team: TerrainArmy in lab.combat_armies:
-		if not team.combat_enabled or team.faction_id == source.faction_id:
+		if not team.combat_enabled or team == source or RegionFactionQuery.same_side(team.faction_id, source.faction_id):
 			continue
 		for index in range(team.combat_units.size()):
 			if team.cells[index] == selected and team.combat_can_act(index):
@@ -1139,11 +1139,12 @@ func _crowd_selected_enemy_identity(source: Variant) -> int:
 	var faction_owner: Variant = source if source != null else crowd.person_owner(lab.controlled_person_id())
 	if faction_owner == null: return -1
 	var faction: int = int(faction_owner.faction_id)
+	var own_team: int = int(faction_owner.team_id) if "team_id" in faction_owner else -1
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if not is_instance_valid(actor) or crowd.contains_person(actor.person_id): continue
-		if actor.faction_id != faction and actor.terrain_cell == selected and actor.can_act(): return actor.person_id
+		if not RegionFactionQuery.same_side(actor.faction_id, faction) and actor.terrain_cell == selected and actor.can_act(): return actor.person_id
 	for owner_ref: CrowdPersonOwner in crowd.person_owners():
-		if not owner_ref.combat_enabled or owner_ref.faction_id == faction: continue
+		if not owner_ref.combat_enabled or owner_ref.team_id == own_team or RegionFactionQuery.same_side(owner_ref.faction_id, faction): continue
 		for index: int in owner_ref.combat_units.keys():
 			var ground: Vector2 = owner_ref.combat_ground(index) / TerrainRenderer.CELL_PIXELS
 			if Vector2i(floori(ground.x), floori(ground.y)) == selected and owner_ref.combat_can_act(index):
@@ -1194,7 +1195,7 @@ func _crowd_command_team(source: String = "trial") -> Dictionary:
 func _crowd_selected_enemy(team: Dictionary) -> int:
 	if team.is_empty(): return -1
 	for candidate_owner: RefCounted in lab.crowd_site.person_owners():
-		if candidate_owner.faction_id == int(team.faction): continue
+		if candidate_owner.team_id == int(team.team_id) or RegionFactionQuery.same_side(candidate_owner.faction_id, int(team.faction)): continue
 		for index: int in candidate_owner.combat_units:
 			var person: Dictionary = candidate_owner.person(index)
 			if person.cell == selected and float(person.hp) > 0.0 and not bool(person.captive): return int(person.person_id)
@@ -4611,7 +4612,7 @@ func _open_roster(trial: bool = false, host: Window = null) -> void:
 	var receiver_choice := _options(column, ["空槽拆分（自動）"], "RosterReceiverTeam")
 	receiver_choice.set_item_metadata(0, -1)
 	for receiver: TerrainArmy in lab.combat_armies:
-		if receiver != team and receiver.has_army() and receiver.faction_id == team.faction_id:
+		if receiver != team and receiver.has_army() and RegionFactionQuery.same_side(receiver.faction_id, team.faction_id):
 			receiver_choice.add_item("編入隊伍 #%d（同勢力）" % receiver.team_id)
 			receiver_choice.set_item_metadata(receiver_choice.item_count - 1, receiver.team_id)
 	if trial and receiver_choice.item_count == 2:
@@ -4631,7 +4632,7 @@ func _open_roster(trial: bool = false, host: Window = null) -> void:
 		if not trial or not enabled or not current_scope.call():
 			return
 		for receiver: TerrainArmy in lab.combat_armies:
-			if receiver.team_id != receiver_id or receiver == team or not receiver.has_army() or receiver.faction_id != team.faction_id:
+			if receiver.team_id != receiver_id or receiver == team or not receiver.has_army() or not RegionFactionQuery.same_side(receiver.faction_id, team.faction_id):
 				continue
 			if receiver.duty_decider("team.roster") <= 0:
 				break
@@ -8877,7 +8878,7 @@ func _recruit_candidates(team: TerrainArmy) -> Array[int]:
 	if not is_instance_valid(team): return [] as Array[int]
 	var result := team.recruit_candidates()
 	for other: TerrainArmy in lab.combat_armies:
-		if is_instance_valid(other) and other != team and other.combat_enabled and other.faction_id == team.faction_id:
+		if is_instance_valid(other) and other != team and other.combat_enabled and RegionFactionQuery.same_side(other.faction_id, team.faction_id):
 			if other.garrison_feature_id.is_empty(): result.append_array(other.recruit_candidates())
 			else: # Garrisoned soldiers (fourth source; SiteGarrison.recruit checks the barracks authority).
 				for index: int in other.combat_units.size():
@@ -8885,7 +8886,7 @@ func _recruit_candidates(team: TerrainArmy) -> Array[int]:
 						result.append(other.combat_identity(index))
 	if not is_instance_valid(team.player_member):
 		for actor: TerrainTestCharacter in lab.combat_actors:
-			if is_instance_valid(actor) and actor in [team.player, team.npc] and actor.faction_id == team.faction_id and actor.person_id != lab.controlled_person_id() 				and actor.can_act() and not lab.combat_armies.any(func(other: TerrainArmy) -> bool: return is_instance_valid(other) and other.player_member == actor):
+			if is_instance_valid(actor) and actor in [team.player, team.npc] and RegionFactionQuery.same_side(actor.faction_id, team.faction_id) and actor.person_id != lab.controlled_person_id() 				and actor.can_act() and not lab.combat_armies.any(func(other: TerrainArmy) -> bool: return is_instance_valid(other) and other.player_member == actor):
 				result.append(actor.person_id)
 	return result
 

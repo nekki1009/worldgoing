@@ -13798,7 +13798,7 @@ func region_party_map_resume_guard(party: Dictionary) -> Dictionary:
 			if team.moving_to[index] != TerrainArmy.INVALID_CELL \
 					or str(team.combat_hot_get(index, &"pose", "")) in ["attack", "shoot", "reload", "rescue"]:
 				return SiteRuntime.fail("PARTY_ACTION_OPEN")
-	if RegionTravelSite._hostile_near(self, faction, cells): return SiteRuntime.fail("IN_COMBAT")
+	if RegionTravelSite._hostile_near(self, faction, cells, int(controlled.owner.team_id) if "team_id" in controlled.owner else -1, controlled_person_id()): return SiteRuntime.fail("IN_COMBAT")
 	# Pending original deaths/down/get-up are retained. Only an unpaid action
 	# blocks handoff; this does not reuse the old all-awake extraction guard.
 	return SiteRuntime.ok("", {"lab": self, "token": str(party.party_id), "body_hash": _region_party_input_hash,

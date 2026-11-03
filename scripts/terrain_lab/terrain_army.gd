@@ -3163,7 +3163,7 @@ func recruit_actor(requester_id: int, actor: TerrainTestCharacter) -> Dictionary
 func recruit_from_team(source: TerrainArmy, requester_id: int, person_id: int) -> Dictionary:
 	var refused := duty_authority("team.recruit", requester_id)
 	if not refused.is_empty(): return refused
-	if source == null or source == self or not is_instance_valid(source) or source.faction_id != faction_id or source.data != data or not source.garrison_feature_id.is_empty():
+	if source == null or source == self or not is_instance_valid(source) or not RegionFactionQuery.same_side(source.faction_id, faction_id) or source.data != data or not source.garrison_feature_id.is_empty():
 		return SiteRuntime.fail("INVALID_TEAM", "來源須是同地圖、同陣營的另一支隊伍")
 	var controlled := int(controlled_person_query.call()) if controlled_person_query.is_valid() else -1
 	var source_roster := source.duty_decider("team.roster")
@@ -3270,7 +3270,7 @@ func join_player(actor: TerrainTestCharacter) -> Dictionary:
 	if not garrison_feature_id.is_empty(): return SiteRuntime.fail("GARRISONED", "駐營容器不使用一般入隊入口")
 	if is_inside_tree() and get_tree().paused:
 		return SiteRuntime.fail("BUSY", "暫停時不處理入隊")
-	if not combat_enabled or not is_instance_valid(actor) or actor not in [player, npc] or actor.person_id <= 0 or actor.faction_id != faction_id:
+	if not combat_enabled or not is_instance_valid(actor) or actor not in [player, npc] or actor.person_id <= 0 or not RegionFactionQuery.same_side(actor.faction_id, faction_id):
 		return SiteRuntime.fail("NO_TARGET", "只能加入同陣營且已部署的隊伍")
 	if is_instance_valid(player_member) or not actor.can_act() or actor.is_moving():
 		return SiteRuntime.fail("BUSY", "已入隊或人物目前無法入隊")
@@ -5157,14 +5157,14 @@ func _probe_move_landing_contact() -> void:
 			var other_id: int = int(occupied.get(next, -1))
 			var other: Dictionary = owners.get(other_id, {})
 			var army: TerrainArmy = other.get("formation") as TerrainArmy
-			if army != null and army != self and army.faction_id != faction_id and army.exchange_enabled:
+			if army != null and army != self and not RegionFactionQuery.same_side(army.faction_id, faction_id) and army.exchange_enabled:
 				var other_index := army.index_for_identity(other_id)
 				if other_index >= 0 and army.combat_can_act(other_index):
 					_combat_move_plan.tactical_overlay = CombatMovementTypes.TacticalOverlay.ENGAGING
 					return
 			if lab != null:
 				for actor: TerrainTestCharacter in lab.combat_actors:
-					if is_instance_valid(actor) and actor.faction_id != faction_id and actor.exchange_enabled \
+					if is_instance_valid(actor) and actor != player and actor != npc and not RegionFactionQuery.same_side(actor.faction_id, faction_id) and actor.exchange_enabled \
 						and actor.can_act() and actor.terrain_cell == next:
 						_combat_move_plan.tactical_overlay = CombatMovementTypes.TacticalOverlay.ENGAGING
 						return
@@ -6472,7 +6472,7 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	if not roster_refused.is_empty():
 		return roster_refused
 	var existing := recipient.has_army()
-	if recipient.team_id < 1 or recipient.team_id > 999999 or recipient.team_id == team_id or recipient.faction_id != faction_id or existing and recipient.data != data or not existing and (not recipient.cells.is_empty() or not recipient.combat_units.is_empty()):
+	if recipient.team_id < 1 or recipient.team_id > 999999 or recipient.team_id == team_id or not RegionFactionQuery.same_side(recipient.faction_id, faction_id) or existing and recipient.data != data or not existing and (not recipient.cells.is_empty() or not recipient.combat_units.is_empty()):
 		return SiteRuntime.fail("INVALID_TEAM", "須指定同地圖、同陣營且不同編號的接收隊伍")
 	if existing and (not recipient.roster_change_ready() or recipient_requester < 0 \
 		or recipient.combat_identity(recipient_requester) != recipient.duty_decider("team.roster")):
@@ -7685,7 +7685,7 @@ func _retreat_refuge_cells() -> Dictionary:
 	var refuges: Dictionary = {}
 	if _coordinator != null:
 		for other in _coordinator.get_active_formations():
-			if other == self or not ("data" in other) or other.data != data or not ("faction_id" in other) or int(other.faction_id) != faction_id:
+			if other == self or not ("data" in other) or other.data != data or not ("faction_id" in other) or not RegionFactionQuery.same_side(int(other.faction_id), faction_id):
 				continue
 			if other.has_method("is_sustain_routed") and other.is_sustain_routed():
 				continue
@@ -7730,7 +7730,7 @@ func _retreat_hard_blockers() -> Dictionary:
 	if _coordinator == null:
 		return blocked
 	for other in _coordinator.get_active_formations():
-		if other == self or not ("faction_id" in other) or int(other.faction_id) == faction_id or not other.has_method("get_active_members_occupancy"):
+		if other == self or not ("faction_id" in other) or RegionFactionQuery.same_side(int(other.faction_id), faction_id) or not other.has_method("get_active_members_occupancy"):
 			continue
 		for cell: Vector2i in other.get_active_members_occupancy().values():
 			blocked[cell] = true

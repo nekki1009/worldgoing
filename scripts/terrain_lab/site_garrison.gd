@@ -496,7 +496,7 @@ static func recruit(lab: TerrainLab, feature_id: String, person_ids: Array, targ
 		# G5 S3: native moves exist, but team.recruit's decider (offices, head, acting) is not ported to the native roster.
 		return Runtime.fail("CROWD_RECRUIT_AUTHORITY", "群眾隊伍的募兵職權（team.recruit）尚未移植為原生判定；原人員未移動，請先切回一般模擬再募兵")
 	var requester := int(lab.controlled_person_id())
-	if target == null or not target.has_army() or not target.combat_enabled or not target.garrison_feature_id.is_empty() or int(target.faction_id) != int(layout.owner_faction):
+	if target == null or not target.has_army() or not target.combat_enabled or not target.garrison_feature_id.is_empty() or not RegionFactionQuery.same_side(int(target.faction_id), int(layout.owner_faction)):
 		return Runtime.fail("INVALID_TEAM", "接收須是同陣營、未駐營的既有隊伍")
 	var refused := target.duty_authority("team.recruit", requester)
 	if not refused.is_empty(): return refused

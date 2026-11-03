@@ -531,6 +531,7 @@ static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_s
 		fall["contest_faction"] = -1
 		fall["contest_seconds"] = 0.0
 		return Runtime.ok()
+	if attacker == RegionFactionQuery.NEUTRAL_FACTION_ID: return Runtime.fail("NEUTRAL_NOT_NATION", "建國後才能進行")
 	if int(fall.contest_faction) != attacker:
 		fall["contest_faction"] = attacker
 		fall["contest_seconds"] = 0.0
@@ -567,6 +568,7 @@ static func _keeps_defender(data: TerrainData, key: String, feature: Dictionary)
 ## leader becomes the provisional head. Level is kept.
 static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
 	var data: TerrainData = lab.terrain
+	if attacker == RegionFactionQuery.NEUTRAL_FACTION_ID: return Runtime.fail("NEUTRAL_NOT_NATION", "建國後才能進行")
 	var settlement := record(data)
 	var defender := int(settlement.owner_faction)
 	var changed: Array[String] = []

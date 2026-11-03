@@ -13,22 +13,24 @@ const ENEMY_RADIUS := 24 # cells (48 m): an able hostile this close means "not o
 ## G6.4: an active crowd keeps its people in native hot state. Its members are read
 ## from their native ground position (never from a disabled TerrainArmy's cells), and
 ## a TerrainTestCharacter that is a crowd member is counted only through its crowd owner.
-static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i]) -> bool:
+## own_team_id / own_person_id: the departing side itself is never an enemy, even when it is neutral.
+static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i], own_team_id: int = -1, own_person_id: int = -1) -> bool:
 	var enemies: Array[Vector2i] = []
 	var crowd: Variant = lab.get("crowd_site")
 	var crowd_active: bool = crowd != null and bool(crowd.active)
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if crowd_active and crowd.contains_person(actor.person_id): continue
-		if lab.actor_present(actor) and actor.faction_id != faction and actor.can_act(): enemies.append(actor.terrain_cell)
+		if actor.person_id == own_person_id: continue
+		if lab.actor_present(actor) and not RegionFactionQuery.same_side(actor.faction_id, faction) and actor.can_act(): enemies.append(actor.terrain_cell)
 	for team: TerrainArmy in lab.combat_armies:
-		if not team.combat_enabled or team.faction_id == faction: continue
+		if not team.combat_enabled or team.team_id == own_team_id or RegionFactionQuery.same_side(team.faction_id, faction): continue
 		if crowd_active and crowd.owns_original_team(team): continue # G8a: the crowd owns this original team's people.
 		for index: int in range(team.combat_units.size()):
 			if team.combat_can_act(index) and not bool(team.combat_hot_get(index, &"site_exited", false)):
 				enemies.append(team.cells[index])
 	if crowd_active:
 		for owner_ref: CrowdPersonOwner in crowd.person_owners():
-			if not owner_ref.combat_enabled or owner_ref.faction_id == faction: continue
+			if not owner_ref.combat_enabled or owner_ref.team_id == own_team_id or RegionFactionQuery.same_side(owner_ref.faction_id, faction): continue
 			for index: int in owner_ref.combat_units.keys():
 				if owner_ref.combat_can_act(index) and not bool(owner_ref.combat_hot_get(index, &"site_exited", false)):
 					var ground: Vector2 = owner_ref.combat_ground(index) / TerrainRenderer.CELL_PIXELS
@@ -89,7 +91,7 @@ static func depart(controller: Node) -> Dictionary:
 	if not captain and team != null:
 		var cape_guard: Dictionary = controller.cape_departure_guard(identity)
 		if not cape_guard.ok: return cape_guard
-	if _hostile_near(lab, faction, cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
+	if _hostile_near(lab, faction, cells, team.team_id if team != null else -1, identity): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
 	var guard: Dictionary = controller.supply_save_guard()
 	if not guard.ok: return guard
 	var captured: Dictionary = controller._capture_for_save()
@@ -278,7 +280,7 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 		if aboard == 0: return Runtime.fail("CROWD_SEA_NOT_EMBARKED", "群眾隊伍須全員上船才能海路出發")
 		if aboard < plan.people.size(): return Runtime.fail("CROWD_SEA_PARTIAL", "群眾隊伍部分隊員未上船；海路須全隊上船")
 	var faction: int = int(plan.faction)
-	if _hostile_near(lab, faction, plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
+	if _hostile_near(lab, faction, plan.cells, int(plan.get("team_id", -1)), identity): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
 	var guard: Dictionary = controller.supply_save_guard()
 	if not guard.ok: return guard
 	var captured: Dictionary = controller._capture_for_save()
@@ -342,7 +344,7 @@ static func _crowd_solo_gate(controller: Node, identity: int) -> Dictionary:
 	if controller.vehicles.is_embarked(identity): return Runtime.fail("CROWD_SOLO_SEA_UNSUPPORTED", "群眾中的單人尚不能海路出發；請整隊或改走陸路")
 	var cells: Array[Vector2i] = []
 	cells.append(plan.cell)
-	if _hostile_near(lab, int(plan.faction), cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
+	if _hostile_near(lab, int(plan.faction), cells, int(plan.get("team_id", -1)), identity): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
 	var actor: TerrainTestCharacter = lab.crowd_site._actors[identity]
 	var actor_key := "player" if actor == lab.character else "npc"
 	var spec := _crowd_spec(controller.region_slot, identity, 0)
@@ -438,7 +440,7 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	if controller.vehicles.is_embarked(leader): return Runtime.fail("CROWD_SPLIT_SEA_UNSUPPORTED", "群眾分隊不支援海路出發；請整隊上船出發")
 	var plan: Dictionary = lab.crowd_site.split_departure_plan(leader, members)
 	if not plan.ok: return plan
-	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能分隊出發")
+	if _hostile_near(lab, int(plan.faction), plan.cells, int(plan.get("team_id", -1)), leader): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能分隊出發")
 	var guard: Dictionary = controller.supply_save_guard()
 	if not guard.ok: return guard
 	# As in _depart_crowd: the full Site capture writes the saved actor bodies that stay (the player body is a fire
@@ -517,7 +519,7 @@ static func crowd_split_gate(controller: Node, members: Array) -> Dictionary:
 	if controller.vehicles.is_embarked(leader): return Runtime.fail("CROWD_SPLIT_SEA_UNSUPPORTED")
 	var plan: Dictionary = lab.crowd_site.split_departure_plan(leader, members)
 	if not plan.ok: return plan
-	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT")
+	if _hostile_near(lab, int(plan.faction), plan.cells, int(plan.get("team_id", -1)), leader): return Runtime.fail("IN_COMBAT")
 	return Runtime.ok("可分隊出發（帶隊員 %d 人）" % members.size(), {"plan": plan})
 
 
@@ -573,7 +575,7 @@ static func _selected_crowd_departure(controller: Node) -> Dictionary:
 	if not plan.ok: return plan
 	# Only the land selection is read here; a sea team leaves through _depart_crowd, never through a deferred intent.
 	if controller.vehicles.team_has_embarked(int(plan.team_id)): return Runtime.fail("CROWD_SEA_SELECTION_UNSUPPORTED", "群眾海路出發不經延後意圖")
-	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT")
+	if _hostile_near(lab, int(plan.faction), plan.cells, int(plan.get("team_id", -1)), identity): return Runtime.fail("IN_COMBAT")
 	var spec := _crowd_spec(slot, identity, int(plan.team_id))
 	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(lab.terrain.site, spec)
 	if not boarding_guard.ok: return boarding_guard
@@ -666,7 +668,7 @@ static func selected_departure(controller: Node) -> Dictionary:
 	if not captain and team != null:
 		var cape_guard: Dictionary = controller.cape_departure_guard(identity)
 		if not cape_guard.ok: return cape_guard
-	if _hostile_near(lab, faction, cells): return Runtime.fail("IN_COMBAT")
+	if _hostile_near(lab, faction, cells, team.team_id if team != null else -1, identity): return Runtime.fail("IN_COMBAT")
 	var cape_policy: Dictionary = controller.cape_policy_guard()
 	if not cape_policy.ok: return cape_policy
 	for mover: int in people:

@@ -4,6 +4,11 @@ extends RefCounted
 const VERSION := 1
 const MAX_ID := 100000000
 const MAX_REVISION := 9007199254740991
+## Reserved neutral side (一人隊 / unaffiliated teams). 255 is inside every faction-id validator range
+## (crowd admission is 0..255; registry, army and store are 0..MAX_ID), no fixture or scenario uses it,
+## and allocate() skips it so a newly allocated faction can never collide.
+const NEUTRAL_FACTION_ID := 255
+const NEUTRAL_NAME := "中立"
 const ENTRY_FIELDS := ["faction_id", "name", "color", "kind", "leader_ref", "nation_ref", "status", "merged_into", "founded_at", "ended_at"]
 
 static func fail(code: String, message: String = "") -> Dictionary:
@@ -57,9 +62,18 @@ static func validate(value: Variant, now: float) -> Dictionary:
 		if not source is Dictionary or not keys(source, ["owner", "source_generation", "runtime_revision", "checksum", "as_of_game_seconds", "complete"]) or not source.owner is String or source.owner.is_empty() or source.source_generation != null and not whole(source.source_generation, 0, 2147483647) or source.runtime_revision != null and not whole(source.runtime_revision, 0, MAX_REVISION) or not source.checksum is String or source.checksum.length() != 64 or not source.checksum.is_valid_hex_number(false) or not _time(source.as_of_game_seconds, now) or source.as_of_game_seconds == null or source.complete != true: return fail("CORRUPT_SAVE", "faction source receipt")
 	return {"ok": true}
 
+## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with
+## neutral: two different neutral teams stay apart. Callers keep same-team identity checks themselves.
+static func same_side(a: int, b: int) -> bool:
+	return a == b and a != NEUTRAL_FACTION_ID
+
+static func neutral_entry() -> Dictionary:
+	return {"faction_id": NEUTRAL_FACTION_ID, "name": NEUTRAL_NAME, "color": "8a897fff", "kind": "npc", "leader_ref": null, "nation_ref": null, "status": "active", "merged_into": null, "founded_at": null, "ended_at": null, "duty_ai": false}
+
 static func resolve(registry: Dictionary, faction_id: int) -> Dictionary:
 	if registry.get("version") != VERSION or registry.get("migration_complete") != true: return fail("UNKNOWN", "no complete registry")
 	var entry: Dictionary = registry.get("entries", {}).get(str(faction_id), {})
+	if entry.is_empty() and faction_id == NEUTRAL_FACTION_ID: entry = neutral_entry()
 	if entry.get("status") == "merged":
 		var target: Variant = entry.get("merged_into")
 		if not whole(target, 0, MAX_ID) or int(target) == faction_id: return fail("CORRUPT_SAVE", "merged endpoint")
@@ -74,6 +88,7 @@ static func active(registry: Dictionary, faction_id: int) -> Dictionary:
 
 static func display(registry: Dictionary, faction_id: int) -> Dictionary:
 	var entry: Dictionary = registry.get("entries", {}).get(str(faction_id), {})
+	if entry.is_empty() and faction_id == NEUTRAL_FACTION_ID: entry = neutral_entry()
 	return {"id": faction_id, "name": str(entry.get("name", "")) if not str(entry.get("name", "")).is_empty() else "勢力 %d" % faction_id, "color": entry.get("color"), "status": entry.get("status", "unknown"), "counts": null, "coverage_complete": bool(registry.get("coverage", {}).get("complete", false))}
 
 static func legacy_entry(faction_id: int) -> Dictionary:
@@ -192,6 +207,7 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float) -
 	if expected_revision >= MAX_REVISION: return fail("FACTION_REVISION_EXHAUSTED")
 	var candidate: Variant = registry.duplicate(true)
 	var id: int = int(candidate.next_faction_id)
+	if id == NEUTRAL_FACTION_ID: id += 1 # reserved neutral side is never allocated
 	candidate.entries[str(id)] = legacy_entry(id)
 	candidate.next_faction_id = id + 1
 	candidate.revision = expected_revision + 1

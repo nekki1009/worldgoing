@@ -477,7 +477,7 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		var toward := Vector2.ZERO
 		var enemies := 0
 		for other in range(sides.size()):
-			if int(sides[other].faction) != faction:
+			if other != slot and not RegionFactionQuery.same_side(int(sides[other].faction), faction):
 				toward += centres[other]
 				enemies += 1
 		var face := (toward / enemies - centres[slot]).angle() if enemies else 0.0

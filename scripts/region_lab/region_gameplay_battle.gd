@@ -208,7 +208,7 @@ static func _original_rank(owner: Variant, identity: int) -> int:
 	return Policy.rank_for(identity, commander, officers)
 
 static func _legal_melee_pair(lab: TerrainLab, source: Dictionary, target: Dictionary) -> bool:
-	if int(source.faction) == int(target.faction): return false
+	if RegionFactionQuery.same_side(int(source.faction), int(target.faction)): return false
 	var gap: Vector2i = target.cell - source.cell
 	if absi(gap.x) + absi(gap.y) != 1 and not lab._combat_ship_pair(int(source.id), int(target.id)): return false
 	return lab._combat_melee_clear(int(source.id), int(target.id), source.cell, target.cell)
