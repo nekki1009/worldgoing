@@ -1478,6 +1478,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 	# its ships (SHIPSEA). Its native section is filtered below. A crowd cadre split does not leave by sea.
 	var crowd_departure := bool(spec.get("crowd_departure", false))
 	var crowd_sea := crowd_departure and str(spec.get("mode", "land")) == "sea"
+	# G6.4c: a crowd actor body that leaves alone. It is a solo team of the section (no armies row), named by actor_key only.
+	var crowd_solo := crowd_departure and bool(spec.get("crowd_solo", false))
 	if crowd_departure and not state.has("crowd"): return fail("UNSUPPORTED", "群眾隊伍只支援整隊出發")
 	if crowd_sea and bool(spec.get("crowd_split", false)): return fail("CROWD_SPLIT_SEA_UNSUPPORTED", "群眾分隊不支援海路出發；請整隊上船出發")
 	if state.has("crowd") and not crowd_departure: return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
@@ -1558,7 +1560,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		origin.armies = remaining
 	if crowd_departure:
 		# The departing team leaves the native section. Remaining crowd keeps its section and blob.
-		if selected_teams.is_empty(): return fail("NO_TARGET", "群眾整隊須指定隊伍")
+		if crowd_solo and (not selected_teams.is_empty() or actor_key.is_empty()): return fail("UNSUPPORTED", "群眾單人只支援本體出發")
+		if selected_teams.is_empty() and not crowd_solo: return fail("NO_TARGET", "群眾整隊須指定隊伍")
 		var section: Dictionary = origin.crowd
 		# Tombstone, not removal: the native formation and its released people stay in the blob (SiteStore departed_ids).
 		for entry: Variant in section.get("teams", []):
@@ -1566,9 +1569,16 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		var crowd_remains := false
 		for army: Dictionary in origin.armies:
 			if bool(army.get("crowd", false)): crowd_remains = true
+		if crowd_solo:
+			# A solo team has no armies row: any live team of the section keeps the crowd (the departed solo is tombstoned).
+			for entry: Variant in section.get("teams", []):
+				if entry is Dictionary and not bool(entry.get("departed", false)): crowd_remains = true
+		# The controlled solo actor is not a mover yet (its body is detached below), so it is named here.
+		var controlled_leaves := movers.has(int(section.get("player", {}).get("person_id", -1)))
+		if crowd_solo and int(section.get("player", {}).get("person_id", -1)) == int(spec.get("person_id", -1)): controlled_leaves = true
 		if not crowd_remains:
 			origin.erase("crowd")
-		elif movers.has(int(section.get("player", {}).get("person_id", -1))):
+		elif controlled_leaves:
 			# G6.5 cadre split: the controlled cadre travels with his sub-party. Control on the Site passes to a saved
 			# actor body that stays (the rule below for an ordinary departure), with its native soldier index from the
 			# live caller; only a Site with no actor left keeps no controlled person.
@@ -1584,7 +1594,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 					return fail("RELATION_OPEN", "群眾受控人物的繼承人不在此地")
 				section["player"] = {"person_id": heir, "soldier_index": int(successor.soldier_index)}
 				origin["controlled_person_id"] = heir
-			elif not origin.actors.is_empty():
+			elif origin.actors.keys().any(func(key: Variant) -> bool: return str(key) != actor_key):
+				# The departing body is still in origin.actors here; only the bodies that stay count.
 				return fail("RELATION_OPEN", "分隊出發後此地人物須有受控繼承人")
 			else:
 				section["player"] = {"person_id": -1, "soldier_index": -1}

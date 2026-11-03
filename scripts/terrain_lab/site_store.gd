@@ -1826,7 +1826,8 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		if bool(team.get("departed", false)):
 			# G6.4b tombstone: the team's people left by travel and their native soldiers stay in the blob, released.
 			# It has no roster and no live records; every id must be a blob soldier that no live team references.
-			if bool(team.solo) or crowd_rosters.has(int(team.team_id)): return Runtime.fail("INVALID_CROWD", "離隊群眾隊伍不得保留名冊")
+			# G6.4c: a solo actor team that left alone is a one-person tombstone (it never had a roster).
+			if bool(team.solo) and team.person_ids.size() != 1 or crowd_rosters.has(int(team.team_id)): return Runtime.fail("INVALID_CROWD", "離隊群眾隊伍不得保留名冊")
 			for identity: Variant in team.person_ids:
 				if not _integer(identity, 1, next_id - 1) or not native_indices.has(int(identity)) or references.has(int(identity)) or departed_ids.has(int(identity)):
 					return Runtime.fail("INVALID_CROWD", "離隊群眾人物引用不唯一")
