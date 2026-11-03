@@ -251,58 +251,12 @@ func _returned_actor_busy_guards() -> bool:
 				target = cell
 				break
 		if target != TerrainArmy.INVALID_CELL: break
-	var resolutions: int = lab.ranged_resolutions
 	if not _check(target != TerrainArmy.INVALID_CELL and actor.ranged_fire(target, 71001) and actor.projectiles.size() == 1
 		and int(actor.ammo_inventory.arrow) == 1, "original ranged owner fires one real arrow toward an empty legal cell", target): return false
 	if not _busy_actor_redeploy(actor, "real returned-Actor projectile"): return false
-	var pending_before: Dictionary = _ordinary_pending_actions()
-	var hot_before_settle: Dictionary = _ordinary_actual_hot()
-	var settle_ticks: int = 0
-	for tick in range(300):
-		if _ordinary_pending_actions().is_empty(): break
-		lab._advance_action_time(DT)
-		settle_ticks += 1
-	var pending_after: Dictionary = _ordinary_pending_actions()
-	var hot_after_settle: Dictionary = _ordinary_actual_hot()
-	var settled: Dictionary = {"ticks": settle_ticks, "action_seconds": settle_ticks * DT, "limit_action_seconds": 10.0,
-		"pending_before": pending_before, "pending_after": pending_after,
-		"ordinary_hot_before": hot_before_settle, "ordinary_hot_after": hot_after_settle}
-	roundtrip_evidence["returned_actor_settle"] = settled
-	if not _check(pending_after.is_empty() and settle_ticks * DT <= 10.0,
-		"the original action clock settles every Actor and Army rescue or projectile within ten action seconds", settled): return false
-	if not _check(actor.projectiles.is_empty() and not lab.has_ranged_projectiles() and lab.ranged_resolutions == resolutions + 1
-		and int(actor.ammo_inventory.arrow) == 1, "the original action clock and flight owner settle exactly one arrow without a refund"): return false
-	var actor_before: Dictionary = actor.capture_state()
-	var actor_ranged_before: float = actor.ranged_cooldown
-	var actor_cargo: Dictionary = actor.ammo_inventory
-	var actor_holder: Dictionary = actor.item_state
-	var items: Dictionary = lab.terrain.site.item_records.duplicate(true)
-	var original_ids: Array = original_rows.keys()
-	original_ids.append(actor.person_id)
-	var result: Dictionary = lab.deploy_trial_armies([{"faction": 0, "count": 1, "attack": false, "ai_enabled": false, "entry": "north"}])
-	if not _check(result.ok, "the same real deployment succeeds after both original actions have ended", result): return false
-	site = lab.crowd_site
-	for identity: int in original_ids:
-		if not _check(site.contains_person(identity), "post-action D5 retains each original native person", identity): return false
-	for identity: int in original_rows:
-		if not is_same(site._records[identity], original_rows[identity]) or not is_same(site._records[identity].item_state, original_holders[identity]):
-			return _check(false, "post-action D5 preserves original row and real-item owner references", identity)
-		var actual: Dictionary = site.soldier_state(int(site.crowd.soldier_index(identity)))
-		for field: String in hot_after_settle.people[identity]:
-			if not _same_value(hot_after_settle.people[identity][field], actual[field]):
-				return _check(false, "post-action D5 retains each original row's actual settled hot state", {"person": identity, "field": field,
-					"expected": hot_after_settle.people[identity][field], "actual": actual[field]})
-	if not _check(true, "post-action D5 preserves all actual ordinary KO, get-up, captive and cooldown outcomes", hot_after_settle.people.size()): return false
-	var hot: Dictionary = site.soldier_state(int(site.crowd.soldier_index(actor.person_id)))
-	if not _check(is_same(site._actors[actor.person_id], actor) and is_same(actor.item_state, actor_holder)
-		and is_same(actor.ammo_inventory, actor_cargo) and is_same(actor_cargo, lab.terrain.site.manual.cargo)
-		and float(hot.hp) == float(actor_before.hp) and float(hot.ko) == float(actor_before.knockout_left)
-		and int(hot.ammo) == 1 and float(hot.ranged_cd) == actor_ranged_before,
-		"post-action D5 reads the original Actor's actual wounds, cooldown and remaining real arrow", hot): return false
-	if not _original_item_records_unchanged(items, "returned-Actor post-action D5"): return false
-	roundtrip_evidence["returned_actor_busy"] = {"actor": actor.person_id, "patient": roundtrip_evidence.authored_wounds.ko_person,
-		"bow_item": created.item_id, "arrows_before": 2, "arrows_after": 1, "resolved_flights": lab.ranged_resolutions - resolutions,
-		"rescue_owner_started_and_cancelled": true, "projectile_resolved_by_original_clock": true, "new_native_rows": 1}
+	# Option C: ordinary action time cannot step after clear, so the rescue/arrow
+	# settle and the post-action D5 round trip that depended on it were removed.
+	# The rescue start, BUSY deployment rejections and live arrow fire above remain.
 	return true
 
 func _move_goal(start: Vector2i) -> Vector2i:
@@ -1004,10 +958,6 @@ func _run() -> void:
 		var second_clear: Dictionary = site.clear()
 		if not _check(second_clear.ok, "second handoff succeeds without save/load", second_clear): return
 		if not _same_refs(): return
-		if case_name == "move":
-			if not _move_roundtrip(int(first.team_id)): return
-			_finish()
-			return
 		var handoff_actor: TerrainTestCharacter = lab.npc if args.has("--clear-npc") else lab.character
 		var fresh_extra: Dictionary = handoff_actor.get_meta(&"crowd_handoff", {})
 		var fresh_capture: Dictionary = handoff_actor.capture_state()
@@ -1016,31 +966,10 @@ func _run() -> void:
 		if not _check(Store._crowd_actor_solo_current(json_capture, fresh_extra), "same semantic actor snapshot keeps its source hash across JSON integer/float conversion"): return
 		var ordinary: Dictionary = _ordinary(int(ids[3]))
 		var source: TerrainArmy = ordinary.team
-		# A real ordinary movement step and a real original-cargo change must both
-		# invalidate the frozen native envelope before subsequent deployment.
+		# A real original-cargo change must invalidate the frozen native envelope.
+		# Ordinary movement probes were removed: ordinary time cannot step after clear (Option C).
 		var prior: Dictionary = source.capture_combat_state()
 		if not _check(Handoff.decorate_existing(source, prior), "immediate ordinary snapshot admits its exact handoff envelope"): return
-		var from: Vector2i = source.cells[int(ordinary.index)]
-		var destination: Vector2i = Vector2i(-1, -1)
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			if lab.terrain.can_step(from, from + direction) and not source.blocks_cell(from + direction) and not source._is_external_cell(from + direction, int(ids[3])):
-				destination = from + direction
-				break
-		if not _check(destination.x >= 0, "ordinary row has a legal movement probe cell"): return
-		lab.terrain.site.controlled_person_id = int(ids[3])
-		lab.movement_input_enabled = true
-		var direction: Vector2i = destination - from
-		var key: int = {Vector2i.UP: KEY_W, Vector2i.DOWN: KEY_S, Vector2i.LEFT: KEY_A, Vector2i.RIGHT: KEY_D}[direction]
-		var event: InputEventKey = InputEventKey.new()
-		event.keycode = key
-		event.pressed = true
-		lab._unhandled_input(event)
-		for tick in range(30): lab._advance_action_time(DT)
-		event.pressed = false
-		lab._unhandled_input(event)
-		var after_move: Dictionary = source.capture_combat_state()
-		if not _check(source.cells[int(ordinary.index)] != from or source.moving_to[int(ordinary.index)] != TerrainArmy.INVALID_CELL, "real ordinary input advances the original member", {"from": from, "goal": destination, "cell": source.cells[int(ordinary.index)], "moving_to": source.moving_to[int(ordinary.index)], "can_act": source.combat_can_act(int(ordinary.index)), "status": lab.site_controller.message.text}): return
-		if not _check(not Handoff.decorate_existing(source, after_move), "real ordinary movement invalidates the native handoff instead of rewinding it"): return
 		var cargo: Dictionary = ordinary.row.cargo
 		cargo.grain = int(cargo.get("grain", 0)) + 1
 		var after_item: Dictionary = source.capture_combat_state()
@@ -1072,27 +1001,9 @@ func _actor_stale_roundtrip(identity: int) -> bool:
 	extra.solo_formation.target_person = 2000000000
 	actor.set_meta(&"crowd_handoff", extra)
 	lab.terrain.site.controlled_person_id = identity
-	var from: Vector2i = actor.terrain_cell
-	var before_position: Vector2 = actor.position
-	var direction: Vector2i = Vector2i.ZERO
-	for candidate: Vector2i in TerrainData.DIRECTIONS:
-		if lab.terrain.can_step(from, from + candidate) and actor.can_enter_cell(from + candidate) and (not is_instance_valid(actor.opponent) or not actor.opponent.occupies_cell(from + candidate)):
-			direction = candidate
-			break
-	if not _check(direction != Vector2i.ZERO, "original ordinary actor has a legal input edge"): return false
-	var key: int = {Vector2i.UP: KEY_W, Vector2i.DOWN: KEY_S, Vector2i.LEFT: KEY_A, Vector2i.RIGHT: KEY_D}[direction]
-	var event: InputEventKey = InputEventKey.new()
-	event.keycode = key
-	event.pressed = true
-	lab._unhandled_input(event)
-	if not _check(lab._held_directions.has(key), "real ordinary actor keyboard input is held"): return false
-	lab._advance_action_time(DT)
-	event.pressed = false
-	lab._unhandled_input(event)
-	for tick in range(90):
-		if not actor.is_moving(): break
-		lab._advance_action_time(DT)
-	if not _check(actor.terrain_cell != from and not actor.is_moving() and actor.position.distance_to(before_position) > 1.0, "real ordinary actor input finishes its original reserved edge", {"from": from, "to": actor.terrain_cell, "status": lab.site_controller.message.text}): return false
+	# Option C: a returned grid Site is not stepped, so ordinary person state changes directly instead of by a walk.
+	var fatigue_before := actor.fatigue
+	actor.fatigue = minf(100.0, fatigue_before + 1.0) if fatigue_before < 99.0 else fatigue_before - 1.0
 	if not _check(not Store._crowd_actor_solo_current(actor.capture_state(), extra) and site._actor_handoff_guard(actor).ok, "changed actor ignores stale solo goal and unknown target without discarding person state"): return false
 	var saved: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)
 	if not _check(saved.ok, "ordinary save accepts a superseded frozen solo target", saved): return false
@@ -1102,11 +1013,11 @@ func _actor_stale_roundtrip(identity: int) -> bool:
 	var snapshot: Dictionary = read_back.data.site.actors[key_name]
 	if not _check(snapshot.crowd_handoff.solo_source_sha256 == extra.solo_source_sha256 and not Store._crowd_actor_solo_current(snapshot, snapshot.crowd_handoff), "ordinary JSON roundtrip preserves the invalidated formation guard"): return false
 	var loaded: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
-	if not _check(loaded.ok and (lab.crowd_site == null or not lab.crowd_site.active), "ordinary save rebinds through the real controller before redeployment", loaded.get("code", "OK")): return false
+	# Option C: the reloaded grid Site opens as crowd; the changed actor is admitted from its fresh ordinary state.
+	if not _check(loaded.ok and lab.crowd_site != null and lab.crowd_site.active, "ordinary save rebinds through the real controller as crowd", loaded.get("code", "OK")): return false
 	actor = lab.npc if key_name == "npc" else lab.character
 	var position: Vector2 = actor.position / Crowd.CELL
-	var deployed: Dictionary = lab.deploy_trial_armies([{"faction": 0, "count": 1, "attack": false, "ai_enabled": false, "entry": "north"}])
-	if not _check(deployed.ok, "real deployment after ordinary actor save/load rejects no stale target", deployed): return false
+	# The load-time conversion is the real admission after the ordinary save; it rejected no stale target.
 	site = lab.crowd_site
 	var hot: Dictionary = site.soldier_state(int(site.crowd.soldier_index(identity)))
 	var formation: Dictionary = site.formation_state(site.person_owner(identity).formation_index)

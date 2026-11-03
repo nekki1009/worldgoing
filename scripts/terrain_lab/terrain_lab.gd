@@ -831,6 +831,16 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		add_child(crowd_site)
 		crowd_site.setup(self)
 	site_controller.bind()
+	# Fire work snapshots use the original ranged-order serials stored by transport.
+	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
+	if not restored_fire_transport.ok:
+		site_controller.show_result(restored_fire_transport)
+		return
+	var restored_fire_owners := _restore_fire_owners()
+	if not restored_fire_owners.ok:
+		site_controller.show_result(restored_fire_owners)
+		return
+	# Conversion runs after the grid fire transport/owners restore, so they are converted with the teams.
 	# A legacy grid save (no crowd section) loaded under crowd, or a crowd-less arrival marked crowd_convert_pending by
 	# RegionTravel.insert, becomes live here after its grid armies were restored. A cold owner (restore_only) has no
 	# CrowdSite under --crowd, so one is attached for the arrival mark only. A refusal keeps the grid Site and is shown
@@ -853,15 +863,6 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 				if arrival_convert: terrain.site.erase("crowd_convert_pending")
 			elif not restore_only:
 				site_controller.show_result(converted)
-	# Fire work snapshots use the original ranged-order serials stored by transport.
-	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
-	if not restored_fire_transport.ok:
-		site_controller.show_result(restored_fire_transport)
-		return
-	var restored_fire_owners := _restore_fire_owners()
-	if not restored_fire_owners.ok:
-		site_controller.show_result(restored_fire_owners)
-		return
 	# Restore the original cadence before applying the complete owner graph;
 	# graph restoration may legitimately restore its exact in-progress counter.
 	_duty_ai_elapsed = DutyAI.restore_cadence(self)
