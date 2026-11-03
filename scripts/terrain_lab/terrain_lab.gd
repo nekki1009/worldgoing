@@ -831,11 +831,22 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		add_child(crowd_site)
 		crowd_site.setup(self)
 	site_controller.bind()
+	# Fire work snapshots use the original ranged-order serials stored by transport.
+	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
+	if not restored_fire_transport.ok:
+		site_controller.show_result(restored_fire_transport)
+		return
+	var restored_fire_owners := _restore_fire_owners()
+	if not restored_fire_owners.ok:
+		site_controller.show_result(restored_fire_owners)
+		return
+	# Conversion runs after the grid fire transport/owners restore, so they are converted with the teams.
 	# A legacy grid save (no crowd section) loaded under crowd, or a crowd-less arrival marked crowd_convert_pending by
 	# RegionTravel.insert, becomes live here after its grid armies were restored. A cold owner (restore_only) has no
 	# CrowdSite under --crowd, so one is attached for the arrival mark only. A refusal keeps the grid Site and is shown
 	# (never on a cold owner). This conversion never writes the save file; the mark clears only on success.
-	var legacy_convert: bool = crowd_startup_requested and terrain.get_meta(&"legacy_grid_save", false)
+	# Option C: any crowd-requested Site (new game start, ordinary save, legacy save) opens as crowd; only --grid keeps grid teams.
+	var legacy_convert: bool = crowd_startup_requested
 	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested()
 	if arrival_convert and (terrain.site.has("crowd") or not _has_active_grid_team()):
 		terrain.site.erase("crowd_convert_pending") # Nothing grid is left to convert.
@@ -852,15 +863,6 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 				if arrival_convert: terrain.site.erase("crowd_convert_pending")
 			elif not restore_only:
 				site_controller.show_result(converted)
-	# Fire work snapshots use the original ranged-order serials stored by transport.
-	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
-	if not restored_fire_transport.ok:
-		site_controller.show_result(restored_fire_transport)
-		return
-	var restored_fire_owners := _restore_fire_owners()
-	if not restored_fire_owners.ok:
-		site_controller.show_result(restored_fire_owners)
-		return
 	# Restore the original cadence before applying the complete owner graph;
 	# graph restoration may legitimately restore its exact in-progress counter.
 	_duty_ai_elapsed = DutyAI.restore_cadence(self)
@@ -2919,9 +2921,17 @@ func _prepare_exchange_kernel(warm: bool = false) -> void:
 		# the first hit. No actual people, terrain, RNG or combat clock is read.
 		_exchange_kernel.FrontOrder(PackedInt32Array([0, 0, 1]), PackedInt32Array([0, 0, 0]), PackedInt64Array([0, 1, 1]), 0)
 
+## Option C: true only when a non-crowd owner has a combat-enabled grid team holding members.
+func _grid_army_active() -> bool:
+	if crowd_site != null and crowd_site.active: return false
+	for team: TerrainArmy in combat_armies:
+		if team.combat_enabled and not team.combat_units.is_empty(): return true
+	return false
+
 func _resolve_exchanges() -> void:
 	if terrain == null:
 		return
+	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_exchanges"): return
 	_exchange_round += 1
 	var profile_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	var snapshot: RefCounted
@@ -4178,6 +4188,7 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 	return true
 
 func _resolve_combat_contacts() -> void:
+	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_combat_contacts"): return
 	_combat_contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.fraction) < float(b.fraction))
 	var cursor := 0
 	while cursor < _combat_contacts.size():
@@ -13887,6 +13898,7 @@ func _prepare_gd_mesh_work_point(seconds: float) -> Dictionary:
 
 func _advance_gd_mesh_work_to(fraction: float) -> void:
 	if _gd_mesh_work_point.is_empty(): return
+	if TerrainArmy.grid_simulation_retired("TerrainLab._advance_gd_mesh_work_to"): return
 	var end: float = float(_gd_mesh_work_point.seconds) * clampf(fraction, 0.0, 1.0)
 	var begin: float = float(_gd_mesh_work_point.elapsed)
 	var seconds: float = end - begin
