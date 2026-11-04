@@ -187,14 +187,34 @@ func _frames(count: int) -> bool:
 		if not _healthy(): return false
 	return true
 
+## Neutral part 2: the created player is roster unit 0 and captain of a one-person crowd team (host control), not an actor.
+## Name, abilities, personality and appearance are read back from that crowd person's record and native soldier.
+func _army_summary(armies: Array) -> Array:
+	var result: Array = []
+	for army: Variant in armies:
+		if army is Dictionary: result.append({"name": army.get("name"), "role": army.get("role"), "faction": army.get("faction_id"), "crowd": army.get("crowd"), "ids": army.get("units", []).map(func(row: Variant) -> Variant: return row.get("person_id") if row is Dictionary else null)})
+	return result
+
 func _player_matches(lab: TerrainLab, expected: Dictionary) -> bool:
-	var actor := lab.character
-	var state := actor.capture_state()
-	if actor.display_name != str(expected.name): return _fail("name " + actor.display_name)
-	if int(actor.combat_ability) != int(expected.combat_ability): return _fail("combat ability %s" % actor.combat_ability)
-	if actor.command_abilities != expected.command_abilities: return _fail("command abilities %s" % actor.command_abilities)
-	if PersonPersonality.read(actor.personality) != expected.personality: return _fail("personality %s" % actor.personality)
-	var appearance: Dictionary = state.appearance
+	var identity := int(lab.controlled_person_id())
+	var crowd: Variant = lab.crowd_site
+	if crowd == null or not crowd.active or not crowd._records.has(identity) or crowd._actors.has(identity): return _fail("player is not a crowd roster person %s" % JSON.stringify({"id": identity, "crowd": crowd != null, "active": crowd != null and crowd.active, "record": crowd != null and crowd._records.has(identity), "actor": crowd != null and crowd._actors.has(identity), "armies": lab.terrain.site.get("armies", []).size(), "site_actors": lab.terrain.site.get("actors", {}).keys(), "armies0": _army_summary(lab.terrain.site.get("armies", [])), "teams": crowd.teams if crowd != null else null, "people": crowd.crowd.person_ids() if crowd != null and crowd.active else null}))
+	if lab.actor_present(lab.character): return _fail("player also present as an actor")
+	var index := int(crowd._index_by_id.get(identity, -1))
+	if index < 0 or index != int(crowd.player_index): return _fail("host control is not on the player")
+	var roster: Dictionary = {}
+	for row: Dictionary in crowd.rosters:
+		if crowd._roster_index_for_person(row, identity) >= 0: roster = row
+	if roster.is_empty() or roster.units.size() != 1 + TerrainLab.INITIAL_CADRES or int(roster.get("formal_commander", -1)) != 0 or int(roster.faction_id) != RegionFactionQuery.NEUTRAL_FACTION_ID:
+		return _fail("player is not the captain of a one-person neutral team")
+	var record: Dictionary = crowd._records[identity]
+	if str(record.get("name", "")) != str(expected.name): return _fail("name " + str(record.get("name", "")))
+	if int(record.get("combat_ability", -1)) != int(expected.combat_ability): return _fail("combat ability %s" % record.get("combat_ability"))
+	var native: Dictionary = crowd.soldier_state(index)
+	for kind: String in ["tactics", "leadership", "coach"]:
+		if int(native.get(kind, -1)) != int(expected.command_abilities.get(kind, -2)): return _fail("command abilities %s" % native)
+	if PersonPersonality.read(record.get("personality", {})) != expected.personality: return _fail("personality %s" % record.get("personality"))
+	var appearance: Dictionary = record.appearance
 	if int(appearance.body) != int(expected.body) or str(appearance.parts.hair) != str(expected.hair) or str(appearance.parts.face) != str(expected.face) \
 		or str(appearance.hair_dye) != str(expected.hair_dye) or not bool(appearance.hair_dyed): return _fail("appearance %s" % appearance)
 	if "林測試" not in lab.site_controller.player_status_label.text:

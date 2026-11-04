@@ -172,6 +172,13 @@ func _run() -> void:
 	var sides: Array[Dictionary] = [_side(friendly_cells.size(), 0), _side(enemy_cells.size(), 1)]
 	if not _check(sides[0].size() > 0 and sides[1].size() > 0, "both original sides exist"): return
 	var formations: Array = [friendly_cells, enemy_cells]
+	# Neutral part 2: the bind opened the Site as the player's live native crowd; clear it to GD before this deploy.
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared): return
+	# Stand-in for the pending join relabel: the player's start team joins the friendly faction 0, as the old actor
+	# player was. Neutral is hostile to everyone, so a neutral player beside the test team would block its departure.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == lab.controlled_person_id(): team.faction_id = 0
 	var entered: Dictionary = lab.crowd_site.deploy(sides, formations)
 	if not _check(entered.get("ok", false) and lab.crowd_site.active, "the native crowd deploys on the bound Site", entered): return
 

@@ -2856,6 +2856,9 @@ func finish_committed_move(member_id: int) -> void:
 
 var shared_fatigue_enabled := true # Formal exchange policy; legacy geometry keeps individual fatigue.
 var team_fatigue: Dictionary = {}
+## Nekki 2026-11-04: the crowd formation's morale state (morale, routed, rally_rest) travels with the team. GD has no morale
+## of its own; it only carries the values between a crowd Site, the Region and the next crowd Site. {} means fresh.
+var team_morale: Dictionary = {}
 var _fatigue_roster_size := -1
 var individual_fatigue_indices: Array[int] = []
 var person_id_allocator: Callable # Site owner supplies new IDs; transfers never allocate.
@@ -6219,8 +6222,21 @@ static func clear_contact_samples() -> void:
 ## True means the caller must stop. The first refusal per entry is a test-visible error; repeats stay quiet.
 static var _grid_retired_reported: Dictionary = {}
 
-static func grid_simulation_retired(entry: String) -> bool:
+## The carried crowd morale state: morale 0..100, routed, rally_rest >= 0 (seconds). Nothing else.
+static func valid_team_morale(value: Variant) -> bool:
+	if not value is Dictionary or value.size() != 3: return false
+	return TerrainTestCharacter._saved_number(value.get("morale"), 0.0, 100.0) and value.get("routed") is bool \
+		and TerrainTestCharacter._saved_number(value.get("rally_rest"), 0.0, 100000.0)
+
+
+## Nekki 2026-11-03: Region keeps the grid. A road-map live party Lab (its _region_party_token is set) never runs
+## per-person combat, so its teams still step there. `context` is any node inside the Lab (a team, or the Lab).
+static func grid_simulation_retired(entry: String, context: Node = null) -> bool:
 	if not CrowdSiteScript.requested(): return false
+	var owner_lab: Node = context
+	while owner_lab != null and not owner_lab is TerrainLab: owner_lab = owner_lab.get_parent()
+	if owner_lab != null and (not str(owner_lab.get("_region_party_token")).is_empty()
+			or owner_lab.terrain != null and owner_lab.terrain.has_meta(&"region_party_owner")): return false
 	if not _grid_retired_reported.has(entry):
 		_grid_retired_reported[entry] = true
 		push_error("GRID_SIMULATION_RETIRED: " + entry)
@@ -8563,7 +8579,7 @@ func sample_combat() -> void:
 	if not garrison_feature_id.is_empty(): return
 	if exchange_enabled or not combat_enabled or not contact_query.is_valid():
 		return
-	if not combat_units.is_empty() and grid_simulation_retired("TerrainArmy.sample_combat"): return
+	if not combat_units.is_empty() and grid_simulation_retired("TerrainArmy.sample_combat", self): return
 	for index in range(combat_units.size()):
 		var unit: Dictionary = combat_units[index]
 		if _ship_in_journey(index) or not combat_can_act(index) or not bool(combat_hot_get(index, &"attack")) or bool(unit.blocked):
@@ -8954,6 +8970,7 @@ func capture_combat_state(read_only: bool = false) -> Dictionary:
 	snapshot["player_member"] = {"id": player_member.person_id, "present": player_present, "goal": [player_goal.x, player_goal.y]} if is_instance_valid(player_member) else {}
 	if not team_fatigue.is_empty():
 		snapshot["team_fatigue"] = {"version": 2, "fatigue": team_fatigue.fatigue, "fatigue_rest": team_fatigue.fatigue_rest, "active": team_fatigue.active}
+	if not team_morale.is_empty(): snapshot["team_morale"] = team_morale.duplicate()
 	snapshot["rescues"] = []
 	for index: int in _unit_rescues:
 		snapshot.rescues.append({"unit": index, "patient": int(_unit_rescues[index].patient), "revision": int(_unit_rescues[index].revision)})
@@ -9491,6 +9508,7 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 	for field: String in ["notice", "status"]:
 		if not snapshot.get(field) is String or str(snapshot[field]).length() > 256:
 			return false
+	if snapshot.has("team_morale") and not valid_team_morale(snapshot.team_morale): return false
 	var shared_version := 0
 	var excluded_player := -1
 	if snapshot.has("team_fatigue"):
@@ -9938,6 +9956,7 @@ func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_playe
 			team_fatigue.fatigue = float(saved_shared.fatigue)
 			team_fatigue.fatigue_rest = float(saved_shared.fatigue_rest)
 		if not saved_shared.is_empty(): team_fatigue.active = bool(saved_shared.active)
+	team_morale = snapshot.team_morale.duplicate() if snapshot.get("team_morale") is Dictionary else {}
 	command_status = str(snapshot.status)
 	_presence_geometry_cache = []
 	_command_dirty = false # No re-election or RNG draws on restore.
@@ -10952,6 +10971,7 @@ func clear(region_bind_token: String = "") -> void:
 	for row: Dictionary in combat_units: PersonFatigue.unbind(row)
 	if is_instance_valid(player_member): PersonFatigue.unbind(player_member)
 	team_fatigue = {}
+	team_morale = {}
 	_fatigue_roster_size = -1
 	individual_fatigue_indices.clear()
 	encirclement_steps = 0
@@ -17271,7 +17291,7 @@ func advance_frame(delta: float) -> void:
 		last_frame_cpu_usec = Time.get_ticks_usec() - frame_start_usec
 		combat_render_usec += last_frame_cpu_usec
 		return # All combat/movement time comes from TerrainLab's action step.
-	if has_army() and grid_simulation_retired("TerrainArmy.advance_frame"): return # Non-combat grid movement (_simulate_step) is retired.
+	if has_army() and grid_simulation_retired("TerrainArmy.advance_frame", self): return # Non-combat grid movement (_simulate_step) is retired.
 	var structure_before := structure_search_expansions
 	var local_before := local_search_expansions
 	var push_before := push_search_expansions

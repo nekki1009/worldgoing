@@ -174,7 +174,16 @@ func _run() -> void:
 	if not _check(slot != null and controller.region_slot == slot, "a Region save slot is bound to the Site"): return
 	site_id = str(lab.terrain.site.id)
 	var mode_gd := _mode()
-	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "gd", "live GD mode before any crowd", mode_gd): return
+	# Neutral part 2: the bind opens the Site as a live native crowd (the player's start team), so the mode is native.
+	var bind_live: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bind_live.get("complete") == true and str(bind_live.get("backend", "")) == "native" and lab.crowd_site.active, "a new world binds straight into a live native crowd", bind_live): return
+	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "native", "live native mode from the bind", mode_gd): return
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared): return
+	# Stand-in for the pending join relabel: the player's start team joins the friendly faction 0, as the old actor
+	# player was. Neutral is hostile to everyone, so a neutral player beside the test team would block its departure.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == lab.controlled_person_id(): team.faction_id = 0
 	var centre: Vector2i = lab.terrain.spawn_cell
 	if not _check(centre != Vector2i(-1, -1), "the Site has a legal spawn cell"): return
 	var friendly_cells: Array[Vector2i] = []
@@ -207,6 +216,9 @@ func _run() -> void:
 	var controlled: int = lab.controlled_person_id()
 	if not _check(controlled == captain and members.has(controlled), "the controlled captain is a member of the friendly crowd team", [controlled, captain]): return
 
+	# Nekki 2026-11-04: the team's morale state travels; it leaves shaken, with a rally rest running.
+	var origin_formation := int(crowd.person_owner(captain).formation_index)
+	if not _check(crowd.set_formation_fields(origin_formation, {"morale": 42.0, "rally_rest": 6.0}), "the departing team is shaken"): return
 	# Step 2: whole-team departure through the player entry. Every refusal is decided before any release.
 	var departed: Dictionary = RegionTravelSite.request_departure(controller)
 	if not _check(departed.get("ok", false) == true, "the controlled team departs through RegionTravelSite.request_departure", departed): return
@@ -324,6 +336,10 @@ func _run() -> void:
 	for unit: Dictionary in arrived_army.units: arrived_ids.append(int(unit.person_id))
 	if not _check(arrived_ids.has(arrived_controlled) and dest_crowd.contains_person(arrived_controlled) and int(dest_crowd.player_index) >= 0,
 		"the arriving controlled person is the native crowd's host-controlled soldier", [arrived_controlled, int(dest_crowd.player_index)]): return
+	var arrived_owner: Variant = dest_crowd.person_owner(arrived_controlled)
+	var arrived_state: Dictionary = dest_crowd.formation_state(int(arrived_owner.formation_index)) if arrived_owner != null else {}
+	if not _check(not arrived_state.is_empty() and float(arrived_state.morale) <= 42.0 + 0.001 and float(arrived_state.morale) < 100.0,
+		"the arrived native team continues its carried morale (no fresh 100)", [arrived_state.get("morale"), arrived_army.get("team_morale")]): return
 	# The converted destination saves and reloads with the team still native and the player still in control.
 	var arrival_path: String = controller.save_root.path_join("arrival_crowd.json")
 	var site_saved: Dictionary = controller.save_to(arrival_path)

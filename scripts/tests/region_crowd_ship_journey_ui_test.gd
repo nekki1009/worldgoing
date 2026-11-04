@@ -254,7 +254,10 @@ func _run() -> void:
 	if not _check(slot != null and controller.region_slot == slot, "a Region save slot is bound to the Site"): return
 	site_id = str(lab.terrain.site.id)
 	var mode_gd := _mode()
-	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "gd", "live GD mode before any crowd", mode_gd): return
+	# Neutral part 2: the bind opens the Site as a live native crowd (the player's start team), so the mode is native.
+	var bind_live: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bind_live.get("complete") == true and str(bind_live.get("backend", "")) == "native" and lab.crowd_site.active, "a new world binds straight into a live native crowd", bind_live): return
+	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "native", "live native mode from the bind", mode_gd): return
 	var hull: Array[Vector2i] = Ship.footprint("ferry", SHIP_ANCHOR, SHIP_FACING)
 	if not _check(lab.terrain.can_place_water_vehicle(hull) and lab.terrain.is_walkable(SHIP_SHORE), "the bound coast has the pinned ferry water and its shore contact", {"anchor": SHIP_ANCHOR, "shore": SHIP_SHORE}): return
 	var friendly_cells: Array[Vector2i] = _inland_cells(Vector2i(24, 40))
@@ -264,6 +267,13 @@ func _run() -> void:
 	var sides: Array[Dictionary] = [_side(friendly_cells.size(), 0), _side(enemy_cells.size(), 1)]
 	if not _check(sides[0].size() > 0 and sides[1].size() > 0, "both original sides exist"): return
 	var formations: Array = [friendly_cells, enemy_cells]
+	# Neutral part 2: clear the player's live native crowd back to GD before the test sides deploy.
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared): return
+	# Stand-in for the pending join relabel: the player's start team joins the friendly faction 0, as the old actor
+	# player was. Neutral is hostile to everyone, so a neutral player beside the test team would block its departure.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == lab.controlled_person_id(): team.faction_id = 0
 	var entered: Dictionary = lab.crowd_site.deploy(sides, formations)
 	if not _check(entered.get("ok", false) and lab.crowd_site.active, "the native crowd deploys on the bound Site", entered): return
 	var native_mode := _mode()

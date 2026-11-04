@@ -42,7 +42,7 @@ func _run() -> void:
 	if not _selected_check(live_slot.get_meta(&"region_party_owner_labs", {}).get(live_token) == lab
 			and live_slot._region_original_labs.get(origin_owner) != lab and str(live_slot.control.active_site_id).is_empty(),
 		"Current Party owns its true Lab and origin cache cannot reuse that body"): _finish_selected(); return
-	live_body = lab.character
+	_bind_live_body(lab)
 	live_data = lab.terrain
 	current_scene = lab
 	await process_frame
@@ -54,7 +54,7 @@ func _run() -> void:
 	view.set_volume(0.8, false)
 	view.set_muted(false, false)
 	view._process(0.0)
-	if not _selected_check(bool(view.stats_snapshot().listener_valid) and view.stats_snapshot().listener_ground == live_body.position,
+	if not _selected_check(bool(view.stats_snapshot().listener_valid) and view.stats_snapshot().listener_ground == _live_ground(),
 		"True Party listener resolves SAME original controlled ground"):
 		_finish_selected(); return
 	if not _party_step_audio(view, false): _finish_selected(); return
@@ -62,19 +62,21 @@ func _run() -> void:
 	_finish_selected()
 
 func _party_step_audio(view: SiteAudioView, reject_publication: bool) -> bool:
-	var original_body := live_body
-	var original_holder: Dictionary = live_body.item_state
-	var source := live_body.terrain_cell
+	# The controlled person is a roster unit on this Party Lab: its step is admitted by the lab's
+	# controlled-person input (_try_move), and its holder and cell are read through the owner row.
+	var original_holder: Dictionary = _live_row().item_state
+	var source := _live_cell()
 	var admitted := false
 	for direction: Vector2i in TerrainData.DIRECTIONS:
-		if live_body.step(direction, false): admitted = true; break
+		lab._try_move(direction)
+		if _live_moving(): admitted = true; break
 	if not _selected_check(admitted, "Public original Actor step starts within true Party body"): return false
-	var original_sink: Callable = live_body.get("audio_step_sink")
+	var original_sink: Callable = live_owner.get("audio_step_sink")
 	var injection := {"called":false, "candidate_before_rejection":false, "old_generation":int(live_slot._marker.generation)}
 	if reject_publication:
 		# Deliberate real Slot permit invalidation AFTER the original endpoint.
 		# No fake shared clock/publisher, and no audio commit from the inner call.
-		live_body.set("audio_step_sink", func(identity: int, ground: Vector2, duration: float, running: bool, mounted: bool) -> void:
+		live_owner.set("audio_step_sink", func(identity: int, ground: Vector2, duration: float, running: bool, mounted: bool) -> void:
 			original_sink.call(identity, ground, duration, running, mounted)
 			injection.called = true
 			injection.old_generation = int(live_slot._marker.generation)
@@ -92,7 +94,7 @@ func _party_step_audio(view: SiteAudioView, reject_publication: bool) -> bool:
 		if not _selected_check(int(view.get("_batch_serial")) == before_serial + 1,
 			"Real nested Party shared-step owns exactly one outer audio batch"): return false
 		if reject_publication and injection.called:
-			live_body.set("audio_step_sink", original_sink)
+			live_owner.set("audio_step_sink", original_sink)
 			live_slot._marker.generation = int(injection.old_generation)
 			view._process(0.0)
 			return _selected_check(injection.candidate_before_rejection and not bool(result.get("ok", true))
@@ -108,15 +110,15 @@ func _party_step_audio(view: SiteAudioView, reject_publication: bool) -> bool:
 			and int(live_slot.control.fire_clock.sequence) == sequence_before + 1
 			and absf(float(live_slot.control.logical_game_seconds) - game_before - float(result.game_seconds)) <= EPS
 			and absf(float(live_slot.control.fire_clock.action_seconds) - action_before - float(result.action_seconds)) <= EPS
-			and lab.character == original_body and lab.terrain == live_data and original_body.data == live_data
-			and is_same(original_body.item_state, original_holder),
+			and _holds_live_body(lab) and lab.terrain == live_data and live_owner.data == live_data
+			and is_same(_live_row().item_state, original_holder),
 			"Actual Party World publishes one positive dual-clock sequence and retains SAME original body/holder", result): return false
 		view._process(0.0)
-		if not live_body.is_moving(): ended = true; break
+		if not _live_moving(): ended = true; break
 	if reject_publication:
-		live_body.set("audio_step_sink", original_sink)
+		live_owner.set("audio_step_sink", original_sink)
 		return _selected_check(false, "Negative original publication fixture never reached an endpoint")
-	return _selected_check(ended and live_body.terrain_cell != source and int(view.stats_snapshot().offered) == offered + 1
+	return _selected_check(ended and _live_cell() != source and int(view.stats_snapshot().offered) == offered + 1
 		and int(view.stats_snapshot().played) == played + 1, "SAME true Party accepted World interval plays exactly one completed native footstep")
 
 func _finish_selected(ok: bool = true, message: String = "") -> void:

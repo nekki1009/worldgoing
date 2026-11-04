@@ -1,13 +1,13 @@
 extends SceneTree
-## G6.4c: the controlled player, a crowd SOLO ACTOR (its own solo team, no roster), leaves Region travel by land while a
-## crowd roster team stays behind. Activates a two-faction native crowd on the formal TerrainLab scene with a pinned synthetic
-## Region world, then checks:
-## - a roster member who is not the formal captain is still refused by departure_plan (UNSUPPORTED), the cadre rule unchanged;
-## - a hostile crowd soldier near the player refuses RegionTravelSite.depart (IN_COMBAT), and the refusal releases nobody;
-## - with the hostile made inactive for the rest of the test, RegionTravelSite.depart succeeds for the solo actor by land;
-## - the travelling party census holds exactly the player, and its team_ids are empty;
-## - the origin Site keeps the stay-behind roster team and its people, keeps a crowd section, and no longer holds the player.
-## The sea refusal (CROWD_SOLO_SEA_UNSUPPORTED) is not covered: no fixture helper embarks a solo crowd actor.
+## Neutral part 2 (v2 rewrite of G6.4c): a new game now births the controlled player as roster unit 0 and formal captain of
+## a one-person neutral crowd team (host control), never as a solo actor, so the old solo-actor fixture cannot be built from a
+## new world any more. The legacy solo-actor departure code is kept (not removed yet) but has no new-game fixture.
+## This test now checks the plain one-person-team departure by land on the formal TerrainLab scene with a pinned Region world:
+## - the bind-time conversion makes the Site crowd at once, with the player as the host-controlled captain and no actor body;
+## - departure_plan accepts the captain with exactly one person;
+## - RegionTravelSite.depart succeeds by land with a travel token; the travelling party holds exactly the player and its team;
+## - the live crowd forgets the player; the origin Site keeps no actor and no roster row for the player.
+## Sea is not covered here (region_crowd_ship_sea_departure_test owns whole-team-aboard departures).
 ## Run only with: --crowd --crowd-test <fresh_run_id>
 ## Output: REGION_CROWD_SOLO_DEPARTURE_PASS on success; quit(1) on any failure or the 240-second deadline.
 
@@ -137,116 +137,47 @@ func _run() -> void:
 	slot = controller.region_slot
 	if not _check(slot != null and controller.region_slot == slot, "a Region save slot is bound to the Site"): return
 	site_id = str(lab.terrain.site.id)
-	if not _check(str(_mode().get("backend", "")) == "gd", "live GD mode before any crowd", _mode()): return
-
-	# Deploy: a four-person friendly roster team (captain plus three soldiers), and an enemy two cells north of the spawn,
-	# close enough to block departure. The controlled player is not in any roster: deploy appends it as a solo crowd actor.
-	var centre: Vector2i = lab.terrain.spawn_cell
-	if not _check(centre != Vector2i(-1, -1), "the Site has a legal spawn cell"): return
-	var player: int = lab.character.person_id
-	if not _check(lab.controlled_person_id() == player, "the controlled body is the player before the crowd deploys", [lab.controlled_person_id(), player]): return
-	var friendly_cells: Array[Vector2i] = []
-	for offset: int in range(-2, 2): friendly_cells.append(centre + Vector2i(offset, 3))
-	var enemy_cells: Array[Vector2i] = [centre + Vector2i(-1, -3), centre + Vector2i(0, -3)]
-	var sides: Array[Dictionary] = [_side(friendly_cells.size(), 0), _side(enemy_cells.size(), 1)]
-	if not _check(sides[0].size() > 0 and sides[1].size() > 0, "both original sides exist"): return
-	var formations: Array = [friendly_cells, enemy_cells]
-	var entered: Dictionary = lab.crowd_site.deploy(sides, formations)
-	if not _check(entered.get("ok", false) and lab.crowd_site.active, "the native crowd deploys with the player as a solo actor", entered): return
 	var crowd: Variant = lab.crowd_site
-	if not _check(crowd._actors.has(player), "the controlled player is a solo crowd actor"): return
-	var solo_owner: Variant = crowd.person_owner(player)
-	if not _check(solo_owner != null and crowd.team_record(solo_owner.formation_index).is_empty(), "the solo actor has no roster team", player): return
-
+	if not _check(crowd != null and crowd.active and str(lab.region_bind_receipt(lab.terrain).get("backend", "")) == "native", "the new world binds straight into a live crowd", lab.region_bind_receipt(lab.terrain)): return
+	var player: int = lab.controlled_person_id()
+	if not _check(player > 0 and not lab.actor_present(lab.character) and lab.terrain.site.get("actors", {}).is_empty(), "the controlled player has no actor body", player): return
+	if not _check(crowd._records.has(player) and not crowd._actors.has(player), "the controlled player is a crowd roster person, not a crowd actor", player): return
+	if not _check(int(crowd._index_by_id.get(player, -1)) == int(crowd.player_index), "host control is on the player", [crowd._index_by_id.get(player, -1), crowd.player_index]): return
 	var roster: Dictionary = {}
 	for candidate: Dictionary in crowd.rosters:
-		if int(candidate.faction_id) == 0:
-			roster = candidate
-			break
-	if not _check(not roster.is_empty() and roster.units.size() == friendly_cells.size(), "the friendly crowd team has its roster"): return
+		if crowd._roster_index_for_person(candidate, player) >= 0: roster = candidate
+	if not _check(not roster.is_empty() and roster.units.size() == 1 + TerrainLab.INITIAL_CADRES and int(roster.formal_commander) == 0 and int(roster.faction_id) == RegionFactionQuery.NEUTRAL_FACTION_ID,
+		"the player is the formal captain of the neutral start team with its cadres", roster.get("units", []).size()): return
+	var team_size: int = roster.units.size()
 	var team_id: int = int(roster.team_id)
-	var captain: int = int(roster.units[int(roster.formal_commander)].person_id)
-	var members: Array[int] = []
-	for unit: Dictionary in roster.units: members.append(int(unit.person_id))
-	if not _check(not members.has(player), "the player is not a roster member"): return
-	# A plain soldier: neither the formal captain nor an officer of the roster.
-	var non_cadre_index := 3
-	var non_cadre: int = members[non_cadre_index]
-	if not _check(int(roster.formal_commander) != non_cadre_index and not roster.officer_service.has(non_cadre_index), "the chosen roster member is not a cadre", non_cadre): return
+	var team_entry: Dictionary = {}
+	for entry: Dictionary in crowd.teams:
+		if int(entry.team_id) == team_id: team_entry = entry
+	if not _check(not team_entry.is_empty() and not bool(team_entry.get("solo", true)), "the player team is a roster team, not a solo team", team_entry): return
 
-	# Cadre rule unchanged: an ordinary roster member cannot leave alone; departure_plan refuses before any release.
-	var member_plan: Dictionary = crowd.departure_plan(non_cadre)
-	if not _check(member_plan.get("ok", true) == false and member_plan.get("code", "") == "UNSUPPORTED",
-		"a non-cadre roster member is refused by departure_plan", member_plan): return
-	if not _check(crowd.contains_person(non_cadre), "the refused roster member stays in the crowd"): return
+	var plan: Dictionary = crowd.departure_plan(player)
+	if not _check(plan.get("ok", false) == true and plan.people.size() == team_size and plan.people.has(player) and int(plan.team_id) == team_id, "departure_plan accepts the captain and the whole start team", plan): return
 
-	# Hostile refusal: the enemy two cells from the spawn is near the player, so depart refuses by name and releases nobody.
-	var refused: Dictionary = RegionTravelSite.depart(controller)
-	if not _check(refused.get("ok", true) == false and refused.get("code", "") == "IN_COMBAT",
-		"a hostile crowd soldier near the solo actor refuses the land departure", refused): return
-	if not _check(crowd._actors.has(player) and crowd.contains_person(player) and crowd.person_owner(player) != null,
-		"after the IN_COMBAT refusal the crowd still contains the player"): return
-	if not _check(crowd.contains_person(captain), "after the IN_COMBAT refusal the roster team is still native"): return
-
-	# The enemy is made inactive for the rest of the test, so the next departure is not blocked by the hostile check.
-	for owner_ref: Variant in crowd.person_owners():
-		if int(owner_ref.faction_id) == 1: owner_ref.combat_enabled = false
-
-	# Departure: the solo actor leaves by land; the roster team and its people stay.
 	var departed: Dictionary = RegionTravelSite.depart(controller)
 	if not _check(departed.get("ok", false) == true and not str(departed.get("token", "")).is_empty(),
-		"the solo actor departs by land and the result carries a travel token", departed): return
+		"the one-person team departs by land and the result carries a travel token", departed): return
 	var token := str(departed.token)
 	var status: Dictionary = slot.region_travel_status()
 	if not _check(status.ok and status.pending and str(status.get("token", "")) == token, "the departure opens one pending travel journey", status): return
-
-	# The travelling party holds exactly the player, and no team.
 	var travelling: Dictionary = slot.region_travel_party()
 	if not _check(travelling.ok, "the travelling party is readable from the slot", travelling): return
 	var census: Dictionary = RegionTravel.census(travelling.party)
-	if not _check(census.people == [player], "the travelling party census holds exactly the player", census.people): return
-	if not _check(travelling.party.get("team_ids", [0]).is_empty(), "the travelling party names no team", travelling.party.get("team_ids")): return
+	if not _check(census.people.size() == team_size and census.people.has(player), "the travelling party census holds the player and the cadres", census.people): return
+	if not _check(travelling.party.get("team_ids", []).size() == 1 and int(travelling.party.team_ids[0]) == team_id, "the travelling party names the player's team", travelling.party.get("team_ids")): return
+	if not _check(not crowd.contains_person(player) and crowd.person_owner(player) == null, "the crowd forgets the departed captain"): return
+	for key: Variant in lab.terrain.site.get("actors", {}).keys():
+		if not _check(int(lab.terrain.site.actors[key].person_id) != player, "the origin Site does not list the player as an actor", key): return
+	# As region_crowd_departure_test: the live Site save after the departure omits the released team's roster rows.
+	var saved: Dictionary = crowd.capture_save() if crowd.active else {"ok": true, "rosters": []}
+	if not _check(saved.get("ok", false) == true, "the origin Site still captures after the departure", saved): return
+	for army: Variant in saved.rosters:
+		for row: Variant in army.get("units", []):
+			if not _check(int(row.person_id) != player, "the origin crowd roster rows do not list the player", army.get("team_id")): return
 
-	# The live crowd: the player is gone; the roster team and every member stay native.
-	if not _check(not crowd._actors.has(player) and not crowd.contains_person(player) and crowd.person_owner(player) == null,
-		"the crowd forgets the departed solo actor"): return
-	for identity: int in members:
-		if not _check(crowd.contains_person(identity), "a stay-behind roster member is still native", identity): return
-	if not _check(crowd.active, "the crowd stays active for the stay-behind team"): return
-
-	# The origin Site: read as the extraction of the post-departure live Site, with the solo spec the departure used.
-	var spec: Dictionary = RegionTravelSite._crowd_spec(slot, player, 0)
-	spec["actor_key"] = "player"
-	spec["crowd_solo"] = true
-	spec["crowd_control_successor"] = RegionTravelSite.split_control_successor(lab, player)
-	var origin_probe: Dictionary = RegionTravel.extract(lab.terrain.site.duplicate(true), spec, "crowd_solo_origin_probe")
-	if not _check(origin_probe.get("ok", false) == true, "the origin Site extracts after the solo departure", origin_probe): return
-	var origin: Dictionary = origin_probe.origin
-	for key: Variant in origin.get("actors", {}).keys():
-		if not _check(int(origin.actors[key].person_id) != player, "the origin Site no longer lists the player as an actor", key): return
-	var section: Dictionary = origin.get("crowd", {})
-	if not _check(not section.is_empty(), "the origin Site keeps its crowd section for the stay-behind team"): return
-	if not _check(int(section.get("player", {}).get("person_id", -1)) != player, "the origin crowd section no longer names the player as controlled"): return
-	var stay_entry := {}
-	var solo_entry := {}
-	for entry: Variant in section.get("teams", []):
-		if int(entry.team_id) == team_id: stay_entry = entry
-		if entry.person_ids.has(player): solo_entry = entry
-	if not _check(not stay_entry.is_empty() and not bool(stay_entry.get("departed", false)), "the origin crowd section keeps the roster team live", stay_entry): return
-	for identity: int in members:
-		if not _check(stay_entry.person_ids.has(identity), "the origin crowd section keeps every roster member", identity): return
-	if not _check(not solo_entry.is_empty() and bool(solo_entry.get("departed", false)), "the origin crowd section tombstones the solo team", solo_entry): return
-	var kept_row := false
-	for army: Variant in origin.get("armies", []):
-		if not army is Dictionary or not bool(army.get("crowd", false)): continue
-		var row_ids: Array[int] = []
-		for row: Variant in army.get("units", []): row_ids.append(int(row.person_id))
-		var all_kept := true
-		for identity: int in members:
-			if not row_ids.has(identity): all_kept = false
-		if all_kept: kept_row = true
-		if not _check(not row_ids.has(player), "the origin crowd roster rows do not list the player"): return
-	if not _check(kept_row, "the origin crowd roster rows keep the stay-behind team"): return
-
-	print("REGION_CROWD_SOLO_DEPARTURE_PASS: ", checks, " checks; a non-cadre roster member is refused by departure_plan, a hostile near the solo actor refuses IN_COMBAT without release, the solo actor departs by land with a token, the travel party holds exactly the player with no team, the crowd and origin keep the stay-behind team and tombstone the solo team; site ", site_id)
+	print("REGION_CROWD_SOLO_DEPARTURE_PASS: ", checks, " checks; the new-game player is the host-controlled captain of a one-person neutral crowd team, departure_plan accepts it, it departs by land with a token, the party holds exactly the player and its team, and the origin keeps no copy; site ", site_id)
 	quit(0)

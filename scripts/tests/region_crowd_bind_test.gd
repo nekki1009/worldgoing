@@ -136,19 +136,20 @@ func _run() -> void:
 	slot = controller.region_slot
 	if not _check(slot != null, "Region slot exists after the fixed world binds"): return
 	var site_id := str(lab.terrain.site.id)
-	# GD bind: the receipt and the live mode both say gd before any crowd exists.
-	var bind_gd: Dictionary = lab.region_bind_receipt(lab.terrain)
-	if not _check(bind_gd.get("complete") == true and str(bind_gd.get("backend", "")) == "gd", "GD bind receipt is complete with backend gd before the crowd", bind_gd): return
-	var mode_gd: Dictionary = slot.region_registry().modes.get(site_id, {})
-	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "gd", "live GD mode exists before the crowd", mode_gd): return
+	# Neutral part 2: the new-game player is the captain of a one-person crowd team, so the bind opens the Site as a live
+	# native crowd (Option C). The test returns it to GD (crowd clear) to stage its own sides beside the player team.
+	var bind_live: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bind_live.get("complete") == true and str(bind_live.get("backend", "")) == "native" and lab.crowd_site.active, "a new world binds straight into a live native crowd", bind_live): return
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared): return
 	var centre: Vector2i = lab.terrain.spawn_cell
 	if not _check(centre != Vector2i(-1, -1), "Region fixed world has a legal spawn cell", centre): return
 	var inactive = lab.crowd_site
-	var friendly_cells: Array[Vector2i] = [centre + Vector2i(-1, 3), centre + Vector2i(0, 3)]
+	var friendly_cells: Array[Vector2i] = [centre + Vector2i(-1, 6), centre + Vector2i(0, 6)]
 	var friendly_sides: Array[Dictionary] = [_side(friendly_cells.size(), 0)]
 	var friendly_formations: Array = [friendly_cells]
 	lab.crowd_site = null
-	var gd_deployed: Dictionary = lab._deploy_trial_teams(friendly_sides, friendly_formations, 0)
+	var gd_deployed: Dictionary = lab._deploy_trial_teams(friendly_sides, friendly_formations, 1) # Slot 0 holds the player team.
 	lab.crowd_site = inactive
 	if not _check(gd_deployed.ok, "original GD friendly side deploys before native activation", gd_deployed): return
 	if not _check(inactive != null and lab.crowd_site == inactive, "inactive CrowdSite is restored for native activation"): return

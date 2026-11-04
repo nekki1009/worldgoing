@@ -2789,10 +2789,14 @@ func _open_officer_priority(host: Window = null) -> void:
 	dialog.canceled.connect(dialog.queue_free)
 	_show_dialog(dialog, "officer", ui_context, host)
 
+func _crowd_roster_holds(identity: int) -> bool:
+	return identity > 0 and lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site._records.has(identity) and not lab.crowd_site._actors.has(identity)
+
 func _capture_positions(state: Dictionary = {}, read_only: bool = false) -> void:
 	if state.is_empty(): state = lab.terrain.site
 	state["actors"] = {}
-	if lab.actor_present(lab.character):
+	# Neutral part 2: a player held as a crowd roster person is saved only in its roster; never also as actors.player.
+	if lab.actor_present(lab.character) and not _crowd_roster_holds(lab.character.person_id):
 		state["player_cell"] = lab.terrain.index(lab.character.terrain_cell)
 		state["actors"]["player"] = lab.character.capture_state(read_only)
 	if lab.actor_present(lab.npc):
@@ -3260,7 +3264,7 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 	var manual_status := "無" if str(data.site.manual.target).is_empty() else "%.1f 分" % float(data.site.manual.progress)
 	var fatigue_label := "隊伍疲勞" if not controlled.is_empty() and not PersonFatigue.pool(controlled.body).is_empty() else "疲勞"
 	var time_label := "騎乘耗時" if not controlled.is_empty() and int(controlled.unit) < 0 and controlled.owner.is_mounted() else "耗時"
-	var controlled_label: String = lab.character.display_name if lab.controlled_person_id() == lab.character.person_id and not lab.character.display_name.is_empty() else "#%d" % lab.controlled_person_id()
+	var controlled_label: String = _controlled_display_name(controlled)
 	player_status_label.text = "目前控制 %s · %s\n攜帶：%s · %s %.1f／100（%s +%.1f%%） · 手動作業：%s" % [controlled_label, controlled_health, Runtime.items_text(controlled_cargo), fatigue_label, controlled_fatigue, time_label, PersonFatigue.slowdown(controlled_fatigue) * 100.0, manual_status]
 	player_status_label.tooltip_text = player_status_label.text
 	stock_label.text = "營地 %d / %d\n%s" % [Runtime.inventory_size(data.site.inventory), data.site.capacity, Runtime.items_text(data.site.inventory)]
@@ -4878,7 +4882,8 @@ func _handover_family_person(requester_id: int, site_id: String, person_id: int)
 	var state: Dictionary = selected["state"]
 	lab.terrain.site["actors"] = state["actors"]
 	lab.terrain.site["armies"] = state["armies"]
-	lab.terrain.site["player_cell"] = state["player_cell"]
+	# Neutral part 2: a Site whose player is a crowd roster person may have no player_cell; keep the live value then.
+	if state.has("player_cell"): lab.terrain.site["player_cell"] = state["player_cell"]
 	lab.terrain.site["worker"]["cell"] = state["worker"]["cell"]
 	if state.has("region_snapshot"): lab.terrain.site["region_snapshot"] = state["region_snapshot"]
 	for team: TerrainArmy in lab.combat_armies:
@@ -10147,6 +10152,10 @@ func _settle_boot_request(result: Dictionary) -> void:
 
 ## Applies main-menu character creation to the new world's player and saves.
 func apply_created_character(data: Dictionary) -> Dictionary:
+	# Neutral part 2: the new-game player is the captain of a one-person crowd roster team. Its crowd record is the person.
+	var controlled_id := int(lab.controlled_person_id())
+	if lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site._records.has(controlled_id) and not lab.crowd_site._actors.has(controlled_id):
+		return _apply_created_crowd_person(controlled_id, data)
 	var actor: TerrainTestCharacter = lab.character
 	if not lab.actor_present(actor): return Runtime.fail("NO_TARGET", "新世界沒有玩家人物")
 	var state := actor.capture_state()
@@ -10176,6 +10185,64 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 		var abilities := {"tactics": int(actor.command_abilities.get("tactics", 0)), "leadership": int(actor.command_abilities.get("leadership", 0)), "coach": int(actor.command_abilities.get("coach", 0))}
 		if index >= 0 and not lab.crowd_site.set_soldier_fields(index, abilities): return Runtime.fail("INVALID", "建立的人物能力無法寫入群眾模擬")
 	return save_to(save_path)
+
+## Neutral part 2: main-menu character creation written onto the controlled crowd roster person (its CrowdPersonOwner record:
+## name, combat_ability, command_abilities, personality, appearance) and native (abilities, equip/kit). Every check runs first.
+func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
+	var crowd: Variant = lab.crowd_site
+	var record: Dictionary = crowd._records[identity]
+	var index := int(crowd._index_by_id.get(identity, -1))
+	if index < 0 or not record.get("appearance") is Dictionary or not record.get("item_state") is Dictionary: return Runtime.fail("NO_TARGET", "新世界沒有玩家人物")
+	var appearance: Dictionary = record.appearance.duplicate(true)
+	appearance["body"] = int(data.get("body", appearance.body))
+	appearance.parts.face = str(data.get("face", appearance.parts.face))
+	appearance.parts.hair = str(data.get("hair", appearance.parts.hair))
+	appearance["hair_dye"] = str(data.get("hair_dye", appearance.get("hair_dye", "")))
+	appearance["hair_dyed"] = bool(data.get("hair_dyed", appearance.get("hair_dyed", false)))
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return Runtime.fail("INVALID", "建立的人物外觀不合法")
+	var person_name := str(data.get("name", "")).strip_edges()
+	if person_name.length() > TerrainTestCharacter.MAX_NAME_LENGTH: return Runtime.fail("INVALID", "建立的人物名字過長")
+	var ability: Variant = data.get("combat_ability", record.get("combat_ability", 50.0))
+	if not TerrainTestCharacter._saved_number(ability, 0.0, 100.0): return Runtime.fail("INVALID", "建立的人物武力不合法")
+	var abilities: Dictionary = record.get("command_abilities", {}).duplicate()
+	if data.get("command_abilities") is Dictionary: abilities = data.command_abilities.duplicate()
+	if not TerrainTestCharacter.valid_command_abilities(abilities): return Runtime.fail("INVALID", "建立的人物統率能力不合法")
+	var packet: Dictionary = record.get("personality", {})
+	var personality: Variant = data.get("personality", {})
+	if personality is Dictionary and not personality.is_empty():
+		if not TerrainTestCharacter.PersonPersonality.valid(personality): return Runtime.fail("INVALID", "人物性格資料不完整")
+		packet = TerrainTestCharacter.PersonPersonality.saved(personality)
+	var projected: Dictionary = Runtime.equipment_appearance(lab.terrain, record.item_state, appearance)
+	if projected.is_empty(): return Runtime.fail("INVALID", "建立的人物實裝無法投影")
+	var guard: Dictionary = crowd.equipment_recipe_guard(identity, projected)
+	if not guard.ok: return guard
+	if not crowd._prepare_contact_appearance(projected, identity): return Runtime.fail("MISSING_ASSET", "建立的人物接觸資源未備妥")
+	var values := {}
+	for kind: String in ["tactics", "leadership", "coach"]:
+		if abilities.has(kind): values[kind] = int(abilities[kind])
+	if not values.is_empty() and not crowd.set_soldier_fields(index, values): return Runtime.fail("INVALID", "建立的人物能力無法寫入群眾模擬")
+	# Commit: the record is the roster row the Site saves (site.armies crowd roster), so the save carries it.
+	record["appearance"] = appearance
+	var role := str(record.get("visual_role", ""))
+	if not role.is_empty(): record["visual_role"] = ("female_" if int(appearance.body) == 1 else "male_") + ("live" if role.ends_with("live") else "atlas")
+	if person_name.is_empty(): record.erase("name")
+	else: record["name"] = person_name
+	record["combat_ability"] = float(ability)
+	record["command_abilities"] = values
+	if packet.is_empty(): record.erase("personality")
+	else: record["personality"] = packet.duplicate(true)
+	crowd.equipment_changed(identity)
+	return save_to(save_path)
+
+## Neutral part 2: the shown name of a controlled person: an actor's display_name, or a crowd/roster row's saved name.
+func _controlled_display_name(controlled: Dictionary) -> String:
+	var identity := int(lab.controlled_person_id())
+	if not controlled.is_empty():
+		var body: Variant = controlled.get("body")
+		if body is TerrainTestCharacter and not body.display_name.is_empty(): return body.display_name
+		if body is Dictionary and not str(body.get("name", "")).is_empty(): return str(body.name)
+	if identity == lab.character.person_id and not lab.character.display_name.is_empty(): return lab.character.display_name
+	return "#%d" % identity
 
 func _record_world(world_name: String = "") -> void:
 	if region_slot == null or lab.terrain == null: return
@@ -13070,7 +13137,7 @@ func _native_sustain_original_rows(seconds: float) -> Dictionary:
 			# ship_food_locations accepts (team_id entry, crowd-aware _supply_person and is_embarked).
 			var original: Variant = null
 			for plan: Dictionary in lab.crowd_site._original_team_plans:
-				if int(plan.crowd_formation) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
+				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
 			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
 			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
 			held["food_locations"] = ship_food_locations(original, members)

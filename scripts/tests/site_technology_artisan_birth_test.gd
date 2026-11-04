@@ -82,11 +82,11 @@ func _check_formal_menu_entry_selection() -> void:
 	var menu: Node = load(MENU).instantiate()
 	root.add_child(menu)
 	var choice := menu.find_child("InitialArtisanScenario", true, false) as OptionButton
-	_check(choice != null and choice.item_count == 3, "Actual original New Game page exposes one finite scenario selector")
-	_check(str(choice.get_item_metadata(choice.selected)) == Artisans.PRIMARY, "Formal new-game draft explicitly selects primary bounded scenario")
-	choice.select(1)
-	choice.item_selected.emit(1)
-	_check(Entry.draft.get("initial_scenario_id") == Artisans.THREE_FACTIONS, "Original scene-change draft carries actual selected scenario")
+	# Nekki 2026-11-03: the menu starts with cadres, not artisans; artisan scenarios stay reachable through the Entry API.
+	_check(choice != null and choice.item_count == 1, "Actual original New Game page exposes only the cadre start")
+	_check(str(choice.get_item_metadata(choice.selected)) == "", "The menu's only start is the fresh cadre birth (no artisan scenario)")
+	choice.item_selected.emit(0)
+	_check(Entry.draft.get("initial_scenario_id") == "", "Original scene-change draft carries the cadre start")
 	var character := {"test_payload": "kept by original request"}
 	_check(Entry.request_new_world(Vector2i(3, 4), character, "原世界", Artisans.THREE_FACTIONS), "Original Entry admits explicit known finite scenario")
 	var request := Entry.take_pending()

@@ -12,7 +12,7 @@ const E3_EPS := 0.00001
 # original legal start site and its all-forest east neighbour.
 const START_SITE := Vector2i(1170, 13252)
 const DEST_SITE := Vector2i(1171, 13252)
-var e3_reference: TerrainLab
+var e3_departure_herb := 0
 var e3_key := ""
 var e3_cell := Vector2i.ZERO
 var e3_person := -1
@@ -26,7 +26,6 @@ var e3_failed := false
 var e3_saw_cold := false
 var e3_out := ""
 var e3_journeys: Array[Dictionary] = []
-var e3_departed_fire_clock: Dictionary = {} # Actual journal observed right after departure.
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 180000
@@ -63,13 +62,16 @@ func _run() -> void:
 	Env.initialize(archive, "ecology-e3:archive")
 	lab.bind_terrain(archive)
 	lab.restore_only = false
+	# This Lab was made restore_only, so _ready left crowd startup off; a live Site opens as crowd (Option C).
+	lab.crowd_startup_requested = preload("res://scripts/terrain_lab/crowd_site.gd").requested()
 	controller.save_root = e3_out.path_join("archive")
 	world_id = "ecology_e3_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	# Exchange before the world opens: the new-game start team is converted to crowd at bind, which needs it.
+	lab.exchange_enabled = true
 	var opened := controller.open_fixed_world(manifest_path, world_id, SLOT, START_SITE, true)
 	if not _must(opened.ok and Env.ecology_active(lab.terrain), "Original world admission supplies modern ecology: " + str(opened)): _finish_e3(false); return
 	_freeze()
 	lab.simulation_speed = 4.0
-	lab.exchange_enabled = true
 	# A fixed-geography Site starts with an empty inventory; harvest requires one
 	# tool to be present (it is not consumed). Stock it before the first batch.
 	if int(lab.terrain.site.inventory.get("tools", 0)) < 1: lab.terrain.site.inventory["tools"] = 1
@@ -83,24 +85,19 @@ func _run() -> void:
 			e3_key = key; e3_cell = cells[0]; break
 	if not _must(not e3_key.is_empty(), "Pinned original source has a discovered accessible herb with two paid batches"): _finish_e3(false); return
 	e3_person = lab.controlled_person_id()
-	e3_holder_ids = lab.character.item_state.get("item_ids", []).duplicate()
+	e3_holder_ids = _e3_row(lab).get("item_state", {}).get("item_ids", []).duplicate()
 	var first := _paid_batch(lab)
 	if not _must(first.ok and int(first.produced) > 0, "Initial original paid manual batch: " + str(first)): _finish_e3(false); return
+	e3_departure_herb = int(_e3_cargo(lab).get("herb", 0))
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _must(saved.ok, "Actual original source checkpoint: " + str(saved)): _finish_e3(false); return
 	var loaded := controller.region_slot._load_checked(controller.region_slot.site_path(START_SITE), START_SITE)
 	if not _must(loaded.ok, "Original selected source readback: " + str(loaded)): _finish_e3(false); return
 	e3_source = loaded.data
 	e3_source_bytes = var_to_bytes([e3_source.site, e3_source.resource_base, e3_source.parameters])
-	var child := lab._region_new_bind_child(e3_source)
-	if not _must(child.ok, "Original reference shell: " + str(child)): _finish_e3(false); return
-	e3_reference = child.child
-	var restored := e3_reference.restore_original_site(e3_source)
-	if not _must(restored.ok and restored.get("owners_restored", false), "Reference restores actual full owners: " + str(restored)): _finish_e3(false); return
+	# Nekki 2026-11-04 (B): the uninterrupted reference Lab is retired. It replayed the Site through the old cold replay
+	# (replay_site_to), which a crowd Site does not take; crowd Sites step natively off-screen (Nekki 2026-11-01).
 	if not _journey_to(DEST_SITE): _finish_e3(false); return
-	# The reference is not a durable indexed owner, so the original prune drops its
-	# prefix once the departed Site settles. Keep the actual journal seen now.
-	e3_departed_fire_clock = controller.region_slot.control.fire_clock.duplicate(true)
 	var until := float(controller.region_slot.control.logical_game_seconds) + E3_IDLE_SECONDS
 	for _step: int in range(E3_LIMIT):
 		if float(controller.region_slot.control.logical_game_seconds) + E3_EPS >= until: break
@@ -119,6 +116,43 @@ func _write_manifest() -> bool:
 
 func _alive() -> bool:
 	return _must(Time.get_ticks_msec() <= deadline and not e3_finished, "Bounded E3 pump")
+
+## Fixture note: a new game gives the controlled player no actor body. It is unit 0 of a
+## neutral crowd team (a roster person), so its row, cargo, task and completion are read
+## from the original owner, and placement uses the crowd soldier-field writer.
+func _e3_row(scene: TerrainLab) -> Dictionary:
+	var found: Dictionary = scene._original_person_target(e3_person)
+	if found.is_empty() or int(found.unit) < 0: return {}
+	return found.owner.combat_units[int(found.unit)]
+
+func _e3_cargo(scene: TerrainLab) -> Dictionary:
+	return _e3_row(scene).get("cargo", {})
+
+func _e3_task(scene: TerrainLab) -> Dictionary:
+	return _e3_row(scene).get("work_task", {})
+
+## SiteWorkTeam drops a manual identity (cancel -> _active_ids.erase) once its task
+## completes, is interrupted, or is cleared. This is the batch loops' completion signal.
+func _e3_active(scene: TerrainLab) -> bool:
+	return scene.site_controller.work_team.is_assigned(e3_person)
+
+## Test fixture, the equivalent of the old actor place(cell, true). The crowd writer
+## refuses velocity fields, so only px/py are written. Verified by the original cell
+## derivation (cell = floor(px)), with a few settle renders if needed.
+func _e3_place(scene: TerrainLab, cell: Vector2i) -> bool:
+	var crowd = scene.crowd_site
+	if crowd == null or not crowd.active or not crowd.contains_person(e3_person):
+		# Without crowd startup the Site keeps the start team as a GD army: its row stands on the cell directly.
+		var target: Dictionary = scene._original_person_target(e3_person)
+		if target.is_empty() or int(target.unit) < 0 or not scene.terrain.is_walkable(cell): return false
+		target.owner.cells[int(target.unit)] = cell
+		return scene._original_person_target(e3_person).get("cell", Vector2i(-1, -1)) == cell
+	var index := int(crowd._index_by_id[e3_person])
+	if not crowd.set_soldier_fields(index, {"px": cell.x + 0.5, "py": cell.y + 0.5}): return false
+	for _settle: int in range(4):
+		if scene._original_person_target(e3_person).get("cell", Vector2i(-1, -1)) == cell: return true
+		crowd.render(0.0)
+	return false
 
 func _journey_to(destination: Vector2i) -> bool:
 	var slot: RegionSaveSlot = controller.region_slot
@@ -175,40 +209,6 @@ func _journey_to(destination: Vector2i) -> bool:
 	_freeze()
 	return true
 
-## Test-only: give the reference the same Fire journal segments and tracking the
-## original cold transaction uses. While the retained journal still covers the
-## reference watermark it is used as is; otherwise the actual journal observed at
-## departure is spliced onto it. The original fire_replay_segments validates
-## continuity and refuses any gap.
-func _reference_fire_replay(target: float) -> bool:
-	var current: Dictionary = controller.region_slot.control.fire_clock
-	var merged: Dictionary = current.duplicate(true)
-	if int(e3_reference.terrain.site.fire_settlement.sequence) < int(current.get("base_sequence", 0)):
-		var departed: Dictionary = e3_departed_fire_clock
-		if not _must(not departed.is_empty() and str(departed.get("epoch", "")) == str(current.epoch) and int(departed.sequence) >= int(current.get("base_sequence", 0)), "Observed departure journal reaches the retained current journal"): return false
-		var journal: Array = []
-		for row: Dictionary in departed.journal:
-			if int(row.last_sequence) <= int(current.get("base_sequence", 0)): journal.append(row.duplicate(true))
-		journal.append_array(current.journal.duplicate(true))
-		for field: String in ["base_sequence", "base_action_seconds", "base_game_seconds"]: merged[field] = departed.get(field, 0)
-		merged.journal = journal
-	var replay := RegionSaveSlot.fire_replay_segments(e3_reference.terrain.site, merged, target)
-	if not _must(replay.ok, "Reference has the complete original Fire journal from its own watermark: " + str(replay)): return false
-	var indexed: Dictionary = current.index.get(str(e3_reference.terrain.site.id), {})
-	e3_reference._fire_replay_tracking = true
-	e3_reference._fire_replay_epoch = str(e3_reference.terrain.site.fire_settlement.get("epoch", ""))
-	e3_reference._fire_replay_keep_tactical = bool(indexed.get("fire_active", false)) or e3_reference._fire_activity()
-	var segments: Array[Dictionary] = []
-	for segment: Dictionary in replay.segments: segments.append(segment)
-	e3_reference._fire_replay_segments = segments
-	e3_reference._fire_replay_segment_index = 0
-	e3_reference._fire_replay_segment_offset = 0
-	e3_reference._fire_replay_partial_cursor = -1.0
-	e3_reference._fire_replay_end_sequence = int(replay.to_sequence)
-	e3_reference._fire_replay_end_action = float(current.action_seconds)
-	e3_reference._fire_replay_end_game = target
-	return true
-
 func _return_to_visited() -> bool:
 	e3_saw_cold = false
 	if not _journey_to(START_SITE): return false
@@ -217,85 +217,24 @@ func _return_to_visited() -> bool:
 	var target := float(controller.region_slot.control.logical_game_seconds)
 	var settlement := RegionSaveSlot.validate_settlement(lab.terrain.site, target)
 	if not _must(settlement.ok and not settlement.get("legacy", true) and float(settlement.pending) <= E3_EPS, "Original return has no unsettled debt"): return false
-	if not _reference_fire_replay(target): return false
-	var reference_done := false
-	for _pump: int in range(E3_LIMIT):
-		if not _alive(): return false
-		var replay := e3_reference.replay_site_to(target, 4000, 128)
-		if not _must(replay.ok, "Original uninterrupted reference clock: " + str(replay)): return false
-		if replay.status == "COMPLETE": reference_done = true; break
-	if not _must(reference_done, "Reference reaches the same actual world endpoint"): return false
-	if not _must(int(lab.terrain.site.total_produced) == int(e3_source.site.total_produced) and int(e3_reference.terrain.site.total_produced) == int(e3_source.site.total_produced), "Neither original path harvests during the away interval"): return false
-	if not _must(_same_ecology_state(lab.terrain, e3_reference.terrain), "Before post-return work: ecology source, latch, deadline, stock and produced total equal"): return false
-	if not _must(absf(Runtime.now(lab.terrain) - Runtime.now(e3_reference.terrain)) <= E3_EPS, "Same original minute/phase endpoint"): return false
-	if not _must(lab.controlled_person_id() == e3_person and lab.character.item_state.get("item_ids", []) == e3_holder_ids, "Same original person and equipment holder restored"): return false
-	if not _must(int(lab.terrain.site.manual.cargo.get("herb", 0)) == int(e3_reference.terrain.site.manual.cargo.get("herb", 0)), "Departure/return preserves the actual previously paid herb cargo"): return false
-	var paired := _paired_return_batch()
-	if not _must(paired.ok, "After bind, paired paid manual result: " + str(paired)): return false
+	if not _must(int(lab.terrain.site.total_produced) == int(e3_source.site.total_produced), "No harvest happens during the away interval"): return false
+	if not _must(lab.controlled_person_id() == e3_person and _e3_row(lab).get("item_state", {}).get("item_ids", []) == e3_holder_ids, "Same original person and equipment holder restored"): return false
+	if not _must(int(_e3_cargo(lab).get("herb", 0)) == int(e3_departure_herb), "Departure/return preserves the actual previously paid herb cargo"): return false
+	var paired := _paid_batch(lab)
+	if not _must(paired.ok and int(paired.produced) > 0 and int(paired.cargo_delta.get("herb", 0)) > 0, "After bind, a paid manual batch yields herb again: " + str(paired)): return false
 	if not _must(var_to_bytes([e3_source.site, e3_source.resource_base, e3_source.parameters]) == e3_source_bytes, "Reference never edits the original saved source"): return false
-	report.e3 = {"source": e3_key, "person_id": e3_person, "fixed_idle_game_seconds": E3_IDLE_SECONDS, "returned_game_seconds": target, "actual_retained_cold_observed": e3_saw_cold, "journeys": e3_journeys, "paired_paid": paired, "scope": "one real departure/original cold owner/return bind calibration; retained replay is optional; not 90-day full-scene equivalence"}
+	report.e3 = {"source": e3_key, "person_id": e3_person, "fixed_idle_game_seconds": E3_IDLE_SECONDS, "returned_game_seconds": target, "actual_retained_cold_observed": e3_saw_cold, "journeys": e3_journeys, "return_paid": paired, "scope": "one real departure/original cold owner/return bind; the uninterrupted reference comparison is retired (crowd Sites step natively off-screen)"}
 	return true
 
-func _paired_return_batch() -> Dictionary:
-	var starts: Array[Dictionary] = []
-	var begin := Runtime.now(lab.terrain) * 60.0
-	for scene: TerrainLab in [lab, e3_reference]:
-		if not _must(scene.actor_present(scene.character) and scene.controlled_person_id() == e3_person and scene.character.place(e3_cell, true), "Paired original person at actual source cell"): return {"ok": false}
-		starts.append({"cargo": scene.terrain.site.manual.cargo.duplicate(true), "produced": int(scene.terrain.site.total_produced)})
-		scene.site_controller.source_key = e3_key
-		scene.site_controller.manual_work("harvest")
-		if not _must(scene.terrain.site.manual.target == e3_key and scene.terrain.site.manual.action == "harvest", "Both original controllers admit the same paid batch"): return {"ok": false}
-	for _step: int in range(E3_LIMIT):
-		if str(lab.terrain.site.manual.target).is_empty(): break
-		if not _alive(): return {"ok": false}
-		var stepped := lab._advance_original_shared_step(lab.EXCHANGE_ACTION_STEP)
-		if not _must(stepped.ok and stepped.get("completed", false), "Paired live original clock: " + str(stepped)): return {"ok": false}
-	var target := float(controller.region_slot.control.logical_game_seconds)
-	if not _must(str(lab.terrain.site.manual.target).is_empty() and target > begin, "Live paid batch completes with positive actual time"): return {"ok": false}
-	if not _reference_fire_replay(target): return {"ok": false}
-	var complete := false
-	for _pump: int in range(E3_LIMIT):
-		if not _alive(): return {"ok": false}
-		var replay := e3_reference.replay_site_to(target, 4000, 128)
-		if not _must(replay.ok, "Paired reference consumes the SAME actual target: " + str(replay)): return {"ok": false}
-		if replay.status == "COMPLETE": complete = true; break
-	if not _must(complete and str(e3_reference.terrain.site.manual.target).is_empty() and absf(Runtime.now(lab.terrain) - Runtime.now(e3_reference.terrain)) <= E3_EPS, "Reference paid batch completes at the identical time endpoint"): return {"ok": false}
-	var results: Array[Dictionary] = []
-	for index: int in range(2):
-		var scene: TerrainLab = lab if index == 0 else e3_reference
-		var cargo: Dictionary = scene.terrain.site.manual.cargo
-		var delta := {}
-		for key: String in cargo:
-			var amount := int(cargo[key]) - int(starts[index].cargo.get(key, 0))
-			if amount != 0: delta[key] = amount
-		results.append({"produced": int(scene.terrain.site.total_produced) - int(starts[index].produced), "cargo_delta": delta})
-	if not _must(results[0] == results[1] and int(results[0].produced) > 0 and _same_ecology_state(lab.terrain, e3_reference.terrain), "Paired batch conserves equal real yield and final source state"): return {"ok": false}
-	return {"ok": true, "begin_game": begin, "end_game": target, "actual": results[0], "reference": results[1]}
-
-func _ecology_state(data: TerrainData) -> Dictionary:
-	# Arrival may legitimately discover other cells. Compare this same paid source.
-	return {"base": data.resource_base, "source": Env.resource(data, e3_key), "ecology": Env.ecology_info(data, e3_key), "ecology_version": data.site.get("ecology_version"), "produced": data.site.total_produced}
-
-func _same_ecology_state(first: TerrainData, second: TerrainData) -> bool:
-	var left := _ecology_state(first)
-	var right := _ecology_state(second)
-	# Only the query's derived floating countdown uses clock epsilon. Saved
-	# deadlines, source fields, latch, stock, base and production stay exact.
-	var countdown_equal := absf(float(left.ecology.wait_minutes) - float(right.ecology.wait_minutes)) <= E3_EPS
-	left.ecology.erase("wait_minutes")
-	right.ecology.erase("wait_minutes")
-	return countdown_equal and left == right
-
 func _paid_batch(scene: TerrainLab) -> Dictionary:
-	if not _must(scene.actor_present(scene.character) and scene.controlled_person_id() == e3_person and scene.character.place(e3_cell, true), "Original controlled body occupies the real source work cell"): return {"ok": false}
-	var cargo: Dictionary = scene.terrain.site.manual.cargo
-	var before := cargo.duplicate(true)
+	if not _must(scene.controlled_person_id() == e3_person and _e3_place(scene, e3_cell), "Controlled roster person stands on the real source work cell"): return {"ok": false}
+	var before := _e3_cargo(scene).duplicate(true)
 	var produced := int(scene.terrain.site.total_produced)
 	scene.site_controller.source_key = e3_key
 	scene.site_controller.manual_work("harvest")
-	if not _must(str(scene.terrain.site.manual.target) == e3_key and str(scene.terrain.site.manual.action) == "harvest", "Original controller admits paid harvest without free survey/refill"): return {"ok": false}
+	if not _must(str(_e3_task(scene).get("target", "")) == e3_key and str(_e3_task(scene).get("action", "")) == "harvest", "Original controller admits paid harvest without free survey/refill"): return {"ok": false}
 	for _step: int in range(E3_LIMIT):
-		if str(scene.terrain.site.manual.target).is_empty(): break
+		if not _e3_active(scene): break
 		if not _alive(): return {"ok": false}
 		if scene.restore_only:
 			var step := scene.replay_site_to(Runtime.now(scene.terrain) * 60.0 + 1.0, 0, 128)
@@ -303,7 +242,9 @@ func _paid_batch(scene: TerrainLab) -> Dictionary:
 		else:
 			var step := scene._advance_original_shared_step(scene.EXCHANGE_ACTION_STEP)
 			if not _must(step.ok and step.get("completed", false), "Original live paid work: " + str(step)): return {"ok": false}
-	if not _must(str(scene.terrain.site.manual.target).is_empty(), "Bounded one-batch completion"): return {"ok": false}
+	if not _must(not _e3_active(scene), "Bounded one-batch completion"): return {"ok": false}
+	# Re-read the row after the steps: the cargo dictionary is owned by the original row.
+	var cargo := _e3_cargo(scene)
 	var delta := {}
 	for key: String in cargo:
 		var amount := int(cargo[key]) - int(before.get(key, 0))

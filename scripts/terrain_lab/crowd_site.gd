@@ -594,6 +594,10 @@ func _finish_admission(sides: Array, prepared: Dictionary, before: Dictionary, t
 	desired.formations.merge(imported.formations, true)
 	var admitted := _source_state_guard(desired)
 	if not admitted.ok: return _deployment_failed(before, admitted)
+	# Nekki 2026-11-04: each imported team's carried morale state, after the hot import and state guard wrote its formation.
+	for plan: Dictionary in prepared.plans:
+		if plan.has("formation") and not apply_team_morale(crowd, int(plan.formation), plan.snapshot.get("team_morale", {})):
+			return _deployment_failed(before, SiteRuntime.fail("INVALID", "原隊伍士氣狀態匯入失敗"))
 	# G5 S2: detached and off-map rows become absent natively after every hot import and state guard.
 	var absent_imported := d5_absent_existing(self, prepared.plans)
 	if not absent_imported.ok: return _deployment_failed(before, absent_imported)
@@ -1412,6 +1416,9 @@ func render(frame_dt: float) -> void:
 			continue
 		row_sig[row] = sig
 		for key: int in sig:
+			# The host-controlled roster person has a row even when it has no presenter yet (headless, or its body is
+			# still being created); there is nothing to order then.
+			if key < 0 and -1 - key >= _draw_actors.size(): continue
 			var node: Node = _draw_actors[-1 - key] if key < 0 else nodes[key]
 			if node.get_parent() == lab:
 				lab.move_child(node, -1)
@@ -3340,8 +3347,16 @@ func capture_save() -> Dictionary:
 	return SiteRuntime.ok("", {"rosters": rosters.duplicate(true), "section": {"version": 1,
 		"dll_sha256": FileAccess.get_sha256(DLL_PATH), "build_id": str(crowd.build_id()),
 		"blob": Marshalls.raw_to_base64(bytes), "blob_sha256": digest.finish().hex_encode(),
-		"teams": teams.duplicate(true), "player": {"person_id": int(lab.controlled_person_id()), "soldier_index": player_index},
+		"teams": teams.duplicate(true), "player": _section_player(),
 		"deploy": _deploy_options.duplicate(true)}})
+
+
+## The saved controlled-person reference. With no controlled person (the controlled roster team departed and no actor
+## stands in for it), it is the "no controlled person" pair -1/-1 the Store accepts, never the absent template's id 0.
+func _section_player() -> Dictionary:
+	var controlled := int(lab.controlled_person_id())
+	if controlled <= 0: return {"person_id": -1, "soldier_index": -1}
+	return {"person_id": controlled, "soldier_index": player_index}
 
 
 func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictionary:
@@ -3458,8 +3473,13 @@ func activate_loaded() -> void:
 ## ("native_faction"; older entries used the global id). A faction keeps one slot on the Site; every neutral team gets
 ## a slot of its own, so native fights two neutral teams as it fights any two factions. -1: no free slot.
 func _native_faction(faction: int) -> int:
+	return native_slot_for(faction, teams)
+
+
+## The slot rule of _native_faction over any teams entries (the Region arrival builds its native offline).
+static func native_slot_for(faction: int, entries: Array) -> int:
 	var used := {}
-	for team: Dictionary in teams:
+	for team: Dictionary in entries:
 		var slot := native_faction_of(team)
 		used[slot] = true
 		if faction != RegionFactionQuery.NEUTRAL_FACTION_ID and int(team.faction) == faction: return slot
@@ -3467,6 +3487,27 @@ func _native_faction(faction: int) -> int:
 	for slot in range(RegionFactionQuery.NEUTRAL_FACTION_ID, -1, -1):
 		if not used.has(slot): return slot
 	return -1
+
+
+## Nekki 2026-11-04: a team's carried morale state (TerrainArmy.team_morale) written onto its native formation. {} keeps the
+## formation's fresh values. Works on a live or a detached ArmyCrowd.
+static func apply_team_morale(native: Object, formation: int, morale: Variant) -> bool:
+	if not morale is Dictionary or morale.is_empty(): return true
+	if not TerrainArmy.valid_team_morale(morale): return false
+	var values: PackedFloat64Array = native.call("get_formation_state", formation)
+	var refs: PackedInt64Array = native.call("formation_refs", formation)
+	for key: String in ["morale", "routed", "rally_rest"]:
+		var at := FORMATION_FIELDS.find(key)
+		if at < 0 or at >= values.size(): return false
+		values[at] = float(morale[key])
+	return bool(native.call("set_formation_state", formation, values, refs))
+
+
+## The team_morale of a native formation, for a crowd team leaving as a GD army (departure, split, clear).
+func team_morale_of(formation: int) -> Dictionary:
+	var state := formation_state(formation)
+	if state.is_empty(): return {}
+	return {"morale": clampf(float(state.morale), 0.0, 100.0), "routed": bool(state.routed), "rally_rest": maxf(0.0, float(state.rally_rest))}
 
 
 static func native_faction_of(team: Dictionary) -> int:
@@ -3886,6 +3927,10 @@ static func d5_append_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 				or not bool(crowd_site.crowd.set_post_holder(first + offset, int(post_holders.has(int(entry.person_id))))):
 				return D5Runtime.fail("INVALID_ROLE", "原人物軍官資格匯入失敗")
 		crowd_site.crowd.set_start_positions(first, starts)
+		# The team's carried morale state (a team back from the Region, or a crowd team cleared to GD) continues natively;
+		# written after its soldiers join, which re-derive the formation's fresh values.
+		if not apply_team_morale(crowd_site.crowd, formation, snapshot.get("team_morale", {})):
+			return D5Runtime.fail("INVALID", "原隊伍士氣狀態匯入失敗")
 		# Each person's troop is derived from actual gear by the native equip setter;
 		# the formation's class remains the original first member's weapon class.
 		var roster: Dictionary = snapshot.duplicate()

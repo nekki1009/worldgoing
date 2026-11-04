@@ -372,6 +372,11 @@ func _continue_army_visual_warmup() -> void:
 		get_tree().process_frame.disconnect(_continue_army_visual_warmup)
 
 func _notification(what: int) -> void:
+	# A selected restore stages its crowd outside the tree until the bind ticket passes; a Lab freed before that (a
+	# disposable bootstrap) frees the staged CrowdSite too, or its atlas host and textures leak.
+	if what == NOTIFICATION_PREDELETE and is_instance_valid(crowd_site) and crowd_site.get_parent() == null:
+		crowd_site.free()
+		return
 	if not pause_when_unfocused:
 		return
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
@@ -666,6 +671,10 @@ func bind_terrain(value: TerrainData, prepared: Dictionary = {}) -> void:
 	var duty_scope := _region_duty_enter()
 	_region_bind_original_terrain(value, prepared)
 	_region_duty_leave(duty_scope)
+	# A refused bind never adopts its staged CrowdSite candidate (outside the tree); free it so its atlas host and
+	# textures do not leak. An adopted or deferred candidate is this Lab's crowd_site and is kept.
+	var staged: Variant = prepared.get("crowd_site")
+	if is_instance_valid(staged) and staged != crowd_site and staged.get_parent() == null: staged.free()
 
 func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}) -> void:
 	var region_admission := _region_bind_ticket_admission(value, prepared)
@@ -846,8 +855,12 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# CrowdSite under --crowd, so one is attached for the arrival mark only. A refusal keeps the grid Site and is shown
 	# (never on a cold owner). This conversion never writes the save file; the mark clears only on success.
 	# Option C: any crowd-requested Site (new game start, ordinary save, legacy save) opens as crowd; only --grid keeps grid teams.
-	var legacy_convert: bool = crowd_startup_requested
-	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested()
+	# Nekki 2026-11-03: Region keeps the grid. A road-map live party Lab is never converted to crowd; its teams stay
+	# GD rosters there, and a road battle becomes a Site.
+	var party_bind: bool = str(_region_owner_bind_tickets.get(str(prepared.get("region_bind_token", "")), {}).get("kind", "")).begins_with("party") \
+		or not _region_party_token.is_empty() or terrain.has_meta(&"region_party_owner")
+	var legacy_convert: bool = crowd_startup_requested and not party_bind
+	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested() and not party_bind
 	if arrival_convert and (terrain.site.has("crowd") or not _has_active_grid_team()):
 		terrain.site.erase("crowd_convert_pending") # Nothing grid is left to convert.
 	elif (legacy_convert or arrival_convert) and not terrain.site.has("crowd") and _has_active_grid_team():
@@ -2931,7 +2944,7 @@ func _grid_army_active() -> bool:
 func _resolve_exchanges() -> void:
 	if terrain == null:
 		return
-	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_exchanges"): return
+	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_exchanges", self): return
 	_exchange_round += 1
 	var profile_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	var snapshot: RefCounted
@@ -4188,7 +4201,7 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 	return true
 
 func _resolve_combat_contacts() -> void:
-	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_combat_contacts"): return
+	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_combat_contacts", self): return
 	_combat_contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.fraction) < float(b.fraction))
 	var cursor := 0
 	while cursor < _combat_contacts.size():
@@ -8066,8 +8079,9 @@ func _region_point_effect(event: Dictionary) -> Dictionary:
 		var identity: int = int(event.person_id)
 		if crowd_site == null or not crowd_site.active or not crowd_site.contains_person(identity): return SiteRuntime.fail("STALE_REGION_LIFE_OWNER")
 		var owner: Variant = crowd_site.person_owner(identity)
-		if owner != packet.owner or int(owner.index_for_identity(identity)) != int(packet.unit) \
-			or not is_same(owner.combat_units.get(int(packet.unit)), packet.body): return SiteRuntime.fail("STALE_REGION_LIFE_OWNER")
+		# The owner is found again by its team, not held: a crowd owner object is no Region checkpoint reference.
+		if not owner is CrowdPersonOwner or int(owner.team_id) != int(packet.team_id) or int(owner.index_for_identity(identity)) != int(packet.unit) \
+			or int(owner.combat_units.get(int(packet.unit), {}).get("person_id", -1)) != identity: return SiteRuntime.fail("STALE_REGION_LIFE_OWNER")
 		crowd_site.apply_environment_damage(identity, float(packet.loss))
 		return site_controller.original_step_fault_guard()
 	if str(event.kind) == "native_manual_combat":
@@ -10964,6 +10978,49 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 		"game_seconds": float(interval.game_end), "action_seconds": float(interval.action_end)}
 
 
+## A party with every Dictionary's keys sorted (recursively), compared as bytes: order-free, value- and type-exact.
+static func _region_party_canonical(value: Variant) -> PackedByteArray:
+	return var_to_bytes(_region_sorted_copy(value))
+
+
+static func _region_sorted_copy(value: Variant) -> Variant:
+	if value is Dictionary:
+		var keys: Array = value.keys()
+		keys.sort_custom(func(a: Variant, b: Variant) -> bool: return var_to_str(a) < var_to_str(b))
+		var sorted := {}
+		for key: Variant in keys: sorted[key] = _region_sorted_copy(value[key])
+		return sorted
+	if value is Array:
+		var items: Array = []
+		for item: Variant in value: items.append(_region_sorted_copy(item))
+		return items
+	return value
+
+
+## Diagnostic for STALE_REGION_PARTY_BODY: the top-level party and content keys whose values differ.
+static func _region_party_diff_keys(a: Dictionary, b: Dictionary) -> Array[String]:
+	var result: Array[String] = []
+	for key: Variant in a.keys() + b.keys():
+		if key == "content" and a.get(key) is Dictionary and b.get(key) is Dictionary:
+			for field: Variant in a.content.keys() + b.content.keys():
+				if var_to_bytes(a.content.get(field)) != var_to_bytes(b.content.get(field)) and not result.has("content." + str(field)): result.append("content." + str(field))
+			if a.content.get("armies") is Array and b.content.get("armies") is Array:
+				for at: int in range(mini(a.content.armies.size(), b.content.armies.size())):
+					var x: Dictionary = a.content.armies[at]
+					var y: Dictionary = b.content.armies[at]
+					for k: Variant in x.keys() + y.keys():
+						if var_to_bytes(x.get(k)) != var_to_bytes(y.get(k)) and not result.has("armies[%d].%s" % [at, k]): result.append("armies[%d].%s" % [at, k])
+					if x.get("units") is Array and y.get("units") is Array:
+						for u: int in range(mini(x.units.size(), y.units.size())):
+							if x.units[u].keys() != y.units[u].keys(): result.append("units[%d] key order %s / %s" % [u, str(x.units[u].keys()).left(300), str(y.units[u].keys()).left(300)])
+							for k: Variant in x.units[u].keys() + y.units[u].keys():
+								if var_to_bytes(x.units[u].get(k)) != var_to_bytes(y.units[u].get(k)) and not result.has("units[%d].%s=%s/%s" % [u, k, str(x.units[u].get(k)), str(y.units[u].get(k))]) and result.size() < 40: result.append("units[%d].%s=%s:%d/%s:%d" % [u, k, str(x.units[u].get(k)).left(60), typeof(x.units[u].get(k)), str(y.units[u].get(k)).left(60), typeof(y.units[u].get(k))])
+					if var_to_bytes(x.get("combat_batches")) != var_to_bytes(y.get("combat_batches")): result.append("batches=%s/%s" % [str(x.get("combat_batches")), str(y.get("combat_batches"))])
+				if a.content.armies.size() != b.content.armies.size(): result.append("armies.size %d/%d" % [a.content.armies.size(), b.content.armies.size()])
+		elif var_to_bytes(a.get(key)) != var_to_bytes(b.get(key)) and not result.has(str(key)): result.append(str(key))
+	return result
+
+
 func _region_capture_original_party(original: TerrainLab, party: Dictionary, slot: RegionSaveSlot,
 		game_seconds: float = -1.0, action_seconds: float = -1.0, read_only: bool = false) -> Dictionary:
 	var state: Dictionary = original.terrain.site.duplicate(true) if read_only else original.terrain.site
@@ -11065,6 +11122,30 @@ func _region_original_family_reference(slot: RegionSaveSlot, original: TerrainLa
 # slot.region_contact_active_data = Callable(self,"_region_gameplay_contact_active_data")
 
 
+## Nekki 2026-11-03: a new game starts with the player plus this many cadres in one neutral team.
+const INITIAL_CADRES := 5
+
+## The start cell, then the nearest cells reachable from it by the walk graph, up to `count`.
+func _initial_team_cells(data: TerrainData, start: Vector2i, count: int) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if not data.is_walkable(start): return result
+	var seen := {start: true}
+	var pending: Array[Vector2i] = [start]
+	var cursor := 0
+	while cursor < pending.size() and result.size() < count:
+		var cell := pending[cursor]
+		cursor += 1
+		# Cadre stand on cells of the start's parity (diagonals, two steps out), never on its four neighbours: a grid
+		# captain boxed in by its own team (as on the road-map Lab) could not take a step.
+		var offset := cell - start
+		if cell == start or (absi(offset.x) + absi(offset.y)) % 2 == 0: result.append(cell)
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cell + direction
+			if seen.has(next) or not data.contains(next) or not data.can_step(cell, next): continue
+			seen[next] = true
+			pending.append(next)
+	return result
+
 func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
 	var pin: Variant = new_data.site.get("world_pin")
@@ -11092,19 +11173,76 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	starter.initialize_visual()
 	if not starter.place(start, true): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND"))
 	var snapshot := starter.capture_state()
-	# This newly born civilian has no military appointment. Choose lawful
-	# starting clothes before the original owner creates any equipment.
+	# Lawful starting clothes (no cape) before the original owner creates any equipment.
 	snapshot.appearance.parts.cape = "none"
 	starter.restore_state(snapshot)
-	var equipped : Dictionary = SiteRuntime.seed_person_equipment(candidate, starter.item_state, starter.person_id, snapshot.appearance)
+	snapshot = starter.capture_state()
+	# Neutral part 2 (shape b): the player is born as roster unit 0 and formal commander of a neutral team, never as a
+	# separate actor body. Nekki 2026-11-03: the start brings INITIAL_CADRES cadres (officers), not artisans. Bind restores
+	# this team and the crowd conversion (convert_existing) turns it into a crowd roster whose captain is the host-controlled
+	# person. The starter Actor above is only the source of the civilian look and personal fields; it is freed with staging.
+	var team := TerrainArmy.new()
+	team.name = "player_team"
+	team.team_id = maxi(1, int(candidate.site.get("army_next_team", 1)))
+	team.faction_id = RegionFactionQuery.NEUTRAL_FACTION_ID
+	team.role = "combat"
+	team.roster_size = 1 + INITIAL_CADRES
+	team.exchange_enabled = exchange_enabled
+	var player_ids: Array = [starter.person_id]
+	player_ids.append_array(_allocate_army_person_ids_for(INITIAL_CADRES, candidate, [starter], []))
+	if player_ids.size() != 1 + INITIAL_CADRES: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("PERSON_ID_EXHAUSTED"))
+	team.person_id_allocator = func(count: int) -> Array: return player_ids.duplicate() if count == player_ids.size() else []
+	staging.add_child(team)
+	team.set_process(false)
+	var player_cells := _initial_team_cells(candidate, start, player_ids.size())
+	if player_cells.size() != player_ids.size(): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND", "玩家隊伍出生格不足；未改變"))
+	if not team.deploy_at(candidate, null, null, player_cells) or not team.enable_combat(false) or team.combat_units.size() != player_ids.size() or team.combat_identity(0) != starter.person_id:
+		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍無法出生；未改變"))
+	# enable_combat seats unit 0 as the formal commander (an officer); the player keeps that seat.
+	if team.formal_commander != 0: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍沒有隊長；未改變"))
+	# The cadres: every other row is an officer holding an officer-service seat, with its own standard gear.
+	for index: int in range(1, team.combat_units.size()):
+		var cadre: Dictionary = team.combat_units[index]
+		cadre["military_role"] = "officer"
+		if not team.officer_service.has(index): team.officer_service.append(index)
+		if not team.officer_order.has(index): team.officer_order.append(index) # Succession order: the cadre are officers.
+		cadre["cargo"] = {}
+		cadre["item_state"] = {}
+		var cadre_items: Dictionary = SiteRuntime.seed_person_equipment(candidate, cadre.item_state, team.combat_identity(index), cadre.appearance)
+		if not cadre_items.ok: return _initial_artisan_birth_dispose(staging, cadre_items)
+	# Cadre follow posts (R1b): each cadre holds a vacant non-head team post in catalog order (工頭, 後勤官, ...), so no
+	# cadre is left 待分職 (which crowd admission refuses MIGRATION_REQUIRED).
+	var team_offices: Dictionary = team.team_offices()
+	for index: int in range(1, team.combat_units.size()):
+		var seated := false
+		for seat: Dictionary in team_offices.positions:
+			if not bool(seat.head) and int(seat.holder) <= 0:
+				seat.holder = team.combat_identity(index)
+				seated = true
+				break
+		if not seated: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_SPACE", "隊伍職位不足以安置開局幹部；未改變"))
+	var body: Dictionary = team.combat_units[0]
+	body["military_role"] = "officer"
+	body["appearance"] = snapshot.appearance.duplicate(true)
+	body["visual_role"] = "female_live" if int(snapshot.appearance.body) == 1 else "male_live"
+	body["combat_ability"] = float(snapshot.get("combat_ability", 50.0))
+	for field: String in ["personality", "technology", "social_state"]:
+		if snapshot.has(field): body[field] = snapshot[field].duplicate(true)
+	body["cargo"] = {}
+	body["item_state"] = {}
+	var equipped : Dictionary = SiteRuntime.seed_person_equipment(candidate, body.item_state, starter.person_id, body.appearance)
 	if not equipped.ok: return _initial_artisan_birth_dispose(staging, equipped)
-	candidate.site["actors"] = {"player": starter.capture_state()}
-	candidate.site["armies"] = []
+	if not TerrainArmy.prepare_contact_source_for(SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)):
+		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("MISSING_ASSET", "玩家外觀接觸資源未備妥；未改變"))
+	var player_team: Dictionary = team.capture_combat_state()
+	candidate.site["actors"] = {}
+	candidate.site["armies"] = [player_team]
 	candidate.site["actor_presence_version"] = 1
 	candidate.site["controlled_person_id"] = starter.person_id
-	candidate.site["next_person_id"] = maxi(starter.person_id + 1, int(candidate.site.get("next_person_id", 1)))
-	candidate.site["army_next_team"] = maxi(1, int(candidate.site.get("army_next_team", 1)))
-	for checked: Dictionary in [SiteStore._validate_actors(candidate, candidate.site), SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_items(candidate, candidate.site), SiteStore._validate_cape_roles(candidate.site)]:
+	candidate.site["next_person_id"] = maxi(int(player_ids.max()) + 1, int(candidate.site.get("next_person_id", 1)))
+	candidate.site["army_next_team"] = team.team_id + 1
+	if not TerrainArmy.valid_combat_state(player_team, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_ARMY", "玩家一人隊快照非法；未改變"))
+	for checked: Dictionary in [SiteStore._validate_actors(candidate, candidate.site), SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_armies(candidate, candidate.site, true), SiteStore._validate_items(candidate, candidate.site), SiteStore._validate_cape_roles(candidate.site)]:
 		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
 	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))
 
@@ -13057,8 +13195,10 @@ func capture_region_party_owner_graph(token: String, party: Dictionary, slot: Re
 		_region_party_input_hash = old_hash
 		terrain.set_meta(&"region_party_owner", old_owner)
 	if not original.ok: return original
-	if var_to_bytes(original.party) != var_to_bytes(party):
-		return SiteRuntime.fail("STALE_REGION_PARTY_BODY", "Original body/holder closure differs from submitted party")
+	# Key order is not part of the closure: a team row restored into this Lab's live TerrainArmy comes back with its
+	# hot fields in the Lab's own order. Values (and their types) must still match exactly.
+	if var_to_bytes(original.party) != var_to_bytes(party) and _region_party_canonical(original.party) != _region_party_canonical(party):
+		return SiteRuntime.fail("STALE_REGION_PARTY_BODY", "Original body/holder closure differs from submitted party: " + str(_region_party_diff_keys(original.party, party)))
 	var scene := capture_region_owner_state(context)
 	if not scene.ok: return scene
 	var transport := capture_region_fire_transport(context, scene.owner_states)
@@ -13898,7 +14038,7 @@ func _prepare_gd_mesh_work_point(seconds: float) -> Dictionary:
 
 func _advance_gd_mesh_work_to(fraction: float) -> void:
 	if _gd_mesh_work_point.is_empty(): return
-	if TerrainArmy.grid_simulation_retired("TerrainLab._advance_gd_mesh_work_to"): return
+	if TerrainArmy.grid_simulation_retired("TerrainLab._advance_gd_mesh_work_to", self): return
 	var end: float = float(_gd_mesh_work_point.seconds) * clampf(fraction, 0.0, 1.0)
 	var begin: float = float(_gd_mesh_work_point.elapsed)
 	var seconds: float = end - begin
@@ -14973,9 +15113,9 @@ func _region_defer_native_environment_damage(identity: int, loss: float) -> bool
 	if not owner is CrowdPersonOwner: return false
 	var unit := int(owner.index_for_identity(identity))
 	if unit < 0 or not owner.combat_units.has(unit): return false
-	# Store original refs; never duplicate the original body/people map.
+	# Team, unit and person identify the body; no object or row is held, so a Region checkpoint can carry it.
 	_region_point_contacts.append({"kind": "native_environment", "person_id": identity,
-		"packet": {"owner": owner, "unit": unit, "body": owner.combat_units[unit], "loss": loss, "environmental": true}})
+		"packet": {"team_id": int(owner.team_id), "unit": unit, "loss": loss, "environmental": true}})
 	return true
 
 func native_checked_forecast_hp(identity: int) -> float:

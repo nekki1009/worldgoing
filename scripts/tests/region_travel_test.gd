@@ -142,6 +142,9 @@ func _free_cells(around: Vector2i, count: int) -> Array[Vector2i]:
 				var taken := false
 				for actor: TerrainTestCharacter in lab.combat_actors:
 					taken = taken or actor.occupies_cell(cell)
+				# The start team already stands on its cells (the player is one of its rows), so those are taken too.
+				for team: TerrainArmy in lab.combat_armies:
+					for occupied: Vector2i in team.cells: taken = taken or occupied == cell
 				if not taken: result.append(cell)
 	return result
 
@@ -149,14 +152,14 @@ func _free_cells(around: Vector2i, count: int) -> Array[Vector2i]:
 ## bind. A hidden absent NPC template cannot witness a nearby enemy refusal.
 func _make_original_test_npc() -> bool:
 	var candidate := Env.navigation_for_state(lab.terrain, lab.terrain.site.duplicate(true))
-	var cells := _free_cells(lab.character.terrain_cell, 1)
+	var cells := _free_cells(_player_cell(), 1)
 	if not _must(cells.size() == 1 and not candidate.site.actors.has("npc"), "Original test NPC needs an unused real cell and actor slot"): return false
 	var ids: Array[int] = lab._allocate_army_person_ids_for(1, candidate, lab.combat_actors, lab.combat_armies)
 	if not _must(ids.size() == 1, "Original person allocator did not reserve the test NPC"): return false
 	var original := TerrainTestNPC.new()
 	original.person_id = ids[0]
 	original.data = candidate
-	original.faction_id = lab.character.faction_id
+	original.faction_id = 0 # Civilian template faction (TerrainTestCharacter default); the start team joins it in _make_team.
 	original.visible = false
 	lab.add_child(original)
 	original.set_process(false)
@@ -180,42 +183,47 @@ func _make_original_test_npc() -> bool:
 	return _must(lab.terrain == candidate and lab.actor_present(lab.npc) and lab.npc.person_id == ids[0]
 		and lab.npc.can_act() and lab.npc.terrain_cell == cells[0], "Original bind did not publish the real living NPC")
 
+## The player's start team (Nekki 2026-11-03) is already live: bind restores it with the player as unit 0 and
+## formal captain, and TerrainLab.INITIAL_CADRES cadres as rows 1..n. No actor body joins it, so the fixture
+## only adds the vehicles and cargo to that team.
+func _team_size() -> int:
+	return 1 + TerrainLab.INITIAL_CADRES
+
+## The player's original body cell, read from the team row (the absent lab.character template has no cell).
+func _player_cell() -> Vector2i:
+	var target: Dictionary = lab._original_person_target(lab.controlled_person_id())
+	if not _must(not target.is_empty(), "Player start team has no original body cell"): return Vector2i.ZERO
+	return target.cell
+
 func _make_team() -> TerrainArmy:
-	var team: TerrainArmy = lab.army
-	team.faction_id = lab.character.faction_id
-	team.team_id = lab._next_army_identity()
-	team.roster_size = 4
-	var cells := _free_cells(lab.character.terrain_cell, 4)
-	# Plan before the formation stands on its cells (original setup order): a
-	# wagon driver rides inside the footprint, so planning after deployment
-	# would see the driver itself as a blocker and leave the wagon parked.
+	var team: TerrainArmy = lab.player_army()
+	if not _must(team != null and team.combat_units.size() == _team_size() and team.combat_identity(0) == lab.controlled_person_id()
+		and team.faction_id in [RegionFactionQuery.NEUTRAL_FACTION_ID, 0], "Start team is not the player's start team"): return null
+	# Stand-in for the pending join relabel: the start team joins faction 0, the fixture NPC's faction, as the old actor
+	# player was. Neutral is hostile to everyone, so a neutral team beside the friendly NPC could never depart.
+	team.faction_id = 0
+	# A formation of the start team's own cells is the planning footprint (the wagon driver rides inside it). No
+	# free cells are needed, because the team already stands there and plan_team only avoids the formation itself.
+	# The start team is born on adjacent cells; spread the cadres onto free ring cells around the captain first, as the old
+	# fixture deployed its team, so a wagon fits beside a driver.
+	var spread := _free_cells(team.cells[0], team.combat_units.size() - 1)
+	if not _must(spread.size() == team.combat_units.size() - 1, "No free cells to spread the start team"): return null
+	for index: int in range(1, team.combat_units.size()): team.cells[index] = spread[index - 1]
+	var cells: Array[Vector2i] = team.cells.duplicate()
 	var plan: Dictionary = controller.vehicles.plan_team(team.team_id, 1, 1, cells)
 	if not _must(plan.ok, "Vehicle plan failed: " + str(plan)): return null
 	var drivers := 0
 	for planned: Dictionary in plan.plan: drivers += 1 if int(planned.operator_index) >= 0 else 0
 	if not _must(drivers == plan.plan.size(), "Original planner gives every fixture vehicle a driver: " + str(plan.plan)): return null
-	if not _must(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false, 0), "Team deployment failed"): return null
-	lab.terrain.site.army_next_team = team.team_id + 1
-	lab.terrain.site.army_trial_active = true
-	_freeze()
-	var joined: Dictionary = lab.join_player_army()
-	if not _must(joined.ok, "Player could not join: " + str(joined)): return null
-	# A captain needs the officer role and command abilities (original rule).
-	lab.character.military_role = "officer"
-	lab.character.command_abilities = {"tactics": 60, "leadership": 60, "coach": 40}
-	team.formal_commander = TerrainArmy.PLAYER_MEMBER
-	team.current_commander = TerrainArmy.PLAYER_MEMBER
-	team.acting_commander = -1
-	team.player_present = true
-	team._command_dirty = true
-	team.settle_combat_command()
-	if not _must(team.formal_commander == TerrainArmy.PLAYER_MEMBER, "Player did not stay captain: %d" % team.formal_commander): return null
+	# The captain is the start team's formal commander: birth seats unit 0 as an officer (original rule). No
+	# separate join and no command-ability fixture is needed; the start team already holds both.
+	if not _must(team.formal_commander == 0 and lab.controlled_member_index(team) == 0, "Player did not stay captain: %d" % team.formal_commander): return null
 	var deployed: Dictionary = controller.vehicles.deploy_plan(team, plan.plan)
 	if not _must(deployed.ok, "Vehicle deploy failed: " + str(deployed)): return null
 	for vehicle: Dictionary in controller.vehicles.records().values():
 		if int(vehicle.team_id) == team.team_id and str(vehicle.kind) == "wagon": vehicle.cargo = {"wood": 7}
-	lab.terrain.site.manual.cargo = {"grain": 3}
-	lab.character.ammo_inventory = lab.terrain.site.manual.cargo
+	# The player's hand cargo is its own roster row's cargo (no player actor, so not site.manual).
+	team.combat_units[0]["cargo"] = {"grain": 3}
 	return team
 
 func _state_census(state: Dictionary, people: Array, vehicles: Array) -> Dictionary:
@@ -316,8 +324,8 @@ func _captain_trip() -> bool:
 	var initial_save := controller.save_to(controller.save_path)
 	if not _must(initial_save.ok, "Initial save failed: " + str(initial_save)): return false
 	var people: Array = []
+	# The player is one of the team's rows now, so the team census already includes the player.
 	for index: int in range(team.combat_units.size()): people.append(team.combat_identity(index))
-	people.append(lab.character.person_id)
 	people.sort()
 	var vehicles: Array = []
 	for vehicle: Dictionary in controller.vehicles.records().values():
@@ -337,9 +345,10 @@ func _captain_trip() -> bool:
 	if not _must(not refused.ok and refused.code == "NOT_READY", "Departure with a downed member was not refused: " + str(refused)): return false
 	var npc_faction := lab.npc.faction_id
 	lab.npc.faction_id = npc_faction + 77
-	var enemy_cell := lab.character.terrain_cell + Vector2i(6, 0)
+	# Neutral is hostile to every other faction, so the NPC (faction 77 here) is an enemy of the start team (faction 255).
+	var enemy_cell := _player_cell() + Vector2i(6, 0)
 	if not _must(lab.npc.place(enemy_cell, true) and lab.actor_present(lab.npc) and lab.npc.can_act()
-		and lab.npc.terrain_cell == enemy_cell and lab.npc.faction_id != lab.character.faction_id, "Enemy refusal requires a real present living hostile body in range"): return false
+		and lab.npc.terrain_cell == enemy_cell and lab.npc.faction_id != team.faction_id, "Enemy refusal requires a real present living hostile body in range"): return false
 	refused = RegionTravelSite.depart(controller)
 	lab.npc.faction_id = npc_faction
 	if not _must(not refused.ok and refused.code == "IN_COMBAT", "Departure beside an enemy was not refused: " + str(refused)): return false
@@ -428,11 +437,13 @@ func _captain_trip() -> bool:
 	if not _must(landed.people == people and landed.items == initial.items and landed.vehicles == vehicles and landed.cargo == initial.cargo, "Arrival lost or changed people/items/vehicles: " + str(landed)): return false
 	var origin_after := _state_census(_saved_state(destination_slot, from), people, vehicles)
 	if not _must(origin_after.people.is_empty() and origin_after.items.is_empty(), "Origin save gained a duplicate"): return false
-	if not _must(lab.terrain.site.manual.cargo == {"grain": 3}, "Hand cargo changed"): return false
+	var carried: Dictionary = lab._original_person_target(lab.controlled_person_id())
+	if not _must(not carried.is_empty() and int(carried.unit) >= 0 and carried.owner.combat_units[int(carried.unit)].get("cargo", {}) == {"grain": 3}, "Hand cargo changed"): return false
 	var arrived_team: TerrainArmy = lab.player_army()
-	if not _must(arrived_team != null and arrived_team.combat_units.size() == 4 and arrived_team.formal_commander == TerrainArmy.PLAYER_MEMBER, "Team or captaincy not restored"): return false
+	if not _must(arrived_team != null and arrived_team.combat_units.size() == _team_size() and arrived_team.formal_commander == 0
+		and lab.controlled_member_index(arrived_team) == 0, "Team or captaincy not restored"): return false
 	var entry := RegionRoute.entry_cell(route.steps.back())
-	var leader := lab.character.terrain_cell
+	var leader := _player_cell()
 	if not _must(absi(leader.x - entry.x) + absi(leader.y - entry.y) <= 6, "Party did not land beside the entry pass %s (leader %s)" % [entry, leader]): return false
 	var replay := destination_slot.commit_region_arrival(lab.terrain)
 	if not _must(not replay.ok, "A committed arrival could be replayed"): return false
@@ -489,13 +500,20 @@ func _reopen_mid_journey(slot: RegionSaveSlot, people: Array) -> bool:
 
 func _solo_trip() -> bool:
 	var team: TerrainArmy = lab.player_army()
-	team.formal_commander = 0
-	team.current_commander = 0
-	team.combat_units[0].military_role = "officer"
+	if not _must(team != null and team.combat_units.size() == _team_size(), "Solo fixture starts from the whole start team"): return false
+	var me := lab.controlled_person_id()
+	# The player (row 0) is the captain, and a captain never leaves alone. Captaincy passes to the first cadre (row 1), so
+	# the player becomes a non-captain row that may leave alone. Still the same solo meaning: one person travels, the team stays.
+	team.formal_commander = 1
+	team.current_commander = 1
+	team.acting_commander = -1
+	team._command_dirty = true
+	team.settle_combat_command()
+	if not _must(team.formal_commander == 1 and lab.controlled_member_index(team) == 0, "Captaincy did not pass to the cadre"): return false
 	var team_people: Array = []
-	for index: int in range(team.combat_units.size()): team_people.append(team.combat_identity(index))
+	for index: int in range(team.combat_units.size()):
+		if team.combat_identity(index) != me: team_people.append(team.combat_identity(index))
 	team_people.sort()
-	var me := lab.character.person_id
 	var from: Vector2i = controller._current_region_site()
 	var slot: RegionSaveSlot = controller.region_slot
 	var departed := RegionTravelSite.depart(controller)
@@ -503,7 +521,8 @@ func _solo_trip() -> bool:
 	if not _bind_original_travel_host(slot): return false
 	var party: Dictionary = slot.region_travel_party().party
 	var census := RegionTravel.census(party)
-	if not _must(census.people == [me] and census.vehicles.is_empty() and party.team_ids.is_empty(), "Solo party carried the team: " + str(census)): return false
+	# The player is a roster row now: the solo leaves in its own detached container, never the start team itself.
+	if not _must(census.people == [me] and census.vehicles.is_empty() and not party.team_ids.has(team.team_id) and party.team_ids.size() <= 1, "Solo party carried the team: " + str(census) + " team_ids=" + str(party.team_ids) + " team=" + str(team.team_id)): return false
 	var stayed := _state_census(_saved_state(slot, from), team_people, [])
 	if not _must(stayed.people == team_people, "Team did not stay behind"): return false
 	for army: Dictionary in _saved_state(slot, from).armies:
@@ -520,7 +539,9 @@ func _solo_trip() -> bool:
 	if not _must(arrived.ok, "Solo arrival failed: " + str(arrived)): return false
 	_freeze()
 	var here := _state_census(lab.terrain.site, [me] + team_people, [])
-	if not _must(here.people == [me] and lab.player_army() == null, "Solo arrival brought the team or lost the player"): return false
+	# The cadre player arrives as the captain of its own one-person team (never the start team).
+	var own: TerrainArmy = lab.player_army()
+	if not _must(here.people == [me] and own != null and own.combat_units.size() == 1 and own.combat_identity(0) == me and own.formal_commander == 0, "Solo arrival brought the team or lost the player"): return false
 	report["solo_trip"] = {"from": [from.x, from.y], "to": [to.x, to.y], "game_seconds": float(route.metres) / RegionTravel.WALK_MPS}
 	return true
 

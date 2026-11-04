@@ -32,6 +32,19 @@ func _freeze_scene(scene: TerrainLab) -> void:
 	for actor: TerrainTestCharacter in scene.combat_actors: actor.set_process(false)
 	for team: TerrainArmy in scene.combat_armies: team.set_process(false)
 
+## The controlled person is a roster row (a crowd person on a Site, a GD unit on a Party Lab), not the absent
+## actor template, so its HP is read through the person-generic accessor.
+var cadence_id := 0
+
+## The reopened Lab carries the seeded actor cadence on the same person.
+func _cadence_kept(scene: TerrainLab) -> bool:
+	for actor: Variant in scene._fatigue_work_seconds:
+		if actor is TerrainTestCharacter and actor.person_id == cadence_id and is_equal_approx(float(scene._fatigue_work_seconds[actor]), 0.625): return true
+	return false
+
+func _controlled_hp(scene: TerrainLab) -> float:
+	return float(scene._original_person_target(scene.controlled_person_id()).get("hp", -1.0))
+
 func _new_actual_scene() -> TerrainLab:
 	var packed := load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene
 	if packed == null: return null
@@ -62,14 +75,23 @@ func _run() -> void:
 	lab._exchange_phase = 0.375
 	lab._exchange_round = 9
 	controller._work_elapsed = 0.625
-	lab._fatigue_work_seconds[lab.character] = 0.625
+	# The actor fatigue-work cadence belongs to actor bodies. The new-game player is a roster person (its fatigue is on its
+	# row), so the cadence is seeded on an actor only when this Site has one (cadence_id 0: none to carry).
+	var cadence_actor: TerrainTestCharacter = lab.character if lab.actor_present(lab.character) else (lab.npc if lab.actor_present(lab.npc) else null)
+	cadence_id = cadence_actor.person_id if cadence_actor != null else 0
+	if cadence_actor != null: lab._fatigue_work_seconds[cadence_actor] = 0.625
 	lab._region_point_pending = {"interval_complete": true, "fire_action_begin": lab.fire_action_cursor,
 		"fire_action_end": lab.fire_action_cursor}
 	var begin: Dictionary = lab._begin_fire_boundary(lab.fire_action_cursor)
 	if not _selected_check(begin.ok, "Original active Site creates its pending endpoint", begin): _finish_selected(); return
-	var hp_before := lab.character.hp
-	lab.character.apply_contact({"result": {"hp": 3.0, "stun": 0.0, "guard_break": false}, "shield": false, "environmental": true})
-	if not _selected_check(lab.character.hp == hp_before and lab._region_point_contacts.size() == 1,
+	var hp_before := _controlled_hp(lab)
+	# The new-game player is a crowd roster person, not the actor template. Its environmental life damage goes through
+	# the product crowd path (CrowdSite.apply_environment_damage), which defers to the same pending point while it is open.
+	if lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site.contains_person(lab.controlled_person_id()):
+		lab.crowd_site.apply_environment_damage(lab.controlled_person_id(), 3.0)
+	else:
+		lab.character.apply_contact({"result": {"hp": 3.0, "stun": 0.0, "guard_break": false}, "shield": false, "environmental": true})
+	if not _selected_check(_controlled_hp(lab) == hp_before and lab._region_point_contacts.size() == 1,
 		"Original pending sink retains unconsumed actual player contact"): _finish_selected(); return
 	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_barrier", false, lab._region_point_pending)
 	if not _selected_check(checkpoint.ok and int(original_slot._marker.generation) == initial_generation + 1,
@@ -102,12 +124,12 @@ func _run() -> void:
 		and int(reopened._marker.generation) == selected_generation and resumed.get_child_count() == child_count,
 		"Selected restore validates real disposable bootstrap then frees it without a marker", prepared): _finish_selected(); return
 	var original_resumed_data: TerrainData = resumed.terrain
-	var original_resumed_hp := resumed.character.hp
+	var original_resumed_hp := _controlled_hp(resumed)
 	# Fault injection in the actual Slot object. Disk still selects the complete old
 	# marker; the old private permit must reject the changed in-memory generation.
 	reopened._marker.generation = selected_generation + 1
 	resumed.bind_terrain(prepared.data, prepared)
-	_selected_check(resumed.terrain == original_resumed_data and resumed.character.hp == original_resumed_hp,
+	_selected_check(resumed.terrain == original_resumed_data and _controlled_hp(resumed) == original_resumed_hp,
 		"Stale actual Slot generation rejects before old scene/body destruction")
 	reopened._marker.generation = selected_generation
 	var selected_path := reopened.site_path(Vector2i.ZERO)
@@ -117,7 +139,7 @@ func _run() -> void:
 	file.store_string("\n")
 	file.close()
 	resumed.bind_terrain(prepared.data, prepared)
-	_selected_check(resumed.terrain == original_resumed_data and resumed.character.hp == original_resumed_hp,
+	_selected_check(resumed.terrain == original_resumed_data and _controlled_hp(resumed) == original_resumed_hp,
 		"Changed selected file SHA rejects before mutation even when JSON still parses")
 	file = FileAccess.open(selected_path, FileAccess.WRITE)
 	file.store_buffer(selected_bytes)
@@ -131,20 +153,20 @@ func _run() -> void:
 	if not _selected_check(receipt.ok and receipt.complete and receipt.owners_restored
 		and not receipt.effects_complete and receipt.zero_world_only and int(reopened._marker.generation) == selected_generation,
 		"Real selected main bind restores complete original owners at the same durable generation", receipt): _finish_selected(); return
-	_selected_check(resumed.character.hp == hp_before and resumed._region_point_contacts.size() == 1
+	_selected_check(_controlled_hp(resumed) == hp_before and resumed._region_point_contacts.size() == 1
 		and is_equal_approx(resumed.site_controller._work_elapsed, 0.625)
-		and resumed._fatigue_work_seconds.has(resumed.character)
+		and (cadence_id == 0 and resumed._fatigue_work_seconds.is_empty() or _cadence_kept(resumed))
 		and resumed._exchange_round == 9 and is_equal_approx(resumed._exchange_phase, 0.375),
 		"Reopened main keeps original queue, P0 progress, cadence and actual Node aliases")
 	var game_before := float(reopened.control.logical_game_seconds)
 	var action_before := float(reopened.control.fire_clock.action_seconds)
 	var done: Dictionary = resumed.consume_region_point(false)
 	if not _selected_check(done.ok and done.complete, "Original main consumes restored effects at zero time", done): _finish_selected(); return
-	_selected_check(resumed.character.hp == hp_before - 3.0 and float(reopened.control.logical_game_seconds) == game_before
+	_selected_check(_controlled_hp(resumed) == hp_before - 3.0 and float(reopened.control.logical_game_seconds) == game_before
 		and float(reopened.control.fire_clock.action_seconds) == action_before and int(reopened._marker.generation) == selected_generation,
 		"Accepted damage is applied once without clock advance or hidden checkpoint")
 	var retry: Dictionary = resumed.consume_region_point(false)
-	_selected_check(retry.ok and resumed.character.hp == hp_before - 3.0, "Same-time consumer retry preserves original HP")
+	_selected_check(retry.ok and _controlled_hp(resumed) == hp_before - 3.0, "Same-time consumer retry preserves original HP")
 	_finish_selected()
 
 func _finish_selected(ok: bool = true, message: String = "") -> void:
@@ -163,6 +185,9 @@ func _finish_selected(ok: bool = true, message: String = "") -> void:
 			file.close()
 		else: DirAccess.remove_absolute(ProjectSettings.globalize_path(Entry.LAST_WORLD))
 	TerrainArmy.release_contact_source()
+	# A crowd Site (the new-game start team) queues its atlas/presenter nodes for deletion; let them go before quit.
+	await process_frame
+	await process_frame
 	print("REGION_GAMEPLAY_SELECTED_RESTORE_", "FAILED" if selected_failed else "PASS", " checks=", selected_checks,
 		" scope=real_slot_marker_readback_main_selected_bind_stale_generation_sha_point_once")
 	quit(1 if selected_failed else 0)

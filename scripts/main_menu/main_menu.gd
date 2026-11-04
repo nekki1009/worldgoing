@@ -525,16 +525,14 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	_initial_scenario = OptionButton.new()
 	_initial_scenario.name = "InitialArtisanScenario"
 	_initial_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_initial_scenario.add_item("原營地與有限工匠隊（5人）")
-	_initial_scenario.set_item_metadata(0, TechnologyArtisans.PRIMARY)
-	_initial_scenario.add_item("三方有限工匠隊（各5人）")
-	_initial_scenario.set_item_metadata(1, TechnologyArtisans.THREE_FACTIONS)
-	_initial_scenario.add_item("原開局；不配置起始工匠")
-	_initial_scenario.set_item_metadata(2, "")
+	# Nekki 2026-11-03: a new game starts with cadres, not artisans. The player captains a neutral team with
+	# TerrainLab.INITIAL_CADRES cadres. The artisan scenarios stay available to tests only, not in the menu.
+	_initial_scenario.add_item("玩家與 %d 名幹部（中立隊）" % TerrainLab.INITIAL_CADRES)
+	_initial_scenario.set_item_metadata(0, "")
 	parent.add_child(_initial_scenario)
 	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))
 	for index: int in _initial_scenario.item_count:
 		if str(_initial_scenario.get_item_metadata(index)) == draft_id: _initial_scenario.select(index)
 	_initial_scenario.item_selected.connect(func(index: int) -> void:
 		RegionEntry.draft["initial_scenario_id"] = str(_initial_scenario.get_item_metadata(index)))
-	_label(parent, "工匠僅在本世界已開放類別配置技藝；其他成員不自動學會。起點須能合法安置各隊。", 14)
+	_label(parent, "你是隊長；幹部都是軍官，可以各自帶人分隊。起點須能合法安置整隊。", 14)

@@ -146,6 +146,15 @@ func _run() -> void:
 	_freeze(lab)
 	slot = controller.region_slot
 	if not _check(slot != null, "Region slot exists after the fixed world binds"): return
+	# Neutral part 2: the bind opens the Site as a live native crowd (the player's start team); clear it to GD first.
+	var bind_live: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bind_live.get("complete") == true and str(bind_live.get("backend", "")) == "native" and lab.crowd_site.active, "a new world binds straight into a live native crowd", bind_live): return
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared): return
+	# Stand-in for the pending join relabel: the player's start team joins the friendly faction 0, as the old actor
+	# player was. Neutral is hostile to everyone, so a neutral player beside the test team would block its departure.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == lab.controlled_person_id(): team.faction_id = 0
 	var site_id := str(lab.terrain.site.id)
 	var centre: Vector2i = lab.terrain.spawn_cell
 	if not _check(centre != Vector2i(-1, -1), "Region fixed world has a legal spawn cell", centre): return
@@ -156,7 +165,7 @@ func _run() -> void:
 	var gd_sides: Array[Dictionary] = [_side(gd_cells.size(), 0)]
 	var gd_formations: Array = [gd_cells]
 	lab.crowd_site = null
-	var gd_deployed: Dictionary = lab._deploy_trial_teams(gd_sides, gd_formations, 0)
+	var gd_deployed: Dictionary = lab._deploy_trial_teams(gd_sides, gd_formations, 1) # Slot 0 holds the player team.
 	lab.crowd_site = inactive
 	if not _check(gd_deployed.ok, "original GD team deploys before native activation", gd_deployed): return
 
@@ -173,8 +182,12 @@ func _run() -> void:
 	if not _check(crowd.has_method("order_serials") and crowd.has_method("set_order_serials"), "ArmyCrowd exposes the ORDSERIAL counters"): return
 
 	# GD -> crowd: the imported team's native counters equal its original TerrainArmy's.
-	if not _check(lab.crowd_site._original_team_plans.size() == 1, "exactly the one original team was imported", lab.crowd_site._original_team_plans.size()): return
-	var source: TerrainArmy = lab.crowd_site._original_team_plans[0].source
+	# The player team (slot 0) is imported too; the original fixture team is the other one.
+	if not _check(lab.crowd_site._original_team_plans.size() == 2, "the player team and the one original team were imported", lab.crowd_site._original_team_plans.size()): return
+	var source: TerrainArmy = null
+	for plan: Variant in lab.crowd_site._original_team_plans:
+		if plan.source.combat_identity(0) != lab.controlled_person_id(): source = plan.source
+	if not _check(source != null, "the original fixture team was imported"): return
 	var imported: Variant = null
 	for team: Variant in AI.command_team_owners(lab):
 		if int(team.team_id) == int(source.team_id): imported = team
@@ -188,7 +201,8 @@ func _run() -> void:
 	# Crowd-deployed sides take team ids in side order; the imported original team keeps its own id.
 	var crowd_rows: Array = []
 	for row: Dictionary in lab.crowd_site.teams:
-		if not bool(row.get("solo", false)) and int(row.team_id) != int(source.team_id): crowd_rows.append(row)
+		# The player's start team was imported from GD as well; it is neither a crowd-deployed side nor the fixture team.
+		if not bool(row.get("solo", false)) and int(row.team_id) != int(source.team_id) and not row.person_ids.has(lab.controlled_person_id()): crowd_rows.append(row)
 	crowd_rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.team_id) < int(b.team_id))
 	if not _check(crowd_rows.size() == 3, "the crowd has the HQ, receiving and enemy teams", crowd_rows.size()): return
 	var hq_team: Dictionary = crowd_rows[0]

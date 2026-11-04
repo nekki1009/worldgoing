@@ -560,7 +560,7 @@ static func prepare(host: Node) -> Dictionary:
 	layout["move_goal_exclusions"] = move_goals.goals
 	for record: Dictionary in state.actors.values():
 		if host.contains_person(int(record.person_id)): _apply_actor_cell(record, layout.cells[int(record.person_id)])
-	state["player_cell"] = lab.terrain.index(_cell(state.actors.player.cell))
+	_player_cell(lab, state, layout.cells) # Neutral part 2: the player may be a crowd roster captain with no actor.
 	if state.actors.has("npc"): state.worker.cell = lab.terrain.index(_cell(state.actors.npc.cell))
 	var guarded_ids: Dictionary = {}
 	for identity: int in confined: guarded_ids[identity] = true
@@ -625,7 +625,7 @@ static func prepare(host: Node) -> Dictionary:
 	# reach the original MOVE planner, Store validators or runtime occupancy.
 	for cell: Vector2i in move_goals.claimed: occupancy.claimed.erase(cell)
 	layout["claimed"] = occupancy.claimed
-	state["player_cell"] = lab.terrain.index(_cell(state.actors.player.cell))
+	_player_cell(lab, state, layout.cells) # Neutral part 2: the player may be a crowd roster captain with no actor.
 	if state.actors.has("npc"): state.worker.cell = lab.terrain.index(_cell(state.actors.npc.cell))
 	var registry: SiteDeploymentReservationRegistry = lab.combat_movement_coordinator.deployment_registry
 	var leases: Dictionary = registry.prepare_handoff(returning)
@@ -968,8 +968,10 @@ static func roster_snapshot(host: Node, original: Dictionary, cadre: int = -1) -
 	snapshot["pursuit_left"] = maxf(0.0, float(snapshot.pursuit_left))
 	snapshot["_order_delay"] = maxf(0.0, float(snapshot._order_delay))
 	var service: Array = []
+	# Cadre (officer_service) are roster truth: native officer_persons can be empty for seated cadre (the new-game start
+	# team), so every still-present cadre row is kept, not only those native also lists as officers.
 	for index: Variant in original.get("officer_service", []):
-		if snapshot.officers.has(int(index)) and not service.has(int(index)): service.append(int(index))
+		if int(index) >= 0 and int(index) < snapshot.units.size() and not service.has(int(index)): service.append(int(index))
 	for index: Variant in snapshot.officers:
 		if not service.has(int(index)): service.append(int(index))
 	snapshot["officer_service"] = service
@@ -977,4 +979,14 @@ static func roster_snapshot(host: Node, original: Dictionary, cadre: int = -1) -
 		snapshot.erase(key)
 	snapshot["rescues"] = []
 	snapshot["vacancies"] = []
+	# Nekki 2026-11-04: morale, rout and rally leave with the team (a team may break off routed or mid-fight).
+	snapshot["team_morale"] = host.team_morale_of(int(original.crowd_formation))
 	return SiteRuntime.ok("", {"snapshot": snapshot})
+
+
+## state.player_cell follows the player actor, or else the controlled roster person's handoff cell; otherwise it is kept.
+static func _player_cell(lab: TerrainLab, state: Dictionary, cells: Dictionary) -> void:
+	if state.actors.has("player"):
+		state["player_cell"] = lab.terrain.index(_cell(state.actors.player.cell))
+	elif cells.has(int(lab.controlled_person_id())):
+		state["player_cell"] = lab.terrain.index(cells[int(lab.controlled_person_id())])

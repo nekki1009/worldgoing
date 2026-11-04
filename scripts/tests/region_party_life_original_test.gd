@@ -7,7 +7,11 @@ const EPS := 0.000001
 var live_slot: RegionSaveSlot
 var live_token := ""
 var life_event_id := ""
-var live_body: TerrainTestCharacter
+## The controlled person is a roster row on this Party Lab (a GD TerrainArmy unit); the player is
+## no longer an actor body. Its body is the owner object plus unit index, read through the lab accessor.
+var live_identity := -1
+var live_owner: Variant
+var live_unit := -1
 var live_data: TerrainData
 
 func _run() -> void:
@@ -52,9 +56,9 @@ func _run() -> void:
 	if not _selected_check(live_slot.get_meta(&"region_party_owner_labs", {}).get(live_token) == lab
 			and live_slot._region_original_labs.get(origin_owner) != lab and str(live_slot.control.active_site_id).is_empty(),
 		"Current Party owns its true Lab and origin cache cannot reuse that body"): _finish_selected(); return
-	live_body = lab.character
+	_bind_live_body(lab)
 	live_data = lab.terrain
-	var holder: Dictionary = live_body.item_state
+	var holder: Dictionary = _live_row().item_state
 	var game := float(live_slot.control.logical_game_seconds)
 	var action := float(live_slot.control.fire_clock.action_seconds)
 	var sequence := int(live_slot.control.fire_clock.sequence)
@@ -67,8 +71,8 @@ func _run() -> void:
 		action += float(result.action_seconds)
 		var actual := live_slot.region_travel_party()
 		var proof := live_slot.region_original_party_runtime_proof(live_token, actual.party)
-		if not _selected_check(proof.ok and proof.lab == lab and lab.terrain == live_data and lab.character == live_body
-				and live_body.data == live_data and is_same(live_body.item_state, holder)
+		if not _selected_check(proof.ok and proof.lab == lab and lab.terrain == live_data and _holds_live_body(lab)
+				and live_owner.data == live_data and is_same(_live_row().item_state, holder)
 				and int(live_slot.control.fire_clock.sequence) == sequence + index + 1
 				and absf(float(live_slot.control.logical_game_seconds) - game) <= EPS
 				and absf(float(live_slot.control.fire_clock.action_seconds) - action) <= EPS,
@@ -85,9 +89,9 @@ func _run() -> void:
 			and not live_slot._region_family_new_generation(actual_context.context, int(selected.proof.generation) + 1),
 		"Authenticated genuine Party file context binds its capture generation; a fabricated later Family receipt G refuses", actual_context):
 		_finish_selected(); return
-	var identity := live_body.person_id
+	var identity := live_identity
 	var reference: Dictionary = selected.party.content.travel_identity.refs.person[str(identity)]
-	var hp := live_body.hp
+	var hp := _live_hp()
 	life_event_id = "travel:%s:life:777" % live_token
 	var payload := {"kind": "supply_damage", "sequence": 777, "person_id": identity, "old_hp": hp, "loss": 3.0,
 		"ending_hp": hp - 3.0, "controlled": true, "death": false, "at": game, "status": "pending",
@@ -99,13 +103,13 @@ func _run() -> void:
 	var original_ref: Dictionary = endpoint.payload.person_reference.duplicate(true)
 	endpoint.payload.person_reference.namespace += ":wrong"
 	var wrong_ref := live_slot._region_life_original_owner(endpoint)
-	_selected_check(not wrong_ref.ok and lab.character == live_body and live_body.hp == hp and int(live_slot._marker.generation) == generation,
+	_selected_check(not wrong_ref.ok and _holds_live_body(lab) and _live_hp() == hp and int(live_slot._marker.generation) == generation,
 		"Wrong typed lineage refuses before original HP/owner/marker mutation", wrong_ref)
 	endpoint.payload.person_reference = original_ref
 	var source_generation := int(endpoint.payload.party_source_proof.generation)
 	endpoint.payload.party_source_proof.generation = generation + 1
 	var wrong_generation := live_slot._region_life_original_owner(endpoint)
-	_selected_check(not wrong_generation.ok and live_body.hp == hp and int(live_slot._marker.generation) == generation,
+	_selected_check(not wrong_generation.ok and _live_hp() == hp and int(live_slot._marker.generation) == generation,
 		"Future source generation refuses before effects", wrong_generation)
 	endpoint.payload.party_source_proof.generation = source_generation
 	var source_path := live_slot.folder.path_join(str(endpoint.payload.party_source_proof.path))
@@ -113,20 +117,20 @@ func _run() -> void:
 	var file := FileAccess.open(source_path, FileAccess.WRITE)
 	file.store_buffer(source_bytes); file.store_string("\n"); file.close()
 	var wrong_sha := live_slot._region_life_original_owner(endpoint)
-	_selected_check(not wrong_sha.ok and live_body.hp == hp and int(live_slot._marker.generation) == generation,
+	_selected_check(not wrong_sha.ok and _live_hp() == hp and int(live_slot._marker.generation) == generation,
 		"Changed true source SHA refuses before effects", wrong_sha)
 	file = FileAccess.open(source_path, FileAccess.WRITE)
 	file.store_buffer(source_bytes); file.close()
 	var applied := live_slot.consume_region_player_event(endpoint)
 	if not _selected_check(applied.ok and applied.receipt.complete and applied.receipt.effects_complete
-			and live_body.hp == hp - 3.0 and lab.terrain == live_data and lab.character == live_body
+			and _live_hp() == hp - 3.0 and lab.terrain == live_data and _holds_live_body(lab)
 			and float(live_slot.control.logical_game_seconds) == game and float(live_slot.control.fire_clock.action_seconds) == action,
 		"Actual original typed life consumer applies one zero-time effect on SAME body and checkpoints full graph", applied):
 		_finish_selected(); return
 	endpoint = _live_event()
 	var receipt: Dictionary = endpoint.payload.effect_receipt.duplicate(true)
 	var duplicate := lab._region_gameplay_site_life_effect(endpoint)
-	if not _selected_check(duplicate.ok and duplicate.get("duplicate", false) and live_body.hp == hp - 3.0
+	if not _selected_check(duplicate.ok and duplicate.get("duplicate", false) and _live_hp() == hp - 3.0
 			and endpoint.payload.effect_receipt == receipt and endpoint.at == game,
 		"Original five-key effect receipt prevents duplicate paid damage without rewriting source event", duplicate):
 		_finish_selected(); return
@@ -150,14 +154,40 @@ func _run() -> void:
 	if not _selected_check(resumed != null, "Actual original scene exists for selected Party restore"): _finish_selected(); return
 	var restored := resumed.bind_selected_region_party(live_token, stored.party, reopened, stored.proof)
 	_freeze_scene(resumed)
-	if not _selected_check(restored.ok and restored.complete and restored.owners_restored and resumed.character.hp == hp - 3.0
-			and resumed.character.person_id == identity and str(resumed.terrain.site.id) == "travel:" + live_token
+	if not _selected_check(restored.ok and restored.complete and restored.owners_restored and _controlled_hp(resumed) == hp - 3.0
+			and resumed.controlled_person_id() == identity and str(resumed.terrain.site.id) == "travel:" + live_token
 			and int(reopened._marker.generation) == int(live_slot._marker.generation)
 			and float(reopened.control.logical_game_seconds) == game and float(reopened.control.fire_clock.action_seconds) == action,
 		"Actual full graph reopen restores paid HP on true Party owner with zero clock/marker growth", restored):
 		_finish_selected(); return
 	if not _actual_live_down_prefix(resumed, reopened): _finish_selected(); return
 	_finish_selected()
+
+## Roster-body helpers for the Party Lab: the owner row is read through the person-generic accessor.
+func _bind_live_body(scene: TerrainLab) -> void:
+	live_identity = scene.controlled_person_id()
+	var target: Dictionary = scene._original_person_target(live_identity)
+	live_owner = target.get("owner")
+	live_unit = int(target.get("unit", -1))
+
+func _holds_live_body(scene: TerrainLab) -> bool:
+	var target: Dictionary = scene._original_person_target(live_identity)
+	return is_same(target.get("owner"), live_owner) and int(target.get("unit", -2)) == live_unit
+
+func _live_row() -> Dictionary:
+	return live_owner.combat_units[live_unit]
+
+func _live_hp() -> float:
+	return float(lab._original_person_target(live_identity).get("hp", -1.0))
+
+func _live_cell() -> Vector2i:
+	return Vector2i(lab._original_person_target(live_identity).get("cell", Vector2i(-1, -1)))
+
+func _live_ground() -> Vector2:
+	return Vector2(lab._original_person_target(live_identity).get("position", Vector2.ZERO))
+
+func _live_moving() -> bool:
+	return live_owner.moving_to[live_unit] != TerrainArmy.INVALID_CELL
 
 func _live_event() -> Dictionary:
 	for event: Dictionary in live_slot.region_registry().events:
@@ -196,10 +226,10 @@ func _actual_live_down_prefix(original: TerrainLab, actual_slot: RegionSaveSlot)
 	if not _selected_check(saved.ok, "True current body checkpoint precedes immutable death source proof", saved): return false
 	var source := actual_slot.region_live_party_proof(live_token)
 	if not _selected_check(source.ok, "Original current durable twelve-key source proof exists", source): return false
-	var identity := original.controlled_person_id()
-	var actor := original.character
+	_bind_live_body(original)
+	var identity := live_identity
 	var data := original.terrain
-	var hp := actor.hp
+	var hp := _controlled_hp(original)
 	var accepted_game := float(actual_slot.control.logical_game_seconds)
 	var accepted_action := float(actual_slot.control.fire_clock.action_seconds)
 	life_event_id = "travel:%s:life:778" % live_token
@@ -212,9 +242,9 @@ func _actual_live_down_prefix(original: TerrainLab, actual_slot: RegionSaveSlot)
 	var applied := actual_slot.consume_region_player_event(_live_event())
 	var original_duration := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
 	if not _selected_check(applied.ok and not applied.receipt.complete and applied.receipt.get("restricted_settlement") == true
-			and actor.hp == 0.0 and original.site_controller._pending_deaths.has(identity)
+			and _controlled_hp(original) == 0.0 and original.site_controller._pending_deaths.has(identity)
 			and absf(float(original.site_controller._pending_deaths[identity]) - original_duration) <= EPS
-			and original.character == actor and original.terrain == data
+			and _holds_live_body(original) and original.terrain == data
 			and float(actual_slot.control.logical_game_seconds) == accepted_game
 			and float(actual_slot.control.fire_clock.action_seconds) == accepted_action,
 		"Actual life handler produces HP0/original down duration at zero time on SAME live Party body", applied): return false
@@ -235,7 +265,7 @@ func _actual_live_down_prefix(original: TerrainLab, actual_slot: RegionSaveSlot)
 			"Actual held Party death advances one admitted positive prefix; rejected work is never PASS", result): return false
 		total_action += float(result.action_seconds)
 		total_game += float(result.game_seconds)
-		if not _selected_check(original.character == actor and original.terrain == data and actor.hp == 0.0
+		if not _selected_check(_holds_live_body(original) and original.terrain == data and _controlled_hp(original) == 0.0
 				and original.site_controller._pending_deaths.has(identity)
 				and absf(float(original.site_controller._pending_deaths[identity]) - original_duration + total_action) <= EPS
 				and absf(float(actual_slot.control.fire_clock.action_seconds) - accepted_action - total_action) <= EPS
@@ -261,7 +291,7 @@ func _actual_live_down_prefix(original: TerrainLab, actual_slot: RegionSaveSlot)
 	var bound := resumed.bind_selected_region_party(live_token, selected.party, reopened, selected.proof)
 	_freeze_scene(resumed)
 	wired = resumed._wire_region_gameplay_adapters(reopened)
-	if not _selected_check(bound.ok and wired.ok and resumed.character.hp == 0.0
+	if not _selected_check(bound.ok and wired.ok and _controlled_hp(resumed) == 0.0
 			and resumed.site_controller._pending_deaths.has(identity)
 			and absf(float(resumed.site_controller._pending_deaths[identity]) - remaining) <= EPS
 			and float(reopened.control.logical_game_seconds) == float(actual_slot.control.logical_game_seconds)

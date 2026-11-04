@@ -121,14 +121,11 @@ func run() -> void:
 	var old_file := FileAccess.open(SAVE + ".legacy", FileAccess.WRITE)
 	old_file.store_string(JSON.stringify({"checksum": body.sha256_text(), "payload": body}))
 	old_file.close()
+	# Site save format 5 (neutral part 2): older formats are refused outright, never migrated.
 	var migrated := Store.load_site(SAVE + ".legacy")
-	assert(migrated.ok and migrated.data.site.actors.is_empty(), str(migrated))
-	assert("舊地圖" in str(migrated.message), "Legacy actor defaults must be explicit")
-	a.fatigue = 90
-	b.fatigue = 75
-	lab.bind_terrain(migrated.data)
-	assert(a.fatigue == 0 and b.fatigue == 0 and a.fatigue_rest == 0, "Explicit no-person legacy migration cannot inherit another map's fatigue")
+	assert(not migrated.ok and str(migrated.get("code", "")) == "OLD_SAVE_UNSUPPORTED", str(migrated))
+	assert(FileAccess.get_sha256(SAVE) == checksum, "Refused old save left the valid save unchanged")
 	lab.queue_free()
 	await process_frame
-	print("SITE COMBAT SAVE PASS: HP/stun/KO/appearance, existing save guard, attack dedup, projectile/ammo, corrupt snapshots, explicit legacy migration")
+	print("SITE COMBAT SAVE PASS: HP/stun/KO/appearance, existing save guard, attack dedup, projectile/ammo, corrupt snapshots, old format refused")
 	quit(0)

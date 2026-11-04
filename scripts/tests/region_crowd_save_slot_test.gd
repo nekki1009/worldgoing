@@ -128,8 +128,14 @@ func _found_settlement() -> bool:
 	data.site.capacity = 100000
 	for resource: String in Env.ITEM_NAMES: data.site.inventory[resource] = 1000
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns explicit fixture stock"): return false
-	lab.character.faction_id = 0
-	if not _check(lab.character.place(Vector2i(20, 15), true), "founder stands in the founding jurisdiction"): return false
+	# The founder is the player, captain of a one-person GD team after the crowd clear. Stand-in for the pending join
+	# relabel: the team joins faction 0 (neutral cannot found), and its captain stands in the founding jurisdiction.
+	var founder_team: TerrainArmy = null
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == lab.controlled_person_id(): founder_team = team
+	if not _check(founder_team != null and lab.terrain.is_walkable(Vector2i(20, 15)), "the player's start team exists and the founder cell is walkable"): return false
+	founder_team.faction_id = 0
+	founder_team.cells[0] = Vector2i(20, 15)
 	var layout: Dictionary = SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i.ONE)
 	if not _check(layout.ok, "settlement center layout is legal", layout): return false
 	var cells: Array[int] = []
@@ -142,16 +148,16 @@ func _found_settlement() -> bool:
 	# The work command must come from the center's management faction (the founder's faction, 0);
 	# _feature_work refuses any other worker_faction before making progress.
 	var management_faction := int(feature.get("owner_faction", -1))
-	if not _check(management_faction == lab.character.faction_id and management_faction == 0, "center management faction is the founder's faction",
-		{"owner_faction": feature.get("owner_faction"), "founder_faction": lab.character.faction_id}): return false
-	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, SiteRuntime.CARRY_CAPACITY, management_faction, lab.character.person_id)
+	if not _check(management_faction == founder_team.faction_id and management_faction == 0, "center management faction is the founder's faction",
+		{"owner_faction": feature.get("owner_faction"), "founder_faction": founder_team.faction_id}): return false
+	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, SiteRuntime.CARRY_CAPACITY, management_faction, lab.controlled_person_id())
 	feature = data.site.features.get(key, feature)
 	if not _check(str(feature.stage) == "complete", "center completes through the original paid feature owner", {
 		"stage": feature.get("stage"), "progress": feature.get("progress"), "work": feature.get("work"),
 		"has_pending_build": feature.has("pending_build"), "owner_faction": feature.get("owner_faction"),
 		"worker_status": task.get("status", ""), "worker_mode": task.get("mode", ""), "worker_action": task.get("action", ""),
 		"worker_cell": task.get("cell", -1), "expected_entrance": int(feature.entrance),
-		"worker_faction_arg": management_faction, "original_identity": lab.character.person_id}): return false
+		"worker_faction_arg": management_faction, "original_identity": lab.controlled_person_id()}): return false
 	return _check(int(SiteSettlement.record(data).get("level", 0)) > 0, "completed center is a level 1 settlement", SiteSettlement.record(data))
 
 func _run() -> void:
@@ -182,6 +188,13 @@ func _run() -> void:
 	if not _check(slot != null, "Region slot exists after the fixed world binds"): return
 	site_id = str(lab.terrain.site.id)
 	var mode_gd := _mode()
+	# Neutral part 2: the bind opens the Site as a live native crowd (the player's start team). Clear it to GD first.
+	var bind_live: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bind_live.get("complete") == true and str(bind_live.get("backend", "")) == "native" and lab.crowd_site.active, "a new world binds straight into a live native crowd", bind_live): return
+	var cleared_bind: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared_bind.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to GD before the test sides deploy", cleared_bind): return
+	# The clear advanced the live revision, so the redeploy checks below measure from this post-clear GD mode.
+	mode_gd = _mode()
 	if not _check(str(mode_gd.get("mode", "")) == "live" and str(mode_gd.get("backend", "")) == "gd", "live GD mode before any crowd", mode_gd): return
 	if not _found_settlement(): return
 

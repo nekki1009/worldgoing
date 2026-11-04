@@ -148,6 +148,9 @@ func _actual_region() -> bool:
 	if not _check(opened.ok, "Original Controller births and binds the fixed World", opened): lab.free(); return false
 	lab.set_process(false)
 	lab.character.set_process(false)
+	# The new-game player is a one-person grid team with combat_enabled. Grid simulation is retired, and this
+	# test only exercises the Site action clock, so hold that team out of combat (it is not under test here).
+	for team: TerrainArmy in lab.combat_armies: team.combat_enabled = false
 	lab.movement_input_enabled = false
 	lab.exchange_enabled = true
 	lab.fixed_action_steps_enabled = true

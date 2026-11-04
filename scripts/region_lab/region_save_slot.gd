@@ -6070,9 +6070,11 @@ func _check_initial_record(record: Dictionary) -> Dictionary:
 				people[int(companion_person)] = true
 		return started
 	var scenario := str(_initialization.initial_scenario_id)
-	if int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0 or int(state.get("controlled_person_id", -1)) != 1 or int(state.get("actors", {}).get("player", {}).get("person_id", -1)) != 1 or state.get("actors", {}).size() != 1 or state.has("family") or state.has("crowd"): return fail("INVALID_INITIAL_POPULATION")
+	# Neutral part 2: a fresh (no scenario) birth holds the player only as its one-person neutral team; a scenario birth keeps the actor.
+	var player_shape_ok: bool = (state.get("actors", {}).is_empty() and _created_player_team(state, 1)) if scenario.is_empty() else (int(state.get("actors", {}).get("player", {}).get("person_id", -1)) == 1 and state.get("actors", {}).size() == 1)
+	if int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0 or int(state.get("controlled_person_id", -1)) != 1 or not player_shape_ok or state.has("family") or state.has("crowd"): return fail("INVALID_INITIAL_POPULATION")
 	if scenario.is_empty():
-		if state.has("initial_scenario") or not state.get("armies", []).is_empty() or state.has("technology_artisans"): return fail("INVALID_INITIAL_POPULATION")
+		if state.has("initial_scenario") or state.get("armies", []).size() != 1 or state.has("technology_artisans"): return fail("INVALID_INITIAL_POPULATION")
 	else:
 		var receipt: Variant = state.get("initial_scenario")
 		if not receipt is Dictionary or receipt.size() != 3 or not _whole(receipt.get("version"), 1, 1) or receipt.get("scenario_id") != scenario or receipt.get("world_id") != str(pin.world_instance_id): return fail("INVALID_INITIAL_SCENARIO")
@@ -12336,6 +12338,18 @@ func _faction_static_site_drop(key: String) -> void:
 	_faction_static_site_metadata.erase(key)
 	_faction_static_site_mutex.unlock()
 
+## Neutral part 2: exactly one saved army holds the created player, as its only unit and formal commander, in the neutral faction.
+static func _created_player_team(state: Dictionary, identity: int) -> bool:
+	var found := 0
+	for army: Variant in state.get("armies", []):
+		if not army is Dictionary or not army.get("units") is Array: continue
+		for unit: Variant in army.units:
+			if unit is Dictionary and int(unit.get("person_id", -1)) == identity:
+				found += 1
+				# The player is unit 0 and formal captain of the neutral start team (with its cadres, Nekki 2026-11-03).
+				if int(army.units[0].get("person_id", -1)) != identity or int(army.get("formal_commander", -1)) != 0 or int(army.get("faction_id", -1)) != RegionFactionQuery.NEUTRAL_FACTION_ID: return false
+	return found == 1
+
 func _check_author_initial_state(data: TerrainData, record: Dictionary, coordinate: Vector2i, path: String) -> Dictionary:
 	var state: Dictionary = data.site
 	var context: Dictionary = _initialization.author_context
@@ -12343,7 +12357,8 @@ func _check_author_initial_state(data: TerrainData, record: Dictionary, coordina
 	var controlled: int = int(state.get("controlled_person_id", -1))
 	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not _initial_site_same(bodies[controlled].get("cell"), context.start.cell) or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
 	if context.start.mode == "created_player":
-		if controlled != 1 or state.get("actors", {}).size() != 1 or int(state.actors.get("player", {}).get("person_id", -1)) != 1: return fail("INVALID_INITIAL_POPULATION")
+		# Neutral part 2: the created player is roster unit 0 and formal commander of a one-person neutral team, not an actor.
+		if controlled != 1 or not state.get("actors", {}).is_empty() or not _created_player_team(state, controlled): return fail("INVALID_INITIAL_POPULATION")
 	elif controlled != int(context.start.person_id): return fail("INVALID_INITIAL_POPULATION")
 	var rows: Array = state.get("residents", [])
 	var housing: Dictionary = state.get("housing", {})

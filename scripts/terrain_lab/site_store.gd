@@ -22,7 +22,7 @@ const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const ShipDefs = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const PresetGeometry = preload("res://scripts/terrain_lab/formation_preset_geometry.gd")
-const FORMAT := 4
+const FORMAT := 5
 const TERRAIN_VERSION := 1
 const DEFAULT_PATH := "user://sites/current.json"
 const MAX_ARMIES := 50
@@ -1634,6 +1634,9 @@ static func _read(path: String) -> Dictionary:
 		return Runtime.fail("CORRUPT_SAVE")
 	if not _integer(payload.get("format"), 1, FORMAT) or int(payload.get("terrain_version", -1)) != TERRAIN_VERSION or int(payload.get("environment_version", -1)) != Env.VERSION:
 		return Runtime.fail("SAVE_VERSION", "生成／存檔版本不同，原檔保留")
+	# Format 5: Site saves older than this format are refused, no conversion.
+	if int(payload.format) < FORMAT:
+		return Runtime.fail("OLD_SAVE_UNSUPPORTED", "舊版存檔不再支援，請開新遊戲")
 	if not payload.get("state") is Dictionary or not payload.get("parameters") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE")
 	_read_exact_region_context_clocks(body, payload.state)
@@ -1933,7 +1936,7 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 	var no_controlled: bool = int(section.player.get("person_id", 0)) == -1 and int(section.player.get("soldier_index", 0)) == -1 \
 		and not state.has("controlled_person_id") and state.get("actors", {}).get("player", {}).is_empty()
 	if not no_controlled and (not _integer(section.player.get("person_id"), 1, next_id - 1) or not _integer(section.player.get("soldier_index"), 0, blob_ids.size() - 1) or int(section.player.person_id) != int(state.get("controlled_person_id", state.actors.get("player", {}).get("person_id", -1))) or blob_ids[int(section.player.soldier_index)] != int(section.player.person_id)):
-		return Runtime.fail("INVALID_CROWD", "群眾受控人物引用不符")
+		return Runtime.fail("INVALID_CROWD", "群眾受控人物引用不符：" + JSON.stringify({"player": section.player, "controlled": state.get("controlled_person_id", null), "blob_size": blob_ids.size()}))
 	return Runtime.ok("", {"native": native})
 
 static func _validate_state(data: TerrainData, state: Dictionary, crowd_workers: int = 1, native_candidate: Variant = null, region_context: Dictionary = {}) -> Dictionary:

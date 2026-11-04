@@ -58,9 +58,10 @@ func _run() -> void:
 		"role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
 	var sides: Array[Dictionary] = [side]
 	var cells: Array[Vector2i] = [Vector2i(20, 20), Vector2i(21, 20)]
-	var born: Dictionary = lab._deploy_trial_teams(sides, [cells], 0)
+	# Slot 0 holds the new-game player team (unit 0, captain); the friendly side goes to slot 1.
+	var born: Dictionary = lab._deploy_trial_teams(sides, [cells], 1)
 	if not _check(born["ok"], "Original named genesis creates real rows without control reassignment", born): _finish(); return
-	var team: TerrainArmy = lab.combat_armies[0]
+	var team: TerrainArmy = lab.combat_armies[1]
 	live_target = team.combat_identity(team.formal_commander)
 	var head: int = lab.controlled_person_id()
 	var family: LiveFamily = controller.family_continuity
@@ -130,7 +131,11 @@ func _run() -> void:
 	restored.visible = false
 	root.add_child(restored)
 	var rebound: Dictionary = restored.restore_original_site(source["data"])
-	_check(rebound["ok"] and restored.actor_present(restored.character) and restored.character.person_id == head,
+	# Neutral part 2: the old head may be a roster person of the start team (crowd or GD roster), not an actor body.
+	var head_in_roster: bool = restored.crowd_site != null and restored.crowd_site.active and restored.crowd_site.contains_person(head)
+	for restored_team: TerrainArmy in restored.combat_armies:
+		if restored_team.has_army() and restored_team.index_for_identity(head) >= 0: head_in_roster = true
+	_check(rebound["ok"] and (restored.actor_present(restored.character) and restored.character.person_id == head or head_in_roster),
 		"Original full owner restore reconstitutes the same old head in the now-cold Site", rebound)
 	restored.free()
 	report = {"generation_before": generation, "generation_after_handover": generation + 1, "target": live_target,

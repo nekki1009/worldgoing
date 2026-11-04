@@ -37,7 +37,7 @@ func _run() -> void:
 			var private_data: TerrainData = Env.navigation_for_state(other.data, other.data.site.duplicate(true))
 			var second_birth: Dictionary = lab.prepare_fresh_initial_population(private_data)
 			if _check(second_birth.ok, "Original disposable Actor birth consumes the same Slot allocator on another Site", second_birth):
-				var second_id: int = int(second_birth.data.site.actors.player.person_id)
+				var second_id: int = int(second_birth.data.site.armies[0].units[0].person_id) # Neutral part 2: the player is its one-person team's unit 0
 				_check(not original.has(second_id) and second_id >= int(allocator.next_person_id), "Second Site gets a globally new original body ID")
 			var invalid_data: TerrainData = Env.navigation_for_state(other.data, other.data.site.duplicate(true))
 			invalid_data.set_meta(&"world_person_allocator", Callable())

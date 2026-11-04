@@ -316,7 +316,7 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	# The travelling roster is the released team's live record; the rest of the Site is captured again without it.
 	# The travelling team is the converted grid army (complete TerrainArmy fields), marked crowd for the origin selection.
 	# RegionTravel.extract erases the marker on the party army.
-	var departing: Dictionary = released.army.duplicate(true)
+	var departing: Dictionary = _grid_party_army(lab, released.army)
 	departing["crowd"] = true
 	var recaptured: Dictionary = lab.crowd_site.capture_save()
 	if not recaptured.ok: return recaptured
@@ -470,7 +470,7 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	# The remaining crowd is captured again; the departing party joins the travel content as in _depart_crowd.
 	var recaptured: Dictionary = lab.crowd_site.capture_save()
 	if not recaptured.ok: return recaptured
-	var departing: Dictionary = released.army.duplicate(true)
+	var departing: Dictionary = _grid_party_army(lab, released.army)
 	departing["crowd"] = true
 	recaptured.rosters.append(departing)
 	controller._apply_region_crowd_capture(recaptured)
@@ -691,3 +691,16 @@ static func selected_departure(controller: Node) -> Dictionary:
 	people.sort()
 	return {"ok": true, "spec": spec, "people": people, "component": component, "waiting": waiting,
 		"selection": var_to_bytes([identity, spec.actor_key, spec.team_id, spec.get("solo_row", 0), spec.get("solo_actor", 0), people, orders])}
+
+
+## Nekki 2026-11-03: Region keeps the grid. A departing crowd team travels as the exact snapshot a grid Lab captures
+## (one restore and capture on a detached TerrainArmy), so a road-map live party Lab recaptures the same bytes.
+static func _grid_party_army(lab: Node, army: Dictionary) -> Dictionary:
+	var team := TerrainArmy.new()
+	team.exchange_enabled = bool(lab.get("exchange_enabled"))
+	team.restore_combat_state(army.duplicate(true), lab.terrain, null, null)
+	var snapshot: Dictionary = team.capture_combat_state()
+	team.free()
+	# A Lab-held team always captures its (empty) movement batches; a detached one leaves the key out.
+	if not snapshot.has("combat_batches"): snapshot["combat_batches"] = []
+	return snapshot

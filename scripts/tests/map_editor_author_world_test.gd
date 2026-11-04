@@ -103,11 +103,15 @@ func _run() -> void:
 	var cold: Dictionary = slot._load_checked(slot.site_path(at), at)
 	if not _check(cold.ok, "first generation Store readback: " + str(cold)): return
 	var state: Dictionary = cold.data.site
-	if not _check(state.actors.size() == 1 and state.armies.size() == 1 and state.armies[0].role == "work" and state.armies[0].units.size() == 2 and state.features[house.feature].stage == "complete" and state.settlement.center_id == center.feature, "one player plus two real civilians and authored infrastructure"): return
+	# Neutral part 2: the created player is its own one-person neutral team (no actor); residents are the work team.
+	var resident_team: Dictionary = {}
+	for army: Dictionary in state.get("armies", []):
+		if army.get("role") == "work": resident_team = army
+	if not _check(state.actors.is_empty() and state.armies.size() == 2 and not resident_team.is_empty() and resident_team.units.size() == 2 and state.features[house.feature].stage == "complete" and state.settlement.center_id == center.feature, "one player team plus two real civilians and authored infrastructure"): return
 	var layout: Dictionary = SiteRuntime.house_layout(cold.data, str(house.feature))
 	var claimed: Dictionary = {}
 	for i: int in range(2):
-		var unit: Dictionary = state.armies[0].units[i]
+		var unit: Dictionary = resident_team.units[i]
 		var home: Dictionary = state.housing[str(int(unit.person_id))]
 		if not _check(unit.get("name", "") == ["甲", "乙"][i] and unit.military_role == "civilian" and home.house_id == house.feature and layout.slots.has(int(home.cell)) and cold.data.index(Vector2i(int(unit.cell[0]), int(unit.cell[1]))) == int(home.cell) and not claimed.has(int(home.cell)) and unit.item_state.item_ids.is_empty(), "resident name, actual body, unique house rest cell and empty holder"): return
 		if not _check(not unit.appearance.has("name") and (str(unit.visual_role).ends_with("live") or TerrainArmy.EquipmentAtlas.supports(unit.appearance)), "name belongs to original person, actual empty-holder geometry passes original atlas admission"): return
@@ -122,7 +126,7 @@ func _run() -> void:
 	var two: Dictionary = saved_slot._load_checked(saved_slot.site_path(at), at)
 	if not _check(one.ok and two.ok and var_to_bytes(one.data.site) == var_to_bytes(two.data.site) and one.data.site.housing == state.housing and int(one.data.site.next_person_id) == int(state.next_person_id), "whole canonical snapshot reload is byte-exact; homes and IDs remain"): return
 	var reopened: Dictionary = lab.site_controller.open_fixed_world(str(exported.path), world, "main", at, false)
-	if not _check(reopened.ok and lab.terrain.site.housing == state.housing and lab.terrain.site.armies.size() == 1, "actual restore never births a second resident team: " + str(reopened)): return
+	if not _check(reopened.ok and lab.terrain.site.housing == state.housing and lab.terrain.site.armies.size() == 2, "actual restore never births a second resident team: " + str(reopened)): return
 	_freeze(lab)
 	# Import only the original, unpublished birth snapshot for author-side family commands.
 	var original: Dictionary = state.duplicate(true)
@@ -133,7 +137,7 @@ func _run() -> void:
 	var imported: bool = editor._commit_work(family_work, "original local born snapshot")
 	if not _check(imported, "original local persons validate through the author Store boundary"): return
 	_press(editor, "FamilyCreate")
-	var identity: int = int(state.armies[0].units[0].person_id)
+	var identity: int = int(resident_team.units[0].person_id)
 	editor._family_person.value = identity
 	_press(editor, "FamilyAddMember")
 	if not _check(editor.draft.initial_state.family.members.size() == 1 and int(editor.draft.initial_state.family.members[0].person_id) == identity, "family panel adds original person"): return

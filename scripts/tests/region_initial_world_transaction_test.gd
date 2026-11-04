@@ -182,6 +182,20 @@ func _facts(state: Dictionary) -> String:
 func _verify_born(data: TerrainData, scenario: String, world_id: String) -> bool:
 	var state: Dictionary = data.site
 	var count := 0 if scenario.is_empty() else (1 if scenario == Artisans.PRIMARY else 3)
+	if scenario.is_empty():
+		# Neutral part 2: a fresh birth holds the player only as unit 0 and formal commander of a one-person neutral team.
+		if not _check(state.get("actors", {}).is_empty() and int(state.get("controlled_person_id", -1)) == 1 and state.get("armies", []).size() == 1, "One true fresh original starter controls the new namespace as its one-person team"): return false
+		var own: Dictionary = state.armies[0]
+		var own_row: Dictionary = own.units[0] if own.get("units", []).size() == 1 + TerrainLab.INITIAL_CADRES else {}
+		_check(not own_row.is_empty() and int(own_row.person_id) == 1 and int(own.get("formal_commander", -1)) == 0 and int(own.faction_id) == RegionFactionQuery.NEUTRAL_FACTION_ID and str(own_row.get("military_role", "")) == "officer", "Fresh starter is the officer captain of a one-person neutral team")
+		_check(not own_row.is_empty() and float(own_row.hp) == 100.0 and float(own_row.get("combat_ability", 50.0)) == 50.0 and own_row.get("technology", {}).is_empty() and own_row.get("item_state", {}).get("holder") == "person:1", "Old hp/faction/ability/F07 do not leak into the genuinely fresh original starter")
+		_check(not state.has("family") and not state.has("technology_artisans"), "Exactly the original finite empty-policy population; no family or skill receipt")
+		_check(int(state.next_person_id) == 2 + TerrainLab.INITIAL_CADRES and int(state.army_next_team) == int(own.team_id) + 1, "True birth advances original person/team allocation exactly once")
+		var fresh_policy: Dictionary = Policy.candidate(state.world_pin)
+		_check(fresh_policy.ok and fresh_policy.policy.categories.is_empty() and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the empty release policy")
+		_check(not state.has("initial_scenario"), "Only the explicit original scenario has its matching one-time persisted selection")
+		_check(Store._validate_actors(data, state).ok and Store._validate_armies(data, state, true).ok and Store._validate_items(data, state).ok and Store._validate_person_allocator(state).ok, "Original body/item/allocator validators admit the full first-generation cold population")
+		return true
 	if not _check(state.get("actors", {}).size() == 1 and int(state.get("controlled_person_id", -1)) == 1, "One true fresh original starter controls the new namespace"): return false
 	var actor: Dictionary = state.actors.player
 	_check(int(actor.person_id) == 1 and float(actor.hp) == 100.0 and int(actor.faction_id) == 0 and float(actor.combat_ability) == 50.0 and actor.get("technology", {}).is_empty(), "Old hp/faction/ability/F07 do not leak into the genuinely fresh original starter")
@@ -253,7 +267,7 @@ func _successful_birth(source: RegionData, scenario: String, label: String) -> v
 	var repeated: Dictionary = controller.open_fixed_world(manifest_path, world_id, SLOT, START, true, scenario)
 	_check(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(slot.folder.path_join("manifest.json")) == manifest_sha and FileAccess.get_sha256(slot.folder.path_join("commits/%020d.json" % 1)) == committed_sha, "Completed world creation cannot reissue births, change policy or overwrite its first generation")
 	report[label] = {"world_id": world_id, "generation": 1, "site_path": ProjectSettings.globalize_path(str(reopened.path)), "site_sha256": reopened.sha256,
-		"people": cold.data.site.get("armies", []).size() * 5 + 1, "archive": result.archive}
+		"people": RegionTravel._body_records(cold.data.site).size(), "archive": result.archive}
 	if scenario == Artisans.PRIMARY: _ordinary_scene_resume(lab, world_id)
 	lab.free()
 

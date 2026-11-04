@@ -99,6 +99,9 @@ func _run() -> void:
 		if not _check(owner != null and owner.is_member(native_index[identity]), "refusal keeps every member native", identity): return
 	if not _check(crowd.set_soldier_fields(native_index[knocked], {"ko": 0.0}), "the knocked member recovers before the departure"): return
 
+	# Nekki 2026-11-04: the team's morale state travels with it (a team may break off shaken or mid-rally).
+	var team_formation := int(crowd.person_owner(captain).formation_index)
+	if not _check(crowd.set_formation_fields(team_formation, {"morale": 37.5, "rally_rest": 4.0}), "the team leaves with a shaken morale and a running rally rest"): return
 	# Pre-validation: capture the Site, then prove the whole extraction on a copy before any release.
 	var captured: Dictionary = lab.site_controller._capture_for_save()
 	if not _check(captured.get("ok", false), "the Site captures its crowd before departure", captured): return
@@ -125,6 +128,9 @@ func _run() -> void:
 		if not _check(not crowd.crowd.site_person_exit_ready(index), "a released member is not exit-ready natively", identity): return
 		if not _check(not crowd.contains_person(identity) and crowd.person_owner(identity) == null, "a released member leaves the Site maps", identity): return
 	var travelling: Dictionary = released.roster.duplicate(true)
+	var carried: Variant = released.army.get("team_morale", {})
+	if not _check(carried is Dictionary and is_equal_approx(float(carried.get("morale", -1.0)), 37.5) and is_equal_approx(float(carried.get("rally_rest", -1.0)), 4.0) and carried.get("routed") == false,
+		"the travelling army carries the formation's morale, rally rest and rout state", carried): return
 	for unit: Dictionary in travelling.units:
 		var identity := int(unit.person_id)
 		if not _check(unit.appearance == before[identity].appearance, "the travelling row keeps its appearance", identity): return

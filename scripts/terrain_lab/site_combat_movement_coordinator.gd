@@ -313,7 +313,7 @@ func _has_member_formation() -> bool:
 	return false
 
 func combat_logic_tick(delta: float, external_blocked_cells: Dictionary = {}) -> void:
-	if (_has_member_formation() or not _inflight_batches.is_empty() or not _egress_retry_queue.is_empty()) and TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.combat_logic_tick"): return
+	if (_has_member_formation() or not _inflight_batches.is_empty() or not _egress_retry_queue.is_empty()) and TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.combat_logic_tick", _gate_context()): return
 	var stage_started := Time.get_ticks_usec() if profile_enabled else 0
 	if _occupancy_rebuild_pending:
 		_resolve_occupancy_rebuild_barrier()
@@ -526,7 +526,7 @@ func _register_started_batches() -> void:
 func complete_committed_moves() -> void:
 	if _inflight_batches.is_empty():
 		return
-	if TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.complete_committed_moves"): return
+	if TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.complete_committed_moves", _gate_context()): return
 	var pending: Array[Array] = []
 	for group: Array in _inflight_batches:
 		var compound_id := str(group[0].get("compound_id", "")) if not group.is_empty() else ""
@@ -675,3 +675,10 @@ func _rebuild_occupancy() -> void:
 				seen_cells[cell] = mid
 				_current_occupancy[cell] = mid
 				_member_lookup[mid] = { "formation": formation, "cell": cell }
+
+
+## Any registered formation node, so the grid gate can tell a road-map live party Lab (Region keeps the grid).
+func _gate_context() -> Node:
+	for formation: Variant in _active_formations:
+		if formation is Node and is_instance_valid(formation): return formation
+	return null

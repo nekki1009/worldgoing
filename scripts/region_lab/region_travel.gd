@@ -12,6 +12,7 @@ extends RefCounted
 ## The original feeding and fatigue owners advance on the same Slot interval.
 
 const Grid = preload("res://scripts/region_lab/region_grid.gd")
+const CrowdSiteScript = preload("res://scripts/terrain_lab/crowd_site.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
@@ -1340,6 +1341,13 @@ static func _detach_row(origin: Dictionary, person_id: int) -> Dictionary:
 	solo.vacancies = []
 	solo.rescues = []
 	for field: String in ["formal_commander", "acting_commander", "current_commander"]: solo[field] = -1
+	# Nekki 2026-11-01: a cadre who leaves alone becomes the captain of its own one-person team.
+	if str(row.get("military_role", "")) == "officer":
+		row.member = true # A member of its own team, so it can be its formal captain.
+		solo.formal_commander = 0 # Current stays -1 while it travels (not present); arrival seats it again.
+		solo.needs_attack_order = true # No present commander yet: the team holds until its captain is seated.
+		solo.combat_attacking = false
+		solo.offices = SiteOffices.default_offices("team", person_id, false)
 	solo.erase("team_fatigue")
 	if solo.has("tactical_ai"): solo.tactical_ai.enabled = false
 	_settle_team(solo, Vector2i(int(row.cell[0]), int(row.cell[1])))
@@ -1763,6 +1771,13 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		for row: Dictionary in transport.get("orders", []):
 			if groups.has(int(row.get("group", 0))): content.fire_orders.append(row)
 			else: kept.append(row)
+		# A detached solo container (a new team id, _detach_row) has no command row in the origin yet: it leaves with a
+		# disabled one, as a crowd arrival team gets, so the party's fire owners and orders stay one-to-one.
+		for group: int in groups:
+			if group <= 0: continue
+			var has_order := false
+			for row: Dictionary in content.fire_orders: has_order = has_order or int(row.get("group", 0)) == group
+			if not has_order: content.fire_orders.append(_crowd_fire_placeholder(origin, group))
 		transport.orders = kept
 		var kept_cursors: Array = []
 		for pair: Array in transport.get("member_cursor", []):
@@ -2139,12 +2154,17 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			if index == formal: team_leader = cell
 		var troop := maxi(0, first_troop)
 		var cols := maxi(1, int(ceil(sqrt(float(units.size())))))
-		var formation := int(native.call("add_formation", faction, float(team_leader.x) + 0.5, float(team_leader.y) + 0.5, 0.0, cols, 1.0, troop, training))
+		# Per-Site native faction slot, as CrowdSite._native_faction: the destination teams plus those already added here.
+		var native_faction: int = CrowdSiteScript.native_slot_for(faction, section.get("teams", []) + teams)
+		if native_faction < 0: return fail("NO_SPACE", "群眾原生陣營槽已滿")
+		var formation := int(native.call("add_formation", native_faction, float(team_leader.x) + 0.5, float(team_leader.y) + 0.5, 0.0, cols, 1.0, troop, training))
 		if formation < 0: return fail("INVALID", "原隊伍無法加入群眾")
 		if not bool(native.call("set_garrisoned", formation, 0)): return fail("INVALID_GARRISON", "原駐營歸屬匯入失敗")
 		var first := int(native.call("add_soldiers", formation, ids, equip, roles, ammo))
 		if first < 0: return fail("INVALID", "原隊伍人物匯入失敗")
 		if not bool(native.call("set_start_positions", first, starts)): return fail("INVALID", "原隊伍起始位置匯入失敗")
+		# Carried morale state, after the soldiers joined (they re-derive fresh formation values).
+		if not CrowdSiteScript.apply_team_morale(native, formation, army.get("team_morale", {})): return fail("INVALID", "原隊伍士氣狀態匯入失敗")
 		for offset: int in range(rows.size()):
 			var row: Dictionary = rows[offset]
 			var cell: Vector2i = row_cells[offset]
@@ -2180,7 +2200,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 		_settle_team(army, team_leader)
 		rosters.append(army)
 		teams.append({"slot": slot, "team_id": team_id, "formation": formation, "faction": faction,
-			"troop": troop, "person_ids": Array(ids), "solo": false})
+			"native_faction": native_faction, "troop": troop, "person_ids": Array(ids), "solo": false})
 		slot += 1
 		team_ids[team_id] = true
 	# The controlled soldier takes host control before the blob is saved; the native keeps one host at most.
