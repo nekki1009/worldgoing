@@ -615,6 +615,23 @@ func prepare_crowd_load(value: TerrainData, native_candidate: Variant = null) ->
 		return prepared
 	return SiteRuntime.ok("", {"crowd_site": candidate})
 
+## Nekki 2026-11-04 (C): a whole team joins another faction (the start choice and the in-game join both end here). A
+## live crowd team relabels natively (CrowdSite.relabel_team_faction); a GD roster (a grid Site or the road-map party)
+## changes its TerrainArmy and its saved row. Never partial: either every holder of the team changes or none.
+func relabel_team_faction(team_id: int, faction: int) -> Dictionary:
+	if faction < 0: return SiteRuntime.fail("INVALID", "勢力不合法")
+	if crowd_site != null and crowd_site.active and crowd_site.has_live_team(team_id):
+		return crowd_site.relabel_team_faction(team_id, faction)
+	var team: TerrainArmy = null
+	for army: TerrainArmy in combat_armies:
+		if army.team_id == team_id and army.has_army(): team = army
+	if team == null: return SiteRuntime.fail("NO_TARGET", "找不到隊伍")
+	if team.faction_id == faction: return SiteRuntime.ok("", {"changed": false})
+	team.faction_id = faction
+	for row: Variant in terrain.site.get("armies", []):
+		if row is Dictionary and int(row.get("team_id", -1)) == team_id: row["faction_id"] = faction
+	return SiteRuntime.ok("", {"changed": true})
+
 func _has_active_grid_team() -> bool:
 	for team: TerrainArmy in combat_armies:
 		if is_instance_valid(team) and team.combat_enabled and team.has_army(): return true

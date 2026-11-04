@@ -1804,18 +1804,16 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		escort_people[int(guard_key)] = true
 		for captive_id: Variant in state.escort_orders[guard_key].get("captives", []): escort_people[int(captive_id)] = true
 	var native_slot_owner := {} # native slot -> global faction
-	var native_slot_of := {} # global faction -> native slot
 	for team: Variant in section.teams:
 		if not team is Dictionary or not _integer(team.get("formation"), 0, section.teams.size() - 1) or formations.has(int(team.get("formation", -1))) or not _integer(team.get("team_id"), 1, 999999) or teams_seen.has(int(team.get("team_id", -1))) or not team.get("solo") is bool or not team.get("person_ids") is Array or (team.person_ids.is_empty() and (bool(team.solo) or not crowd_rosters.has(int(team.get("team_id", -1))) or not crowd_rosters[int(team.team_id)].get("units", []).is_empty())) or not _integer(team.get("faction"), 0, 100000000) or not _integer(team.get("troop"), 0, 3) or not _integer(team.get("slot"), -1, 10000):
 			return Runtime.fail("INVALID_CROWD", "群眾隊伍引用格式")
 		var native_formation: PackedInt32Array = native.call("formation_info", int(team.formation))
-		# Per-Site native faction slot: a faction keeps one slot, and a neutral team has a slot of its own.
+		# Per-Site native faction slot: a slot belongs to one faction and a neutral team has a slot of its own. A faction may
+		# hold several slots after a team joins it (relabel); native hostility makes them allies (CrowdSite._apply_slot_alliances).
 		var native_slot := int(team.get("native_faction", team.faction))
-		if not _integer(team.get("native_faction", team.faction), 0, 255) or native_slot_owner.get(native_slot, int(team.faction)) != int(team.faction) or int(team.faction) == RegionFactionQuery.NEUTRAL_FACTION_ID and native_slot_owner.has(native_slot) \
-				or native_slot_of.get(int(team.faction), native_slot) != native_slot and int(team.faction) != RegionFactionQuery.NEUTRAL_FACTION_ID:
+		if not _integer(team.get("native_faction", team.faction), 0, 255) or native_slot_owner.get(native_slot, int(team.faction)) != int(team.faction) or int(team.faction) == RegionFactionQuery.NEUTRAL_FACTION_ID and native_slot_owner.has(native_slot):
 			return Runtime.fail("INVALID_CROWD", "群眾隊伍原生陣營槽不一致")
 		native_slot_owner[native_slot] = int(team.faction)
-		native_slot_of[int(team.faction)] = native_slot
 		if native_formation.size() < 2 or native_formation[0] != native_slot or native_formation[1] != int(team.troop):
 			return Runtime.fail("INVALID_CROWD", "群眾隊伍陣營／兵種與原生陣列不符")
 		var original_roster: Dictionary = crowd_rosters.get(int(team.team_id), {})

@@ -176,6 +176,14 @@ func contains_person(identity: int) -> bool:
 	return _index_by_id.has(identity)
 
 
+## True when a live (not departed) roster team of this crowd has 	eam_id.
+func has_live_team(team_id: int) -> bool:
+	if not active: return false
+	for team: Dictionary in teams:
+		if int(team.team_id) == team_id and not bool(team.get("solo", false)) and not bool(team.get("departed", false)): return true
+	return false
+
+
 func owns_original_team(source: TerrainArmy) -> bool:
 	if not active: return false
 	for plan: Dictionary in _original_team_plans:
@@ -3421,6 +3429,8 @@ func activate_loaded() -> void:
 	# Nothing about bodies is saved: the loaded rosters, control and native refs give the same bodied set.
 	_clear_bodies()
 	_refresh_bodies()
+	# The saved hostility table already holds joined-team alliances; re-assert them from the teams (idempotent).
+	if not _apply_slot_alliances(): last_event_error = SiteRuntime.fail("INVALID", "原生陣營敵對表無法還原")
 	_begin_player()
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
@@ -3433,6 +3443,48 @@ func activate_loaded() -> void:
 func _native_faction(faction: int) -> int:
 	return native_slot_for(faction, teams)
 
+
+## Nekki 2026-11-04 (C): a whole team joins another faction. Native keeps the team's formation and slot; the slot's native
+## hostility is made to match the new faction (allied with that faction's other slots, hostile to everyone else), and the
+## hostility table is saved in the blob. A slot shared with other teams cannot change faction (leaving is a later flow).
+func relabel_team_faction(team_id: int, faction: int) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if faction < 0: return SiteRuntime.fail("INVALID", "勢力不合法")
+	var entry: Dictionary = {}
+	for team: Dictionary in teams:
+		if int(team.team_id) == team_id and not bool(team.get("solo", false)) and not bool(team.get("departed", false)): entry = team
+	if entry.is_empty(): return SiteRuntime.fail("NO_TARGET", "找不到群眾隊伍")
+	if int(entry.faction) == faction: return SiteRuntime.ok("", {"changed": false})
+	var slot := native_faction_of(entry)
+	for team: Dictionary in teams:
+		if team != entry and native_faction_of(team) == slot: return SiteRuntime.fail("BUSY", "此隊與其他隊伍共用原生陣營槽，不能單獨改換勢力")
+	var roster: Dictionary = {}
+	for row: Dictionary in rosters:
+		if int(row.team_id) == team_id: roster = row
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "找不到群眾隊伍名冊")
+	entry["faction"] = faction
+	roster["faction_id"] = faction
+	for army: TerrainArmy in lab.combat_armies:
+		if army.team_id == team_id: army.faction_id = faction
+	if not _apply_slot_alliances(): return SiteRuntime.fail("INVALID", "原生陣營敵對表無法更新")
+	_bind_people() # Owners read the team's faction.
+	return SiteRuntime.ok("", {"changed": true, "slot": slot})
+
+
+## Native hostility between every two used slots follows the factions that own them: allied when the same non-neutral
+## faction owns both (a joined team keeps its own slot), hostile otherwise. Idempotent; also run after a load.
+func _apply_slot_alliances() -> bool:
+	if crowd == null or not crowd.has_method("set_hostile"): return false
+	var owner := {}
+	for team: Dictionary in teams:
+		if bool(team.get("departed", false)): continue
+		owner[native_faction_of(team)] = int(team.faction)
+	var slots: Array = owner.keys()
+	for a in range(slots.size()):
+		for b in range(a + 1, slots.size()):
+			var allied := RegionFactionQuery.same_side(int(owner[slots[a]]), int(owner[slots[b]]))
+			if not bool(crowd.set_hostile(int(slots[a]), int(slots[b]), not allied)): return false
+	return true
 
 ## The slot rule of _native_faction over any teams entries (the Region arrival builds its native offline).
 static func native_slot_for(faction: int, entries: Array) -> int:
