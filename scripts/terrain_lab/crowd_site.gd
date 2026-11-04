@@ -3042,67 +3042,6 @@ func departure_release(plan: Dictionary) -> Dictionary:
 	return SiteRuntime.ok("", {"roster": roster, "released": released.size(), "army": army_conversion.snapshot})
 
 
-## G6.4c: read-only plan for a crowd actor body that leaves alone by land. The body is its own solo team (no roster), so
-## only that team's formation is released. Nothing is released here.
-func solo_departure_plan(identity: int) -> Dictionary:
-	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
-	if not _actors.has(identity) or not _index_by_id.has(identity): return SiteRuntime.fail("NO_TARGET", "此人不是群眾中的單人本體")
-	if not pending_captivity.is_empty(): return SiteRuntime.fail("BUSY", "群眾俘虜事件尚未結束")
-	if has_pending_capture(identity): return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
-	var team: Dictionary = {}
-	for candidate: Dictionary in teams:
-		if not bool(candidate.get("solo", false)) or bool(candidate.get("departed", false)): continue
-		for member: Variant in candidate.get("person_ids", []):
-			if int(member) == identity: team = candidate
-		if not team.is_empty(): break
-	if team.is_empty(): return SiteRuntime.fail("NO_TARGET", "群眾中沒有此人的單人隊")
-	var owner: Variant = person_owner(identity)
-	var index := int(_index_by_id[identity])
-	if owner == null or int(owner.formation_index) != int(team.formation): return SiteRuntime.fail("INVALID", "群眾單人隊與原生資料不符")
-	# The controlled actor holds host control; _split_exit_ready hands it back for the query only.
-	if not _split_exit_ready(owner, index, -1): return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
-	var state := soldier_state(index)
-	return SiteRuntime.ok("", {"identity": identity, "formation": int(team.formation), "index": index, "faction": int(team.faction),
-		"owner": owner, "cell": Vector2i(floori(float(state.px)), floori(float(state.py)))})
-
-
-## G6.4c: releases the solo actor of a plan that solo_departure_plan passed. Release is irreversible, so callers must
-## pre-validate the extraction first. Returns the native receipt and the ammunition key; the caller writes them into the
-## Site body that leaves, and this Site forgets the actor (bodies, owners, records, contact and death bookkeeping).
-func solo_departure_release(plan: Dictionary) -> Dictionary:
-	if not plan.get("ok", false): return plan
-	var identity := int(plan.identity)
-	var index := int(plan.index)
-	var owner: Variant = plan.owner
-	# Same host-control handover as departure_release: handed back on refusal, cleared on success.
-	var host_held := index == player_index
-	if host_held: crowd.set_host_control(index, false)
-	var receipt: Dictionary = owner.release_for_departure(index, -1)
-	if receipt.is_empty():
-		if host_held: crowd.set_host_control(index, true)
-		return SiteRuntime.fail("RELEASE_REFUSED", "原生釋放被拒；請重新檢查")
-	if host_held: player_index = -1
-	var ammo_key := str(_ammo_keys.get(identity, ""))
-	var actor: TerrainTestCharacter = _actors[identity]
-	lab.combat_actors.erase(actor) # actor_present reads this list; a later capture must not keep the departed body.
-	_actors.erase(identity)
-	_index_by_id.erase(identity)
-	_owner_by_id.erase(identity)
-	_records.erase(identity)
-	_live_contact_actor_ids.erase(identity)
-	_death_notified.erase(identity)
-	_ammo_keys.erase(identity)
-	var formation := int(plan.formation)
-	var kept_owners: Array = []
-	for owner_ref: Variant in owners:
-		if int(owner_ref.formation_index) != formation: kept_owners.append(owner_ref)
-	owners = kept_owners
-	# Tombstone: the formation stays in the native World, and _departed_people skips its person from now on.
-	for team: Dictionary in teams:
-		if int(team.formation) == formation: team["departed"] = true
-	return SiteRuntime.ok("", {"receipt": receipt, "ammo_key": ammo_key})
-
-
 ## G6.5 (2026-11-01): 幹部分隊. A cadre leads a sub-party out of one live crowd team. The cadre is the party's formal
 ## captain; the other members are ordinary people of the same team. An ordinary member never leaves alone, the formal
 ## captain never leaves by a split (it departs with the whole team), and the controlled cadre leads the split and travels

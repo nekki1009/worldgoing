@@ -268,7 +268,7 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
 	var identity: int = lab.controlled_person_id()
-	if lab.crowd_site._actors.has(identity): return _depart_crowd_solo(controller, identity)
+	# S4 (Nekki 2026-11-03): no crowd actor leaves alone; the player is a roster captain and departs with its team.
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
 	if not plan.ok: return plan
 	# SHIPSEA: a team aboard its ships leaves by sea (the same extraction as a grid sea departure). Partial boarding refuses.
@@ -331,89 +331,6 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
 	var text := ("已整隊出海（群眾 %d 人、%d 艘船）%s" % [census.people.size(), census.vehicles.size(), note]) if sea else ("已整隊出發（群眾 %d 人）%s" % [census.people.size(), note])
 	return Runtime.ok(text, {"token": result.token})
-
-
-## G6.4c: the read-only gates of a crowd actor body that leaves alone by land (its own solo team, no roster). Shared by the
-## departure and the travel selection. Nothing is captured or released here: the route and the saved successor are read
-## again after the Site capture by _depart_crowd_solo.
-static func _crowd_solo_gate(controller: Node, identity: int) -> Dictionary:
-	var lab: Node = controller.lab
-	var plan: Dictionary = lab.crowd_site.solo_departure_plan(identity)
-	if not plan.ok: return plan
-	# A solo actor aboard a ship cannot leave alone by sea yet; the whole team or the land route is the way out.
-	if controller.vehicles.is_embarked(identity): return Runtime.fail("CROWD_SOLO_SEA_UNSUPPORTED", "群眾中的單人尚不能海路出發；請整隊或改走陸路")
-	var cells: Array[Vector2i] = []
-	cells.append(plan.cell)
-	if _hostile_near(lab, int(plan.faction), cells, int(plan.get("team_id", -1)), identity): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
-	var actor: TerrainTestCharacter = lab.crowd_site._actors[identity]
-	var actor_key := "player" if actor == lab.character else "npc"
-	var spec := _crowd_spec(controller.region_slot, identity, 0)
-	spec["actor_key"] = actor_key
-	spec["crowd_solo"] = true
-	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(lab.terrain.site, spec)
-	if not boarding_guard.ok: return boarding_guard
-	return Runtime.ok("", {"plan": plan, "spec": spec, "actor_key": actor_key})
-
-## G6.4c: 「整隊出發」 of a crowd actor body that leaves alone. As in _depart_crowd, every refusal is decided before the native
-## release: the gate, the supply guard, the body readiness, the route, the preflight and an extraction probe on a copy.
-## The body then leaves with the native receipt written into it, and the Site keeps it until the travel extracts it.
-static func _depart_crowd_solo(controller: Node, identity: int) -> Dictionary:
-	var lab: Node = controller.lab
-	var slot: RegionSaveSlot = controller.region_slot
-	if slot == null or lab.restore_only: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中才能整隊出發")
-	var fault: Dictionary = controller.original_step_fault_guard()
-	if not fault.ok: return fault
-	var gate: Dictionary = _crowd_solo_gate(controller, identity)
-	if not gate.ok: return gate
-	var guard: Dictionary = controller.supply_save_guard()
-	if not guard.ok: return guard
-	var captured: Dictionary = controller._capture_for_save()
-	if not captured.ok: return captured
-	var plan: Dictionary = gate.plan
-	var spec: Dictionary = gate.spec
-	var actor_key := str(gate.actor_key)
-	var body: Dictionary = lab.terrain.site.actors.get(actor_key, {})
-	if body.is_empty() or int(body.get("person_id", -1)) != identity: return Runtime.fail("NO_TARGET", "群眾中的單人本體不在此地")
-	var reason := RegionTravel._actor_ready(body)
-	if not reason.is_empty(): return Runtime.fail("NOT_READY", reason)
-	# The body leaves without the crowd handoff of the formation it is leaving (its solo_formation is tombstoned now).
-	body.erase("crowd_handoff")
-	var component := start_component(slot, controller._current_region_site(), plan.cell, lab.terrain)
-	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
-	# Read after the full Site capture above, which writes the saved bodies that stay.
-	spec["crowd_control_successor"] = split_control_successor(lab, identity)
-	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
-	if not pre.ok: return pre
-	var probe: Dictionary = RegionTravel.extract(lab.terrain.site.duplicate(true), spec, "crowd_probe")
-	if not probe.ok: return probe
-	var released: Dictionary = lab.crowd_site.solo_departure_release(plan)
-	if not released.ok: return released
-	# The receipt is the body's state as it leaves, converted as CrowdSite._sync_actor reads it back.
-	var receipt: Dictionary = released.receipt
-	body["hp"] = float(receipt.hp)
-	body["cell"] = [receipt.cell.x, receipt.cell.y]
-	body["position"] = [receipt.position.x * CrowdSiteScript.CELL, receipt.position.y * CrowdSiteScript.CELL]
-	if float(receipt.hp) > 0.0:
-		body["fatigue"] = float(receipt.fatigue)
-		body["fatigue_rest"] = float(receipt.fatigue_rest)
-	# Ammunition the body carries returns to its activity cargo, where the travel extraction reads it.
-	var ammo_key := str(released.ammo_key)
-	if not ammo_key.is_empty():
-		var activity: Dictionary = lab.terrain.site.get("manual" if actor_key == "player" else "worker", {})
-		var cargo: Dictionary = activity.get("cargo", {})
-		if int(receipt.ammo) > 0: cargo[ammo_key] = int(receipt.ammo)
-		else: cargo.erase(ammo_key)
-		activity["cargo"] = cargo
-	var recaptured: Dictionary = lab.crowd_site.capture_save()
-	if not recaptured.ok: return recaptured
-	controller._apply_region_crowd_capture(recaptured)
-	var result := slot.begin_region_travel(lab.terrain, spec, component)
-	if not result.ok: return result
-	controller._auto_save_blocked = true
-	lab.terrain.site.paused = true
-	open_travel_map(controller, str(slot.pin.world_instance_id), str(slot.pin.slot_id), controller._region_manifest_path)
-	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
-	return Runtime.ok("已單獨出發（群眾中的單人）%s" % note, {"token": result.token})
 
 
 static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Dictionary:
@@ -562,15 +479,6 @@ static func _selected_crowd_departure(controller: Node) -> Dictionary:
 	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
 	var identity: int = lab.controlled_person_id()
-	if lab.crowd_site._actors.has(identity):
-		var solo_gate: Dictionary = _crowd_solo_gate(controller, identity)
-		if not solo_gate.ok: return solo_gate
-		var solo_component := start_component(slot, controller._current_region_site(), solo_gate.plan.cell, lab.terrain)
-		if solo_component < 0 or solo_component > 253: return Runtime.fail("NO_ROUTE")
-		var solo_people: Array[int] = []
-		solo_people.append(identity)
-		return {"ok": true, "spec": solo_gate.spec, "people": solo_people, "component": solo_component, "waiting": false,
-			"selection": var_to_bytes([identity, solo_gate.actor_key, 0, 0, 0, [identity], []])}
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
 	if not plan.ok: return plan
 	# Only the land selection is read here; a sea team leaves through _depart_crowd, never through a deferred intent.
