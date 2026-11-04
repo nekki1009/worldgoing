@@ -543,6 +543,7 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		rosters.append(roster)
 		teams.append({"slot": slot, "team_id": next_team + slot, "formation": formation, "faction": faction,
 			"native_faction": native_faction, "troop": troop, "person_ids": ids, "solo": false})
+	_ensure_team_containers()
 	return _finish_admission(sides, prepared, before, total, "群眾模式：已部署 %d 隊、%d 人" % [sides.size(), total])
 
 
@@ -2677,6 +2678,23 @@ func native_empty_formation(team_id: int, faction: int) -> Dictionary:
 
 
 # A new native formation of `faction` with its GD roster and team record. Formations are never removed.
+## Option C: every crowd team keeps a TerrainArmy roster container with its team id (no simulation). The fire transport,
+## garrison registrations and load (activate_loaded) find a team's owner there; the lab's three default slots covered only
+## three teams, so a fourth deployed team could not save (CORRUPT_FIRE_OWNER).
+func _ensure_team_containers() -> void:
+	if not is_instance_valid(lab) or not lab.has_method("_ensure_army_slots"): return
+	for team: Dictionary in teams:
+		if bool(team.get("solo", false)): continue
+		var team_id := int(team.team_id)
+		var found := false
+		for army: TerrainArmy in lab.combat_armies: found = found or army.team_id == team_id
+		if found: continue
+		# A new empty slot, never a reused one (an empty slot's id may still name a saved roster).
+		lab._ensure_army_slots(lab.combat_armies.size() + 1)
+		var container: TerrainArmy = lab.combat_armies.back()
+		container.team_id = team_id
+
+
 func native_add_team(team_id: int, faction: int, troop: int, training: float, cell: Vector2, garrison_feature_id: String) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
 	var native_faction := _native_faction(faction)
@@ -2694,6 +2712,7 @@ func native_add_team(team_id: int, faction: int, troop: int, training: float, ce
 	rosters.append(roster)
 	lab.terrain.site.armies.append(roster)
 	lab.terrain.site["army_next_team"] = maxi(int(lab.terrain.site.get("army_next_team", 0)), team_id + 1)
+	_ensure_team_containers()
 	return SiteRuntime.ok("", {"formation": formation, "roster": roster})
 
 
