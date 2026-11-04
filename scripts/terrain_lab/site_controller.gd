@@ -10142,6 +10142,10 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
+	var start_faction: Dictionary = request.get("start_faction", {})
+	if result.ok and str(start_faction.get("mode", "neutral")) == "found":
+		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")))
+		if not founded.ok: result = founded
 	if result.ok:
 		lab._audio_boot_complete()
 		_record_world(str(request.get("world_name", "")))
@@ -10150,6 +10154,32 @@ func _settle_boot_request(result: Dictionary) -> void:
 	RegionEntry.menu_message = str(result.get("message", result.get("code", "無法開啟世界")))
 	_leave_site.call_deferred(RegionEntry.MAIN_MENU)
 
+## Nekki 2026-11-04 (C): the main-menu start choice "found own faction". A new registry faction (kind player, hostile to
+## everyone by default) is founded and the player's start team joins it; the player, its formal captain, is the faction's
+## head (FQ2: before a nation, the roster head). Registry and Site are published in one Region checkpoint, else undone.
+func found_start_faction(faction_name: String) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中才能建立勢力")
+	var named := faction_name.strip_edges()
+	if named.is_empty() or named.length() > 32: return Runtime.fail("INVALID", "勢力名稱須為 1–32 字")
+	var player: int = lab.controlled_person_id()
+	var target: Dictionary = lab._original_person_target(player)
+	if target.is_empty() or int(target.get("unit", -1)) < 0: return Runtime.fail("NO_TARGET", "玩家不在自己的隊伍中")
+	var team_id := int(target.owner.team_id)
+	var leader: Variant = null
+	var resolved: Dictionary = region_slot.resolve_person_reference(region_slot.person_reference(player))
+	if resolved.get("ok", false) and RegionFactionQuery.ref_valid(resolved.get("typed_ref", {}), "person"): leader = resolved.typed_ref
+	var fields := {"name": named, "kind": "player", "leader_ref": leader, "founded_at": float(region_slot.control.logical_game_seconds)}
+	var revision := int(region_slot.control.get("faction_registry", {}).get("revision", 0))
+	var prepared: Dictionary = region_slot.prepare_faction_creation(lab.terrain, revision, [], fields)
+	if not prepared.ok: return prepared
+	var joined: Dictionary = lab.relabel_team_faction(team_id, int(prepared.faction_id))
+	if not joined.ok: return joined
+	var captured: Dictionary = capture_region_checkpoint("region_checkpoint", true)
+	var committed: Dictionary = region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners, prepared.registry, false, captured) if captured.ok else captured
+	if not committed.ok:
+		lab.relabel_team_faction(team_id, RegionFactionQuery.NEUTRAL_FACTION_ID)
+		return committed
+	return Runtime.ok("已建立勢力「%s」，你是首長" % named, {"faction_id": int(prepared.faction_id)})
 ## Applies main-menu character creation to the new world's player and saves.
 func apply_created_character(data: Dictionary) -> Dictionary:
 	# Neutral part 2: the new-game player is the captain of a one-person crowd roster team. Its crowd record is the person.

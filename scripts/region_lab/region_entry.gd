@@ -35,9 +35,14 @@ static var draft: Dictionary = {}
 ## Failure to report on the main menu after a scene hand-off.
 static var menu_message := ""
 
-static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST) -> bool:
+## start_faction: {"mode": "neutral"} (default) or {"mode": "found", "name": ...}: the main-menu start choice, settled after birth.
+static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
+		return false
+	var mode := str(start_faction.get("mode", "neutral"))
+	if mode not in ["neutral", "found"] or mode == "found" and (str(start_faction.get("name", "")).strip_edges().is_empty() or str(start_faction.name).strip_edges().length() > 32):
+		menu_message = "自建勢力須取 1–32 字的名稱；未建立世界"
 		return false
 	var accepted := false
 	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path
@@ -51,7 +56,7 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		return false
 	pending = {"manifest": manifest_path, "world_id": "taiwan_%d" % int(Time.get_unix_time_from_system()),
 		"slot_id": SLOT, "site": site, "create_new": true, "character": character.duplicate(true),
-		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id}
+		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true)}
 	return true
 
 

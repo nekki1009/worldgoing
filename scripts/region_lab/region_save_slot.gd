@@ -12166,7 +12166,7 @@ func checkpoint_faction_migration(data: TerrainData, prepared: Dictionary, conte
 	if current.registry != prepared.get("registry"): return fail("CONFLICT", "migration sources changed")
 	return checkpoint_region_site(data, context, owners, current.registry)
 
-func prepare_faction_creation(data: TerrainData, expected_revision: int, reserved_ids: Array = []) -> Dictionary:
+func prepare_faction_creation(data: TerrainData, expected_revision: int, reserved_ids: Array = [], fields: Dictionary = {}) -> Dictionary:
 	if data == null or str(data.site.get("id", "")) != str(control.active_site_id): return fail("REGION_SOURCE")
 	if int(control.get("faction_registry", {}).get("revision", 0)) != expected_revision: return fail("CONFLICT")
 	var all_reserved: Array = reserved_ids.duplicate()
@@ -12176,7 +12176,7 @@ func prepare_faction_creation(data: TerrainData, expected_revision: int, reserve
 	for id: String in current_ids: all_reserved.append(int(id))
 	var migration: Dictionary = prepare_faction_migration(all_reserved)
 	if not migration.ok: return migration
-	var allocated: Variant = RegionFactionQuery.allocate(migration.registry, int(migration.registry.revision), float(control.logical_game_seconds))
+	var allocated: Variant = RegionFactionQuery.allocate(migration.registry, int(migration.registry.revision), float(control.logical_game_seconds), fields)
 	if not allocated.ok: return allocated
 	return {"ok": true, "source_generation": int(_marker.get("generation", 0)), "registry_revision": expected_revision, "source_hash": var_to_bytes(data.site).hex_encode().sha256_text(), "reserved_ids": reserved_ids.duplicate(), "registry": allocated.registry, "faction_id": allocated.faction_id}
 

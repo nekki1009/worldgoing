@@ -199,7 +199,9 @@ static func migration(states: Array[Dictionary], receipts: Array[Dictionary], re
 	if not bound.ok: return bound
 	return {"ok": true, "registry": registry}
 
-static func allocate(registry: Dictionary, expected_revision: int, now: float) -> Dictionary:
+## `fields` (name, color, kind, leader_ref, founded_at, duty_ai) overrides the legacy defaults of a founded faction, e.g.
+## the player's own faction at the start (kind player, leader the player); the candidate is validated as a whole.
+static func allocate(registry: Dictionary, expected_revision: int, now: float, fields: Dictionary = {}) -> Dictionary:
 	var checked: Dictionary = validate(registry, now)
 	if not checked.ok: return checked
 	if int(registry.revision) != expected_revision: return fail("CONFLICT")
@@ -208,9 +210,15 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float) -
 	var candidate: Variant = registry.duplicate(true)
 	var id: int = int(candidate.next_faction_id)
 	if id == NEUTRAL_FACTION_ID: id += 1 # reserved neutral side is never allocated
-	candidate.entries[str(id)] = legacy_entry(id)
+	var entry := legacy_entry(id)
+	for key: String in ["name", "color", "kind", "leader_ref", "founded_at", "duty_ai"]:
+		if fields.has(key): entry[key] = fields[key]
+	candidate.entries[str(id)] = entry
 	candidate.next_faction_id = id + 1
 	candidate.revision = expected_revision + 1
+	if not fields.is_empty():
+		var founded: Dictionary = validate(candidate, now)
+		if not founded.ok: return founded
 	return {"ok": true, "registry": candidate, "faction_id": id}
 
 ## An unmapped legacy/trial nation cannot acquire a formal faction by inference.

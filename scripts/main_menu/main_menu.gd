@@ -36,6 +36,8 @@ var _preview_rect: TextureRect
 # Confirm page controls.
 var _world_name: LineEdit
 var _initial_scenario: OptionButton
+var _start_faction: OptionButton
+var _start_faction_name: LineEdit
 var _summary: Label
 
 func _ready() -> void:
@@ -505,6 +507,11 @@ func _refresh_summary() -> void:
 		int(data.command_abilities.tactics), int(data.command_abilities.leadership), int(data.command_abilities.coach),
 		"中性" if traits.is_empty() else "、".join(traits)]
 
+## The selected start faction for RegionEntry.request_new_world.
+func start_faction_choice() -> Dictionary:
+	if _start_faction == null or str(_start_faction.get_item_metadata(_start_faction.selected)) != "found": return {"mode": "neutral"}
+	return {"mode": "found", "name": _start_faction_name.text.strip_edges()}
+
 func start_new_game() -> void:
 	var data: Dictionary = RegionEntry.draft.get("character", {})
 	var site: Variant = RegionEntry.draft.get("site")
@@ -512,7 +519,8 @@ func start_new_game() -> void:
 		show_page("main")
 		return
 	var scenario_id := str(_initial_scenario.get_item_metadata(_initial_scenario.selected))
-	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST))):
+	var start_faction := start_faction_choice()
+	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction):
 		_message.text = RegionEntry.menu_message
 		_message.visible = true
 		return
@@ -527,7 +535,7 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	_initial_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Nekki 2026-11-03: a new game starts with cadres, not artisans. The player captains a neutral team with
 	# TerrainLab.INITIAL_CADRES cadres. The artisan scenarios stay available to tests only, not in the menu.
-	_initial_scenario.add_item("玩家與 %d 名幹部（中立隊）" % TerrainLab.INITIAL_CADRES)
+	_initial_scenario.add_item("玩家與 %d 名幹部" % TerrainLab.INITIAL_CADRES)
 	_initial_scenario.set_item_metadata(0, "")
 	parent.add_child(_initial_scenario)
 	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))
@@ -536,3 +544,27 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	_initial_scenario.item_selected.connect(func(index: int) -> void:
 		RegionEntry.draft["initial_scenario_id"] = str(_initial_scenario.get_item_metadata(index)))
 	_label(parent, "你是隊長；幹部都是軍官，可以各自帶人分隊。起點須能合法安置整隊。", 14)
+	# Nekki 2026-11-04 (C): start neutral, or found your own faction (you are its head; hostile to all by default).
+	# Joining a scenario faction appears once the world has scenario factions.
+	_label(parent, "開局勢力", 16)
+	_start_faction = OptionButton.new()
+	_start_faction.name = "StartFaction"
+	_start_faction.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_start_faction.add_item("中立（不屬於任何勢力；建國前不能外交或佔領聚落）")
+	_start_faction.set_item_metadata(0, "neutral")
+	_start_faction.add_item("自建勢力（你是首長；預設與所有勢力敵對）")
+	_start_faction.set_item_metadata(1, "found")
+	parent.add_child(_start_faction)
+	_start_faction_name = LineEdit.new()
+	_start_faction_name.name = "StartFactionName"
+	_start_faction_name.placeholder_text = "勢力名稱（1–32 字）"
+	_start_faction_name.max_length = 32
+	_start_faction_name.visible = false
+	parent.add_child(_start_faction_name)
+	var draft_faction: Dictionary = RegionEntry.draft.get("start_faction", {})
+	if str(draft_faction.get("mode", "neutral")) == "found":
+		_start_faction.select(1)
+		_start_faction_name.text = str(draft_faction.get("name", ""))
+		_start_faction_name.visible = true
+	_start_faction.item_selected.connect(func(index: int) -> void:
+		_start_faction_name.visible = str(_start_faction.get_item_metadata(index)) == "found")
