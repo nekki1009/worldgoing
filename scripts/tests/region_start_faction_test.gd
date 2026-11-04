@@ -55,6 +55,9 @@ func _run() -> void:
 		var entry: Dictionary = registry.entries[key]
 		if str(entry.get("kind", "")) == "player" and str(entry.get("name", "")) == NAME and str(entry.get("status", "")) == "active": founded = int(entry.faction_id)
 	if not _check(founded >= 0 and founded != RegionFactionQuery.NEUTRAL_FACTION_ID, "the registry holds the new active player faction", registry.get("entries", {}).keys()): return
+	var leader: Variant = registry.entries[str(founded)].get("leader_ref")
+	var crowned: Dictionary = RegionPeerage.record_of(registry, leader)
+	if not _check(RegionFactionQuery.ref_valid(leader, "person") and crowned.get("rank") == "king" and crowned.get("liege_ref") == null, "the founder is the faction's leader and its king (head of the peerage)", [leader, crowned]): return
 	var player := int(lab.controlled_person_id())
 	var target: Dictionary = lab._original_person_target(player)
 	if not _check(not target.is_empty() and int(target.get("unit", -1)) >= 0, "the player is a roster person of its start team"): return

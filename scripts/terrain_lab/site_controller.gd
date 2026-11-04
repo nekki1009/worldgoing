@@ -10168,6 +10168,7 @@ func found_start_faction(faction_name: String) -> Dictionary:
 	var leader: Variant = null
 	var resolved: Dictionary = region_slot.resolve_person_reference(region_slot.person_reference(player))
 	if resolved.get("ok", false) and RegionFactionQuery.ref_valid(resolved.get("typed_ref", {}), "person"): leader = resolved.typed_ref
+	elif resolved.get("ok", false) and resolved.get("status") == "current": leader = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), player)
 	var fields := {"name": named, "kind": "player", "leader_ref": leader, "founded_at": float(region_slot.control.logical_game_seconds)}
 	var revision := int(region_slot.control.get("faction_registry", {}).get("revision", 0))
 	var prepared: Dictionary = region_slot.prepare_faction_creation(lab.terrain, revision, [], fields)

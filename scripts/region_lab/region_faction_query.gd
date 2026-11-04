@@ -33,7 +33,10 @@ static func _time(value: Variant, now: float) -> bool:
 	return value == null or (value is int or value is float) and is_finite(float(value)) and float(value) >= 0.0 and float(value) <= now
 
 static func validate(value: Variant, now: float) -> Dictionary:
-	if not value is Dictionary or not keys(value, ["version", "revision", "next_faction_id", "migration_complete", "entries", "coverage"]): return fail("CORRUPT_SAVE", "faction registry fields")
+	# `peerage` (nobility ranks, RegionPeerage) is optional: a registry without it simply has no titled people.
+	var registry_fields: Array = ["version", "revision", "next_faction_id", "migration_complete", "entries", "coverage"]
+	if value is Dictionary and value.has("peerage"): registry_fields.append("peerage")
+	if not value is Dictionary or not keys(value, registry_fields): return fail("CORRUPT_SAVE", "faction registry fields")
 	if not whole(value.version, VERSION, VERSION): return fail("SAVE_VERSION", "unknown faction registry version")
 	if not whole(value.revision, 0, MAX_REVISION) or not whole(value.next_faction_id, 0, MAX_ID + 1) or not value.migration_complete is bool or value.migration_complete != true or not value.entries is Dictionary or not value.coverage is Dictionary: return fail("CORRUPT_SAVE", "incomplete faction migration")
 	var bound := {}
@@ -60,6 +63,9 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	if not keys(coverage, ["complete", "sources", "counts"]) or coverage.complete != false or not coverage.complete is bool or not coverage.sources is Array or coverage.counts != null: return fail("CORRUPT_SAVE", "unknown coverage must not be zero")
 	for source: Variant in coverage.sources:
 		if not source is Dictionary or not keys(source, ["owner", "source_generation", "runtime_revision", "checksum", "as_of_game_seconds", "complete"]) or not source.owner is String or source.owner.is_empty() or source.source_generation != null and not whole(source.source_generation, 0, 2147483647) or source.runtime_revision != null and not whole(source.runtime_revision, 0, MAX_REVISION) or not source.checksum is String or source.checksum.length() != 64 or not source.checksum.is_valid_hex_number(false) or not _time(source.as_of_game_seconds, now) or source.as_of_game_seconds == null or source.complete != true: return fail("CORRUPT_SAVE", "faction source receipt")
+	if value.has("peerage"):
+		var titled: Dictionary = RegionPeerage.validate(value.peerage, value, now)
+		if not titled.ok: return titled
 	return {"ok": true}
 
 ## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with
@@ -165,6 +171,7 @@ static func canonical_registry(value: Dictionary) -> Dictionary:
 			if source is Dictionary: sources.append(canonical_receipt(source))
 			else: sources.append(source)
 		registry.coverage.sources = sources
+	if registry.get("peerage") is Dictionary: registry.peerage = RegionPeerage.canonical(registry.peerage)
 	return registry
 
 static func migration(states: Array[Dictionary], receipts: Array[Dictionary], reserved: Array, previous: Dictionary, now: float, complete: bool) -> Dictionary:
@@ -219,6 +226,11 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float, f
 	if not fields.is_empty():
 		var founded: Dictionary = validate(candidate, now)
 		if not founded.ok: return founded
+	# A founder with a person ref is crowned king of the new faction (RegionPeerage head record).
+	if ref_valid(entry.leader_ref, "person"):
+		var crowned: Dictionary = RegionPeerage.crown_founder(candidate, id, entry.leader_ref, now)
+		if not crowned.ok: return crowned
+		candidate = crowned.registry
 	return {"ok": true, "registry": candidate, "faction_id": id}
 
 ## An unmapped legacy/trial nation cannot acquire a formal faction by inference.
