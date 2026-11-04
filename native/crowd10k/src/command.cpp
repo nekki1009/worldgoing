@@ -726,6 +726,36 @@ bool World::transfer_member(int i, int to) {
 	return true;
 }
 
+// Leave (NEKKI 2026-11-04, joining in person): an awake, free member on the field of one team becomes a normal member of
+// another team's formation, as a captive does in transfer_member but without captivity. A cadre who will not follow his
+// captain into another faction leaves this way for his own one-person team. Orders, exchanges and targets naming him are
+// cleared as move_member clears them; the soldier takes the target team (team[] too, so hostility follows) and keeps
+// position, hp, ammo, equipment and person id. Refusals change nothing: captive, dead, knocked out, getting up,
+// surrendered, absent, aboard, released, convoy or siege crew, in a prison, under escort, same team, same formation,
+// garrisoned source or target, bad ids.
+bool World::leave_member(int i, int to) {
+	if (work_point_active_ || work_point_finish_ready_ || i < 0 || i >= soldier_count() || to < 0 || to >= (int)formations.size()) return false;
+	const int from = form[i];
+	if (from < 0 || from >= (int)formations.size() || from == to || formations[from].team == formations[to].team) return false;
+	if (formations[from].garrisoned || formations[to].garrisoned) return false;
+	if (captive[i] || !alive(i) || ko[i] > 0.0 || getup[i] > 0.0 || surrendered[i] || released[i]) return false;
+	if (is_absent(i) || is_aboard(i) || is_convoy_crew(i) || is_siege_crew(i) || prison_id[i] != 0 || escort_mode[i] != 0) return false;
+	cancel_actions_involving(i);
+	for (int j = 0; j < soldier_count(); ++j) {
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	reassign_formation(i, to);
+	team[i] = (uint8_t)formations[to].team;
+	// Faction slots are built from soldiers' teams; a team whose formation was just added has none yet, so the per-slot
+	// block tables must be rebuilt before the next step indexes them with this soldier's team.
+	if (faction_slot_[team[i]] < 0) build_faction_slots();
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	return true;
+}
+
 bool World::charge_custody_work(int i, double seconds) {
 	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
 	if (i < 0 || i >= soldier_count() || !can_act(i) || escort_mode[i] != 1 || !std::isfinite(seconds) || seconds < 0) return false;

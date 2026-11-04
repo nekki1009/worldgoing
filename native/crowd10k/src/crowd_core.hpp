@@ -750,6 +750,8 @@ public:
 	bool move_member(int i, int to_formation);
 	// NEKKI 2026-10-30 persuasion: an awake captive of another team joins to_formation as a normal member (command.cpp).
 	bool transfer_member(int i, int to_formation);
+	// NEKKI 2026-11-04 joining in person: an awake member on the field leaves for another team's formation (command.cpp).
+	bool leave_member(int i, int to_formation);
 	bool landing_cell(int i, double x, double y, float &fx, float &fy, int &cell_index) const;
 	void reassign_formation(int i, int to_formation);
 	bool charge_siege_round(const std::vector<int> &members, double per_person);

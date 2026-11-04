@@ -9,12 +9,14 @@ extends RefCounted
 ## - A head grants any rank below emperor; any other noble grants only ranks at least two steps below his own.
 ## - Fiefs are settlements whose head office the noble holds (Site data); this module only checks the minimum
 ##   fief levels a rank requires when it is granted. Falling below the minimum later never demotes (Nekki: 都照建議).
-const RANKS := ["emperor", "king", "duke", "marquis", "count", "viscount", "baron"]
-const NAMES := {"emperor": "皇帝", "king": "王", "duke": "公爵", "marquis": "侯爵", "count": "伯爵", "viscount": "子爵", "baron": "男爵"}
-const SUFFIX := {"emperor": "帝", "king": "王", "duke": "公", "marquis": "侯", "count": "伯", "viscount": "子", "baron": "男"}
+## "none" is an untitled sworn person (a joined captain, a retainer): it has a liege but grants nothing.
+const RANKS := ["emperor", "king", "duke", "marquis", "count", "viscount", "baron", "none"]
+const NAMES := {"emperor": "皇帝", "king": "王", "duke": "公爵", "marquis": "侯爵", "count": "伯爵", "viscount": "子爵", "baron": "男爵", "none": "無爵"}
+const SUFFIX := {"emperor": "帝", "king": "王", "duke": "公", "marquis": "侯", "count": "伯", "viscount": "子", "baron": "男", "none": ""}
 ## Minimum fiefs: {settlement level, count}. Levels follow SiteRuntime.SETTLEMENT_HEAD_NAMES (2 村, 3 鄉, 4 鎮, 5 城).
 const MIN_FIEFS := {"king": [5, 4], "duke": [5, 2], "marquis": [5, 1], "count": [4, 1], "viscount": [3, 1], "baron": [2, 1]}
 const HEAD_RANKS := ["emperor", "king"]
+const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const RECORD_FIELDS := ["person_ref", "faction_id", "rank", "liege_ref", "granted_at"]
 ## Viscount and above may accept a whole team joining in person.
 const ACCEPT_JOIN_RANK := "viscount"
@@ -85,6 +87,11 @@ static func may_grant(granter: Dictionary, rank: String) -> bool:
 	if granter.liege_ref == null: return rank != "emperor"
 	return rank_index(rank) - rank_index(str(granter.rank)) >= 2
 
+## May `liege` (a record) hold a vassal of `rank`? Untitled sworn people need a liege who may accept joiners.
+static func may_hold(liege: Dictionary, rank: String) -> bool:
+	if rank == "none": return not liege.is_empty() and (liege.liege_ref == null or rank_index(str(liege.rank)) <= rank_index(ACCEPT_JOIN_RANK))
+	return may_grant(liege, rank)
+
 ## `levels` = the settlement levels of every fief the person will hold.
 static func meets_minimum(rank: String, levels: Array) -> bool:
 	if not MIN_FIEFS.has(rank): return true
@@ -117,7 +124,7 @@ static func validate(peerage: Variant, registry: Dictionary, now: float) -> Dict
 		if not RegionFactionQuery.ref_valid(record.liege_ref, "person") or same_ref(record.liege_ref, record.person_ref): return fail("CORRUPT_SAVE", "peerage liege ref")
 		var liege: Variant = peerage.get(key_of(record.liege_ref))
 		if not liege is Dictionary or int(liege.get("faction_id", -1)) != int(record.faction_id): return fail("CORRUPT_SAVE", "liege outside the faction")
-		if not may_grant(liege, str(record.rank)): return fail("CORRUPT_SAVE", "liege may not hold this vassal rank")
+		if not may_hold(liege, str(record.rank)): return fail("CORRUPT_SAVE", "liege may not hold this vassal rank")
 	return {"ok": true}
 
 ## The faction head's person ref from the registry. A nation-bound faction's head lives in the nation's
@@ -163,6 +170,7 @@ static func title(rank: String, fief_name: String = "") -> String:
 static func _candidate(registry: Dictionary) -> Dictionary:
 	var candidate: Dictionary = registry.duplicate(true)
 	candidate.peerage = canonical(table(candidate))
+	candidate.revision = int(candidate.get("revision", 0)) + 1
 	return candidate
 
 static func _finish(candidate: Dictionary, now: float) -> Dictionary:
@@ -197,6 +205,7 @@ static func grant(registry: Dictionary, granter_ref: Dictionary, person_ref: Dic
 	var granter: Dictionary = record_of(registry, granter_ref)
 	if granter.is_empty(): return fail("NOT_NOBLE", "授爵者沒有爵位")
 	if same_ref(granter_ref, person_ref): return fail("SELF_GRANT", "不能授爵給自己")
+	if rank == "none": return fail("NOT_PROMOTION", "無爵不是授予的爵位；投靠用宣誓效忠")
 	if not may_grant(granter, rank): return fail("RANK_TOO_HIGH", "%s不能授予%s" % [NAMES[granter.rank], NAMES.get(rank, rank)])
 	if not meets_minimum(rank, fief_levels): return fail("FIEF_MINIMUM", "%s至少要有 %d 座%s以上的封地" % [NAMES[rank], int(MIN_FIEFS[rank][1]), SiteRuntime.SETTLEMENT_HEAD_NAMES.get(int(MIN_FIEFS[rank][0]), "")])
 	var existing: Dictionary = record_of(registry, person_ref)
@@ -209,7 +218,7 @@ static func grant(registry: Dictionary, granter_ref: Dictionary, person_ref: Dic
 			if not outranks(rank, str(record_of(registry, vassal).rank)): return fail("RANK_TOO_HIGH", "部下的爵位不能高於上級")
 	# A head promoting someone else's vassal keeps that liege when the liege may still hold the new rank.
 	var liege: Variant = canonical_ref(granter_ref)
-	if not existing.is_empty() and may_grant(record_of(registry, existing.liege_ref), rank): liege = canonical_ref(existing.liege_ref)
+	if not existing.is_empty() and existing.liege_ref != null and may_grant(record_of(registry, existing.liege_ref), rank): liege = canonical_ref(existing.liege_ref)
 	var candidate := _candidate(registry)
 	candidate.peerage[key_of(person_ref)] = {"person_ref": canonical_ref(person_ref), "faction_id": int(granter.faction_id), "rank": rank, "liege_ref": liege, "granted_at": now}
 	return _finish(candidate, now)
@@ -263,3 +272,37 @@ static func inherit(registry: Dictionary, dead_ref: Dictionary, heir_ref: Varian
 		var entry: Dictionary = candidate.entries[str(int(dead.faction_id))]
 		if entry.leader_ref != null: entry.leader_ref = canonical_ref(heir_ref)
 	return _finish(candidate, now)
+
+## An untitled person swears fealty to `acceptor` (the head, or viscount and above) on joining in person.
+static func swear(registry: Dictionary, acceptor_ref: Dictionary, person_ref: Dictionary, now: float) -> Dictionary:
+	var acceptor: Dictionary = record_of(registry, acceptor_ref)
+	if not may_hold(acceptor, "none"): return fail("NOT_ACCEPTOR", "只有首長或子爵以上的貴族能收投靠")
+	if same_ref(acceptor_ref, person_ref): return fail("SELF_GRANT")
+	if not record_of(registry, person_ref).is_empty(): return fail("ALREADY_SWORN", "此人已效忠某勢力")
+	var candidate := _candidate(registry)
+	candidate.peerage[key_of(person_ref)] = {"person_ref": canonical_ref(person_ref), "faction_id": int(acceptor.faction_id), "rank": "none", "liege_ref": canonical_ref(acceptor_ref), "granted_at": now}
+	return _finish(candidate, now)
+
+## --- Joining in person (Nekki 2026-11-05 03:28, formulas agreed) ---
+const ACCEPT_THRESHOLD := 50.0
+const FOLLOW_THRESHOLD := 55.0
+
+## Personality distance 0..100: mean absolute difference over the ten axes (missing packet = neutral).
+static func personality_distance(a: Variant, b: Variant) -> float:
+	var left: Dictionary = PersonPersonality.read(a)
+	var right: Dictionary = PersonPersonality.read(b)
+	var total := 0.0
+	for axis: String in PersonPersonality.AXES: total += absf(float(left[axis]) - float(right[axis]))
+	return total / float(PersonPersonality.AXES.size())
+
+## (100 - dist(official, player)) x 0.5 + official ambition x 0.3 + min(1, team size / faction people here) x 20; >= 50 accepts.
+static func accept_score(official: Variant, player: Variant, team_size: int, faction_people_here: int) -> float:
+	var ratio: float = 1.0 if faction_people_here <= 0 else minf(1.0, float(team_size) / float(faction_people_here))
+	return (100.0 - personality_distance(official, player)) * 0.5 + float(PersonPersonality.read(official).ambition) * 0.3 + ratio * 20.0
+
+## (100 - dist(cadre, acceptor)) x 0.6 + (100 - dist(cadre, player)) x 0.4; with no acceptor only the player counts (weight 1).
+## >= 55 follows.
+static func follow_score(cadre: Variant, acceptor: Variant, player: Variant) -> float:
+	var to_player: float = 100.0 - personality_distance(cadre, player)
+	if acceptor == null: return to_player
+	return (100.0 - personality_distance(cadre, acceptor)) * 0.6 + to_player * 0.4

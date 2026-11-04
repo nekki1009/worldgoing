@@ -26,6 +26,7 @@ const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
+const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const MODES := ["查看", "手動採集", "隊員採集區", "清理區", "勘探區", "建設區", "馬羊捕捉區", "復育原生植被區"]
 const FORMATION_DESCRIPTIONS := {
 	"auto": "依地形站位，可使用進路待命",
@@ -579,6 +580,8 @@ func _build_ui() -> void:
 	_button(launcher.column, "台灣地圖", "OpenRegionMap", _open_region_map)
 	region_travel_button = _button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
 	_build_crowd_split_entry(launcher.column)
+	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
+	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
 	_resume_region_party_map_button = _button(launcher.column, "原旅隊繼續地圖旅行", "ResumeOriginalPartyMap", _resume_region_party_map)
 	_button(launcher.column, "回主選單", "ReturnMainMenu", func() -> void: _request_exit(RegionEntry.MAIN_MENU))
 	var column: VBoxContainer = _formal_columns.map
@@ -10181,6 +10184,16 @@ func found_start_faction(faction_name: String) -> Dictionary:
 		lab.relabel_team_faction(team_id, RegionFactionQuery.NEUTRAL_FACTION_ID)
 		return committed
 	return Runtime.ok("已建立勢力「%s」，你是首長" % named, {"faction_id": int(prepared.faction_id)})
+## Joining in person: the official's decision and which cadres would follow, as a readable result. Changes nothing.
+func preview_join_faction(official_id: int) -> Dictionary:
+	var seen: Dictionary = JoinFaction.preview(self, official_id)
+	if not seen.ok: return seen
+	var stay: Array = []
+	for cadre: Dictionary in seen.cadres:
+		if not cadre.follows: stay.append("#%d（%.0f）" % [int(cadre.id), float(cadre.score)])
+	var verdict := "願意收你" if seen.accepted else "不會收你"
+	var cadres := "所有幹部都會跟隨" if stay.is_empty() else "不願跟隨的幹部：" + "、".join(stay)
+	return Runtime.ok("對方%s（接受分 %.1f）；%s" % [verdict, float(seen.score), cadres], seen)
 ## Applies main-menu character creation to the new world's player and saves.
 func apply_created_character(data: Dictionary) -> Dictionary:
 	# Neutral part 2: the new-game player is the captain of a one-person crowd roster team. Its crowd record is the person.

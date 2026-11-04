@@ -3085,6 +3085,75 @@ static func cadre_index(roster: Dictionary, index: int) -> bool:
 	return false
 
 
+## Nekki 2026-11-04 (joining in person): a cadre who will not follow his captain into another faction leaves the team on
+## the spot and becomes the captain of his own one-person team of `faction` (normally neutral), in this Site. The person
+## keeps his row (life, items, abilities); his posts in the old team are vacated. Supply follows the person first, so a
+## refusal before the native move changes nothing. Returns {team_id, formation}.
+func detach_to_new_team(identity: int, faction: int) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if not crowd.has_method("leave_member"): return SiteRuntime.fail("UNSUPPORTED", "原生群眾未提供離隊轉投")
+	if _actors.has(identity) or not _index_by_id.has(identity) or not _owner_by_id.has(identity): return SiteRuntime.fail("UNSUPPORTED", "此人不在原生群眾名冊")
+	if not pending_captivity.is_empty() or has_pending_capture(identity): return SiteRuntime.fail("BUSY", "群眾俘虜事件尚未結束")
+	var roster: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if _roster_index_for_person(candidate, identity) >= 0: roster = candidate
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "群眾中沒有此人的隊伍")
+	if not str(roster.get("garrison_feature_id", "")).is_empty(): return SiteRuntime.fail("BUSY", "駐營隊伍的人員不能單獨離隊")
+	var index := _roster_index_for_person(roster, identity)
+	if index == int(roster.get("formal_commander", -1)): return SiteRuntime.fail("CAPTAIN_REQUIRED", "正式隊長不能單獨離隊")
+	if roster.units.size() < 2: return SiteRuntime.fail("WHOLE_TEAM", "一人隊不必離隊")
+	var owner: Variant = _owner_by_id[identity]
+	var native_index := int(_index_by_id[identity])
+	if native_index == player_index: return SiteRuntime.fail("UNSUPPORTED", "受控本人不能用此流程離隊")
+	if not bool(owner.site_exit_ready(native_index)): return SiteRuntime.fail("NOT_READY", "此人作業或動作尚未收束")
+	var team_id := native_next_team_id()
+	var ids: Array[int] = [identity]
+	var supplied: Dictionary = lab.site_controller.captivity_supply._change_membership_supply(owner,
+		{"key": "team:%d" % team_id, "team": native_pending_owner(team_id, faction)}, ids)
+	if not supplied.ok: return supplied
+	var state := soldier_state(native_index)
+	var entry: Dictionary = native_team(int(roster.team_id))
+	var created: Dictionary = native_add_team(team_id, faction, int(entry.get("troop", 0)), float(formation_state(int(owner.formation_index)).get("training", 0.0)), Vector2(float(state.px), float(state.py)), "")
+	if not created.ok: return created
+	var destination: Dictionary = created.roster
+	var formation := int(destination.crowd_formation)
+	# Native move_member keeps a soldier inside his team's slot; leaving for another team (and slot) is leave_member.
+	if not crowd.has_method("leave_member") or not bool(crowd.leave_member(native_index, formation)):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此人離隊；此人未移動")
+	var held_before: bool = roster_post_holders(int(roster.team_id)).has(identity)
+	# Unit indices of the old roster shift when the row leaves: commanders, officers and abilities are remapped as
+	# split_roster remaps them (native_transfer_records remaps officer_service itself).
+	var keep_map := {}
+	for at in range(roster.units.size()):
+		if at != index: keep_map[at] = keep_map.size()
+	var old_abilities: Array = roster.get("abilities", []).duplicate(true)
+	native_transfer_records(ids, roster, destination)
+	for field: String in ["formal_commander", "acting_commander", "current_commander"]:
+		if roster.has(field): roster[field] = _remap_index(int(roster[field]), keep_map)
+	if roster.has("officers"): roster["officers"] = _remap_list(roster.officers, keep_map)
+	roster["abilities"] = _remap_abilities(old_abilities.duplicate(true), keep_map)
+	destination["abilities"] = _remap_abilities(old_abilities, {index: 0})
+	var officer_persons: Array = []
+	for officer: Variant in roster.get("officers", []):
+		if int(officer) >= 0 and int(officer) < roster.units.size(): officer_persons.append(int(roster.units[int(officer)].person_id))
+	if not set_formation_fields(int(owner.formation_index), {"officer_persons": officer_persons}):
+		return SiteRuntime.fail("INVALID_ROLE", "原生軍官列表寫入失敗")
+	if roster.has("offices"):
+		SiteOffices.vacate_unless(roster.offices, func(holder: int) -> bool: return holder != identity)
+	for row: Dictionary in destination.units: row["member"] = true
+	destination["formal_commander"] = 0
+	destination["offices"] = SiteOffices.default_offices("team", identity, false)
+	if not set_formation_fields(formation, {"formal_person": identity}):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定隊長；此人已移入新隊")
+	var holds := roster_post_holders(team_id).has(identity)
+	if holds != held_before and not bool(crowd.set_post_holder(int(_index_by_id[identity]), int(holds))):
+		return SiteRuntime.fail("INVALID_ROLE", "原生職位旗標寫入失敗")
+	_refresh_bodies()
+	var synced: Dictionary = sync_to_site()
+	if not synced.ok: return synced
+	return SiteRuntime.ok("", {"team_id": team_id, "formation": formation})
+
+
 ## G6.5: the native exit gate for a split. It refuses a host-controlled soldier, and the controlled cadre leads the split,
 ## so his host control is handed back for the query and then restored; nothing else changes.
 func _split_exit_ready(owner: Variant, index: int, aboard_vehicle: int = -1) -> bool:

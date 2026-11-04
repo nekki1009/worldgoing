@@ -126,6 +126,9 @@ int wg_crowd_move_member(wg_crowd *c,int i,int to_formation) {
 int wg_crowd_transfer_member(wg_crowd *c,int i,int to_formation) {
 	return c && i>=0 && i<c->world.soldier_count() && c->world.transfer_member(i,to_formation) ? 1 : 0;
 }
+int wg_crowd_leave_member(wg_crowd *c,int i,int to_formation) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.leave_member(i,to_formation) ? 1 : 0;
+}
 int wg_crowd_site_person_absent_state(const wg_crowd *c,int i,double *out) {
 	if (!c || !out || i<0 || i>=c->world.soldier_count()) return 0;
 	out[0] = c->world.is_absent(i) ? 1.0 : 0.0; out[1] = static_cast<double>(c->world.absent_kind[i]);

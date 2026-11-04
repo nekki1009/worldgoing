@@ -1418,6 +1418,45 @@ static void transfer_refusals_and_transfer() {
 	REQUIRE(!w.transfer_member(2, foreign)); // already in that formation
 }
 
+static void leave_refusals_and_leave() {
+	test_case = "leave_member: refusals change nothing; an awake free member leaves for another team's formation";
+	World w(1); int foreign = -1; transfer_scenario(w, foreign);
+	REQUIRE(!w.leave_member(-1, foreign) && !w.leave_member(99, foreign) && !w.leave_member(1, -1) && !w.leave_member(1, 99));
+	REQUIRE(!w.leave_member(1, 0));                     // same formation
+	REQUIRE(!w.leave_member(2, foreign));               // a captive leaves only through transfer_member
+	w.ko[1] = 30.0;
+	REQUIRE(!w.leave_member(1, foreign));               // knocked out
+	w.ko[1] = 0.0;
+	REQUIRE(w.set_garrisoned(foreign, true));
+	REQUIRE(!w.leave_member(1, foreign));               // garrisoned target
+	REQUIRE(w.set_garrisoned(foreign, false));
+	REQUIRE(w.validate());
+	const float hp_before = (float)w.hp[1];
+	REQUIRE(w.leave_member(1, foreign));
+	REQUIRE(w.team[1] == 1 && w.form[1] == foreign && w.captive[1] == 0 && (float)w.hp[1] == hp_before && !w.is_absent(1));
+	REQUIRE(std::find(w.formations[foreign].members.begin(), w.formations[foreign].members.end(), 1) != w.formations[foreign].members.end());
+	REQUIRE(w.validate());
+	for (int t = 0; t < 60; ++t) step(w);
+	REQUIRE(w.validate());
+	const std::vector<uint8_t> blob = w.save();
+	World loaded(1);
+	REQUIRE(loaded.load(blob) && loaded.team[1] == 1 && loaded.form[1] == foreign && loaded.state_hash() == w.state_hash());
+}
+
+static void leave_into_new_empty_team() {
+	test_case = "leave_member: leaving into a just-added formation of a team with no soldiers yet builds its faction slot";
+	World w(1); int foreign = -1; transfer_scenario(w, foreign);
+	const int fresh = second_formation(w, 7, 12.5f, 25.5f); // team 7 has no soldiers until the leave
+	REQUIRE(w.leave_member(1, fresh));
+	REQUIRE(w.team[1] == 7 && w.form[1] == fresh);
+	REQUIRE(w.validate());
+	for (int t = 0; t < 120; ++t) step(w);
+	REQUIRE(w.validate());
+	const std::vector<uint8_t> blob = w.save();
+	World loaded(1);
+	REQUIRE(loaded.load(blob) && loaded.state_hash() == w.state_hash());
+}
+
 static uint64_t transfer_scenario_hash(int threads) {
 	World w(threads); int foreign = -1; transfer_scenario(w, foreign);
 	REQUIRE(w.transfer_member(2, foreign));
@@ -1583,6 +1622,8 @@ int main(int argc, char **argv) {
 	move_refusals();
 	transfer_refusals_and_transfer();
 	transfer_hash_matches_across_thread_counts();
+	leave_refusals_and_leave();
+	leave_into_new_empty_team();
 	absent_save_load_matches();
 	absent_hash_matches_across_thread_counts();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
