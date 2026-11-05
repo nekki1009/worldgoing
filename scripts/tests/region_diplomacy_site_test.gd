@@ -115,6 +115,7 @@ func _run() -> void:
 	var war: Dictionary = controller.declare_war_on(faction)
 	if not _check(war.ok and RegionDiplomacy.hostile(slot.control.faction_registry, mine, faction, now) and RegionDiplomacy.table(slot.control.faction_registry).breaches.size() == 1, "war during a truce is a breach and the pair is hostile again", war): return
 	if not _check(int(controller.reputation_of(player).credit) == -2000, "breaking the truce costs 20 credit", controller.reputation_of(player)): return
+	if not _check(controller.breach_grievance(mine, 1) == 0, "a faction without a nation here has no nation grievance to queue (skipped)"): return
 	_finished = true
 	print("REGION_DIPLOMACY_SITE_PASS: ", checks, " checks; NPC truce request, acceptance, native re-arm and breach hold")
 	quit(0)

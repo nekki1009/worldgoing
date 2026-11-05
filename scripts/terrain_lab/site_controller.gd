@@ -10373,8 +10373,30 @@ func declare_war_on(target: int) -> Dictionary:
 	if not result.ok: return result
 	if not result.changed: return Runtime.ok("雙方本來就是敵對")
 	var done := _commit_diplomacy(result, "已宣戰（背約）")
-	if done.ok: adjust_reputation(int(lab.controlled_person_id()), 0.0, float(Reputation.BREAK_TREATY))
+	if done.ok:
+		adjust_reputation(int(lab.controlled_person_id()), 0.0, float(Reputation.BREAK_TREATY))
+		var breaches: Array = RegionDiplomacy.table(region_slot.control.faction_registry).breaches
+		breach_grievance(mine, int(breaches.back().id) if not breaches.is_empty() else 0)
 	return done
+
+## §11.5 本國不滿: a breach queues +5 grievance toward the breaker's own nation for its members present here (the head
+## excepted), deduplicated by (breach id, person). A faction without a nation in this Site, and members elsewhere, are
+## skipped (the spec's "國家不存在 → 明記 skipped"; the cold-member receipts are not built yet). Returns how many got it.
+func breach_grievance(faction: int, breach_id: int) -> int:
+	var count := 0
+	var site_id := str(lab.terrain.site.get("id", ""))
+	var minute := int(lab.terrain.site.get("minute", 0))
+	var head := int(lab.controlled_person_id())
+	for nation_id: Variant in lab.terrain.site.get("equipment_nations", {}):
+		var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+		if int(nation.get("faction_id", -1)) != faction: continue
+		var ref := {"kind": "nation", "site_id": site_id, "org_id": str(nation_id)}
+		for member: Variant in nation.get("members", []):
+			if int(member) == head: continue
+			var person: Dictionary = person_actions._person(int(member), false)
+			if person.is_empty(): continue
+			if SiteSocial.record(person.body, ref, "breach", 5, "breach:%d:%d" % [breach_id, int(member)], minute): count += 1
+	return count
 
 ## §11.4: the head sends a truce (days) or peace letter to another faction's head.
 func propose_diplomacy(target: int, kind: String, days: int = 15) -> Dictionary:
@@ -10440,6 +10462,10 @@ func settle_diplomacy() -> Dictionary:
 	return done
 
 var _diplomacy_retry_at := 0.0
+
+## A settlement fell (SiteSettlement.fall_to): the fall joins the diplomacy record at the next checkpoint.
+func note_settlement_fall(site_id: String, from: int, to: int) -> void:
+	if region_slot != null: region_slot.pending_falls.append({"site_id": site_id, "from": from, "to": to, "at": float(region_slot.control.logical_game_seconds)})
 
 ## --- Diplomacy D3: NPC heads once per game day (§11.6) ---
 var _npc_diplomacy_day := -1
@@ -10510,7 +10536,10 @@ func npc_diplomacy_day() -> Dictionary:
 			var distance := diplomacy_distance_m(me, them)
 			if distance < 0.0: continue
 			var moved: Dictionary = {}
-			if RegionDiplomacyAI.want_peace_upgrade(registry, me, them, 2.0 * RegionDiplomacy.delay_seconds(distance), now):
+			var known_pair := strength.has(me) and strength.has(them)
+			if RegionDiplomacyAI.want_reclaim_war(registry, me, them, mind.ambition, mind.mercy, int(strength.get(me, 0)), int(strength.get(them, 0)), known_pair, RegionDiplomacy.holds_fallen_of(registry, me, them), now):
+				moved = RegionDiplomacy.declare_war(registry, me, them, head_ref, now)
+			elif RegionDiplomacyAI.want_peace_upgrade(registry, me, them, 2.0 * RegionDiplomacy.delay_seconds(distance), now):
 				moved = RegionDiplomacy.propose(registry, me, them, "peace", 0, head_ref, distance, now)
 			elif RegionDiplomacy.hostile(registry, me, them, now) and not RegionDiplomacy.in_breach_window(registry, them, me, now):
 				var known := strength.has(me) and strength.has(them)

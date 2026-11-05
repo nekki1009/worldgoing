@@ -598,6 +598,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 		var level := int(settlement.level)
 		if leader_id > 0: controller.adjust_reputation(leader_id, PersonReputation.settlement_change(level, false), 0.0)
 		if old_lord > 0 and old_lord != leader_id: controller.adjust_reputation(old_lord, PersonReputation.settlement_change(level, true), 0.0)
+	if controller != null and controller.has_method("note_settlement_fall"): controller.note_settlement_fall(str(data.site.get("id", "")), defender, attacker)
 	SiteOffices.vacate_unless(settlement.offices, func(_holder: int) -> bool: return false)
 	var head := SiteOffices.head_position(settlement.offices)
 	head.holder = leader_id if leader_id > 0 else -1

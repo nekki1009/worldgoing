@@ -3758,6 +3758,7 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	if not published.ok: return published
 	pending_peerage_inheritance.clear()
 	pending_battles.clear()
+	pending_falls.clear()
 	return {"ok": true, "path": path, "generation": published.generation, "data": loaded.data, "snapshot": validated.snapshot}
 
 
@@ -12582,6 +12583,8 @@ func rollback_person_allocation(checkpoint: Dictionary, allowed_owners: Array = 
 var pending_peerage_inheritance: Array = []
 ## Closed battles of the active Site (RegionBattleLog), joined to the registry at the next checkpoint.
 var pending_battles: Array = []
+## Settlement falls of the active Site (RegionDiplomacy.record_fall), applied at the next checkpoint.
+var pending_falls: Array = []
 
 func _peerage_reconcile_site(next_clock: Dictionary, data: TerrainData) -> Dictionary:
 	var registry: Variant = next_clock.get("faction_registry", {})
@@ -12589,6 +12592,11 @@ func _peerage_reconcile_site(next_clock: Dictionary, data: TerrainData) -> Dicti
 		for battle: Dictionary in pending_battles:
 			var logged: Dictionary = RegionBattleLog.add(registry, battle, float(next_clock.logical_game_seconds))
 			if logged.ok: registry = logged.registry
+		next_clock.faction_registry = registry
+	if registry is Dictionary and not pending_falls.is_empty() and registry.get("version") == RegionFactionQuery.VERSION:
+		for fall: Dictionary in pending_falls:
+			var noted: Dictionary = RegionDiplomacy.record_fall(registry, str(fall.site_id), int(fall.from), int(fall.to), float(next_clock.logical_game_seconds))
+			if noted.ok: registry = noted.registry
 		next_clock.faction_registry = registry
 	if not registry is Dictionary or not registry.get("peerage") is Dictionary: return {"ok": true}
 	for death: Dictionary in pending_peerage_inheritance:

@@ -206,7 +206,14 @@ static func settle(registry: Dictionary, now: float) -> Dictionary:
 
 ## Structural validation of the optional table (RegionFactionQuery.validate calls it).
 static func validate(value: Variant, registry: Dictionary, now: float) -> Dictionary:
-	if not value is Dictionary or not RegionFactionQuery.keys(value, ["version", "next_id", "treaties", "proposals", "breaches", "cooldowns"]): return fail("CORRUPT_SAVE", "diplomacy fields")
+	var fields: Array = ["version", "next_id", "treaties", "proposals", "breaches", "cooldowns"]
+	if value is Dictionary and value.has("falls"): fields.append("falls")
+	if not value is Dictionary or not RegionFactionQuery.keys(value, fields): return fail("CORRUPT_SAVE", "diplomacy fields")
+	if value.has("falls"):
+		if not value.falls is Dictionary: return fail("CORRUPT_SAVE", "diplomacy falls")
+		for site_id: Variant in value.falls:
+			var fall: Variant = value.falls[site_id]
+			if not site_id is String or not fall is Dictionary or not RegionFactionQuery.keys(fall, ["owner", "lost_by", "at"]) or not fall.lost_by is Array or float(fall.at) > now: return fail("CORRUPT_SAVE", "diplomacy fall record")
 	if not RegionFactionQuery.whole(value.version, VERSION, VERSION) or not RegionFactionQuery.whole(value.next_id, 1, RegionFactionQuery.MAX_REVISION): return fail("CORRUPT_SAVE", "diplomacy version")
 	if not value.treaties is Dictionary or not value.proposals is Dictionary or not value.breaches is Array or not value.cooldowns is Dictionary: return fail("CORRUPT_SAVE", "diplomacy tables")
 	for key: Variant in value.treaties:
@@ -235,6 +242,12 @@ static func canonical(value: Dictionary) -> Dictionary:
 		for field: String in ["id", "from", "to", "days"]: proposal[field] = int(proposal[field])
 		if proposal.by_ref is Dictionary: proposal.by_ref = RegionPeerage.canonical_ref(proposal.by_ref)
 		if proposal.reply_ref is Dictionary: proposal.reply_ref = RegionPeerage.canonical_ref(proposal.reply_ref)
+	for fall: Dictionary in result.get("falls", {}).values():
+		fall.owner = int(fall.owner)
+		fall.at = float(fall.at)
+		var lost: Array = []
+		for faction: Variant in fall.lost_by: lost.append(int(faction))
+		fall.lost_by = lost
 	for breach: Dictionary in result.get("breaches", []):
 		for field: String in ["id", "breaker", "victim"]: breach[field] = int(breach[field])
 		var ended: Array = []
@@ -255,3 +268,24 @@ static func next_event_at(registry: Dictionary, now: float) -> float:
 	for treaty: Dictionary in diplomacy.treaties.values():
 		if treaty.status == "active" and treaty.kind == "truce": next = minf(next, float(treaty.ends_at))
 	return next
+
+## --- Settlement falls (§11.6 收復宣戰: "沿原 fall_to 成功收據更新追索紀錄") ---
+## Each fall records the new owner and adds the loser to the site's lost_by list; retaking a site removes the
+## retaker from it. Only falls proven by fall_to after this record existed are known; nothing is inferred.
+static func record_fall(registry: Dictionary, site_id: String, from: int, to: int, now: float) -> Dictionary:
+	if site_id.is_empty() or from == to: return {"ok": true, "registry": registry, "changed": false}
+	var candidate := _candidate(registry)
+	var falls: Dictionary = candidate.diplomacy.get("falls", {})
+	var fall: Dictionary = falls.get(site_id, {"owner": to, "lost_by": [], "at": now})
+	var lost: Array = fall.lost_by.duplicate()
+	if from >= 0 and from != RegionFactionQuery.NEUTRAL_FACTION_ID and not lost.has(from): lost.append(from)
+	lost.erase(to)
+	falls[site_id] = {"owner": to, "lost_by": lost, "at": now}
+	candidate.diplomacy["falls"] = falls
+	return _finish(candidate, now, {"changed": true})
+
+## Does `other` hold a settlement that fell from `me` (and that `me` has not retaken)?
+static func holds_fallen_of(registry: Dictionary, me: int, other: int) -> bool:
+	for fall: Dictionary in table(registry).get("falls", {}).values():
+		if int(fall.owner) == other and fall.lost_by.has(me): return true
+	return false

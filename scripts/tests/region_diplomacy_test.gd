@@ -132,5 +132,26 @@ func _run() -> void:
 	var corrupt: Dictionary = reg.duplicate(true)
 	corrupt.diplomacy.treaties[corrupt.diplomacy.treaties.keys()[0]].kind = "alliance"
 	if not _check(not RegionFactionQuery.validate(corrupt, bc_now + 3.0 * DAY).ok, "an unknown treaty kind is refused"): return
+	# Settlement falls and the reclaim-war rule (§11.6).
+	var fell := bc_now + 4.0 * DAY
+	reg = _step(RegionDiplomacy.record_fall(reg, "site_x", fa, fb, fell), "乙 takes 甲's settlement site_x")
+	if reg.is_empty(): return
+	if not _check(RegionDiplomacy.holds_fallen_of(reg, fa, fb) and not RegionDiplomacy.holds_fallen_of(reg, fb, fa), "乙 holds a settlement that fell from 甲"): return
+	sent = RegionDiplomacy.propose(reg, fb, fa, "peace", 0, B, 0.0, fell)
+	reg = _step(sent, "乙 offers peace")
+	if reg.is_empty(): return
+	reg = _step(RegionDiplomacy.settle(reg, fell), "delivered")
+	if reg.is_empty(): return
+	reg = _step(RegionDiplomacy.reply(reg, int(sent.proposal_id), true, A, 0.0, fell), "甲 accepts after the 30-day window? no: 乙 is not the breaker")
+	if reg.is_empty(): return
+	reg = _step(RegionDiplomacy.settle(reg, fell), "peace with 乙")
+	if reg.is_empty(): return
+	if not _check(not RegionDiplomacyAI.want_reclaim_war(reg, fa, fb, 70, 30, 10, 10, true, true, fell + 9.0 * DAY), "no reclaim war within 10 days of peace"): return
+	if not _check(RegionDiplomacyAI.want_reclaim_war(reg, fa, fb, 70, 30, 10, 10, true, true, fell + 10.0 * DAY), "an ambitious head reclaims after 10 days of peace at r = 1 >= 0.8"): return
+	if not _check(not RegionDiplomacyAI.want_reclaim_war(reg, fa, fb, 30, 70, 10, 10, true, true, fell + 10.0 * DAY) and not RegionDiplomacyAI.want_reclaim_war(reg, fa, fb, 70, 30, 7, 10, true, true, fell + 10.0 * DAY), "a merciful head, or one too weak (r 0.7 < 0.8), does not"): return
+	reg = _step(RegionDiplomacy.record_fall(reg, "site_x", fb, fa, fell + 11.0 * DAY), "甲 retakes site_x")
+	if reg.is_empty(): return
+	if not _check(not RegionDiplomacy.holds_fallen_of(reg, fa, fb) and RegionDiplomacy.holds_fallen_of(reg, fb, fa), "retaking clears 甲's claim and records 乙's loss"): return
+	if not _check(RegionFactionQuery.validate(JSON.parse_string(JSON.stringify(reg)), fell + 11.0 * DAY).ok, "the fall record survives JSON"): return
 	print("REGION_DIPLOMACY_PASS: ", checks, " checks")
 	quit(0)
