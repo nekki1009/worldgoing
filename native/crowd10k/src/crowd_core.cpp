@@ -654,6 +654,14 @@ void World::refresh_cav_layout(Formation &f) const {
 
 void World::slot_world(const Formation &f, int s, int n, float &x, float &y) const {
 	n = std::max(1, n);
+	if (f.charge_cols == 0 && s >= 0 && s < n && 2 * (size_t)n <= f.shape.size()) {
+		const float sp = slot_spacing(f);
+		const float lat = f.shape[2 * (size_t)s] * sp, back = f.shape[2 * (size_t)s + 1] * sp;
+		const float fx = std::cos(f.facing), fy = std::sin(f.facing);
+		x = f.cx - fy * lat - fx * back;
+		y = f.cy + fx * lat - fy * back;
+		return;
+	}
 	int cols = std::max(1, std::min(f.cols, n));
 	int rows = (n + cols - 1) / cols;
 	int row = s / cols, col = s % cols;
@@ -922,6 +930,11 @@ bool World::charge_target(int fi, float &tx, float &ty) const {
 
 float World::layout_half_extent(const Formation &f) const {
 	const int m = std::max(1, f.slot_count), cols = std::max(1, std::min(f.cols, m)), rows = (m + cols - 1) / cols;
+	if (f.charge_cols == 0 && 2 * (size_t)m <= f.shape.size()) {
+		float r2 = 0.f;
+		for (int s = 0; s < m; ++s) r2 = std::max(r2, f.shape[2 * (size_t)s] * f.shape[2 * (size_t)s] + f.shape[2 * (size_t)s + 1] * f.shape[2 * (size_t)s + 1]);
+		return slot_spacing(f) * std::sqrt(r2);
+	}
 	return 0.5f * slot_spacing(f) * std::sqrt((float)((cols - 1) * (cols - 1) + (rows - 1) * (rows - 1)));
 }
 
@@ -3983,6 +3996,7 @@ uint64_t World::state_hash() const {
 		m(f.charge_target_form); m(f.charge_t); m(f.charge_cols); m(f.charge_runs); m(f.cav_layout); // CAV-4a charge cycle, mounted layout
 		m(f.order_serial); m(f.ranged_order_serial); // ORDSERIAL
 		m(f.cols); m(f.spacing); m(f.field); m(f.lag); m(f.command_dirty); m(f.commander_present); m(f.resupplying); m(f.charged_this_step);
+		m(f.shape.size()); mv(f.shape); // G7b preset
 	}
 	m(tick); m(exchange_round); m(shot_serial); m(time);
 	m(host_ranged_delegate); m(host_last_release_id);

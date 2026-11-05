@@ -3,7 +3,7 @@ extends SceneTree
 ## Pinned synthetic Region world (same manifest as region_crowd_bind_test.gd), one original GD team imported into a
 ## native crowd plus three crowd teams (nation HQ, receiving team, enemy). Checks:
 ## - the native formation order serial: a GD team's counters continue in the crowd; +1 per accepted crowd order and
-##   none for a refused one; the ranged counter is written through CrowdPersonOwner; KW19 save / load keeps both;
+##   none for a refused one; the ranged counter is written through CrowdPersonOwner; KW20 save / load keeps both;
 ## - the source gate admits an active crowd (no UNSUPPORTED_BACKEND) and the receiving team is the CrowdPersonOwner;
 ## - receive applies: the captain's own HOLD goes through crowd_site.issue_order, adds one to the serial, leaves the
 ##   tactical AI, records the prior policy, and the native order delay is the recorded original delay;
@@ -224,11 +224,11 @@ func _run() -> void:
 	if not _check(team.ranged_order_serial == 4 and int(_serials(team)[1]) == 4 and int(_serials(team)[0]) == 2, "the ranged order counter is written to the native formation"): return
 	team.ranged_order_serial = 0
 	var blob: PackedByteArray = crowd.save_state()
-	if not _check(blob.size() > 4 and blob[0] == 0x4B and blob[1] == 0x57 and blob[2] == 0x31 and blob[3] == 0x39, "the native save magic is KW19"): return
+	if not _check(blob.size() > 4 and blob[0] == 0x4B and blob[1] == 0x57 and blob[2] == 0x32 and blob[3] == 0x30, "the native save magic is KW20 (KW19 order serials, KW20 formation shapes)"): return
 	var copy: RefCounted = ClassDB.instantiate("ArmyCrowd")
 	copy.setup(1, 971)
 	if not _check(copy.load_state(blob) and copy.order_serials(int(team.formation_index)) == _serials(team) and copy.order_serials(int(imported.formation_index)) == imported_serials,
-		"a KW19 save loads with the same counters"): return
+		"a KW20 save loads with the same counters"): return
 
 	# Nation authority in this same Site: head = HQ captain; members = head and the receiving team.
 	var members: Array[int] = [head]

@@ -1879,8 +1879,10 @@ func _formation_external_signature(team: TerrainArmy) -> int:
 
 func _update_formation_controls() -> void:
 	if _crowd_active():
-		if formation_apply_button != null: formation_apply_button.disabled = true
-		if formation_status_label != null: formation_status_label.text = "群眾隊形由戰場維持；可直接移動、守位、接敵、撤退或追擊。"
+		var crowd_team := _crowd_command_team(_formation_source())
+		if formation_apply_button != null: formation_apply_button.disabled = crowd_team.is_empty()
+		if formation_status_label != null:
+			formation_status_label.text = "先選擇可下令的群眾隊伍。" if crowd_team.is_empty() else "目前陣形：%s；選好後按套用。" % _formation_name(lab.crowd_site.team_preset(int(crowd_team.team_id)))
 		return
 	if formation_preset_choice == null or formation_status_label == null:
 		return
@@ -1978,7 +1980,16 @@ func _update_formation_controls() -> void:
 
 func _apply_formation_change() -> void:
 	if _crowd_active():
-		show_result(Runtime.fail("CROWD_UNSUPPORTED", "群眾隊形由戰場維持；未改陣"))
+		var source := _formation_source()
+		var crowd_team := _crowd_command_team(source)
+		if crowd_team.is_empty():
+			show_result(Runtime.fail("NO_TARGET", "尚未部署可下令的群眾隊伍"))
+			return
+		var preset := str(formation_preset_choice.get_item_metadata(formation_preset_choice.selected))
+		var changed: Dictionary = lab.crowd_site.set_team_preset(int(crowd_team.team_id), preset, source)
+		if changed.ok: changed.message = "已改為%s" % _formation_name(preset)
+		show_result(changed)
+		_update_formation_controls()
 		return
 	var source := _formation_source()
 	var team := _formation_team(source)

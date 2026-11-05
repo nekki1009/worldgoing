@@ -2269,7 +2269,7 @@ static void test_order_serial() {
 		check_valid(s.w);
 		// KW19 save / load
 		const std::vector<uint8_t> blob = s.w.save();
-		CHECK(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '1' && blob[3] == '9', "the save magic is KW19");
+		CHECK(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '2' && blob[3] == '0', "the save magic is KW20");
 		World back(1);
 		CHECK(back.load(blob) && back.state_hash() == s.w.state_hash(), "a KW19 blob loads with the same hash");
 		CHECK(back.formations[a].order_serial == 17 && back.formations[a].ranged_order_serial == 5 && back.formations[b].order_serial == 2, "the counters survive save / load");
@@ -2281,7 +2281,7 @@ static void test_order_serial() {
 		// KW18 / KW17 layouts: no counters; they load with 1 / 0
 		const std::vector<uint8_t> old18 = s.w.save_kw18(), old17 = s.w.save_kw17();
 		CHECK(old18.size() > 4 && old18[3] == '8' && old17.size() > 4 && old17[3] == '7', "the test hooks write the KW18 and KW17 layouts");
-		CHECK(old18.size() + 16 * s.w.formations.size() == blob.size(), "KW19 adds exactly two 8-byte counters per formation");
+		CHECK(old18.size() + 24 * s.w.formations.size() == blob.size(), "KW19 adds two 8-byte counters and KW20 an empty 8-byte shape count per formation");
 		World b18(1), b17(1);
 		CHECK(b18.load(old18) && b17.load(old17), "KW18 and KW17 blobs load");
 		check_valid(b18); check_valid(b17);
@@ -2289,7 +2289,7 @@ static void test_order_serial() {
 		CHECK(b17.formations[a].order_serial == 1 && b17.formations[a].ranged_order_serial == 0, "a KW17 blob loads the counters at their defaults (1, 0)");
 		World ref(1);
 		CHECK(ref.load(blob) && ref.set_order_serials(a, 1, 0) && ref.set_order_serials(b, 1, 0) && ref.state_hash() == b18.state_hash(), "a KW18 blob is the same state as the KW19 one with default counters");
-		CHECK(b18.save().size() == blob.size() && b18.save()[3] == '9', "a loaded KW18 world saves as KW19");
+		CHECK(b18.save().size() == blob.size() && b18.save()[2] == '2' && b18.save()[3] == '0', "a loaded KW18 world saves as KW20");
 		CHECK(b18.host_order(a, 0, 0.f, 0.f, 0) == OK && b18.formations[a].order_serial == 2, "a loaded KW18 formation counts from 1");
 	}
 	{   // AI orders count
@@ -2343,6 +2343,48 @@ static void test_order_serial() {
 	}
 }
 
+static void test_formation_shape() {
+	std::printf("[formation shape] G7b: preset slot offsets place the able members, validation, garrison refusal, KW20 save / load, hash, clear\n");
+	Scene s(1, 64, 48);
+	const int n = 9;
+	int a = s.formation(0, 30.5f, 24.5f, 0.f, n, sword());
+	s.w.finalize();
+	s.w.formations[a].ai_enabled = false;
+	// a wedge: tip in front (negative back), rows widening backwards
+	std::vector<float> wedge;
+	int placed = 0;
+	for (int row = 0; placed < n; ++row)
+		for (int c = -row; c <= row && placed < n; ++c, ++placed) { wedge.push_back((float)c); wedge.push_back((float)row - 1.0f); }
+	CHECK(!s.w.set_formation_shape(a, std::vector<float>{1.f}), "an odd offset count is refused");
+	CHECK(!s.w.set_formation_shape(a, std::vector<float>{0.f, NAN}), "a non-finite offset is refused");
+	CHECK(!s.w.set_formation_shape(a, std::vector<float>{0.f, 65.f}), "an offset beyond 64 slots is refused");
+	CHECK(!s.w.set_formation_shape(99, wedge), "a bad formation id is refused");
+	CHECK(s.w.set_formation_shape(a, wedge) && s.w.formations[a].shape == wedge, "a wedge is accepted");
+	check_valid(s.w);
+	s.run(20.0);
+	const Formation &f = s.w.formations[a];
+	const float fx = std::cos(f.facing), fy = std::sin(f.facing);
+	int near_slots = 0;
+	for (int k = 0; k < n; ++k) {
+		const float lat = wedge[2 * k], back = wedge[2 * k + 1];
+		const float x = f.cx - fy * lat - fx * back, y = f.cy + fx * lat - fy * back;
+		for (int i : f.members) if (std::hypot(s.w.px[i] - x, s.w.py[i] - y) < 0.6f) { ++near_slots; break; }
+	}
+	CHECK(near_slots == n, "every wedge slot has a member standing on it (%d of %d)", near_slots, n);
+	const std::vector<uint8_t> blob = s.w.save();
+	World back(1);
+	CHECK(back.load(blob) && back.state_hash() == s.w.state_hash() && back.formations[a].shape == wedge, "a KW20 blob keeps the shape with the same hash");
+	for (int k = 0; k < 30 * 4; ++k) { checked_step(s.w, DT); checked_step(back, DT); }
+	CHECK(back.state_hash() == s.w.state_hash(), "the loaded copy steps identically");
+	const uint64_t with_shape = s.w.state_hash();
+	World other(1);
+	CHECK(other.load(blob) && other.set_formation_shape(a, std::vector<float>{}) && other.state_hash() != back.state_hash(), "the shape is hashed");
+	CHECK(other.formations[a].shape.empty(), "an empty offset list clears the shape");
+	(void)with_shape;
+	s.w.formations[a].garrisoned = true; // the host garrison precondition (members at rest) is not under test here
+	CHECK(!s.w.set_formation_shape(a, wedge), "a garrisoned formation refuses a shape");
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -2385,6 +2427,7 @@ int main() {
 	test_cavalry_charge();
 	test_cavalry_speed();
 	test_order_serial();
+	test_formation_shape();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

@@ -1927,6 +1927,46 @@ func _command_eligible(state: Dictionary) -> bool:
 	return _index_by_id.has(identity) and bool(state.commander_present) and person_owner(identity).combat_can_act(int(_index_by_id[identity]))
 
 
+## G7b: the formation preset of a crowd team, as native slot offsets (lateral, back) in slots, from the same geometry
+## the grid planner used (FormationPresetGeometry). "auto" clears the shape (rows as before). The current commander
+## orders it (the controlled person for source "player"); a garrisoned, one-person or routed team refuses.
+const FormationGeometry = preload("res://scripts/terrain_lab/formation_preset_geometry.gd")
+
+static func preset_offsets(preset_id: String, count: int) -> PackedFloat32Array:
+	var offsets := PackedFloat32Array()
+	if preset_id == "auto": return offsets
+	# Facing RIGHT maps a local (lateral u, forward v) cell to (x = v, y = u); native back is -forward.
+	for cell: Vector2i in FormationGeometry.shape_slots(preset_id, count, Vector2i.ZERO, Vector2i.RIGHT):
+		offsets.append(float(cell.y))
+		offsets.append(float(-cell.x))
+	return offsets
+
+func set_team_preset(team_id: int, preset_id: String, source: String = "ui") -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if not FormationGeometry.is_valid_preset(preset_id): return SiteRuntime.fail("BAD_ARGS", "未知的陣形")
+	if not crowd.has_method("set_formation_shape"): return SiteRuntime.fail("UNSUPPORTED", "原生群眾未提供陣形")
+	var team := _team_by_id(team_id)
+	if team.is_empty(): return SiteRuntime.fail("BAD_FORMATION")
+	var formation := int(team.formation)
+	var state := formation_state(formation)
+	if bool(state.no_orders): return SiteRuntime.fail("NO_ORDERS", "一人隊伍由本人操作，不接受隊伍軍令")
+	if not _command_eligible(state) or (source == "player" and int(state.current_person) != int(lab.controlled_person_id())):
+		return SiteRuntime.fail("NO_AUTHORITY", "只有當前在場指揮者可下令或切換自主指揮")
+	if bool(state.routed): return SiteRuntime.fail("ROUTED", "隊伍尚未完成安全整補與重新集結")
+	if bool(crowd.get_garrisoned(formation)): return SiteRuntime.fail("BUSY", "駐營隊伍不能改陣")
+	var count := int(team.get("person_ids", []).size())
+	var offsets := preset_offsets(preset_id, count)
+	if preset_id != "auto" and offsets.size() != 2 * count: return SiteRuntime.fail("TOO_LARGE", "此陣形容納不下全隊（上限 200 人）")
+	if not bool(crowd.set_formation_shape(formation, offsets)): return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此陣形；未改陣")
+	_team_presets[team_id] = preset_id
+	return SiteRuntime.ok("已改為%s" % preset_id, {"preset": preset_id})
+
+## The UI label only; the native shape is the saved truth (a loaded Site shows "auto" until the next change).
+var _team_presets := {}
+
+func team_preset(team_id: int) -> String:
+	return str(_team_presets.get(team_id, "auto"))
+
 func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1, source: String = "ui", facing: Vector2i = Vector2i.ZERO) -> Dictionary:
 	var team := _team_by_id(team_id)
 	if team.is_empty(): return SiteRuntime.fail("BAD_FORMATION")

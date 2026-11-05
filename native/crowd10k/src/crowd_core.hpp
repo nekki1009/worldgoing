@@ -178,6 +178,10 @@ struct Formation {
 	float cx = 0, cy = 0, facing = 0;
 	float goal_x = 0, goal_y = 0, goal_facing = 0;
 	int cols = 10;
+	// G7b formation preset (saved from KW20, hashed): slot offsets as (lateral, back) pairs in spacing units, slot s at
+	// pair s (the first n pairs for n able members). Empty, or fewer pairs than members, or a charge in progress: rows
+	// of `cols` as before.
+	std::vector<float> shape;
 	float spacing = 1.0f;
 	int field = -1;
 	bool arrived = true, los_goal = false;
@@ -692,6 +696,10 @@ public:
 	SoldierState get_soldier_state(int i) const;
 	void set_formation_state(int f, const FormationState &s);
 	bool set_garrisoned(int f, bool enabled);
+	// G7b: set (or clear, with no offsets) a formation's preset slot offsets; refuses a garrisoned formation, an odd
+	// count, more than MAX_SHAPE_SLOTS pairs, or a value that is not finite or beyond 64 slots. The able members reslot.
+	static constexpr int MAX_SHAPE_SLOTS = 400;
+	bool set_formation_shape(int f, const std::vector<float> &offsets);
 	bool set_military_role(int i, int value);
 	bool set_post_holder(int i, int value);
 	bool apply_training_state(int f, double before_training, double before_fatigue, double before_rest,

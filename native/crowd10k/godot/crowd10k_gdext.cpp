@@ -1108,6 +1108,23 @@ void m_set_fire_safe_rest_input(CALL_ARGS) {
 		|| !arg_int(a[1],safe) || (safe != 0 && safe != 1)) { ret_bool(r,false); return; }
 	ret_bool(r,w.set_fire_safe_rest_input((int)f,safe != 0));
 }
+// G7b: set_formation_shape(formation, offsets: PackedFloat32Array of (lateral, back) pairs; empty clears) -> bool
+void m_set_formation_shape(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t f;
+	if (!arg_int(a[0], f)) return bad_args(e, 0);
+	void *p = arg_packed(a[1], FLOATS);
+	if (!p) return bad_args(e, 1);
+	const int64_t count = packed_size(size_floats, p);
+	if (f < 0 || f >= (int64_t)w.formations.size() || count < 0 || count > 2 * (int64_t)wg::World::MAX_SHAPE_SLOTS) { ret_bool(r, false); return; }
+	std::vector<float> offsets((size_t)count);
+	for (int64_t k = 0; k < count; ++k) offsets[(size_t)k] = *floats_read(p, k);
+	ret_bool(r, w.set_formation_shape((int)f, offsets));
+}
+// G7b: get_formation_shape(formation) -> number of preset slots (pairs); 0 for none or a bad id
+void m_get_formation_shape(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t f;
+	ret_int(r, arg_int(a[0], f) && f >= 0 && f < (int64_t)w.formations.size() ? (int64_t)(w.formations[f].shape.size() / 2) : 0);
+}
 void m_get_garrisoned(CALL_ARGS) {
 	SELF; NEED(1); WORLD; int64_t f;
 	ret_bool(r,arg_int(a[0],f) && f>=0 && f<(int64_t)w.formations.size() && w.formations[f].garrisoned);
@@ -1508,6 +1525,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("set_order_serials", m_set_order_serials, {{INT,"formation"},{INT,"order_serial"},{INT,"ranged_order_serial"}}, BOOL);
 	add_method("set_garrisoned", m_set_garrisoned, {{INT,"formation"},{INT,"enabled"}}, BOOL);
 	add_method("get_garrisoned", m_get_garrisoned, {{INT,"formation"}}, BOOL);
+	add_method("set_formation_shape", m_set_formation_shape, {{INT,"formation"},{FLOATS,"offsets"}}, BOOL);
+	add_method("get_formation_shape", m_get_formation_shape, {{INT,"formation"}}, INT);
 	add_method("set_military_role", m_set_military_role, {{INT,"soldier"},{INT,"role"}}, BOOL);
 	add_method("get_military_role", m_get_military_role, {{INT,"soldier"}}, INT);
 	add_method("set_post_holder", m_set_post_holder, {{INT,"soldier"},{INT,"value"}}, BOOL);

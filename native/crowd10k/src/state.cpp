@@ -136,6 +136,7 @@ template <class Ar> void io_formation(Ar &ar, Formation &f, int layout) {
 		ar.pod(f.cav_layout); // mounted layout of the last formation step (a host order between steps reads it)
 	}
 	if (layout >= 19) { ar.pod(f.order_serial); ar.pod(f.ranged_order_serial); } // KW19 ORDSERIAL (older blobs load 1 / 0)
+	if (layout >= 20) ar.vec(f.shape); // KW20 G7b preset slot offsets (older blobs load none)
 }
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
@@ -150,13 +151,14 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3931574Bu; // "KW19": formation order serials (ORDSERIAL: order_serial, ranged_order_serial); KW18: formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3032574Bu; // "KW20": formation preset slot offsets (G7b shape); KW19: formation order serials (ORDSERIAL: order_serial, ranged_order_serial); KW18: formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic19 = 0x3931574Bu; // KW19 layout: loads with no preset shapes
 	const uint32_t magic18 = 0x3831574Bu; // KW18 layout: loads with the KW19 order serials at their defaults (1, 0); written only by save_kw18 (tests)
 	const uint32_t magic17 = 0x3731574Bu; // KW17 layout: loads with the KW18 charge fields and KW19 serials at their defaults; written only by save_kw17 (tests)
 	uint32_t m = Ar::loading ? 0u : (kw17_write_ ? magic17 : kw18_write_ ? magic18 : magic);
 	ar.pod(m);
-	if (Ar::loading && m != magic && m != magic18 && m != magic17) { ar.ok = false; return; }
-	const int layout = m == magic17 ? 17 : m == magic18 ? 18 : 19;
+	if (Ar::loading && m != magic && m != magic19 && m != magic18 && m != magic17) { ar.ok = false; return; }
+	const int layout = m == magic17 ? 17 : m == magic18 ? 18 : m == magic19 ? 19 : 20;
 	const bool legacy_kw17 = layout == 17;
 	io_config(ar, cfg);
 	// terrain (static during a battle, stored so a save is self-contained)
@@ -421,6 +423,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		CHECK_VALID(std::isfinite(f.rally_x) && std::isfinite(f.rally_y) && std::isfinite(f.charge_t) && f.charge_t >= -1e6);
 		CHECK_VALID(f.cols >= 1 && f.cols <= 65536 && f.roster >= 0 && f.roster <= (int)n && f.slot_count >= 0 && f.slot_count <= (int)f.members.size());
 		CHECK_VALID(f.fatigue_count >= 0 && f.fatigue_count <= (int)n);
+		CHECK_VALID(f.shape.size() % 2 == 0 && f.shape.size() <= 2 * (size_t)MAX_SHAPE_SLOTS);
+		for (float v : f.shape) CHECK_VALID(std::isfinite(v) && std::fabs(v) <= 64.f);
 		CHECK_VALID(xy(f.cx,f.cy) && xy(f.goal_x,f.goal_y) && xy(f.origin_x,f.origin_y));
 		CHECK_VALID(std::isfinite(f.ref_x) && std::isfinite(f.ref_y) && (!f.ref_valid || xy(f.ref_x,f.ref_y)));
 		CHECK_VALID(std::isfinite(f.facing) && std::isfinite(f.goal_facing) && std::isfinite(f.spacing) && f.spacing > 0 && f.spacing <= 1024);

@@ -777,6 +777,17 @@ bool World::set_post_holder(int i, int value) {
 	return true;
 }
 
+bool World::set_formation_shape(int fi, const std::vector<float> &offsets) {
+	if (fi < 0 || fi >= (int)formations.size()) return false;
+	if (offsets.size() % 2 != 0 || offsets.size() > 2 * (size_t)MAX_SHAPE_SLOTS) return false;
+	for (float v : offsets) if (!std::isfinite(v) || std::fabs(v) > 64.f) return false;
+	Formation &f = formations[fi];
+	if (f.garrisoned) return false;
+	f.shape = offsets;
+	reslot_formation(f);
+	return true;
+}
+
 bool World::set_garrisoned(int fi, bool enabled) {
 	if (fi < 0 || fi >= (int)formations.size()) return false;
 	Formation &f = formations[fi];
