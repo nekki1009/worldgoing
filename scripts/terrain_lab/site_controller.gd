@@ -5104,6 +5104,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
 	settle_diplomacy()
 	npc_diplomacy_day()
+	npc_rebellion_day()
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10560,7 +10561,12 @@ func npc_diplomacy_day() -> Dictionary:
 ## old faction is at war with him at once.
 func rebel(mode: String, acceptor_id: int = -1, faction_name: String = "") -> Dictionary:
 	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
-	var player := int(lab.controlled_person_id())
+	return rebel_person(int(lab.controlled_person_id()), mode, acceptor_id, faction_name)
+
+## The rebellion of any noble present here (the controlled one through `rebel`, an NPC through npc_rebellion_day). A team
+## captain takes his whole team along; a noble serving under another captain leaves as captain of a new team of his own.
+func rebel_person(player: int, mode: String, acceptor_id: int = -1, faction_name: String = "") -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
 	var player_ref: Variant = region_slot.peerage_person_ref(player)
 	var registry: Dictionary = region_slot.control.get("faction_registry", {})
 	var mine: Dictionary = RegionPeerage.record_of(registry, player_ref)
@@ -10604,7 +10610,7 @@ func rebel(mode: String, acceptor_id: int = -1, faction_name: String = "") -> Di
 	if not rebelled.ok:
 		adjust_reputation(player, 0.0, float(int(before_rep.credit) - int(after_rep.credit)) / float(Reputation.SCALE))
 		return rebelled
-	var moved: Dictionary = lab.relabel_team_faction(team_id, new_faction)
+	var moved: Dictionary = _rebel_team_move(player, team_id, new_faction)
 	if not moved.ok:
 		adjust_reputation(player, 0.0, float(int(before_rep.credit) - int(after_rep.credit)) / float(Reputation.SCALE))
 		return moved
@@ -10619,6 +10625,62 @@ func rebel(mode: String, acceptor_id: int = -1, faction_name: String = "") -> Di
 	for key: String in follow:
 		if not follow[key]: stayed += 1
 	return Runtime.ok("已%s；信譽 %d，%d 名在場部下不願跟隨" % ["自立" if mode == "independent" else "改投", Reputation.shown(int(after_rep.credit)), stayed], {"faction_id": new_faction})
+
+## A captain relabels his whole team; anyone else leaves alone as captain of a new team of `faction` (crowd only).
+func _rebel_team_move(person: int, team_id: int, faction: int) -> Dictionary:
+	if _crowd_active() and lab.crowd_site.has_live_team(team_id):
+		var roster: Dictionary = lab.crowd_site.native_roster(team_id)
+		var index: int = lab.crowd_site._roster_index_for_person(roster, person)
+		if index >= 0 and index != int(roster.get("formal_commander", -1)) and roster.get("units", []).size() > 1:
+			return lab.crowd_site.detach_to_new_team(person, faction)
+	return lab.relabel_team_faction(team_id, faction)
+
+## --- NPC rebellion (爵位規劃「叛離」; 職位計畫 §8.4 預兆) ---
+## Once per game day: a titled NPC noble with a liege whose departure intent (three observed days with grievance at or
+## above his own threshold) stands toward his own team or a nation of his faction declares himself independent, taking
+## his fiefs; at most one per day, in person-key order. The controlled person never acts here.
+var _npc_rebellion_day := -1
+
+func rebellion_intent(person: int, faction: int) -> bool:
+	var body: Variant = person_actions._person(person, false).get("body")
+	if body == null: return false
+	var packet: Dictionary = PersonSocialPacket.read(body)
+	if int(packet.get("version", 0)) < 2: return false
+	var site_id := str(lab.terrain.site.get("id", ""))
+	var target: Dictionary = lab._original_person_target(person)
+	var team_id := int(target.owner.get("team_id")) if not target.is_empty() and target.owner != null else -1
+	for key: Variant in packet.get("orgs", {}):
+		var entry: Dictionary = packet.orgs[key]
+		if not bool(entry.get("intent", false)) or not entry.get("ref") is Dictionary: continue
+		var ref: Dictionary = entry.ref
+		if str(ref.get("site_id", "")) != site_id: continue
+		if ref.get("kind") == "team" and str(ref.get("org_id", "")) == str(team_id): return true
+		if ref.get("kind") == "nation":
+			var nation: Variant = lab.terrain.site.get("equipment_nations", {}).get(str(ref.get("org_id", "")))
+			if nation is Dictionary and int(nation.get("faction_id", -1)) == faction: return true
+	return false
+
+func npc_rebellion_day() -> Dictionary:
+	if region_slot == null or lab == null or lab.terrain == null: return {}
+	var day := int(float(region_slot.control.logical_game_seconds) / RegionDiplomacyAI.DAY)
+	if day == _npc_rebellion_day: return {}
+	_npc_rebellion_day = day
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	if registry.get("version") != RegionFactionQuery.VERSION: return {}
+	var player := int(lab.controlled_person_id())
+	var peerage: Dictionary = RegionPeerage.table(registry)
+	var keys: Array = peerage.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var record: Dictionary = peerage[key]
+		if str(record.get("rank", "none")) == "none" or record.get("liege_ref") == null: continue
+		var id := RegionPeerage.world_person_id(record.person_ref)
+		if id <= 0 or id == player or lab._original_person_target(id).is_empty(): continue
+		if not rebellion_intent(id, int(record.faction_id)): continue
+		var done: Dictionary = rebel_person(id, "independent", -1, "#%d 自立" % id)
+		if done.ok: show_result(done)
+		return done
+	return {}
 
 ## Step 5-2: a fief whose lord rebelled while this Site was cold changes owner when the Site is next active. The truth
 ## is derived, nothing pending is stored: the settlement's head holds a peerage record of another faction that still
