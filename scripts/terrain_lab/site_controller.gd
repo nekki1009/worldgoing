@@ -582,6 +582,11 @@ func _build_ui() -> void:
 	_build_crowd_split_entry(launcher.column)
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
+	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
+	_button(launcher.column, "授予所選人物爵位", "GrantTitle", func() -> void:
+		show_result(grant_title(int(lab.selected_army_target), ["king", "duke", "marquis", "count", "viscount", "baron"][grant_rank.selected])))
+	_button(launcher.column, "削去所選人物爵位", "RevokeTitle", func() -> void: show_result(revoke_title(int(lab.selected_army_target))))
+	_button(launcher.column, "稱帝", "ProclaimEmperor", func() -> void: show_result(proclaim_emperor()))
 	_resume_region_party_map_button = _button(launcher.column, "原旅隊繼續地圖旅行", "ResumeOriginalPartyMap", _resume_region_party_map)
 	_button(launcher.column, "回主選單", "ReturnMainMenu", func() -> void: _request_exit(RegionEntry.MAIN_MENU))
 	var column: VBoxContainer = _formal_columns.map
@@ -5108,6 +5113,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 		lab.terrain.site.get("captivity", {}).erase(str(identity))
 		lab.terrain.site.get("housing", {}).erase(str(identity))
 		_pending_deaths.erase(identity)
+		_queue_peerage_inheritance(identity)
 		equipment_changed(identity)
 
 func _presentation_holder(person: Dictionary) -> Dictionary:
@@ -10184,6 +10190,72 @@ func found_start_faction(faction_name: String) -> Dictionary:
 		lab.relabel_team_faction(team_id, RegionFactionQuery.NEUTRAL_FACTION_ID)
 		return committed
 	return Runtime.ok("已建立勢力「%s」，你是首長" % named, {"faction_id": int(prepared.faction_id)})
+## --- Peerage step 3: granting, revoking, emperor (plan "勢力爵位與封地規劃") ---
+## Fiefs a person holds: the registry's index, plus this Site's settlement when he sits in its head seat (an untitled head's
+## first settlement is not indexed until his first title, so it is counted here).
+func peerage_fief_levels(registry: Dictionary, person_id: int, person_ref: Dictionary) -> Array:
+	var fiefs: Dictionary = RegionPeerage.fiefs_of(registry, person_ref).duplicate()
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	if not settlement.is_empty() and int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", 0)) == person_id and int(settlement.get("level", 0)) >= 2:
+		fiefs[str(lab.terrain.site.get("id", ""))] = int(settlement.level)
+	return fiefs.values()
+
+func _peerage_people(person_id: int) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
+	var granter_id := int(lab.controlled_person_id())
+	var granter_ref: Variant = region_slot.peerage_person_ref(granter_id)
+	var person_ref: Variant = region_slot.peerage_person_ref(person_id) if person_id > 0 else null
+	if granter_ref == null: return Runtime.fail("NO_PERSON_REF", "你沒有世界身分")
+	if person_id > 0 and (person_ref == null or lab._original_person_target(person_id).is_empty()): return Runtime.fail("NO_TARGET", "須當面選中此地的人物")
+	return Runtime.ok("", {"granter_ref": granter_ref, "person_ref": person_ref, "registry": region_slot.control.get("faction_registry", {}), "now": float(region_slot.control.logical_game_seconds)})
+
+func _commit_peerage(candidate: Dictionary, message: String) -> Dictionary:
+	if not candidate.get("ok", false): return candidate
+	var captured: Dictionary = capture_region_checkpoint("region_checkpoint", true)
+	var committed: Dictionary = region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners, candidate.registry, false, captured) if captured.ok else captured
+	if not committed.ok: return committed
+	return Runtime.ok(message)
+
+## Grant or promote: the controlled person grants `rank` to a person present here, checked against that person's fiefs.
+func grant_title(person_id: int, rank: String) -> Dictionary:
+	var people := _peerage_people(person_id)
+	if not people.ok: return people
+	var granter: Dictionary = RegionPeerage.record_of(people.registry, people.granter_ref)
+	var target: Dictionary = lab._original_person_target(person_id)
+	var target_faction := int(target.owner.get("faction_id")) if target.owner != null else -1
+	if granter.is_empty() or target_faction != int(granter.faction_id): return Runtime.fail("OTHER_FACTION", "只能授爵給同勢力的人")
+	var levels := peerage_fief_levels(people.registry, person_id, people.person_ref)
+	var candidate: Dictionary = RegionPeerage.grant(people.registry, people.granter_ref, people.person_ref, rank, levels, people.now)
+	return _commit_peerage(candidate, "已授予%s" % RegionPeerage.NAMES.get(rank, rank))
+
+func revoke_title(person_id: int) -> Dictionary:
+	var people := _peerage_people(person_id)
+	if not people.ok: return people
+	return _commit_peerage(RegionPeerage.revoke(people.registry, people.granter_ref, people.person_ref, people.now), "已削去爵位；其部下改由你接手")
+
+func proclaim_emperor() -> Dictionary:
+	var people := _peerage_people(0)
+	if not people.ok: return people
+	return _commit_peerage(RegionPeerage.proclaim_emperor(people.registry, people.granter_ref, people.now), "已稱帝")
+
+## Hereditary titles follow the family rule: a dead family head's designated heir inherits; any other dead family member's
+## title returns to the family head; without a family the title ends and its fiefs and vassals go to the liege.
+func peerage_heir_of(identity: int) -> int:
+	var family: Variant = lab.terrain.site.get("family", {})
+	if not family is Dictionary or not family.has("offices") or not FamilyContinuity.member_ids(family, str(lab.terrain.site.get("id", ""))).has(identity): return 0
+	var head := SiteOffices.head_position(family.offices)
+	var holder := int(head.get("holder", 0))
+	if holder == identity: return int(family.get("succession", {}).get("heirs", {}).get(str(head.get("id", "")), 0))
+	return holder if holder > 0 else 0
+
+func _queue_peerage_inheritance(identity: int) -> void:
+	if region_slot == null or not region_slot.control.get("faction_registry", {}).get("peerage") is Dictionary: return
+	var dead_ref: Variant = region_slot.peerage_person_ref(identity)
+	if dead_ref == null or RegionPeerage.record_of(region_slot.control.faction_registry, dead_ref).is_empty(): return
+	var heir := peerage_heir_of(identity)
+	var heir_ref: Variant = region_slot.peerage_person_ref(heir) if heir > 0 else null
+	region_slot.pending_peerage_inheritance.append({"dead_ref": dead_ref, "heir_ref": heir_ref})
+
 ## Joining in person: the official's decision and which cadres would follow, as a readable result. Changes nothing.
 func preview_join_faction(official_id: int) -> Dictionary:
 	var seen: Dictionary = JoinFaction.preview(self, official_id)

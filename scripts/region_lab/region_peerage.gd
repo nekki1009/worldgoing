@@ -73,6 +73,9 @@ static func canonical(peerage: Dictionary) -> Dictionary:
 		copy.liege_ref = canonical_ref(copy.get("liege_ref"))
 		if copy.get("faction_id") is float: copy.faction_id = int(copy.faction_id)
 		if copy.get("granted_at") is int: copy.granted_at = float(copy.granted_at)
+		if copy.get("fiefs") is Dictionary:
+			for site_id: Variant in copy.fiefs:
+				if copy.fiefs[site_id] is float: copy.fiefs[site_id] = int(copy.fiefs[site_id])
 		result[key] = copy
 	return result
 
@@ -107,7 +110,14 @@ static func validate(peerage: Variant, registry: Dictionary, now: float) -> Dict
 	var heads := {}
 	for key: Variant in peerage:
 		var record: Variant = peerage[key]
-		if not key is String or not record is Dictionary or not RegionFactionQuery.keys(record, RECORD_FIELDS): return fail("CORRUPT_SAVE", "peerage record fields")
+		if not key is String or not record is Dictionary: return fail("CORRUPT_SAVE", "peerage record fields")
+		var fields: Array = RECORD_FIELDS.duplicate()
+		if record.has("fiefs"): fields.append("fiefs")
+		if not RegionFactionQuery.keys(record, fields): return fail("CORRUPT_SAVE", "peerage record fields")
+		if record.has("fiefs"):
+			if not record.fiefs is Dictionary: return fail("CORRUPT_SAVE", "peerage fiefs")
+			for site_id: Variant in record.fiefs:
+				if not site_id is String or str(site_id).is_empty() or not RegionFactionQuery.whole(record.fiefs[site_id], 2, 5): return fail("CORRUPT_SAVE", "peerage fief level")
 		if not RegionFactionQuery.ref_valid(record.person_ref, "person") or key_of(record.person_ref) != key: return fail("CORRUPT_SAVE", "peerage person ref")
 		if rank_index(record.rank) < 0: return fail("CORRUPT_SAVE", "peerage rank")
 		if not RegionFactionQuery.whole(record.faction_id, 0, RegionFactionQuery.MAX_ID) or int(record.faction_id) == RegionFactionQuery.NEUTRAL_FACTION_ID: return fail("CORRUPT_SAVE", "peerage faction")
@@ -221,6 +231,7 @@ static func grant(registry: Dictionary, granter_ref: Dictionary, person_ref: Dic
 	if not existing.is_empty() and existing.liege_ref != null and may_grant(record_of(registry, existing.liege_ref), rank): liege = canonical_ref(existing.liege_ref)
 	var candidate := _candidate(registry)
 	candidate.peerage[key_of(person_ref)] = {"person_ref": canonical_ref(person_ref), "faction_id": int(granter.faction_id), "rank": rank, "liege_ref": liege, "granted_at": now}
+	if existing.has("fiefs"): candidate.peerage[key_of(person_ref)]["fiefs"] = existing.fiefs.duplicate(true)
 	return _finish(candidate, now)
 
 ## Remove the record of `person_ref` and hand its vassals to `successor` (a ref, or null for "the old liege").
@@ -268,6 +279,8 @@ static func inherit(registry: Dictionary, dead_ref: Dictionary, heir_ref: Varian
 	if not held.is_empty(): _remove(candidate, heir_ref, canonical_ref(heir_ref))
 	_remove(candidate, dead_ref, canonical_ref(heir_ref))
 	candidate.peerage[key_of(heir_ref)] = {"person_ref": canonical_ref(heir_ref), "faction_id": int(dead.faction_id), "rank": rank, "liege_ref": canonical_ref(liege), "granted_at": now}
+	# Fiefs are re-indexed from each Site's head seat; the heir keeps the ones he already held.
+	if held.has("fiefs"): candidate.peerage[key_of(heir_ref)]["fiefs"] = held.fiefs.duplicate(true)
 	if dead.liege_ref == null:
 		var entry: Dictionary = candidate.entries[str(int(dead.faction_id))]
 		if entry.leader_ref != null: entry.leader_ref = canonical_ref(heir_ref)
@@ -306,3 +319,37 @@ static func follow_score(cadre: Variant, acceptor: Variant, player: Variant) -> 
 	var to_player: float = 100.0 - personality_distance(cadre, player)
 	if acceptor == null: return to_player
 	return (100.0 - personality_distance(cadre, acceptor)) * 0.6 + to_player * 0.4
+
+## --- Fiefs (step 3) ---
+## A fief is a Site's settlement (level 2 村 .. 5 城) whose head seat a titled noble holds. The Site is the truth; each
+## record keeps `fiefs` {site_id: level} as the world-wide index, reconciled from a Site whenever it is checkpointed.
+
+static func fiefs_of(registry: Dictionary, person_ref: Variant) -> Dictionary:
+	return record_of(registry, person_ref).get("fiefs", {})
+
+static func fief_levels(registry: Dictionary, person_ref: Variant) -> Array:
+	return fiefs_of(registry, person_ref).values()
+
+## Re-index one Site: the site leaves every record, then joins the holder's record when the holder is sworn into the
+## settlement's faction (titled or not: an untitled head's settlement counts toward his first title) and the settlement is at least a village. Returns {ok, registry, changed}.
+static func reconcile_site(registry: Dictionary, site_id: String, level: int, holder_ref: Variant, owner_faction: int, now: float) -> Dictionary:
+	if not registry.get("peerage") is Dictionary or site_id.is_empty(): return {"ok": true, "registry": registry, "changed": false}
+	var candidate: Dictionary = registry.duplicate(true)
+	candidate.peerage = canonical(candidate.peerage)
+	var before: Dictionary = candidate.peerage.duplicate(true)
+	for key: String in candidate.peerage:
+		var record: Dictionary = candidate.peerage[key]
+		if record.get("fiefs", {}).has(site_id):
+			record.fiefs.erase(site_id)
+			if record.fiefs.is_empty(): record.erase("fiefs")
+	if level >= 2 and RegionFactionQuery.ref_valid(holder_ref, "person"):
+		var holder: Variant = candidate.peerage.get(key_of(holder_ref))
+		if holder is Dictionary and int(holder.faction_id) == owner_faction:
+			var fiefs: Dictionary = holder.get("fiefs", {})
+			fiefs[site_id] = mini(level, 5)
+			holder["fiefs"] = fiefs
+	if candidate.peerage == before: return {"ok": true, "registry": registry, "changed": false}
+	candidate.revision = int(candidate.get("revision", 0)) + 1
+	var checked: Dictionary = RegionFactionQuery.validate(candidate, now)
+	if not checked.ok: return checked
+	return {"ok": true, "registry": candidate, "changed": true}

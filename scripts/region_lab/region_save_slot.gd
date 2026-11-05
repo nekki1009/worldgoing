@@ -3745,6 +3745,8 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 		var checked_factions: Variant = RegionFactionQuery.validate(faction_candidate, float(next_clock.logical_game_seconds))
 		if not checked_factions.ok: return checked_factions
 		next_clock.faction_registry = faction_candidate.duplicate(true)
+	var fiefs: Dictionary = _peerage_reconcile_site(next_clock, loaded.data)
+	if not fiefs.ok: return fiefs
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
 	sites[_site_key(coordinate.site)] = _file_entry(path)
 	var collected: Dictionary = _collect_cold_checkpoint(generation, sites, next_clock, read_only_owners)
@@ -3754,6 +3756,7 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	if not parties.ok: return parties
 	var published := _publish(sites, next_clock, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
 	if not published.ok: return published
+	pending_peerage_inheritance.clear()
 	return {"ok": true, "path": path, "generation": published.generation, "data": loaded.data, "snapshot": validated.snapshot}
 
 
@@ -12570,6 +12573,42 @@ func rollback_person_allocation(checkpoint: Dictionary, allowed_owners: Array = 
 	_person_pending = checkpoint.allocator.duplicate(true)
 	_person_allocation_owners.resize(begin)
 	return true
+
+## Peerage step 3: the fief index of the faction registry follows this Site's settlement (head seat holder, level and
+## owner faction) at every checkpoint. A registry without peerage is left alone.
+## Titles of people who died in the active Site: [{dead_ref, heir_ref or null}], applied (family rule) at the next
+## checkpoint and cleared once it publishes.
+var pending_peerage_inheritance: Array = []
+
+func _peerage_reconcile_site(next_clock: Dictionary, data: TerrainData) -> Dictionary:
+	var registry: Variant = next_clock.get("faction_registry", {})
+	if not registry is Dictionary or not registry.get("peerage") is Dictionary: return {"ok": true}
+	for death: Dictionary in pending_peerage_inheritance:
+		if RegionPeerage.record_of(registry, death.dead_ref).is_empty(): continue
+		var inherited: Dictionary = RegionPeerage.inherit(registry, death.dead_ref, death.heir_ref, float(next_clock.logical_game_seconds))
+		if inherited.ok: registry = inherited.registry
+	next_clock.faction_registry = registry
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var level := 0
+	var owner := -1
+	var holder_ref: Variant = null
+	if not settlement.is_empty():
+		level = int(settlement.get("level", 0))
+		owner = int(settlement.get("owner_faction", -1))
+		var holder := int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", 0))
+		if holder > 0: holder_ref = peerage_person_ref(holder)
+	var reconciled: Dictionary = RegionPeerage.reconcile_site(registry, str(data.site.get("id", "")), level, holder_ref, owner, float(next_clock.logical_game_seconds))
+	if not reconciled.ok: return reconciled
+	if reconciled.changed: next_clock.faction_registry = reconciled.registry
+	return {"ok": true}
+
+## The typed person ref the peerage uses: a historical alias when one exists, else the world-scoped live ref.
+func peerage_person_ref(person_id: int) -> Variant:
+	var resolved: Dictionary = resolve_person_reference(person_reference(person_id))
+	if not resolved.get("ok", false): return null
+	if RegionFactionQuery.ref_valid(resolved.get("typed_ref", {}), "person"): return resolved.typed_ref
+	if resolved.get("status") == "current": return RegionPeerage.world_person_ref(str(pin.world_instance_id), person_id)
+	return null
 
 func person_reference(person_id: int) -> Dictionary:
 	if not person_allocator_enabled() or not _person_pending.locations.has(str(person_id)): return {}

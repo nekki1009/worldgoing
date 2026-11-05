@@ -129,6 +129,25 @@ func _run() -> void:
 	if not _check(RegionPeerage.record_of(reg, H).rank == "emperor" and RegionPeerage.record_of(reg, H).liege_ref == null and RegionPeerage.same_ref(reg.entries[str(fid)].leader_ref, H), "the heir is emperor and faction leader"): return
 	if not _check(RegionPeerage.same_ref(RegionPeerage.liege_of(reg, G), H) and RegionPeerage.same_ref(RegionPeerage.liege_of(reg, F), H), "the dead emperor's vassals serve the heir"): return
 
+	# Fief index: a Site's settlement joins its head's record (titled or sworn), leaves on a new head or a capture.
+	var indexed: Dictionary = RegionPeerage.reconcile_site(reg, "site_a", 5, G, fid, NOW)
+	if not _check(indexed.ok and indexed.changed and RegionPeerage.fiefs_of(indexed.registry, G) == {"site_a": 5}, "a city whose head is the marquis heir is indexed as his fief", indexed): return
+	reg = indexed.registry
+	if not _check(RegionPeerage.fief_levels(reg, G) == [5], "fief levels read back from the index"): return
+	var same: Dictionary = RegionPeerage.reconcile_site(reg, "site_a", 5, G, fid, NOW)
+	if not _check(same.ok and not same.changed, "an unchanged Site changes nothing"): return
+	var taken: Dictionary = RegionPeerage.reconcile_site(reg, "site_a", 5, X, other_id, NOW)
+	if not _check(taken.ok and RegionPeerage.fiefs_of(taken.registry, G).is_empty() and RegionPeerage.fiefs_of(taken.registry, X) == {"site_a": 5} and RegionPeerage.record_of(taken.registry, G).rank == "marquis", "a captured city leaves the loser's fiefs, joins the captor's, and the loser keeps his rank", taken): return
+	var hamlet: Dictionary = RegionPeerage.reconcile_site(reg, "site_b", 1, G, fid, NOW)
+	if not _check(hamlet.ok and not RegionPeerage.fiefs_of(hamlet.registry, G).has("site_b"), "a level-1 hamlet is not a fief"): return
+	var promoted: Dictionary = RegionPeerage.grant(reg, H, G, "duke", RegionPeerage.fief_levels(reg, G), NOW)
+	if not _refused(promoted, "FIEF_MINIMUM", "one city is not enough for a duke"): return
+	reg = _step(RegionPeerage.reconcile_site(reg, "site_c", 5, G, fid, NOW), "a second city joins the index")
+	if reg.is_empty(): return
+	reg = _step(RegionPeerage.grant(reg, H, G, "duke", RegionPeerage.fief_levels(reg, G), NOW), "two indexed cities make him a duke, keeping his fiefs")
+	if reg.is_empty(): return
+	if not _check(RegionPeerage.fiefs_of(reg, G).size() == 2, "the promotion keeps the fief index", RegionPeerage.fiefs_of(reg, G)): return
+
 	var parsed: Variant = JSON.parse_string(JSON.stringify(reg))
 	if not _check(parsed is Dictionary and RegionFactionQuery.validate(parsed, NOW).ok, "the registry stays valid after a JSON round trip", parsed): return
 	if not _check(RegionFactionQuery.canonical_registry(parsed).peerage == reg.peerage, "the canonical peerage after JSON equals the original"): return
