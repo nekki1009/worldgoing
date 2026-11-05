@@ -8,6 +8,7 @@ extends RefCounted
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const CrowdSite = preload("res://scripts/terrain_lab/crowd_site.gd")
+const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 ## Cells around the player inside which any fighting person refuses a join.
 const COMBAT_NEARBY_CELLS := 24.0
 
@@ -72,12 +73,15 @@ static func preview(controller: Variant, official_id: int) -> Dictionary:
 	if _fight_nearby(lab, Vector2(mine.position)): return Runtime.fail("IN_COMBAT", "附近正在交戰，不能投靠")
 	var player_mind: Dictionary = DutyAI.personality(player, null, lab)
 	var official_mind: Dictionary = DutyAI.personality(official_id, null, lab)
-	var score := RegionPeerage.accept_score(official_mind, player_mind, roster.units.size(), _faction_people(lab, faction))
+	# Reputation terms (聲望系統規劃): zero at the neutral start, so the agreed scores are unchanged there.
+	var player_rep: Dictionary = controller.reputation_of(player)
+	var official_rep: Dictionary = controller.reputation_of(official_id)
+	var score := RegionPeerage.accept_score(official_mind, player_mind, roster.units.size(), _faction_people(lab, faction)) 		+ Reputation.accept_bonus(int(player_rep.prestige), int(player_rep.credit))
 	var cadres: Array = []
 	for at in range(roster.units.size()):
 		var identity := int(roster.units[at].person_id)
 		if identity == player or not CrowdSite.cadre_index(roster, at): continue
-		var follow := RegionPeerage.follow_score(DutyAI.personality(identity, null, lab), official_mind, player_mind)
+		var follow := RegionPeerage.follow_score(DutyAI.personality(identity, null, lab), official_mind, player_mind) 			+ Reputation.follow_bonus(int(player_rep.credit), int(official_rep.credit))
 		cadres.append({"id": identity, "score": follow, "follows": follow >= RegionPeerage.FOLLOW_THRESHOLD})
 	return Runtime.ok("", {"accepted": score >= RegionPeerage.ACCEPT_THRESHOLD, "score": score, "cadres": cadres, "faction_id": faction,
 		"team_id": team_id, "official_ref": official_ref, "player_ref": player_ref, "registry": titled.registry, "now": now})

@@ -27,6 +27,8 @@ const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
+const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
+const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
 const MODES := ["查看", "手動採集", "隊員採集區", "清理區", "勘探區", "建設區", "馬羊捕捉區", "復育原生植被區"]
 const FORMATION_DESCRIPTIONS := {
 	"auto": "依地形站位，可使用進路待命",
@@ -10189,7 +10191,31 @@ func found_start_faction(faction_name: String) -> Dictionary:
 	if not committed.ok:
 		lab.relabel_team_faction(team_id, RegionFactionQuery.NEUTRAL_FACTION_ID)
 		return committed
+	adjust_reputation(player, float(Reputation.FOUND_KING), 0.0)
 	return Runtime.ok("已建立勢力「%s」，你是首長" % named, {"faction_id": int(prepared.faction_id)})
+## --- Reputation (聲望系統規劃): prestige and credit live on the person's own row (social_state) ---
+func peerage_rank_of(person_id: int) -> String:
+	if region_slot == null: return ""
+	var ref: Variant = region_slot.peerage_person_ref(person_id)
+	return str(RegionPeerage.record_of(region_slot.control.get("faction_registry", {}), ref).get("rank", "")) if ref != null else ""
+
+## {prestige, credit, day} of a person present here; the rank floor lifts an older, lower prestige.
+func reputation_of(person_id: int) -> Dictionary:
+	var person: Dictionary = person_actions._person(person_id, false)
+	var floor_value := Reputation.floor_of(peerage_rank_of(person_id))
+	if person.is_empty(): return {"prestige": floor_value, "credit": 0, "day": -1}
+	return PersonSocialPacket.reputation(person.body, floor_value)
+
+## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
+func adjust_reputation(person_id: int, prestige_delta: float, credit_delta: float) -> Dictionary:
+	var person: Dictionary = person_actions._person(person_id, false)
+	if person.is_empty(): return {}
+	var current := reputation_of(person_id)
+	current.prestige = Reputation.add_prestige(int(current.prestige), prestige_delta)
+	current.credit = Reputation.add_credit(int(current.credit), credit_delta)
+	PersonSocialPacket.set_reputation(person.body, current)
+	return current
+
 ## --- Peerage step 3: granting, revoking, emperor (plan "勢力爵位與封地規劃") ---
 ## Fiefs a person holds: the registry's index, plus this Site's settlement when he sits in its head seat (an untitled head's
 ## first settlement is not indexed until his first title, so it is counted here).
@@ -10226,17 +10252,24 @@ func grant_title(person_id: int, rank: String) -> Dictionary:
 	if granter.is_empty() or target_faction != int(granter.faction_id): return Runtime.fail("OTHER_FACTION", "只能授爵給同勢力的人")
 	var levels := peerage_fief_levels(people.registry, person_id, people.person_ref)
 	var candidate: Dictionary = RegionPeerage.grant(people.registry, people.granter_ref, people.person_ref, rank, levels, people.now)
-	return _commit_peerage(candidate, "已授予%s" % RegionPeerage.NAMES.get(rank, rank))
+	var done := _commit_peerage(candidate, "已授予%s" % RegionPeerage.NAMES.get(rank, rank))
+	if done.ok: adjust_reputation(person_id, float(Reputation.GRANT_GAIN.get(rank, 0)), 0.0)
+	return done
 
 func revoke_title(person_id: int) -> Dictionary:
 	var people := _peerage_people(person_id)
 	if not people.ok: return people
-	return _commit_peerage(RegionPeerage.revoke(people.registry, people.granter_ref, people.person_ref, people.now), "已削去爵位；其部下改由你接手")
+	var old_rank := str(RegionPeerage.record_of(people.registry, people.person_ref).get("rank", ""))
+	var done := _commit_peerage(RegionPeerage.revoke(people.registry, people.granter_ref, people.person_ref, people.now), "已削去爵位；其部下改由你接手")
+	if done.ok: adjust_reputation(person_id, Reputation.revoke_loss(old_rank, "none"), 0.0)
+	return done
 
 func proclaim_emperor() -> Dictionary:
 	var people := _peerage_people(0)
 	if not people.ok: return people
-	return _commit_peerage(RegionPeerage.proclaim_emperor(people.registry, people.granter_ref, people.now), "已稱帝")
+	var done := _commit_peerage(RegionPeerage.proclaim_emperor(people.registry, people.granter_ref, people.now), "已稱帝")
+	if done.ok: adjust_reputation(int(lab.controlled_person_id()), float(Reputation.PROCLAIM_EMPEROR), 0.0)
+	return done
 
 ## Hereditary titles follow the family rule: a dead family head's designated heir inherits; any other dead family member's
 ## title returns to the family head; without a family the title ends and its fiefs and vassals go to the liege.
@@ -10254,6 +10287,11 @@ func _queue_peerage_inheritance(identity: int) -> void:
 	if dead_ref == null or RegionPeerage.record_of(region_slot.control.faction_registry, dead_ref).is_empty(): return
 	var heir := peerage_heir_of(identity)
 	var heir_ref: Variant = region_slot.peerage_person_ref(heir) if heir > 0 else null
+	if heir > 0:
+		# The heir's prestige = max(own, predecessor x 0.3); credit is not inherited.
+		var heir_now := reputation_of(heir)
+		var raised := Reputation.inherited_prestige(int(heir_now.prestige), int(reputation_of(identity).prestige))
+		if raised > int(heir_now.prestige): adjust_reputation(heir, float(raised - int(heir_now.prestige)) / float(Reputation.SCALE), 0.0)
 	region_slot.pending_peerage_inheritance.append({"dead_ref": dead_ref, "heir_ref": heir_ref})
 
 ## Joining in person: the official's decision and which cadres would follow, as a readable result. Changes nothing.

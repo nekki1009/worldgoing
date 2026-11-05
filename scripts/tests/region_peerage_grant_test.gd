@@ -51,6 +51,8 @@ func _run() -> void:
 	var player := int(lab.controlled_person_id())
 	var player_ref: Variant = slot.peerage_person_ref(player)
 	if not _check(RegionPeerage.record_of(slot.control.faction_registry, player_ref).get("rank") == "king", "the founder is king"): return
+	var founder_rep: Dictionary = controller.reputation_of(player)
+	if not _check(int(founder_rep.prestige) == 6000 and int(founder_rep.credit) == 0, "founding a kingdom: king floor 50 + 10 prestige, credit 0", founder_rep): return
 	var cadre := -1
 	for team: Dictionary in lab.crowd_site.teams:
 		if team.get("person_ids", []).has(player):
@@ -68,8 +70,10 @@ func _run() -> void:
 	if not _check(granted.ok and RegionPeerage.record_of(slot.control.faction_registry, cadre_ref).get("rank") == "baron", "a baron candidate commits through the Region checkpoint", granted): return
 	if not _check(RegionPeerage.fiefs_of(slot.control.faction_registry, cadre_ref).is_empty(), "the checkpoint indexes no fief here (this Site has no settlement)"): return
 
+	if not _check(int(controller.reputation_of(cadre).prestige) == 1200, "a baron's prestige reads at least the baron floor 12"): return
 	var revoked: Dictionary = controller.revoke_title(cadre)
 	if not _check(revoked.ok and RegionPeerage.record_of(slot.control.faction_registry, cadre_ref).is_empty(), "the king revokes the baron", revoked): return
+	if not _check(int(controller.reputation_of(cadre).prestige) == 0, "revoking costs the floor difference (12 -> 0)", controller.reputation_of(cadre)): return
 	var emperor: Dictionary = controller.proclaim_emperor()
 	if not _check(not emperor.ok and emperor.get("code") == "NEEDS_KING", "an emperor needs a granted king", emperor): return
 
