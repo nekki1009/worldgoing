@@ -5092,6 +5092,7 @@ func _person_died(identity: int) -> void:
 
 func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
+	settle_diplomacy()
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10281,6 +10282,90 @@ func team_routed_reputation(team_id: int) -> void:
 	winners.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.prestige) > int(b.prestige))
 	for at in range(winners.size()):
 		adjust_reputation(int(winners[at].captain), gain if at == 0 else gain / 2.0, 0.0)
+
+## --- Diplomacy (FACTION_DIPLOMACY_SPECIFICATION §11) ---
+## The faction the controlled person heads, or -1 (diplomacy needs the head himself; joining or kind=player is not enough).
+func diplomacy_head_faction() -> int:
+	if region_slot == null: return -1
+	var ref: Variant = region_slot.peerage_person_ref(int(lab.controlled_person_id()))
+	var record: Dictionary = RegionPeerage.record_of(region_slot.control.get("faction_registry", {}), ref) if ref != null else {}
+	return int(record.faction_id) if not record.is_empty() and record.liege_ref == null and record.rank in RegionPeerage.HEAD_RANKS else -1
+
+## Site coordinate of a person by the world person allocator: a Site location gives its grid coordinate; a travelling
+## party has no provable position here, so it is unavailable (§11.3 LOCATION_UNAVAILABLE, never the birth Site).
+func diplomacy_site_of(person_ref: Variant) -> Variant:
+	var id := RegionPeerage.world_person_id(person_ref)
+	if id <= 0 or region_slot == null: return null
+	var resolved: Dictionary = region_slot.resolve_person_reference(region_slot.person_reference(id))
+	var location: Dictionary = resolved.get("location", {})
+	if str(location.get("kind", "")) != "site": return null
+	var parts: PackedStringArray = str(location.id).split(":")
+	if parts.size() < 3 or not parts[-2].is_valid_int() or not parts[-1].is_valid_int(): return null
+	return Vector2i(int(parts[-2]), int(parts[-1]))
+
+## Straight-line metres between the two faction heads' Sites (Site centres, RegionGrid metres), or -1 when unavailable.
+func diplomacy_distance_m(a: int, b: int) -> float:
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	var head_a: Dictionary = RegionPeerage.head_of(registry, a)
+	var head_b: Dictionary = RegionPeerage.head_of(registry, b)
+	if not head_a.ok or not head_b.ok: return -1.0
+	var site_a: Variant = diplomacy_site_of(head_a.get("person_ref"))
+	var site_b: Variant = diplomacy_site_of(head_b.get("person_ref"))
+	if site_a == null or site_b == null: return -1.0
+	return Vector2(site_a - site_b).length() * float(RegionGrid.SITE_MM) / 1000.0
+
+func _commit_diplomacy(candidate: Dictionary, message: String) -> Dictionary:
+	var done := _commit_peerage(candidate, message)
+	if done.ok and _crowd_active(): lab.crowd_site._apply_slot_alliances()
+	return done
+
+## §11.5: the head declares war at once; against a peace or truce it is a breach (credit -20).
+func declare_war_on(target: int) -> Dictionary:
+	var mine := diplomacy_head_faction()
+	if mine < 0: return Runtime.fail("NOT_HEAD", "只有勢力首長本人能宣戰")
+	var now := float(region_slot.control.logical_game_seconds)
+	var result: Dictionary = RegionDiplomacy.declare_war(region_slot.control.faction_registry, mine, target, region_slot.peerage_person_ref(int(lab.controlled_person_id())), now)
+	if not result.ok: return result
+	if not result.changed: return Runtime.ok("雙方本來就是敵對")
+	var done := _commit_diplomacy(result, "已宣戰（背約）")
+	if done.ok: adjust_reputation(int(lab.controlled_person_id()), 0.0, float(Reputation.BREAK_TREATY))
+	return done
+
+## §11.4: the head sends a truce (days) or peace letter to another faction's head.
+func propose_diplomacy(target: int, kind: String, days: int = 15) -> Dictionary:
+	var mine := diplomacy_head_faction()
+	if mine < 0: return Runtime.fail("NOT_HEAD", "只有勢力首長本人能提出外交")
+	var distance := diplomacy_distance_m(mine, target)
+	if distance < 0.0: return Runtime.fail("LOCATION_UNAVAILABLE", "找不到對方首長所在位置，無法送信")
+	var now := float(region_slot.control.logical_game_seconds)
+	var result: Dictionary = RegionDiplomacy.propose(region_slot.control.faction_registry, mine, target, kind, days, region_slot.peerage_person_ref(int(lab.controlled_person_id())), distance, now)
+	return _commit_diplomacy(result, "信已送出") if result.ok else result
+
+## §11.4: the head answers a delivered letter.
+func reply_diplomacy(proposal_id: int, accept: bool) -> Dictionary:
+	var mine := diplomacy_head_faction()
+	var proposal: Dictionary = RegionDiplomacy.table(region_slot.control.faction_registry).proposals.get(str(proposal_id), {}) if region_slot != null else {}
+	if mine < 0 or proposal.is_empty() or int(proposal.to) != mine: return Runtime.fail("NOT_HEAD", "只有收信勢力的首長本人能回覆")
+	var distance := diplomacy_distance_m(mine, int(proposal.from))
+	if distance < 0.0: return Runtime.fail("LOCATION_UNAVAILABLE", "找不到對方首長所在位置，無法回信")
+	var result: Dictionary = RegionDiplomacy.reply(region_slot.control.faction_registry, proposal_id, accept, region_slot.peerage_person_ref(int(lab.controlled_person_id())), distance, float(region_slot.control.logical_game_seconds))
+	return _commit_diplomacy(result, "已回信") if result.ok else result
+
+## Lazy endpoints: letters and truces move on when the Region clock passes their next time (checked once per frame, cheap).
+func settle_diplomacy() -> Dictionary:
+	if region_slot == null: return {}
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	if not registry.get("diplomacy") is Dictionary: return {}
+	var now := float(region_slot.control.logical_game_seconds)
+	if RegionDiplomacy.next_event_at(registry, now) > now or now < _diplomacy_retry_at: return {}
+	var settled: Dictionary = RegionDiplomacy.settle(registry, now)
+	if not settled.ok or not settled.changed: return settled
+	var done := _commit_diplomacy(settled, "外交事件已結算")
+	# A checkpoint refused now (combat, pending work) is retried one game minute later, never every frame.
+	_diplomacy_retry_at = now + 60.0 if not done.ok else 0.0
+	return done
+
+var _diplomacy_retry_at := 0.0
 
 ## --- Step 5: rebellion (爵位規劃「叛離」, 聲望規劃) ---
 ## The controlled noble leaves his faction with his fiefs: "independent" founds `faction_name` with him as its king;

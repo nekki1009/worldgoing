@@ -36,6 +36,7 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	# `peerage` (nobility ranks, RegionPeerage) is optional: a registry without it simply has no titled people.
 	var registry_fields: Array = ["version", "revision", "next_faction_id", "migration_complete", "entries", "coverage"]
 	if value is Dictionary and value.has("peerage"): registry_fields.append("peerage")
+	if value is Dictionary and value.has("diplomacy"): registry_fields.append("diplomacy")
 	if not value is Dictionary or not keys(value, registry_fields): return fail("CORRUPT_SAVE", "faction registry fields")
 	if not whole(value.version, VERSION, VERSION): return fail("SAVE_VERSION", "unknown faction registry version")
 	if not whole(value.revision, 0, MAX_REVISION) or not whole(value.next_faction_id, 0, MAX_ID + 1) or not value.migration_complete is bool or value.migration_complete != true or not value.entries is Dictionary or not value.coverage is Dictionary: return fail("CORRUPT_SAVE", "incomplete faction migration")
@@ -66,6 +67,9 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	if value.has("peerage"):
 		var titled: Dictionary = RegionPeerage.validate(value.peerage, value, now)
 		if not titled.ok: return titled
+	if value.has("diplomacy"):
+		var relations: Dictionary = RegionDiplomacy.validate(value.diplomacy, value, now)
+		if not relations.ok: return relations
 	return {"ok": true}
 
 ## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with
@@ -172,6 +176,7 @@ static func canonical_registry(value: Dictionary) -> Dictionary:
 			else: sources.append(source)
 		registry.coverage.sources = sources
 	if registry.get("peerage") is Dictionary: registry.peerage = RegionPeerage.canonical(registry.peerage)
+	if registry.get("diplomacy") is Dictionary: registry.diplomacy = RegionDiplomacy.canonical(registry.diplomacy)
 	return registry
 
 static func migration(states: Array[Dictionary], receipts: Array[Dictionary], reserved: Array, previous: Dictionary, now: float, complete: bool) -> Dictionary:

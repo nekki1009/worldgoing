@@ -3547,6 +3547,11 @@ func relabel_team_faction(team_id: int, faction: int) -> Dictionary:
 ## faction owns both (a joined team keeps its own slot), hostile otherwise. Idempotent; also run after a load.
 func _apply_slot_alliances() -> bool:
 	if crowd == null or not crowd.has_method("set_hostile"): return false
+	var registry: Dictionary = {}
+	var now := 0.0
+	if is_instance_valid(lab) and lab.site_controller != null and lab.site_controller.region_slot != null:
+		registry = lab.site_controller.region_slot.control.get("faction_registry", {})
+		now = float(lab.site_controller.region_slot.control.logical_game_seconds)
 	var owner := {}
 	for team: Dictionary in teams:
 		if bool(team.get("departed", false)): continue
@@ -3554,7 +3559,8 @@ func _apply_slot_alliances() -> bool:
 	var slots: Array = owner.keys()
 	for a in range(slots.size()):
 		for b in range(a + 1, slots.size()):
-			var allied := RegionFactionQuery.same_side(int(owner[slots[a]]), int(owner[slots[b]]))
+			# Diplomacy (§11.1): same faction, or an active truce/peace between the two factions, keeps the slots apart from war.
+			var allied := not RegionDiplomacy.hostile(registry, int(owner[slots[a]]), int(owner[slots[b]]), now)
 			if not bool(crowd.set_hostile(int(slots[a]), int(slots[b]), not allied)): return false
 	return true
 
