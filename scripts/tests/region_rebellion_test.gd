@@ -114,6 +114,15 @@ func _run() -> void:
 	if not _check(not RegionFactionQuery.same_side(new_faction, faction), "the old and the new faction are hostile"): return
 	var synced: Dictionary = controller.sync_fief_owner()
 	if not _check(synced.ok and not synced.changed, "a Site without a settlement has no fief to move", synced): return
+	# 5-2: a fief whose lord rebelled while its Site was cold. Stand-in: this Site gets a village still owned by the old
+	# faction with the rebel in its head seat, and the rebel's fief index lists it (test-only, never saved).
+	var site_id := str(lab.terrain.site.get("id", ""))
+	slot.control.faction_registry.peerage[RegionPeerage.key_of(player_ref)]["fiefs"] = {site_id: 2}
+	lab.terrain.site["settlement"] = {"version": 1, "settlement_id": "rebel_test_village", "center_id": "rebel_test_center", "level": 2, "name": "測試村",
+		"owner_faction": faction, "offices": SiteOffices.default_offices("settlement", player, false), "fall_record": SiteSettlement.empty_fall_record()}
+	var moved_fief: Dictionary = controller.sync_fief_owner()
+	if not _check(moved_fief.ok and moved_fief.changed and int(lab.terrain.site.settlement.owner_faction) == new_faction and int(SiteOffices.head_position(lab.terrain.site.settlement.offices).holder) == player, "the cold fief changes owner to the rebel's faction and keeps him as its head", [moved_fief, lab.terrain.site.settlement.owner_faction]): return
+	lab.terrain.site.erase("settlement")
 	_finished = true
 	print("REGION_REBELLION_PASS: ", checks, " checks; refusals, independence, credit penalty and the new faction hold")
 	quit(0)
