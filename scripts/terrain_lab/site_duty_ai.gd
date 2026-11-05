@@ -23,6 +23,7 @@ const ContestInvitation = preload("res://scripts/terrain_lab/site_contest_invita
 const Clock = preload("res://scripts/terrain_lab/site_vacancy_clock.gd") # R5 S9: owner proven day for the vacancy clock.
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd") # R5 S9: read-only packet access.
 const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
+const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
 # Nation equipment templates (NPC plan 7.8), lightest first.
@@ -212,6 +213,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 			_inmate_since = crowd_cadence.get("inmate_since", {}).duplicate(true)
 		review_round += 1
 		review_crowd_personnel(lab, int(lab.controlled_person_id()))
+		review_peerage(lab)
 		if not crowd_cadence.is_empty():
 			crowd_cadence.round = review_round
 			crowd_cadence.seat_waits = _seat_waits.duplicate(true)
@@ -268,6 +270,45 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		cadence.seat_waits = _seat_waits.duplicate(true)
 		cadence.inmate_since = _inmate_since.duplicate(true)
 		cadence.last_game_time = stamp
+
+## Step 6 (爵位規劃 NPC 職務 AI, 聲望規劃 NPC 授爵挑人): one grant per review round. An NPC noble present who may grant
+## picks, among present people of his faction, the most prestigious one (tie: leadership) whose fiefs and prestige meet
+## the highest rank he may grant above that person's current rank. The player as liege decides himself (never here).
+static func review_peerage(lab: Variant) -> Dictionary:
+	var controller: Variant = lab.site_controller
+	if controller == null or controller.region_slot == null or not lab.crowd_site.active: return {}
+	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {})
+	if not registry.get("peerage") is Dictionary: return {}
+	var controlled := int(lab.controlled_person_id())
+	var present: Array[int] = []
+	for identity: Variant in lab.crowd_site._index_by_id.keys(): present.append(int(identity))
+	for granter_id: int in present:
+		if granter_id == controlled: continue
+		var granter_ref: Variant = controller.region_slot.peerage_person_ref(granter_id)
+		var granter: Dictionary = RegionPeerage.record_of(registry, granter_ref) if granter_ref != null else {}
+		if granter.is_empty() or granter.rank == "none": continue
+		var best := {}
+		for person_id: int in present:
+			if person_id == granter_id: continue
+			var target: Dictionary = lab._original_person_target(person_id)
+			if target.is_empty() or int(target.owner.get("faction_id")) != int(granter.faction_id): continue
+			var ref: Variant = controller.region_slot.peerage_person_ref(person_id)
+			if ref == null: continue
+			var current: Dictionary = RegionPeerage.record_of(registry, ref)
+			if not current.is_empty() and current.liege_ref == null: continue
+			var levels: Array = controller.peerage_fief_levels(registry, person_id, ref)
+			var prestige := int(controller.reputation_of(person_id).prestige)
+			for rank: String in RegionPeerage.RANKS:
+				if rank == "none" or rank == "emperor" or not RegionPeerage.may_grant(granter, rank): continue
+				if not current.is_empty() and not RegionPeerage.outranks(rank, str(current.rank)): continue
+				if not RegionPeerage.meets_minimum(rank, levels) or not Reputation.promotion_allowed(prestige, rank): continue
+				var lead := _leadership(target.owner.combat_units.get(int(target.unit), {}) if target.owner.get("combat_units") is Dictionary else {})
+				if best.is_empty() or prestige > int(best.prestige) or prestige == int(best.prestige) and lead > int(best.lead):
+					best = {"person": person_id, "rank": rank, "prestige": prestige, "lead": lead}
+				break
+		if not best.is_empty():
+			return controller.grant_title_by(granter_id, int(best.person), str(best.rank))
+	return {}
 
 ## Resolve and filter: {} means "do not decide" (with reason in `skip`).
 static func _decider(team: TerrainArmy, duty_id: String, controlled: int, skip: Array) -> Dictionary:

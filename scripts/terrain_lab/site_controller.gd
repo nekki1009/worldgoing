@@ -10385,9 +10385,9 @@ func peerage_fief_levels(registry: Dictionary, person_id: int, person_ref: Dicti
 		fiefs[str(lab.terrain.site.get("id", ""))] = int(settlement.level)
 	return fiefs.values()
 
-func _peerage_people(person_id: int) -> Dictionary:
+func _peerage_people(person_id: int, granter_id: int = -1) -> Dictionary:
 	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
-	var granter_id := int(lab.controlled_person_id())
+	if granter_id <= 0: granter_id = int(lab.controlled_person_id())
 	var granter_ref: Variant = region_slot.peerage_person_ref(granter_id)
 	var person_ref: Variant = region_slot.peerage_person_ref(person_id) if person_id > 0 else null
 	if granter_ref == null: return Runtime.fail("NO_PERSON_REF", "你沒有世界身分")
@@ -10403,7 +10403,11 @@ func _commit_peerage(candidate: Dictionary, message: String) -> Dictionary:
 
 ## Grant or promote: the controlled person grants `rank` to a person present here, checked against that person's fiefs.
 func grant_title(person_id: int, rank: String) -> Dictionary:
-	var people := _peerage_people(person_id)
+	return grant_title_by(int(lab.controlled_person_id()), person_id, rank)
+
+## The same grant by any present noble (NPC duty AI uses it with an NPC granter).
+func grant_title_by(granter_id: int, person_id: int, rank: String) -> Dictionary:
+	var people := _peerage_people(person_id, granter_id)
 	if not people.ok: return people
 	var granter: Dictionary = RegionPeerage.record_of(people.registry, people.granter_ref)
 	var target: Dictionary = lab._original_person_target(person_id)
