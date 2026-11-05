@@ -30,7 +30,7 @@ func _first_difference(left: Variant, right: Variant, path: String) -> String:
 			var difference: String = _first_difference(left[key], right[key], path + "." + str(key))
 			if not difference.is_empty(): return difference
 		for key: Variant in right:
-			if not left.has(key): return path + "." + str(key) + " added after load"
+			if not left.has(key): return path + "." + str(key) + " added after load (saved %s, loaded %s)" % [var_to_str(left), var_to_str(right)]
 	elif left is Array and right is Array:
 		if left.size() != right.size(): return "%s size: %d vs %d" % [path, left.size(), right.size()]
 		for index in range(left.size()):

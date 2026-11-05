@@ -482,7 +482,7 @@ func fire_safe_rest_input(snapshot: Dictionary) -> bool:
 		if person_row.is_empty() or bool(person_row.get("site_exited", false)): continue
 		live += 1
 		var risk := SiteRuntime.fire_path_hazard_at(snapshot, person_row.cell, float(data.effective_height(person_row.cell)) + 0.5)
-		var body: Dictionary = _fire_body(index)
+		var body: Dictionary = _fire_body_view(index)
 		var work: Dictionary = _cold_get(index, "work_task", {})
 		var identity := combat_identity(index)
 		if SiteCombatRules.fire_risk_band(risk) > int(profile.normal_max_band) or float(body.get("burn_left", 0.0)) > 0.0 \
@@ -1080,6 +1080,11 @@ func _fire_body(index: int) -> Dictionary:
 	if not combat_units[index].has("fire_body"): combat_units[index]["fire_body"] = {}
 	return combat_units[index].fire_body
 
+## Read-only view: a person without a fire body reads an empty one, and nothing is added to his saved row.
+func _fire_body_view(index: int) -> Dictionary:
+	if actors.has(index): return actors[index].fire_body
+	return combat_units[index].get("fire_body", {})
+
 func fire_body_receive_contact(index: int, payload: Dictionary) -> bool:
 	if not crowd_site.fire_host_active() or float(combat_hot_get(index, &"hp")) <= 0.0: return false
 	var body := _fire_body(index)
@@ -1110,7 +1115,7 @@ func advance_fire_exposure(index: int, sequence: int, action_begin: float, actio
 	return result
 
 func fire_body_visual_code(index: int) -> int:
-	return SiteCombatRules.fire_body_visual_code(_fire_body(index)) if float(combat_hot_get(index, &"hp")) > 0.0 else 0
+	return SiteCombatRules.fire_body_visual_code(_fire_body_view(index)) if float(combat_hot_get(index, &"hp")) > 0.0 else 0
 
 func ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode: String = "NORMAL", auto_power: bool = false) -> Dictionary:
 	if not crowd_site.fire_host_active() or not ranged_order_authorized() or not exchange_ready(index) \
