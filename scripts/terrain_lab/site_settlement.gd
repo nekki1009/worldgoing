@@ -567,7 +567,7 @@ static func _keeps_defender(data: TerrainData, key: String, feature: Dictionary)
 ## Fall: defender buildings in jurisdiction change owner; residents' house
 ## registrations end; all settlement positions are vacated; the capturing
 ## leader becomes the provisional head. Level is kept.
-static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
+static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: bool = true) -> Dictionary:
 	var data: TerrainData = lab.terrain
 	if attacker == RegionFactionQuery.NEUTRAL_FACTION_ID: return Runtime.fail("NEUTRAL_NOT_NATION", "建國後才能進行")
 	var settlement := record(data)
@@ -594,7 +594,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
 	# Reputation (聲望系統規劃): the capturing leader gains village +2 / township +3 / town +5 / city +8; the old lord loses half.
 	var old_lord := int(SiteOffices.head_position(settlement.offices).get("holder", -1))
 	var controller: Variant = lab.get("site_controller")
-	if controller != null and controller.has_method("adjust_reputation") and int(settlement.get("level", 0)) >= 2:
+	if reputation and controller != null and controller.has_method("adjust_reputation") and int(settlement.get("level", 0)) >= 2:
 		var level := int(settlement.level)
 		if leader_id > 0: controller.adjust_reputation(leader_id, PersonReputation.settlement_change(level, false), 0.0)
 		if old_lord > 0 and old_lord != leader_id: controller.adjust_reputation(old_lord, PersonReputation.settlement_change(level, true), 0.0)

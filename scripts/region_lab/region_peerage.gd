@@ -353,3 +353,45 @@ static func reconcile_site(registry: Dictionary, site_id: String, level: int, ho
 	var checked: Dictionary = RegionFactionQuery.validate(candidate, now)
 	if not checked.ok: return checked
 	return {"ok": true, "registry": candidate, "changed": true}
+
+## --- Rebellion (step 5; 爵位規劃「叛離」, 聲望規劃 -30 / -40) ---
+## A titled noble leaves his faction with his fiefs. `vassal_follow` = {person key: bool} for his vassals (sworn or
+## titled) decided by the follow score; a vassal not named, or false, stays and passes to the rebel's liege.
+## mode "independent": the rebel becomes king of `new_faction` (already allocated, leader = rebel).
+## mode "defect": the rebel swears to `acceptor_ref` of `new_faction` (the head or a viscount and above) and keeps his rank;
+## an acceptor who may not hold that rank refuses.
+## Followers move with him: same records, faction = new_faction, liege unchanged (still the rebel).
+## Fiefs stay indexed on the rebel; each Site's settlement re-indexes on its next checkpoint once its owner changes.
+static func rebel(registry: Dictionary, rebel_ref: Dictionary, mode: String, new_faction: int, acceptor_ref: Variant, vassal_follow: Dictionary, now: float) -> Dictionary:
+	var record: Dictionary = record_of(registry, rebel_ref)
+	if record.is_empty() or record.rank == "none": return fail("NOT_NOBLE", "只有貴族能帶封地叛離")
+	if record.liege_ref == null: return fail("IS_HEAD", "首長不能對自己叛離")
+	if new_faction == int(record.faction_id): return fail("SAME_FACTION")
+	var candidate := _candidate(registry)
+	var old_liege: Variant = record.liege_ref
+	# Everyone below the rebel, depth first: a follower brings his own vassals along; a stayer's subtree stays with him.
+	var moving: Array = [key_of(rebel_ref)]
+	var frontier: Array = [rebel_ref]
+	while not frontier.is_empty():
+		var lord: Variant = frontier.pop_back()
+		for vassal: Variant in vassals_of(registry, lord):
+			var key := key_of(vassal)
+			if same_ref(lord, rebel_ref) and not bool(vassal_follow.get(key, false)):
+				candidate.peerage[key].liege_ref = canonical_ref(old_liege)
+				continue
+			moving.append(key)
+			frontier.append(vassal)
+	for key: String in moving:
+		candidate.peerage[key].faction_id = new_faction
+	var mine: Dictionary = candidate.peerage[key_of(rebel_ref)]
+	if mode == "independent":
+		mine.rank = "king"
+		mine.liege_ref = null
+	elif mode == "defect":
+		var acceptor: Dictionary = record_of(registry, acceptor_ref)
+		if acceptor.is_empty() or int(acceptor.faction_id) != new_faction or not may_hold(acceptor, "none"): return fail("NOT_ACCEPTOR", "只有首長或子爵以上的貴族能收投靠")
+		if not may_hold(acceptor, str(mine.rank)): return fail("RANK_TOO_HIGH", "對方的爵位不足以收你這一等的貴族")
+		mine.liege_ref = canonical_ref(acceptor_ref)
+	else:
+		return fail("INVALID", "未知的叛離方式")
+	return _finish(candidate, now)

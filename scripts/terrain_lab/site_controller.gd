@@ -28,6 +28,7 @@ const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_appen
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
+const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
 const MODES := ["查看", "手動採集", "隊員採集區", "清理區", "勘探區", "建設區", "馬羊捕捉區", "復育原生植被區"]
 const FORMATION_DESCRIPTIONS := {
@@ -589,6 +590,12 @@ func _build_ui() -> void:
 		show_result(grant_title(int(lab.selected_army_target), ["king", "duke", "marquis", "count", "viscount", "baron"][grant_rank.selected])))
 	_button(launcher.column, "削去所選人物爵位", "RevokeTitle", func() -> void: show_result(revoke_title(int(lab.selected_army_target))))
 	_button(launcher.column, "稱帝", "ProclaimEmperor", func() -> void: show_result(proclaim_emperor()))
+	var rebel_name := LineEdit.new()
+	rebel_name.name = "RebelFactionName"
+	rebel_name.placeholder_text = "自立的勢力名稱"
+	launcher.column.add_child(rebel_name)
+	_button(launcher.column, "帶封地自立（信譽 −30）", "RebelIndependent", func() -> void: show_result(rebel("independent", -1, rebel_name.text)))
+	_button(launcher.column, "帶封地改投所選官員（信譽 −40）", "RebelDefect", func() -> void: show_result(rebel("defect", int(lab.selected_army_target))))
 	_resume_region_party_map_button = _button(launcher.column, "原旅隊繼續地圖旅行", "ResumeOriginalPartyMap", _resume_region_party_map)
 	_button(launcher.column, "回主選單", "ReturnMainMenu", func() -> void: _request_exit(RegionEntry.MAIN_MENU))
 	var column: VBoxContainer = _formal_columns.map
@@ -5084,6 +5091,7 @@ func _person_died(identity: int) -> void:
 	_pending_deaths[identity] = float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
 
 func settle_person_deaths(real_seconds: float) -> void:
+	_sync_fief_owner_once()
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10273,6 +10281,99 @@ func team_routed_reputation(team_id: int) -> void:
 	winners.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.prestige) > int(b.prestige))
 	for at in range(winners.size()):
 		adjust_reputation(int(winners[at].captain), gain if at == 0 else gain / 2.0, 0.0)
+
+## --- Step 5: rebellion (爵位規劃「叛離」, 聲望規劃) ---
+## The controlled noble leaves his faction with his fiefs: "independent" founds `faction_name` with him as its king;
+## "defect" swears him to `acceptor_id` (head or viscount+ of another faction, present here). Credit falls first (-30 /
+## -40), then each vassal present decides by the follow score; vassals not present stay with the old liege. His team moves
+## with him; this Site's settlement, when he holds its head seat, changes owner. Different factions are hostile, so the
+## old faction is at war with him at once.
+func rebel(mode: String, acceptor_id: int = -1, faction_name: String = "") -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
+	var player := int(lab.controlled_person_id())
+	var player_ref: Variant = region_slot.peerage_person_ref(player)
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	var mine: Dictionary = RegionPeerage.record_of(registry, player_ref)
+	if mine.is_empty() or mine.rank == "none" or mine.liege_ref == null: return Runtime.fail("NOT_NOBLE", "只有有上級的貴族能帶封地叛離")
+	var target: Dictionary = lab._original_person_target(player)
+	if target.is_empty(): return Runtime.fail("NO_TARGET", "你不在此地")
+	var team_id := int(target.owner.team_id)
+	var now := float(region_slot.control.logical_game_seconds)
+	var new_faction := -1
+	var acceptor_ref: Variant = null
+	var candidate_registry := registry
+	if mode == "independent":
+		var named := faction_name.strip_edges()
+		if named.is_empty() or named.length() > 32: return Runtime.fail("INVALID", "勢力名稱須為 1–32 字")
+		var prepared: Dictionary = region_slot.prepare_faction_creation(lab.terrain, int(registry.get("revision", 0)), [], {"name": named, "kind": "rebel", "leader_ref": player_ref, "founded_at": now})
+		if not prepared.ok: return prepared
+		new_faction = int(prepared.faction_id)
+		candidate_registry = prepared.registry
+	elif mode == "defect":
+		var theirs: Dictionary = lab._original_person_target(acceptor_id)
+		if theirs.is_empty(): return Runtime.fail("NO_TARGET", "改投須當面見到對方官員")
+		new_faction = int(theirs.owner.get("faction_id"))
+		acceptor_ref = region_slot.peerage_person_ref(acceptor_id)
+		if acceptor_ref == null: return Runtime.fail("NO_PERSON_REF", "對方沒有世界身分")
+	else:
+		return Runtime.fail("INVALID", "未知的叛離方式")
+	# Credit first, so a rebel's vassals already see the stain when they decide.
+	var penalty := Reputation.REBEL_INDEPENDENT if mode == "independent" else Reputation.REBEL_DEFECT
+	var before_rep := reputation_of(player)
+	var after_rep := adjust_reputation(player, 0.0, float(penalty))
+	var acceptor_credit := int(reputation_of(acceptor_id).credit) if acceptor_id > 0 else 0
+	var follow := {}
+	var player_mind: Dictionary = DutyAI.personality(player, null, lab)
+	var acceptor_mind: Variant = DutyAI.personality(acceptor_id, null, lab) if acceptor_id > 0 else null
+	for vassal: Variant in RegionPeerage.vassals_of(candidate_registry, player_ref):
+		var vassal_id := RegionPeerage.world_person_id(vassal)
+		if vassal_id <= 0 or lab._original_person_target(vassal_id).is_empty(): continue
+		var score := RegionPeerage.follow_score(DutyAI.personality(vassal_id, null, lab), acceptor_mind, player_mind) + Reputation.follow_bonus(int(after_rep.credit), acceptor_credit)
+		follow[RegionPeerage.key_of(vassal)] = score >= RegionPeerage.FOLLOW_THRESHOLD
+	var rebelled: Dictionary = RegionPeerage.rebel(candidate_registry, player_ref, mode, new_faction, acceptor_ref, follow, now)
+	if not rebelled.ok:
+		adjust_reputation(player, 0.0, float(int(before_rep.credit) - int(after_rep.credit)) / float(Reputation.SCALE))
+		return rebelled
+	var moved: Dictionary = lab.relabel_team_faction(team_id, new_faction)
+	if not moved.ok:
+		adjust_reputation(player, 0.0, float(int(before_rep.credit) - int(after_rep.credit)) / float(Reputation.SCALE))
+		return moved
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	if not settlement.is_empty() and int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", 0)) == player:
+		var fell: Dictionary = Settlement.fall_to(lab, new_faction, player, false)
+		if not fell.ok: return fell
+	var captured: Dictionary = capture_region_checkpoint("region_checkpoint", true)
+	var committed: Dictionary = region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners, rebelled.registry, false, captured) if captured.ok else captured
+	if not committed.ok: return committed
+	var stayed := 0
+	for key: String in follow:
+		if not follow[key]: stayed += 1
+	return Runtime.ok("已%s；信譽 %d，%d 名在場部下不願跟隨" % ["自立" if mode == "independent" else "改投", Reputation.shown(int(after_rep.credit)), stayed], {"faction_id": new_faction})
+
+## Step 5-2: a fief whose lord rebelled while this Site was cold changes owner when the Site is next active. The truth
+## is derived, nothing pending is stored: the settlement's head holds a peerage record of another faction that still
+## indexes this Site as his fief. Runs once per active Site (the next checkpoint re-indexes and saves it).
+var _fief_synced_site := ""
+
+func _sync_fief_owner_once() -> void:
+	if region_slot == null or lab == null or lab.terrain == null: return
+	var site_id := str(lab.terrain.site.get("id", ""))
+	if site_id == _fief_synced_site: return
+	_fief_synced_site = site_id
+	sync_fief_owner()
+
+func sync_fief_owner() -> Dictionary:
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	if settlement.is_empty() or region_slot == null: return Runtime.ok("", {"changed": false})
+	var holder := int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", 0))
+	if holder <= 0: return Runtime.ok("", {"changed": false})
+	var holder_ref: Variant = region_slot.peerage_person_ref(holder)
+	var record: Dictionary = RegionPeerage.record_of(region_slot.control.get("faction_registry", {}), holder_ref) if holder_ref != null else {}
+	var site_id := str(lab.terrain.site.get("id", ""))
+	if record.is_empty() or int(record.faction_id) == int(settlement.owner_faction) or not record.get("fiefs", {}).has(site_id): return Runtime.ok("", {"changed": false})
+	var fell: Dictionary = Settlement.fall_to(lab, int(record.faction_id), holder, false)
+	if not fell.ok: return fell
+	return Runtime.ok("封地隨領主改歸勢力 %d" % int(record.faction_id), {"changed": true})
 
 ## --- Peerage step 3: granting, revoking, emperor (plan "勢力爵位與封地規劃") ---
 ## Fiefs a person holds: the registry's index, plus this Site's settlement when he sits in its head seat (an untitled head's

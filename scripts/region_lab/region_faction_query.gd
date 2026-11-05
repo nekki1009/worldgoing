@@ -226,8 +226,9 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float, f
 	if not fields.is_empty():
 		var founded: Dictionary = validate(candidate, now)
 		if not founded.ok: return founded
-	# A founder with a person ref is crowned king of the new faction (RegionPeerage head record).
-	if ref_valid(entry.leader_ref, "person"):
+	# A founder with a person ref is crowned king of the new faction (RegionPeerage head record). A noble who rebels
+	# into it keeps his record until RegionPeerage.rebel makes him its king.
+	if ref_valid(entry.leader_ref, "person") and RegionPeerage.record_of(candidate, entry.leader_ref).is_empty():
 		var crowned: Dictionary = RegionPeerage.crown_founder(candidate, id, entry.leader_ref, now)
 		if not crowned.ok: return crowned
 		candidate = crowned.registry
