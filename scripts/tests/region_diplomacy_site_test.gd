@@ -1,7 +1,7 @@
 extends SceneTree
 ## Diplomacy in a live world. The player founds 甲國 (its king); a cadre leaves as king of 乙國 in the same Site. Checks:
-## - a non-head cannot act; the head sends 乙國 a truce letter (same Site: no delay) and it is delivered;
-## - 乙國's king accepts; once the answer arrives the pair is at peace and the native slots are re-armed;
+## - the NPC day (§11.6): the weaker 乙國 asks for a 15-day truce, delivered at once, once per game day;
+## - the player head accepts the oldest letter; the pair is at truce and the native slots are re-armed;
 ## - declaring war while at peace is a breach (credit -20) and the pair is hostile again.
 ## Output: REGION_DIPLOMACY_SITE_PASS on success; quit(1) on any failure or the deadline.
 
@@ -94,20 +94,27 @@ func _run() -> void:
 
 	var location_a: Variant = controller.diplomacy_site_of(slot.peerage_person_ref(player))
 	if not _check(location_a != null and controller.diplomacy_distance_m(mine, faction) == 0.0, "both heads are in this Site: no letter delay", location_a): return
-	var sent: Dictionary = controller.propose_diplomacy(faction, "truce", 10)
-	if not _check(sent.ok, "the head sends a 10-day truce letter", sent): return
+	# NPC day (§11.6): 乙國 (1 person) faces 甲國 (5): r = 0.2 < 0.5 with a neutral head, so it asks for a 15-day truce.
+	if not _check(_set_personality(lab, official, 50), "the NPC head has a neutral personality (A = M = 50)"): return
+	controller._npc_diplomacy_day = -1
+	var npc: Dictionary = controller.npc_diplomacy_day()
+	if not _check(npc.get("ok", false), "the NPC day commits its own move", npc): return
 	controller.settle_diplomacy()
 	var letters: Dictionary = RegionDiplomacy.table(slot.control.faction_registry).proposals
-	var id := int(letters.keys()[0])
-	if not _check(letters[str(id)].status == "delivered", "the letter is delivered at once in the same Site", letters): return
-	var answered: Dictionary = RegionDiplomacy.reply(slot.control.faction_registry, id, true, official_ref, 0.0, float(slot.control.logical_game_seconds))
-	if not _check(answered.ok and controller._commit_diplomacy(answered, "回信").ok, "乙國's king accepts", answered): return
+	var asked: Dictionary = letters.values()[0] if letters.size() == 1 else {}
+	if not _check(int(asked.get("from", -1)) == faction and int(asked.get("to", -1)) == mine and asked.get("kind") == "truce" and int(asked.get("days", 0)) == 15 and asked.get("status") == "delivered", "the weaker NPC head asks for a 15-day truce, delivered at once", letters): return
+	if not _check(controller.npc_diplomacy_day().is_empty(), "the NPC acts at most once per game day"): return
+	if not _check(controller.propose_diplomacy(faction, "truce", 10).get("code") == "PENDING", "the same pair and kind cannot have two open letters"): return
+	var accepted: Dictionary = controller.answer_oldest_letter(true)
+	if not _check(accepted.ok, "the head accepts the oldest letter", accepted): return
 	controller.settle_diplomacy()
 	var now := float(slot.control.logical_game_seconds)
 	if not _check(not RegionDiplomacy.hostile(slot.control.faction_registry, mine, faction, now) and lab.crowd_site._apply_slot_alliances(), "the pair is at truce and the native slots are re-armed"): return
+	var status: Dictionary = controller.diplomacy_status()
+	if not _check(status.ok and str(status.message).contains("停戰"), "the status shows the truce", status): return
 	var war: Dictionary = controller.declare_war_on(faction)
 	if not _check(war.ok and RegionDiplomacy.hostile(slot.control.faction_registry, mine, faction, now) and RegionDiplomacy.table(slot.control.faction_registry).breaches.size() == 1, "war during a truce is a breach and the pair is hostile again", war): return
 	if not _check(int(controller.reputation_of(player).credit) == -2000, "breaking the truce costs 20 credit", controller.reputation_of(player)): return
 	_finished = true
-	print("REGION_DIPLOMACY_SITE_PASS: ", checks, " checks; letters, truce, native re-arm and breach hold")
+	print("REGION_DIPLOMACY_SITE_PASS: ", checks, " checks; NPC truce request, acceptance, native re-arm and breach hold")
 	quit(0)

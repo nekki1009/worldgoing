@@ -590,6 +590,16 @@ func _build_ui() -> void:
 		show_result(grant_title(int(lab.selected_army_target), ["king", "duke", "marquis", "count", "viscount", "baron"][grant_rank.selected])))
 	_button(launcher.column, "削去所選人物爵位", "RevokeTitle", func() -> void: show_result(revoke_title(int(lab.selected_army_target))))
 	_button(launcher.column, "稱帝", "ProclaimEmperor", func() -> void: show_result(proclaim_emperor()))
+	var dip_target := LineEdit.new()
+	dip_target.name = "DiplomacyTarget"
+	dip_target.placeholder_text = "外交對象的勢力編號"
+	launcher.column.add_child(dip_target)
+	_button(launcher.column, "對該勢力宣戰", "DeclareWar", func() -> void: show_result(declare_war_on(int(dip_target.text))))
+	_button(launcher.column, "提出停戰（15 日）", "ProposeTruce", func() -> void: show_result(propose_diplomacy(int(dip_target.text), "truce", 15)))
+	_button(launcher.column, "提出講和", "ProposePeace", func() -> void: show_result(propose_diplomacy(int(dip_target.text), "peace")))
+	_button(launcher.column, "接受最早的來信", "AcceptLetter", func() -> void: show_result(answer_oldest_letter(true)))
+	_button(launcher.column, "拒絕最早的來信", "RejectLetter", func() -> void: show_result(answer_oldest_letter(false)))
+	_button(launcher.column, "外交現況", "DiplomacyStatus", func() -> void: show_result(diplomacy_status()))
 	var rebel_name := LineEdit.new()
 	rebel_name.name = "RebelFactionName"
 	rebel_name.placeholder_text = "自立的勢力名稱"
@@ -5093,6 +5103,7 @@ func _person_died(identity: int) -> void:
 func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
 	settle_diplomacy()
+	npc_diplomacy_day()
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10385,6 +10396,35 @@ func reply_diplomacy(proposal_id: int, accept: bool) -> Dictionary:
 	var result: Dictionary = RegionDiplomacy.reply(region_slot.control.faction_registry, proposal_id, accept, region_slot.peerage_person_ref(int(lab.controlled_person_id())), distance, float(region_slot.control.logical_game_seconds))
 	return _commit_diplomacy(result, "已回信") if result.ok else result
 
+## The oldest delivered letter to the controlled head's faction, answered.
+func answer_oldest_letter(accept: bool) -> Dictionary:
+	var mine := diplomacy_head_faction()
+	if mine < 0: return Runtime.fail("NOT_HEAD", "只有勢力首長本人能回信")
+	var best := -1
+	for proposal: Dictionary in RegionDiplomacy.table(region_slot.control.faction_registry).proposals.values():
+		if proposal.status == "delivered" and int(proposal.to) == mine and (best < 0 or int(proposal.id) < best): best = int(proposal.id)
+	if best < 0: return Runtime.fail("NO_TARGET", "沒有待回覆的來信")
+	return reply_diplomacy(best, accept)
+
+## A readable summary: relations with every other faction and open letters.
+func diplomacy_status() -> Dictionary:
+	var mine := diplomacy_head_faction()
+	if mine < 0: return Runtime.fail("NOT_HEAD", "只有勢力首長本人能查看外交")
+	var registry: Dictionary = region_slot.control.faction_registry
+	var now := float(region_slot.control.logical_game_seconds)
+	var lines: Array = []
+	for key: Variant in registry.entries:
+		var id := int(key)
+		if id == mine or registry.entries[key].status != "active" or id == RegionFactionQuery.NEUTRAL_FACTION_ID: continue
+		var treaty: Dictionary = RegionDiplomacy.treaty_between(registry, mine, id, now)
+		var relation := "敵對"
+		if not treaty.is_empty(): relation = "講和" if treaty.kind == "peace" else "停戰剩 %.1f 日" % ((float(treaty.ends_at) - now) / RegionDiplomacyAI.DAY)
+		lines.append("%d %s：%s" % [id, str(registry.entries[key].name), relation])
+	for proposal: Dictionary in RegionDiplomacy.table(registry).proposals.values():
+		if proposal.status in RegionDiplomacy.TERMINAL or (int(proposal.from) != mine and int(proposal.to) != mine): continue
+		lines.append("信 %d：%d → %d %s（%s）" % [int(proposal.id), int(proposal.from), int(proposal.to), str(proposal.kind), str(proposal.status)])
+	return Runtime.ok("；".join(lines) if not lines.is_empty() else "沒有其他勢力")
+
 ## Lazy endpoints: letters and truces move on when the Region clock passes their next time (checked once per frame, cheap).
 func settle_diplomacy() -> Dictionary:
 	if region_slot == null: return {}
@@ -10400,6 +10440,88 @@ func settle_diplomacy() -> Dictionary:
 	return done
 
 var _diplomacy_retry_at := 0.0
+
+## --- Diplomacy D3: NPC heads once per game day (§11.6) ---
+var _npc_diplomacy_day := -1
+
+## Visible fighters per faction (Nekki "1A"): living people of crowd teams in this Site.
+func visible_strength() -> Dictionary:
+	var counts := {}
+	if not _crowd_active(): return counts
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)): continue
+		var faction := int(team.get("faction", -1))
+		for person: Variant in team.get("person_ids", []):
+			var target: Dictionary = lab._original_person_target(int(person))
+			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: counts[faction] = int(counts.get(faction, 0)) + 1
+	return counts
+
+func _head_mind(registry: Dictionary, faction: int) -> Dictionary:
+	var head: Dictionary = RegionPeerage.head_of(registry, faction)
+	var id := RegionPeerage.world_person_id(head.get("person_ref")) if head.ok else -1
+	var mind: Dictionary = DutyAI.personality(id, null, lab) if id > 0 and not lab._original_person_target(id).is_empty() else {"ambition": 50, "mercy": 50}
+	return {"id": id, "ambition": int(mind.ambition), "mercy": int(mind.mercy)}
+
+## Once per game day: NPC heads answer delivered letters, then each makes at most one own move (a truce when weak,
+## peace when a truce is about to end). Controlled heads and the neutral side never act here. Reclaim war is not wired
+## yet: the game keeps no provable list of fallen settlements per faction.
+func npc_diplomacy_day() -> Dictionary:
+	if region_slot == null: return {}
+	var now := float(region_slot.control.logical_game_seconds)
+	var day := int(now / RegionDiplomacyAI.DAY)
+	if day == _npc_diplomacy_day: return {}
+	_npc_diplomacy_day = day
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	if registry.get("version") != RegionFactionQuery.VERSION: return {}
+	var settled: Dictionary = RegionDiplomacy.settle(registry, now)
+	if settled.ok: registry = settled.registry
+	var player_faction := diplomacy_head_faction()
+	var strength := visible_strength()
+	var factions: Array[int] = []
+	for key: Variant in registry.get("entries", {}):
+		var entry: Dictionary = registry.entries[key]
+		var id := int(entry.faction_id)
+		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and RegionPeerage.head_of(registry, id).ok: factions.append(id)
+	factions.sort()
+	var changed := false
+	var ids: Array = RegionDiplomacy.table(registry).proposals.keys()
+	ids.sort_custom(func(a: Variant, b: Variant) -> bool: return int(a) < int(b))
+	for pid: Variant in ids:
+		var proposal: Dictionary = RegionDiplomacy.table(registry).proposals[pid]
+		if proposal.status != "delivered" or not factions.has(int(proposal.to)): continue
+		var me := int(proposal.to)
+		var them := int(proposal.from)
+		var mind := _head_mind(registry, me)
+		var known := strength.has(me) and strength.has(them)
+		var accept := RegionDiplomacyAI.accept_peace(registry, me, them, mind.ambition, mind.mercy, int(strength.get(me, 0)), int(strength.get(them, 0)), known, now)
+		var distance := diplomacy_distance_m(me, them)
+		if distance < 0.0: continue
+		var answered: Dictionary = RegionDiplomacy.reply(registry, int(pid), accept, RegionPeerage.head_of(registry, me).get("person_ref"), distance, now)
+		if answered.ok:
+			registry = answered.registry
+			changed = true
+	var others: Array[int] = factions.duplicate()
+	if player_faction >= 0: others.append(player_faction)
+	for me: int in factions:
+		var mind := _head_mind(registry, me)
+		var head_ref: Variant = RegionPeerage.head_of(registry, me).get("person_ref")
+		for them: int in others:
+			if them == me: continue
+			var distance := diplomacy_distance_m(me, them)
+			if distance < 0.0: continue
+			var moved: Dictionary = {}
+			if RegionDiplomacyAI.want_peace_upgrade(registry, me, them, 2.0 * RegionDiplomacy.delay_seconds(distance), now):
+				moved = RegionDiplomacy.propose(registry, me, them, "peace", 0, head_ref, distance, now)
+			elif RegionDiplomacy.hostile(registry, me, them, now) and not RegionDiplomacy.in_breach_window(registry, them, me, now):
+				var known := strength.has(me) and strength.has(them)
+				if RegionDiplomacyAI.want_truce(mind.ambition, mind.mercy, int(strength.get(me, 0)), int(strength.get(them, 0)), known):
+					moved = RegionDiplomacy.propose(registry, me, them, "truce", RegionDiplomacyAI.NPC_TRUCE_DAYS, head_ref, distance, now)
+			if moved.get("ok", false):
+				registry = moved.registry
+				changed = true
+				break
+	if not changed and not settled.get("changed", false): return {}
+	return _commit_diplomacy({"ok": true, "registry": registry}, "NPC 外交")
 
 ## --- Step 5: rebellion (爵位規劃「叛離」, 聲望規劃) ---
 ## The controlled noble leaves his faction with his fiefs: "independent" founds `faction_name` with him as its king;
