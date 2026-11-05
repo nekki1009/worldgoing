@@ -75,6 +75,12 @@ func _near_hunger_boundary(identity: int, seconds_before: float) -> Dictionary:
 				return cohort
 	return {}
 
+func _cohort_of(identity: int) -> Dictionary:
+	for entry: Dictionary in lab.terrain.site.team_supply.values():
+		for cohort: Dictionary in entry.sustain.cohorts:
+			if identity in cohort.ids: return cohort
+	return {}
+
 func _events(events: PackedInt64Array) -> void:
 	for at in range(0, events.size(), 4):
 		var identity := int(events[at + 1])
@@ -154,7 +160,9 @@ func _run() -> void:
 	_step()
 	_step()
 	var helper_after := _hot(helper_id)
-	if not _check(float(helper_after.hp) < float(helper_before.hp) and float(helper_after.hp) > 0.0 and float(rescue_cohort.hunger) > 48.0, "common Sustain bridge applies nonlethal hunger after the boundary", {"before_hp": helper_before.hp, "after_hp": helper_after.hp, "hunger_hours": rescue_cohort.hunger}): return
+	# Sustain may rebuild its cohort dictionaries while stepping: read the helper's live cohort, not the authored one.
+	var live_cohort := _cohort_of(helper_id)
+	if not _check(float(helper_after.hp) < float(helper_before.hp) and float(helper_after.hp) > 0.0 and float(live_cohort.get("hunger", 0.0)) > 48.0, "common Sustain bridge applies nonlethal hunger after the boundary", {"before_hp": helper_before.hp, "after_hp": helper_after.hp, "hunger_hours": live_cohort.get("hunger"), "authored_hunger": rescue_cohort.hunger}): return
 	if not _check(int(helper_after.state) == NATIVE_RESCUE and float(helper_after.act_t) > float(helper_before.act_t) and int(_person(helper_id).hit) == helper_hit, "nonlethal hunger preserves ongoing rescue and does not register an effective hit", {"before_progress": helper_before.act_t, "after_progress": helper_after.act_t}): return
 	for tick in range(180):
 		if float(site.crowd.stats()[12]) > rescued_before: break
