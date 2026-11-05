@@ -98,6 +98,10 @@ void World::apply_contact(int i, double hp_loss, double stun_add, bool environme
 	if (hp[i] <= 0.0) return;
 	Formation &f = formations[form[i]];
 	bool effective = !environmental && (hp_loss > 0.0 || stun_add > 0.0);
+	if (effective && striker_person_ >= 0) {
+		if ((int)last_striker_person.size() < soldier_count()) last_striker_person.resize(soldier_count(), -1);
+		last_striker_person[i] = striker_person_;
+	}
 	if (effective) {
 		contact_revision[i] = contact_revision[i] == INT64_MAX ? 0 : contact_revision[i] + 1;
 		// An impact interrupts custody work without altering the original position.
@@ -357,7 +361,9 @@ void World::exchange_round_run() {
 		if (all_won) set_visual(i, e.big_wins > 0 ? V_ATTACK_HEAVY : V_ATTACK);
 		else if (e.count == 1 && e.draws == 1) set_visual(i, V_GUARD);
 		else set_visual(i, e.big_losses > 0 || e.knock ? V_KNOCKBACK : V_HIT);
+		striker_person_ = e.r_other >= 0 ? person_id[e.r_other] : -1;
 		apply_contact(i, e.hp, e.stun);
+		striker_person_ = -1;
 		e.in = false;
 	}
 }
@@ -525,7 +531,9 @@ void World::projectiles_advance(float dt) {
 		if (skill[tgt] == SK_BRACE) { skill[tgt] = SK_NONE; skill_cd[tgt] = EXCHANGE_SKILL_COOLDOWN; stats.skills_used++; }
 		if (r.kind == R_HIT) stats.hits++; else if (r.kind == R_GRAZE) stats.grazes++; else stats.misses++;
 		if (r.kind != R_MISS && !hostile(p.faction, team[tgt])) stats.friendly_hits++;
+		striker_person_ = p.shooter_id;
 		apply_contact(tgt, r.hp, r.stun);
+		striker_person_ = -1;
 		if (alive(tgt) && ko[tgt] <= 0.0 && getup[tgt] <= 0.0 && r.hp > 0.0) {
 			set_visual(tgt, V_HIT);
 			if (rescue_of[tgt] >= 0) cancel_actions_involving(tgt);
@@ -1205,14 +1213,14 @@ void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
 	cav_record(r, v);
 	auto stop = [&]() { vx[r] = vy[r] = 0.f; stats.cav_stops++; cav_spent[r] = 1; }; // 4.4 brake to zero; CAV-4a: the charge is spent
 	if (res.winner == 0) { // draw: both stunned, the horse is held up for 0.5 s
-		apply_contact(v, 0.0, res.stun_b);
-		apply_contact(r, 0.0, res.stun_a);
+		striker_person_ = person_id[r]; apply_contact(v, 0.0, res.stun_b);
+		striker_person_ = person_id[v]; apply_contact(r, 0.0, res.stun_a); striker_person_ = -1;
 		if (alive(r)) stagger[r] = std::max(stagger[r], cav::DRAW_STOP_SECONDS);
 		stop();
 		return;
 	}
 	if (res.winner == 1) { // the rider wins
-		apply_contact(v, res.hp_b, res.stun_b);
+		striker_person_ = person_id[r]; apply_contact(v, res.hp_b, res.stun_b); striker_person_ = -1;
 		if (alive(v) && ko[v] <= 0.0) stagger[v] = std::max(stagger[v], res.stagger);
 		if (res.kind == rules::EX_BIG) {
 			// penetration: an impulse away from the rider's line on the side the victim stood, plus a little forward; 1.2 s down
@@ -1245,7 +1253,7 @@ void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
 		return;
 	}
 	// the defender wins: the rider takes its exchange loss plus the recoil (1.5 x that loss), stops, and on a big loss dismounts
-	apply_contact(r, res.hp_a * (1.0 + cav::RECOIL), res.stun_a);
+	striker_person_ = person_id[v]; apply_contact(r, res.hp_a * (1.0 + cav::RECOIL), res.stun_a); striker_person_ = -1;
 	if (alive(r)) stagger[r] = std::max(stagger[r], res.stagger);
 	stop();
 	if (res.kind == rules::EX_BIG && alive(r)) {

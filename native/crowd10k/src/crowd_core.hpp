@@ -485,6 +485,11 @@ public:
 	// CAV-4a: 1 once this rider's charge in the current cycle is over (stopped, or engaged in contact while charging).
 	// A spent rider follows the ordinary engagement and slot rules until the next form-up clears it. Saved from KW18, hashed.
 	std::vector<uint8_t> cav_spent;
+	// Combat records (NEKKI 2026-11-05): the person who last landed an effective blow on each soldier, read by the host
+	// with last_striker(i) when it handles that soldier's DEATH / KO event (events keep their sentinel `other`).
+	// Transient: not saved or hashed; a loaded World starts unknown (-1). Sized lazily to the soldier count.
+	std::vector<int64_t> last_striker_person;
+	int64_t striker_person_ = -1; // set around apply_contact by the exchange, ranged and cavalry resolvers
 	// derived each step (never saved or hashed): the charge candidate of each rider and the impact velocity of it
 	std::vector<int32_t> cav_cand;
 	std::vector<float> cav_cand_vx, cav_cand_vy;
@@ -844,6 +849,7 @@ public:
 	bool charge_state(int i) const;
 	// CAV-2 read accessors: seconds the rider has been moving straight (cav_hold) and the penetrations of the current charge.
 	double charge_straight_seconds(int i) const { return i >= 0 && i < (int)cav_hold.size() ? cav_hold[i] : 0.0; }
+	int64_t last_striker(int i) const { return i >= 0 && i < (int)last_striker_person.size() ? last_striker_person[i] : -1; }
 	int charge_hits(int i) const { return i >= 0 && i < (int)cav_hits.size() ? (int)cav_hits[i] : 0; }
 	int cav_distinct_victims(int i) const; // distinct victims in the rider's recent-victim ring (ids >= 0)
 	// Modifiers of a rider charging a victim at `speed` (4.3): ability, speed bonus, flank / rear bonus, basic mount bonus

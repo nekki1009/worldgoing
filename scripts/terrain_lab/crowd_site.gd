@@ -1329,6 +1329,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		lab._region_mark_native_work_combat(mark)
 	if not work_fatigue_point_active():
 		if not _consume_events(): return false
+		_battle_tick(combat_left)
 		settle_events()
 	sync_rider_dismounts()
 	event_cost_last_us = Time.get_ticks_usec() - events_started
@@ -2132,6 +2133,43 @@ func _consume_events() -> bool:
 	return succeeded
 
 
+## --- Battle log and personal records (Nekki 2026-11-05) ---
+var battle = preload("res://scripts/terrain_lab/site_battle_tracker.gd").new()
+var _battle_sample := 0
+
+func _faction_of_person(identity: int) -> int:
+	var owner: Variant = _owner_by_id.get(identity)
+	return int(owner.faction_id) if owner != null else -1
+
+func _battle_now() -> float:
+	var controller: Variant = lab.site_controller if is_instance_valid(lab) else null
+	if controller != null and controller.region_slot != null: return float(controller.region_slot.control.logical_game_seconds)
+	return float(lab.terrain.site.get("minute", 0)) * 60.0
+
+func _battle_event(kind: int, identity: int, other: int) -> void:
+	if not battle.open: return
+	var striker := -1
+	if kind in [0, 1] and _index_by_id.has(identity) and crowd.has_method("last_striker"): striker = int(crowd.last_striker(int(_index_by_id[identity])))
+	var rank: String = lab.site_controller.peerage_rank_of(identity) if lab.site_controller.has_method("peerage_rank_of") else ""
+	battle.on_event(kind, identity, _faction_of_person(identity), striker, _faction_of_person(striker), other if kind == 4 else -1,
+		_faction_of_person(other) if kind == 4 else -1, rank != "" and rank != "none")
+
+func _battle_tick(combat_left: float) -> void:
+	var now := _battle_now()
+	var combat_on := combat_left > 0.0
+	if not battle.open:
+		if not combat_on: return
+		battle.begin(str(lab.terrain.site.get("id", "")), now)
+		_battle_sample = 0
+	if combat_on:
+		_battle_sample += 1
+		if _battle_sample % 120 == 1:
+			for identity: Variant in _index_by_id.keys():
+				if person_fighting(int(identity)): battle.join(int(identity), _faction_of_person(int(identity)))
+	if battle.tick(combat_on, now) and lab.site_controller.has_method("close_battle"):
+		lab.site_controller.close_battle(battle, now)
+
+
 func _freeze_dead_person_fatigue(identity: int, value: float, rested: float) -> void:
 	# Native already decremented its formation count. Keep the same original body;
 	# detach a suspended GD pool before writing the true values from that death event.
@@ -2558,6 +2596,8 @@ func sync_to_site() -> Dictionary:
 			# Reputation: a team that has just broken is a defeat for it and a victory for the hostile teams present.
 			if bool(state.routed) and not bool(entry.sustain.get("routed", false)) and lab.site_controller.has_method("team_routed_reputation"):
 				lab.site_controller.team_routed_reputation(int(roster.team_id))
+				var routed_team: Dictionary = _team_by_id(int(roster.team_id))
+				battle.on_rout(int(roster.team_id), int(routed_team.get("faction", -1)), routed_team.get("person_ids", []))
 			entry.sustain.morale = float(state.morale)
 			entry.sustain.routed = bool(state.routed)
 			entry.sustain.regroup_seconds = float(state.rally_rest)
@@ -4843,6 +4883,7 @@ func _consume_events_original() -> bool:
 		var identity := int(events[offset + 1])
 		var other := int(events[offset + 2])
 		event_counts[kind] = int(event_counts.get(kind, 0)) + 1
+		if kind in [0, 1, 4]: _battle_event(kind, identity, other)
 		if kind in [4, 5]:
 			pending_captivity.append({"kind": kind, "person": identity, "other": other, "ammo_synced": false})
 		elif kind == 0:

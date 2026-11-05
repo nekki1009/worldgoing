@@ -1457,6 +1457,20 @@ static void leave_into_new_empty_team() {
 	REQUIRE(loaded.load(blob) && loaded.state_hash() == w.state_hash());
 }
 
+static void last_striker_on_events() {
+	test_case = "combat records: last_striker names who last landed an effective blow; direct contacts name nobody";
+	World w(1); int foreign = -1; transfer_scenario(w, foreign);
+	w.apply_contact(1, 0.0, 200.0); // a direct contact: no striker
+	REQUIRE(w.last_striker(1) == -1 && w.events.back().kind == EV_KO && w.events.back().other == -1);
+	w.striker_person_ = w.person_id[3];
+	w.apply_contact(0, 0.0, 200.0);
+	w.striker_person_ = -1;
+	REQUIRE(w.events.back().kind == EV_KO && w.events.back().other == -1 && w.last_striker(0) == w.person_id[3]);
+	w.apply_contact(0, 500.0, 0.0); // a later direct blow keeps the last effective striker
+	REQUIRE(w.events.back().kind == EV_DEATH && w.last_striker(0) == w.person_id[3]);
+	REQUIRE(w.last_striker(-1) == -1 && w.last_striker(999) == -1 && w.validate());
+}
+
 static uint64_t transfer_scenario_hash(int threads) {
 	World w(threads); int foreign = -1; transfer_scenario(w, foreign);
 	REQUIRE(w.transfer_member(2, foreign));
@@ -1624,6 +1638,7 @@ int main(int argc, char **argv) {
 	transfer_hash_matches_across_thread_counts();
 	leave_refusals_and_leave();
 	leave_into_new_empty_team();
+	last_striker_on_events();
 	absent_save_load_matches();
 	absent_hash_matches_across_thread_counts();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);

@@ -10283,6 +10283,40 @@ func team_routed_reputation(team_id: int) -> void:
 	for at in range(winners.size()):
 		adjust_reputation(int(winners[at].captain), gain if at == 0 else gain / 2.0, 0.0)
 
+## --- Battle log and personal records (Nekki 2026-11-05) ---
+## Closes the crowd's open battle: personal records are written onto the people present now; the log entry is queued on
+## the Region slot and joins the faction registry at the next checkpoint (RegionBattleLog.add).
+func close_battle(tracker: Variant, now: float) -> Dictionary:
+	var host: Variant = lab.crowd_site
+	var standing := {}
+	var largest := {}
+	for team: Dictionary in host.teams:
+		if bool(team.get("departed", false)): continue
+		var faction := int(team.get("faction", -1))
+		var able := 0
+		for person: Variant in team.get("person_ids", []):
+			var target: Dictionary = lab._original_person_target(int(person))
+			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: able += 1
+		standing[faction] = int(standing.get(faction, 0)) + able
+		if team.get("person_ids", []).size() > int(largest.get(faction, {}).get("size", -1)):
+			largest[faction] = {"size": team.get("person_ids", []).size(), "team_id": int(team.team_id)}
+	var commanders := {}
+	for faction: Variant in largest:
+		var captain := team_captain_of_team(int(largest[faction].team_id))
+		if captain > 0: commanders[int(faction)] = {"person": captain, "ref": region_slot.peerage_person_ref(captain) if region_slot != null else null}
+	var closed: Dictionary = tracker.close(now, standing, commanders)
+	if closed.is_empty(): return {}
+	for person: Variant in closed.deltas:
+		var found: Dictionary = person_actions._person(int(person), false)
+		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
+	if region_slot != null: region_slot.pending_battles.append(closed.battle)
+	return closed
+
+func team_captain_of_team(team_id: int) -> int:
+	var roster: Dictionary = lab.crowd_site.native_roster(team_id)
+	var formal := int(roster.get("formal_commander", -1))
+	return int(roster.units[formal].person_id) if formal >= 0 and formal < roster.get("units", []).size() else -1
+
 ## --- Diplomacy (FACTION_DIPLOMACY_SPECIFICATION §11) ---
 ## The faction the controlled person heads, or -1 (diplomacy needs the head himself; joining or kind=player is not enough).
 func diplomacy_head_faction() -> int:

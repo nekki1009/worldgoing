@@ -3757,6 +3757,7 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	var published := _publish(sites, next_clock, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
 	if not published.ok: return published
 	pending_peerage_inheritance.clear()
+	pending_battles.clear()
 	return {"ok": true, "path": path, "generation": published.generation, "data": loaded.data, "snapshot": validated.snapshot}
 
 
@@ -12579,9 +12580,16 @@ func rollback_person_allocation(checkpoint: Dictionary, allowed_owners: Array = 
 ## Titles of people who died in the active Site: [{dead_ref, heir_ref or null}], applied (family rule) at the next
 ## checkpoint and cleared once it publishes.
 var pending_peerage_inheritance: Array = []
+## Closed battles of the active Site (RegionBattleLog), joined to the registry at the next checkpoint.
+var pending_battles: Array = []
 
 func _peerage_reconcile_site(next_clock: Dictionary, data: TerrainData) -> Dictionary:
 	var registry: Variant = next_clock.get("faction_registry", {})
+	if registry is Dictionary and not pending_battles.is_empty() and registry.get("version") == RegionFactionQuery.VERSION:
+		for battle: Dictionary in pending_battles:
+			var logged: Dictionary = RegionBattleLog.add(registry, battle, float(next_clock.logical_game_seconds))
+			if logged.ok: registry = logged.registry
+		next_clock.faction_registry = registry
 	if not registry is Dictionary or not registry.get("peerage") is Dictionary: return {"ok": true}
 	for death: Dictionary in pending_peerage_inheritance:
 		if RegionPeerage.record_of(registry, death.dead_ref).is_empty(): continue

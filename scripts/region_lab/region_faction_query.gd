@@ -37,6 +37,7 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	var registry_fields: Array = ["version", "revision", "next_faction_id", "migration_complete", "entries", "coverage"]
 	if value is Dictionary and value.has("peerage"): registry_fields.append("peerage")
 	if value is Dictionary and value.has("diplomacy"): registry_fields.append("diplomacy")
+	if value is Dictionary and value.has("battles"): registry_fields.append("battles")
 	if not value is Dictionary or not keys(value, registry_fields): return fail("CORRUPT_SAVE", "faction registry fields")
 	if not whole(value.version, VERSION, VERSION): return fail("SAVE_VERSION", "unknown faction registry version")
 	if not whole(value.revision, 0, MAX_REVISION) or not whole(value.next_faction_id, 0, MAX_ID + 1) or not value.migration_complete is bool or value.migration_complete != true or not value.entries is Dictionary or not value.coverage is Dictionary: return fail("CORRUPT_SAVE", "incomplete faction migration")
@@ -70,6 +71,9 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	if value.has("diplomacy"):
 		var relations: Dictionary = RegionDiplomacy.validate(value.diplomacy, value, now)
 		if not relations.ok: return relations
+	if value.has("battles"):
+		var fought: Dictionary = RegionBattleLog.validate(value.battles, now)
+		if not fought.ok: return fought
 	return {"ok": true}
 
 ## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with
@@ -177,6 +181,7 @@ static func canonical_registry(value: Dictionary) -> Dictionary:
 		registry.coverage.sources = sources
 	if registry.get("peerage") is Dictionary: registry.peerage = RegionPeerage.canonical(registry.peerage)
 	if registry.get("diplomacy") is Dictionary: registry.diplomacy = RegionDiplomacy.canonical(registry.diplomacy)
+	if registry.get("battles") is Dictionary: registry.battles = RegionBattleLog.canonical(registry.battles)
 	return registry
 
 static func migration(states: Array[Dictionary], receipts: Array[Dictionary], reserved: Array, previous: Dictionary, now: float, complete: bool) -> Dictionary:

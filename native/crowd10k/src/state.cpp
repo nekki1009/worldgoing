@@ -545,6 +545,7 @@ void World::swap_state(World &o) {
 	swap(military_role, o.military_role);
 	swap(post_holder, o.post_holder); swap(released, o.released); swap(aboard, o.aboard); swap(aboard_vehicle, o.aboard_vehicle);
 	swap(absent, o.absent); swap(absent_kind, o.absent_kind); swap(surrendered, o.surrendered);
+	swap(last_striker_person, o.last_striker_person);
 	swap(mounted, o.mounted); swap(cav_hits, o.cav_hits); swap(cav_hist, o.cav_hist); swap(cav_hold, o.cav_hold); swap(cav_spent, o.cav_spent);
 	swap(cav_down, o.cav_down); swap(cav_hit_who, o.cav_hit_who); swap(cav_hit_t, o.cav_hit_t);
 	swap(captive, o.captive);

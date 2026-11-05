@@ -24,7 +24,10 @@ static func valid(packet: Variant) -> bool:
 	var extra := 0
 	if packet.has("reputation"):
 		if not valid_reputation(packet.reputation): return false
-		extra = 1
+		extra += 1
+	if packet.has("combat_record"):
+		if not valid_combat_record(packet.combat_record): return false
+		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
 	if not _integer(packet.get("version"), 3, 3) or packet.size() != 10 + extra: return false
@@ -82,6 +85,7 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 	var result := {"version": VERSION, "capture_seq": int(packet.get("capture_seq", 0)), "orgs": {}, "settled_day": -2,
 		"no_post_days": 0, "pending": [], "seen": [], "evidence": {}, "proven": {}, "unexecuted": {"days": 0, "events": 0}}
 	if valid_reputation(packet.get("reputation")): result["reputation"] = packet.reputation.duplicate(true)
+	if valid_combat_record(packet.get("combat_record")): result["combat_record"] = packet.combat_record.duplicate(true)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -125,6 +129,8 @@ static func normalized(packet: Dictionary) -> Dictionary:
 		for field: String in ["days", "events"]: result.unexecuted[field] = int(result.unexecuted[field])
 	if result.get("reputation") is Dictionary:
 		for field: String in ["prestige", "credit", "day"]: result.reputation[field] = int(result.reputation[field])
+	if result.get("combat_record") is Dictionary:
+		for field: String in COMBAT_FIELDS: result.combat_record[field] = int(result.combat_record[field])
 	return result
 
 static func valid_reputation(value: Variant) -> bool:
@@ -142,6 +148,32 @@ static func set_reputation(body: Variant, value: Dictionary) -> void:
 	var packet := read(body).duplicate(true)
 	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
 	packet["reputation"] = {"prestige": clampi(int(value.prestige), 0, 10000), "credit": clampi(int(value.credit), -10000, 10000), "day": int(value.get("day", -1))}
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+
+## Personal combat record (Nekki 2026-11-05): optional `combat_record` with the RegionBattleLog.RECORD_FIELDS counters.
+const COMBAT_FIELDS := ["battles", "wins", "losses", "routs", "kills", "kos_dealt", "captures", "nobles_captured", "captured", "kod", "commanded"]
+
+static func valid_combat_record(value: Variant) -> bool:
+	if not value is Dictionary or value.size() != COMBAT_FIELDS.size(): return false
+	for field: String in COMBAT_FIELDS:
+		if not _integer(value.get(field), 0, 2147483647): return false
+	return true
+
+static func combat_record(body: Variant) -> Dictionary:
+	var stored: Variant = read(body).get("combat_record")
+	var result := {}
+	for field: String in COMBAT_FIELDS: result[field] = int(stored.get(field, 0)) if valid_combat_record(stored) else 0
+	return result
+
+## Adds `deltas` {field: amount} to the person's record (creating a v1 packet when the person has none).
+static func add_combat_record(body: Variant, deltas: Dictionary) -> void:
+	var record := combat_record(body)
+	for field: Variant in deltas:
+		if record.has(str(field)): record[str(field)] = clampi(int(record[str(field)]) + int(deltas[field]), 0, 2147483647)
+	var packet := read(body).duplicate(true)
+	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
+	packet["combat_record"] = record
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 
