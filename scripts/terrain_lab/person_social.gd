@@ -9,6 +9,8 @@ extends RefCounted
 ## v3 (G0 F10/F11): plus the start-of-day evidence of the last observed political
 ## day, the last proven day's start/end stamps, the unexecuted-day counter, and
 ## per-organization observation start (obs_from). v2 loads with no proven progress.
+## Reputation (聲望系統規劃): an optional `reputation` {prestige 0..10000, credit -10000..10000, day} on v1 and v3
+## packets. Missing = prestige at the person's rank floor (read by callers) and credit 0, so old saves need no migration.
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -19,10 +21,14 @@ const MAX_SEEN := 128
 
 static func valid(packet: Variant) -> bool:
 	if not packet is Dictionary or not _integer(packet.get("capture_seq"), 0, 2147483647): return false
-	if _integer(packet.get("version"), 1, 1): return packet.size() == 2
-	if _integer(packet.get("version"), 2, 2): return _valid_common(packet, 7, 5) and not packet.has("evidence")
-	if not _integer(packet.get("version"), 3, 3) or packet.size() != 10: return false
-	if not _valid_common(packet, 10, 6): return false
+	var extra := 0
+	if packet.has("reputation"):
+		if not valid_reputation(packet.reputation): return false
+		extra = 1
+	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
+	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
+	if not _integer(packet.get("version"), 3, 3) or packet.size() != 10 + extra: return false
+	if not _valid_common(packet, 10 + extra, 6): return false
 	if not _valid_evidence(packet.get("evidence")) or not _valid_proven(packet.get("proven")): return false
 	var unexecuted: Variant = packet.get("unexecuted")
 	return unexecuted is Dictionary and unexecuted.size() == 2 and _integer(unexecuted.get("days"), 0, 2147483647) and _integer(unexecuted.get("events"), 0, 2147483647)
@@ -73,8 +79,10 @@ static func read(body: Variant) -> Dictionary:
 	return packet if packet is Dictionary else {}
 
 static func upgraded(packet: Dictionary) -> Dictionary:
-	return {"version": VERSION, "capture_seq": int(packet.get("capture_seq", 0)), "orgs": {}, "settled_day": -2,
+	var result := {"version": VERSION, "capture_seq": int(packet.get("capture_seq", 0)), "orgs": {}, "settled_day": -2,
 		"no_post_days": 0, "pending": [], "seen": [], "evidence": {}, "proven": {}, "unexecuted": {"days": 0, "events": 0}}
+	if valid_reputation(packet.get("reputation")): result["reputation"] = packet.reputation.duplicate(true)
+	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
 ## evidence is empty, existing observation has no recorded start (obs_from -1) and
@@ -115,7 +123,27 @@ static func normalized(packet: Dictionary) -> Dictionary:
 		for field: String in ["day", "start", "end"]: result.proven[field] = int(result.proven[field])
 	if result.has("unexecuted"):
 		for field: String in ["days", "events"]: result.unexecuted[field] = int(result.unexecuted[field])
+	if result.get("reputation") is Dictionary:
+		for field: String in ["prestige", "credit", "day"]: result.reputation[field] = int(result.reputation[field])
 	return result
+
+static func valid_reputation(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 3 and _integer(value.get("prestige"), 0, 10000) \
+		and _integer(value.get("credit"), -10000, 10000) and _integer(value.get("day"), -1, 2147483647)
+
+## The person's reputation, or the neutral default {prestige floor_prestige, credit 0, day -1} when none is stored.
+static func reputation(body: Variant, floor_prestige: int = 0) -> Dictionary:
+	var stored: Variant = read(body).get("reputation")
+	if valid_reputation(stored): return {"prestige": maxi(int(stored.prestige), floor_prestige), "credit": int(stored.credit), "day": int(stored.day)}
+	return {"prestige": floor_prestige, "credit": 0, "day": -1}
+
+## Writes the reputation into the person's packet (creating a v1 packet when the person has none).
+static func set_reputation(body: Variant, value: Dictionary) -> void:
+	var packet := read(body).duplicate(true)
+	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
+	packet["reputation"] = {"prestige": clampi(int(value.prestige), 0, 10000), "credit": clampi(int(value.credit), -10000, 10000), "day": int(value.get("day", -1))}
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
 
 static func valid_org_ref(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 3 and ORG_KINDS.has(str(value.get("kind", ""))) \
