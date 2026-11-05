@@ -79,6 +79,14 @@ func _run() -> void:
 
 	candidate = RegionPeerage.grant(slot.control.faction_registry, player_ref, cadre_ref, "baron", [2], float(slot.control.logical_game_seconds))
 	if not _check(controller._commit_peerage(candidate, "已授予男爵").ok, "the baron is granted again"): return
+	# Reputation events: a broken team's captain loses 2; capturing a baron gives the captor's captain 0.2 x 12.
+	var team_id := -1
+	for team: Dictionary in lab.crowd_site.teams:
+		if team.get("person_ids", []).has(player): team_id = int(team.team_id)
+	controller.team_routed_reputation(team_id)
+	if not _check(int(controller.reputation_of(player).prestige) == 5800, "the routed team's captain loses 2 (no hostile team here wins anything)", controller.reputation_of(player)): return
+	controller._captivity_reputation(cadre, player)
+	if not _check(int(controller.reputation_of(player).prestige) == 6040 and int(controller.reputation_of(cadre).prestige) == 1200, "capturing a baron gives +2.4; the captured baron stays at his floor", [controller.reputation_of(player), controller.reputation_of(cadre)]): return
 	var heir := controller.peerage_heir_of(cadre)
 	controller._queue_peerage_inheritance(cadre)
 	if not _check(slot.pending_peerage_inheritance.size() == 1, "the baron's death is queued for the next checkpoint", slot.pending_peerage_inheritance): return

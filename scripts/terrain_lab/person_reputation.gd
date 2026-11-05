@@ -74,6 +74,15 @@ static func recover_credit(stored: int, days: int) -> int:
 	if stored >= CREDIT_RECOVERY_CAP * SCALE or days < CREDIT_RECOVERY_DAYS: return stored
 	return mini(CREDIT_RECOVERY_CAP * SCALE, stored + int(days / CREDIT_RECOVERY_DAYS) * SCALE)
 
+## The daily change over `days` whole days since the last stamp: prestige decays toward the rank floor, negative credit
+## recovers. `value` = {prestige, credit}; returns a copy.
+static func aged(value: Dictionary, rank: String, days: int) -> Dictionary:
+	var result := value.duplicate()
+	if days <= 0: return result
+	for _day: int in range(mini(days, 3650)): result.prestige = decay_prestige(int(result.prestige), rank)
+	result.credit = recover_credit(int(result.credit), days)
+	return result
+
 ## Inheritance: the heir's prestige = max(own, predecessor x 0.3); credit is not inherited.
 static func inherited_prestige(heir: int, predecessor: int) -> int:
 	return maxi(heir, int(predecessor * 3 / 10))

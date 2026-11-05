@@ -5,6 +5,7 @@ extends RefCounted
 ## Population, jurisdiction and suspension are derived from the live Site and
 ## never stored. Missing record = un-founded Site: every original rule stays.
 
+const PersonReputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
@@ -590,6 +591,13 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
 			supply.training_requester = -1
 			supply.training_feature_id = ""
 	settlement.owner_faction = attacker
+	# Reputation (聲望系統規劃): the capturing leader gains village +2 / township +3 / town +5 / city +8; the old lord loses half.
+	var old_lord := int(SiteOffices.head_position(settlement.offices).get("holder", -1))
+	var controller: Variant = lab.get("site_controller")
+	if controller != null and controller.has_method("adjust_reputation") and int(settlement.get("level", 0)) >= 2:
+		var level := int(settlement.level)
+		if leader_id > 0: controller.adjust_reputation(leader_id, PersonReputation.settlement_change(level, false), 0.0)
+		if old_lord > 0 and old_lord != leader_id: controller.adjust_reputation(old_lord, PersonReputation.settlement_change(level, true), 0.0)
 	SiteOffices.vacate_unless(settlement.offices, func(_holder: int) -> bool: return false)
 	var head := SiteOffices.head_position(settlement.offices)
 	head.holder = leader_id if leader_id > 0 else -1

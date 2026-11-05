@@ -2555,6 +2555,9 @@ func sync_to_site() -> Dictionary:
 		if not result.ok: return result
 		var entry: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(roster.team_id), {})
 		if not entry.is_empty():
+			# Reputation: a team that has just broken is a defeat for it and a victory for the hostile teams present.
+			if bool(state.routed) and not bool(entry.sustain.get("routed", false)) and lab.site_controller.has_method("team_routed_reputation"):
+				lab.site_controller.team_routed_reputation(int(roster.team_id))
 			entry.sustain.morale = float(state.morale)
 			entry.sustain.routed = bool(state.routed)
 			entry.sustain.regroup_seconds = float(state.rally_rest)

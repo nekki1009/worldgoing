@@ -37,6 +37,11 @@ func _run() -> void:
 	if not _check(is_equal_approx(R.follow_bonus(-4000, 0), -4.0) and is_equal_approx(R.follow_bonus(10000, -10000), 20.0), "follow term: (player - acceptor credit) x 0.1"): return
 	if not _check(R.diplomacy_allows("peace", -5000) and not R.diplomacy_allows("peace", -5100) and R.diplomacy_allows("trade", -2000) and not R.diplomacy_allows("trade", -2100) and R.diplomacy_allows("submit", -10000), "diplomacy credit gates -50 / -20; submission always"): return
 	if not _check(R.promotion_allowed(1800, "viscount") and not R.promotion_allowed(1700, "viscount"), "promotion needs prestige at the new floor"): return
+	var aged: Dictionary = R.aged({"prestige": 7000, "credit": -4000}, "king", 10)
+	var expected := 7000
+	for _day: int in range(10): expected = R.decay_prestige(expected, "king")
+	if not _check(int(aged.prestige) == expected and expected < 7000 and expected > 5000 and int(aged.credit) == -3900, "ten days: prestige decays toward the king floor, credit -40 recovers to -39", [aged, expected]): return
+	if not _check(R.aged({"prestige": 7000, "credit": -4000}, "king", 0) == {"prestige": 7000, "credit": -4000}, "no day passed, no change"): return
 	var Social = preload("res://scripts/terrain_lab/person_social.gd")
 	var body := {}
 	if not _check(Social.reputation(body, 1200) == {"prestige": 1200, "credit": 0, "day": -1}, "a person without a packet reads the rank floor and neutral credit"): return

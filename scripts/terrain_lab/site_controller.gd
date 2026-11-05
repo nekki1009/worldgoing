@@ -5361,6 +5361,7 @@ func equipment_changed(identity: int) -> void:
 	TerrainArmy.clear_contact_samples()
 
 func _captivity_changed(identity: int, _captor_id: int, capturing: bool) -> void:
+	if capturing: _captivity_reputation(identity, _captor_id)
 	if _crowd_active() and lab.crowd_site.contains_person(identity):
 		lab.crowd_site.captivity_changed(identity, _captor_id, capturing)
 		return
@@ -10204,7 +10205,16 @@ func reputation_of(person_id: int) -> Dictionary:
 	var person: Dictionary = person_actions._person(person_id, false)
 	var floor_value := Reputation.floor_of(peerage_rank_of(person_id))
 	if person.is_empty(): return {"prestige": floor_value, "credit": 0, "day": -1}
-	return PersonSocialPacket.reputation(person.body, floor_value)
+	var stored: Dictionary = PersonSocialPacket.reputation(person.body, floor_value)
+	# Lazy daily change since the stamp: prestige above the floor falls 1% a day, negative credit recovers to -20.
+	var today := reputation_day()
+	if int(stored.day) >= 0 and today > int(stored.day): stored = Reputation.aged(stored, peerage_rank_of(person_id), today - int(stored.day))
+	stored.day = today
+	return stored
+
+## Whole game days of the Region clock (0 without a Region slot).
+func reputation_day() -> int:
+	return int(float(region_slot.control.logical_game_seconds) / 86400.0) if region_slot != null else 0
 
 ## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
 func adjust_reputation(person_id: int, prestige_delta: float, credit_delta: float) -> Dictionary:
@@ -10215,6 +10225,54 @@ func adjust_reputation(person_id: int, prestige_delta: float, credit_delta: floa
 	current.credit = Reputation.add_credit(int(current.credit), credit_delta)
 	PersonSocialPacket.set_reputation(person.body, current)
 	return current
+
+## The formal captain of a person's crowd team (the person himself outside a crowd roster).
+func team_captain_of(person_id: int) -> int:
+	if _crowd_active() and lab.crowd_site.contains_person(person_id):
+		var owner: Variant = lab.crowd_site.person_owner(person_id)
+		var roster: Dictionary = lab.crowd_site.native_roster(int(owner.team_id)) if owner != null else {}
+		var formal := int(roster.get("formal_commander", -1))
+		if formal >= 0 and formal < roster.get("units", []).size(): return int(roster.units[formal].person_id)
+	return person_id
+
+## Captured: the captive loses 5 prestige; a titled captive gives the captor's captain 0.2 x his rank floor. Never fails.
+func _captivity_reputation(captive_id: int, captor_id: int) -> void:
+	var rank := peerage_rank_of(captive_id)
+	adjust_reputation(captive_id, float(Reputation.CAPTURED), 0.0)
+	if captor_id > 0 and Reputation.noble_taken_gain(rank) > 0.0:
+		adjust_reputation(team_captain_of(captor_id), Reputation.noble_taken_gain(rank), 0.0)
+
+## A crowd team broke (routed): its captain loses 2 prestige. The captains of the hostile, unbroken teams present win:
+## + min(5, broken team size / 20), x1.5 when outnumbered; the most prestigious winner gets it whole, the others half.
+func team_routed_reputation(team_id: int) -> void:
+	if not _crowd_active(): return
+	var host: Variant = lab.crowd_site
+	var broken: Dictionary = host.native_team(team_id)
+	if broken.is_empty(): return
+	var loser_roster: Dictionary = host.native_roster(team_id)
+	var losers: int = broken.get("person_ids", []).size()
+	var loser_captain := -1
+	if int(loser_roster.get("formal_commander", -1)) >= 0 and int(loser_roster.formal_commander) < loser_roster.get("units", []).size():
+		loser_captain = int(loser_roster.units[int(loser_roster.formal_commander)].person_id)
+	if loser_captain > 0: adjust_reputation(loser_captain, float(Reputation.ROUTED), 0.0)
+	var winners: Array = []
+	for team: Dictionary in host.teams:
+		if int(team.team_id) == team_id or bool(team.get("departed", false)) or bool(team.get("solo", false)): continue
+		if RegionFactionQuery.same_side(int(team.get("faction", -1)), int(broken.get("faction", -2))): continue
+		var morale: Dictionary = host.team_morale_of(int(team.get("formation", -1)))
+		if bool(morale.get("routed", false)): continue
+		var roster: Dictionary = host.native_roster(int(team.team_id))
+		var formal := int(roster.get("formal_commander", -1))
+		if formal < 0 or formal >= roster.get("units", []).size(): continue
+		var captain := int(roster.units[formal].person_id)
+		winners.append({"captain": captain, "size": team.get("person_ids", []).size(), "prestige": int(reputation_of(captain).prestige)})
+	if winners.is_empty(): return
+	var own := 0
+	for winner: Dictionary in winners: own += int(winner.size)
+	var gain := Reputation.victory_gain(losers, own)
+	winners.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.prestige) > int(b.prestige))
+	for at in range(winners.size()):
+		adjust_reputation(int(winners[at].captain), gain if at == 0 else gain / 2.0, 0.0)
 
 ## --- Peerage step 3: granting, revoking, emperor (plan "勢力爵位與封地規劃") ---
 ## Fiefs a person holds: the registry's index, plus this Site's settlement when he sits in its head seat (an untitled head's
