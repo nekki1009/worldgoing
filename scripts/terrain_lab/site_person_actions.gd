@@ -7184,8 +7184,11 @@ func technology_build_admission(operation_selector: Dictionary) -> Dictionary:
 		var raw: Variant = settlement.get("technology_operations")
 		if not SiteSettlement.valid_technology_operations(lab.terrain, raw): return Runtime.fail("CORRUPT_STATE")
 		var order: Dictionary = raw.orders.get(operation_selector.order_id, {})
-		if order.get("kind") != "defense" or order.get("status") not in ["prepared", "active"] or int(order.next_step) >= order.steps.size(): return Runtime.fail("NO_TARGET")
-		return Runtime.settlement_defense_work_preflight(lab.terrain, operation_selector, {}, str(order.steps[int(order.next_step)].action))
+		# Only defense orders resolve here; processing orders (S03/S05...) fall through to the
+		# settlement processing branch below instead of being refused NO_TARGET.
+		if order.get("kind") == "defense":
+			if order.get("status") not in ["prepared", "active"] or int(order.next_step) >= order.steps.size(): return Runtime.fail("NO_TARGET")
+			return Runtime.settlement_defense_work_preflight(lab.terrain, operation_selector, {}, str(order.steps[int(order.next_step)].action))
 	if Technology.keys(operation_selector, ["token"]) and operation_selector.token is Dictionary:
 		if not has_method("technology_phase_work_preflight"): return Runtime.fail("UNIMPLEMENTED")
 		var token: Dictionary = operation_selector.token

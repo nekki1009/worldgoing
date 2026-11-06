@@ -13,7 +13,10 @@ func _processing_fixture(known: bool) -> Dictionary:
 	data.site.settlement.technology.known = ["S03", "S05"] if known else []
 	fixture.kiln = _cold_natural_feature(data, "charcoal", Vector2i(15, 29) + Vector2i(fixture.natural_offset))
 	fixture.weaver = _cold_natural_feature(data, "weaver", Vector2i(24, 33) + Vector2i(fixture.natural_offset))
-	data.site.inventory.wool = 12 # Explicit real starting-world camp stock.
+	# The weaver needs a water supply now; a real well beside it serves its demand.
+	_cold_natural_feature(data, "well", Vector2i(24, 31) + Vector2i(fixture.natural_offset))
+	Runtime.rebuild_water(data)
+	data.site.inventory["wool"] = 12 # Explicit real starting-world camp stock (bracket write keeps a String key).
 	_check(fixture.lab.character.place(Vector2i(9, 10) + Vector2i(fixture.natural_offset), true), "Actual head reaches original camp contact for the finite source grant")
 	_check(Family.validate_family(data.site.family, str(data.site.id)), "Real fixture Family/person prerequisites use the original strict validator")
 	return fixture
@@ -49,7 +52,7 @@ func _processing_finish(fixture: Dictionary, key: String) -> void:
 	while feature.batch_paid and intervals < 200:
 		_processing_point(fixture)
 		intervals += 1
-	_check(not feature.batch_paid, "Real original output endpoint ends this paid finite batch")
+	_check(not feature.batch_paid, "Real original output endpoint ends this paid finite batch: production=%s water=%s" % [feature.get("production"), str(fixture.data.site.get("water_status", {}).get(key, {}))] + " preflight=" + str(Runtime.work_preflight(fixture.data, fixture.row.get("work_task", {}), fixture.row.get("cargo", {}), 40, 1, int(fixture.executor))).left(300) + " task=" + str(fixture.row.get("work_task", {}).get("status")) + " intervals=" + str(intervals))
 	_check(not fixture.row.has("work_task") or fixture.row.work_task.is_empty(), "Actual original named worker stops after one batch")
 	_check(not Runtime._feature_operation_active(fixture.data, key), "The original zone cannot automatically buy a fourth or third batch")
 
@@ -71,7 +74,7 @@ func _known_finite_batches() -> void:
 			var version := int(data.site.depot_items.version)
 			var produced := int(fixture.row.cargo.get(selection.output, 0))
 			var started := Runtime.begin_settlement_processing_operation(data, scope_id, str(requested.order_id))
-			_check(started.ok and int(data.site.depot_items.version) == version + 1, "Each adopted real batch debits the original holder exactly once")
+			_check(started.ok and int(data.site.depot_items.version) == version + 1, "Each adopted real batch debits the original holder exactly once: " + str(started))
 			for item: String in selection.cost: _check(int(data.site.inventory[item]) == int(stock[item]) - int(selection.cost[item]), "Actual complete per-batch %s input is paid once" % item)
 			var feature: Dictionary = data.site.features[selection.key]
 			_check(feature.recipe_id == selection.recipe and is_equal_approx(float(Runtime.feature_recipe(feature).cycle) * 60.0, float(selection.seconds)), "True original recipe uses one personal duration effect without an extra settlement multiplier")

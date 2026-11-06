@@ -88,9 +88,11 @@ func check_scopes_and_strict_schema() -> void:
 	for node: Dictionary in Catalog.all():
 		if node.id == "F07": continue # Original v1 formal F07 work remains on its existing API.
 		var route: Dictionary = node.research.routes[0]
+		var enabled_before := bool(Catalog.get_node(str(node.id)).enabled)
 		var state := prepared(str(node.scope), str(node.id), A, str(route.id))
-		check(Technology.valid_scope_record(state, str(node.scope)), "Disabled catalog node may have a valid pure candidate: " + str(node.id))
-		check(not bool(node.enabled), "A saved candidate does not enable its operation: " + str(node.id))
+		check(Technology.valid_scope_record(state, str(node.scope)), "Any catalog node may have a valid pure candidate: " + str(node.id))
+		# Nodes open one by one during acceptance; a saved candidate never changes the catalog flag itself.
+		check(bool(Catalog.get_node(str(node.id)).enabled) == enabled_before, "A saved candidate does not enable its operation: " + str(node.id))
 	var state := prepared("family", "F14")
 	for field: String in ["version", "epoch", "next_project", "active"]:
 		var bad := state.duplicate(true)
