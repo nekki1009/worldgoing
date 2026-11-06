@@ -7004,6 +7004,19 @@ func fire_physical_job_owner(worker: Dictionary, cargo: Dictionary, cell: Vector
 		return context.ok and is_same(context.person.cargo, cargo) and Vector2i(context.person.cell) == cell
 	return null
 
+## Work slots held by physical technology jobs (controlled operators at their station), for the
+## operating-slot water projection. Read-only.
+func controlled_operating_tasks() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for key: String in _jobs:
+		var job: Dictionary = _jobs[key]
+		if str(job.get("kind", "")) != "technology_feature" or not job.get("work_task") is Dictionary: continue
+		var task: Dictionary = job.work_task
+		if str(task.get("action", "")) != "operate" or int(task.get("work_slot", -1)) < 0 or str(task.get("mode", "")) != "work" \
+			or int(task.get("cell", -1)) != int(task.get("work_cell", -2)) or str(task.get("target", "")).is_empty(): continue
+		result.append(task)
+	return result
+
 func _controlled_feature_job_context(job: Dictionary) -> Dictionary:
 	if job.get("kind") == "technology_vehicle": return _controlled_vehicle_job_context(job)
 	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site) \

@@ -3856,6 +3856,11 @@ static func set_operating_slots(data: TerrainData, jobs: Array) -> void:
 	var camp_task: Dictionary = data.get_meta(&"site_camp_operating_task", {})
 	if not camp_task.is_empty() and not str(camp_task.get("target", "")).is_empty():
 		all_jobs.append({"task": camp_task})
+	# A controlled person operating a farm or workshop through a physical technology job also
+	# occupies its work slot; without this its farm never received water (F01/F02 stalled).
+	var actions: Variant = _technology_actions(data)
+	if actions != null and actions.has_method("controlled_operating_tasks"):
+		for controlled_task: Dictionary in actions.controlled_operating_tasks(): all_jobs.append({"task": controlled_task})
 	for job: Dictionary in all_jobs:
 		var task: Dictionary = job.task
 		var key := str(task.target).trim_prefix("feature:")
