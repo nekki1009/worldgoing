@@ -125,12 +125,35 @@ func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
 	for holder: String in [_holder_id(player), npc_holder if not npc_holder.is_empty() else _holder_id(npc)]:
 		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, holder)
 		if not endpoint.ok: return endpoint
-	if npc_holder.begins_with("feature:"):
-		var party := settlement_party(npc_holder.trim_prefix("feature:"))
+	if npc_holder.begins_with("feature:") or npc_holder.begins_with("vehicle:"):
+		var party := source_party(npc_holder)
 		if not party.ok: return party
-		if int(party.decider) != npc: return Runtime.fail("NO_AUTHORITY", "此倉由「%s」負責交易" % str(party.position_name))
-		if Vector2(b.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "聚落代表須站在倉庫門口")
+		if int(party.decider) != npc: return Runtime.fail("NO_AUTHORITY", "此貨由「%s」負責交易" % str(party.position_name))
+		if Vector2(b.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "代表須站在倉庫門口或車旁")
 	return Runtime.ok("", {"a": a, "b": b})
+
+## The organization side of a trade by its holder: a settlement warehouse or a team's stopped cart / wagon.
+func source_party(holder: String) -> Dictionary:
+	if holder.begins_with("feature:"): return settlement_party(holder.trim_prefix("feature:"))
+	if holder.begins_with("vehicle:"): return vehicle_party(holder.trim_prefix("vehicle:"))
+	return Runtime.fail("UNSUPPORTED")
+
+## T2 TR-27: a team's stopped cart or wagon trades through the team's current commander standing beside it; the
+## team values with its members × 3 days of food (the personal target per member).
+func vehicle_party(key: String) -> Dictionary:
+	var data: TerrainData = _lab().terrain
+	var vehicle: Dictionary = data.site.get("vehicles", {}).get(key, {})
+	if vehicle.is_empty() or str(vehicle.get("kind", "")) not in ["cart", "wagon"]: return Runtime.fail("NO_TARGET", "只有停穩的陸車能交易")
+	var endpoint: Dictionary = Runtime.trade_endpoint(data, "vehicle:" + key)
+	if not endpoint.ok: return endpoint
+	var crowd: Variant = _lab().crowd_site
+	if crowd == null or not crowd.active: return Runtime.fail("UNSUPPORTED", "車輛交易需要群眾隊伍")
+	var team: Dictionary = crowd._team_by_id(int(vehicle.get("team_id", -1)))
+	if team.is_empty(): return Runtime.fail("NO_TARGET", "車輛沒有所屬隊伍")
+	var decider := int(crowd.formation_state(int(team.formation)).get("current_person", -1))
+	if decider <= 0 or not _able(_person(decider)): return Runtime.fail("OFFICE_PAUSED", "隊伍目前無人指揮")
+	return Runtime.ok("", {"decider": decider, "position_name": "隊伍指揮者", "cell": data.cell_from_index(int(vehicle.cell)),
+		"holder": "vehicle:" + key, "cargo": endpoint.cargo, "members": int(team.person_ids.size())})
 
 ## T2: the settlement side of a warehouse trade. The warehouse lies in the jurisdiction, belongs to the settlement's
 ## faction and has its stock; the decider is SiteOffices' `settlement.trade` (the head acts when it is vacant).
@@ -194,6 +217,10 @@ func propose(player: int, npc: int, player_gives: Dictionary, npc_gives: Diction
 func propose_settlement(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
 	return _propose(player, npc, Stockpiles.identity(key), player_gives, npc_gives)
 
+## T2 TR-27: trade with a team's stopped cart or wagon `key` through its commander `npc`.
+func propose_vehicle(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
+	return _propose(player, npc, "vehicle:" + key, player_gives, npc_gives)
+
 func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
 	var pair := _check_pair(player, npc, npc_holder)
 	if not pair.ok: return pair
@@ -207,9 +234,13 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 	var used := holder_concessions(holder, _holder_id(player))
 	var terms := _npc_terms(pair.b)
 	if not npc_holder.is_empty():
-		# The settlement values its own stock: this warehouse, residents × 14 days of food.
+		# An organization values its own stock: a warehouse with residents × 14 days of food, a team vehicle with
+		# its members × 3 days.
 		terms["stock"] = Runtime.trade_endpoint(_lab().terrain, holder).cargo
-		terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
+		if npc_holder.begins_with("vehicle:"):
+			terms["targets"] = {"food": float(int(vehicle_party(npc_holder.trim_prefix("vehicle:")).get("members", 1)) * FOOD_TARGET_DAYS)}
+		else:
+			terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
 	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.a.cargo, _legal(player, holder),
 		float(terms.thrift), used, _lab().terrain.site)
 	if not answer.ok: return answer
@@ -296,9 +327,9 @@ func advance() -> Array[Dictionary]:
 			elif _holder_version(str(offer[side].holder)) != int(offer[side].expected_version): reason = "持物已改變"
 			if not reason.is_empty(): break
 		if reason.is_empty() and hostile(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方勢力已敵對"
-		if reason.is_empty() and str(offer.b.holder).begins_with("feature:"):
-			var party := settlement_party(str(offer.b.holder).trim_prefix("feature:"))
-			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "聚落交易職責已變更"
+		if reason.is_empty() and (str(offer.b.holder).begins_with("feature:") or str(offer.b.holder).begins_with("vehicle:")):
+			var party := source_party(str(offer.b.holder))
+			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "組織交易負責人已變更"
 		if reason.is_empty() and not _face_to_face(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方已不在面前"
 		if not reason.is_empty():
 			results.append(_end(str(key), Runtime.fail("CANCELLED", "交易中止：%s；未轉移任何物品" % reason)))
