@@ -3,6 +3,7 @@ extends RefCounted
 ## Commands reference original people and sparse holders; no surrogate bodies.
 ## advance() is before contact/life settlement; only settle_after_contacts commits.
 
+const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const BoardingContract = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -3835,6 +3836,22 @@ func publish_family_siege_history(prepared: Dictionary) -> void:
 
 # Expanded research stays on the same original people, scopes and operation
 # owners. The token is stored on their original feature/order, never here.
+## Seat or unseat a researcher at a research institution (Nekki 11/07 option C). The requester
+## must hold the scope research command; the person must belong to the scope and their team
+## must consent to the institution purpose.
+func set_institution_researcher(requester_id: int, key: String, person_id: int, seated: bool = true) -> Dictionary:
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(key, {})
+	var owner: Dictionary = ResearchInstitutions.scope_owner(lab.terrain, str(feature.get("kind", "")))
+	if owner.is_empty(): return Runtime.fail("NO_TARGET")
+	var checked := _technology_scope_command(requester_id, str(owner.scope), owner.owner)
+	if not checked.ok: return checked
+	if seated:
+		checked = _technology_scope_person(str(owner.scope), owner.owner, person_id)
+		if not checked.ok: return checked
+		var consent := _technology_scope_consent_candidate(checked.person, "institution:" + key, requester_id)
+		if not consent.ok: return consent
+	return ResearchInstitutions.set_researcher(lab.terrain, key, person_id, seated)
+
 func _technology_scope_owner(scope: String, scope_id: String = "") -> Dictionary:
 	if scope == "family":
 		var family := _technology_family()

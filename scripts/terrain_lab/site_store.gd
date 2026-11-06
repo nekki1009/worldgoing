@@ -10,6 +10,7 @@ const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoi
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
@@ -1347,6 +1348,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		state["team_supply"] = {}
 	if not state.has("housing"): state["housing"] = {}
 	Settlement.normalize(state)
+	ResearchInstitutions.normalize(state)
 	for registered: Dictionary in state.housing.values():
 		registered.version = int(registered.version)
 		registered.cell = int(registered.cell)
@@ -3766,6 +3768,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not housing_validation.ok: return housing_validation
 	var settlement_validation := Settlement.validate(data, state, housing_people)
 	if not settlement_validation.ok: return settlement_validation
+	var institution_validation := ResearchInstitutions.validate(state, people)
+	if not institution_validation.ok: return institution_validation
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
 	if state.has("controlled_person_id") and (not _integer(state.controlled_person_id, 1, 2147483647) or not people.has(int(state.controlled_person_id))):

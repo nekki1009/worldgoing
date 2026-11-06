@@ -1,6 +1,7 @@
 class_name SiteController
 extends Node
 
+const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
@@ -2730,6 +2731,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 			worker_limit, manual_limit, time_multiplier, int(inputs.get("worker_faction", -1)), work_interval,
 			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan), checked_runtime_clock_interval())
 		_advance_settlement(delta, work_interval)
+		ResearchInstitutions.advance(data, person_actions, work_interval)
 		if checked_runtime_clock_interval().is_empty() and worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
