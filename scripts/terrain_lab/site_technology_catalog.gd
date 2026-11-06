@@ -395,7 +395,7 @@ const _NODES := [
 	},
 	{
 		"id": "S01", "name": "供水排程", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["active_settlement_jurisdiction","working_original_water_sources"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -515,7 +515,7 @@ const _NODES := [
 	},
 	{
 		"id": "S07", "name": "弓弩作坊", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F07"],"any":[],"conditions":["active_settlement_jurisdiction","usable_smithy","learned_F07_operator"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
