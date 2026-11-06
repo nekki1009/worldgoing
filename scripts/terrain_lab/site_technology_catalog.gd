@@ -764,7 +764,7 @@ const _NODES := [
 	},
 	{
 		"id": "N06", "name": "公共工程編制", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N02","S09"],"any":[],"conditions":["original_nation","active_settlement_jurisdiction","registered_labor_and_source_budget"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [

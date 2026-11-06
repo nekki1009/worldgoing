@@ -135,7 +135,8 @@ func _npc_paid_resume() -> void:
 	var row: Dictionary = fixture.row
 	_check(actions.prepare_scope_technology(control, executor, "N06", "n1").ok \
 		and actions.request_scope_technology_consent(control, "nation", "n1", executor).ok, "The actual NPC accepts this true N06 research purpose")
-	var registered = fixture.orders.request_public_work_order(control, "n1", "house", str(fixture.labor.order_id), [executor], str(fixture.warehouse))
+	var public_workers: Array[int] = [executor]
+	var registered = fixture.orders.request_public_work_order(control, "n1", "house", str(fixture.labor.order_id), public_workers, str(fixture.warehouse))
 	_check(registered.ok, "The original national duty records the real finite public house order")
 	_fund(lab, str(registered.order_id), {"wood": 8, "stone": 4}, str(fixture.warehouse))
 	var options = {"layout_version": 1, "quarter": 0, "owner_faction": 1}

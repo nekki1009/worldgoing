@@ -216,8 +216,9 @@ func _run() -> void:
 	var camp: Dictionary = data.site.inventory.duplicate()
 	var stock = Stocks.stock_endpoint(data, str(f.smelter))
 	assert(f.lab.character.place(stock.cell, true))
-	assert(_metal_scope_begin(f, id, "iron", str(f.smelter)).ok)
-	assert(stock.cargo.is_empty() and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"))
+	var iron_begun: Dictionary = _metal_scope_begin(f, id, "iron", str(f.smelter))
+	assert(iron_begun.ok, str(iron_begun))
+	assert(stock.cargo.is_empty() and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"), "first iron step pays from the order source only: stock=%s camp_same=%s" % [str(stock.cargo), str(data.site.inventory == camp)])
 	assert(f.actions.is_busy(int(f.control)) and not f.actions.save_guard().ok)
 	_metal_finish(f, str(f.smelter))
 	if not _disabled_contract.poll(self): return
