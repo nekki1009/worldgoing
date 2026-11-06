@@ -140,7 +140,8 @@ func _settlement_target(f: Dictionary, phase: Dictionary) -> Dictionary:
 # consent counts only members present within command radius. Explicit fixture
 # stations beside the Actor, then a real command event (unchanged tactical-AI
 # confirmation) refreshes presence. Travel is covered by the movement tests.
-func _settlement_team_with_actor(f: Dictionary) -> void:
+## `avoid`: cell indexes the team must not stand on (an unbuilt footprint the Actor is about to work on).
+func _settlement_team_with_actor(f: Dictionary, avoid: Array = []) -> void:
 	var team: TerrainArmy = f.team
 	var data: TerrainData = f.data
 	var actor_cell: Vector2i = f.lab.character.terrain_cell
@@ -154,7 +155,7 @@ func _settlement_team_with_actor(f: Dictionary) -> void:
 				for x: int in range(-radius, radius + 1):
 					if station.x >= 0 or absi(x) + absi(y) != radius: continue
 					var cell := actor_cell + Vector2i(x, y)
-					if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0 or f.controller.reserves_cell(cell) or cell in taken: continue
+					if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0 or f.controller.reserves_cell(cell) or cell in taken or avoid.has(data.index(cell)): continue
 					var occupied: bool = f.lab.npc != null and f.lab.npc.terrain_cell == cell
 					for other: int in team.cells.size(): occupied = occupied or other != index and team.cells[other] == cell
 					if not occupied: station = cell
@@ -387,7 +388,7 @@ func _settlement_natural_geometry(f: Dictionary, binding: String) -> Dictionary:
 		var preview = Runtime.preview_build(data, kind, cells, f.controller.reserves_cell, options, {}, {"token": _settlement_token(f, target)})
 		if not preview.ok or not preview.get("clearing", []).is_empty(): continue
 		_check(f.lab.character.place(data.cell_from_index(int(preview.entrance)), true), "Actual Actor reaches this pure original natural geometry station")
-		_settlement_team_with_actor(f)
+		_settlement_team_with_actor(f, cells) # the team stands clear of the footprint it is about to build
 		if binding == "wall_build": f.keys.wall_anchor = anchor
 		return {"target": target, "work_target": {"cells": cells, "options": options}}
 	_check(false, "Original natural scan finds the legal current Settlement trial geometry")
