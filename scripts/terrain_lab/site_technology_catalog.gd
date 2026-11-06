@@ -136,7 +136,7 @@ const _NODES := [
 	},
 	{
 		"id": "F03", "name": "炭化控火", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": false,
 		"prerequisites": {"all":[],"any":[],"conditions":["usable_charcoal_kiln"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -1031,7 +1031,8 @@ static func validate_catalog(raw: Variant) -> bool:
 		if not entry.get("name") is String or str(entry.name).is_empty() or not entry.get("enabled") is bool or not entry.get("tuning_confirmed") is bool: return false
 		var scope := "family" if str(entry.id).begins_with("F") else ("settlement" if str(entry.id).begins_with("S") else "nation")
 		if entry.get("scope") != scope or entry.get("status") not in ["candidate", "p1_integration", "implemented"]: return false
-		if bool(entry.enabled) and (entry.id != "F07" or entry.status != "implemented"): return false
+		# A node opens only once accepted (status implemented); Nekki 2026-11-06 "好，驗": node-by-node acceptance from F03.
+		if bool(entry.enabled) and entry.status != "implemented": return false
 		if bool(entry.tuning_confirmed) != (entry.id == "F07"): return false
 		if not entry.get("prerequisites") is Dictionary or not _strings(entry.prerequisites.get("all"), NODE_IDS) or not _strings(entry.prerequisites.get("any"), NODE_IDS) or not _strings(entry.prerequisites.get("conditions")): return false
 		if entry.prerequisites.all.has(entry.id) or entry.prerequisites.any.has(entry.id): return false

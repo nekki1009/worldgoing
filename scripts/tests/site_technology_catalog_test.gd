@@ -16,7 +16,9 @@ func _run() -> void:
 	all_ids.clear()
 	assert(Catalog.ids().size() == 40, "Catalog IDs are caller-local")
 	for entry: Dictionary in entries:
-		assert(not bool(entry.enabled), "Candidates and P1 integration cannot claim runtime completion")
+		# Accepted nodes (Nekki 2026-11-06 node-by-node acceptance) are enabled and implemented; every other stays off.
+		assert(bool(entry.enabled) == (str(entry.status) == "implemented"), "Only accepted (implemented) nodes are enabled; candidates and P1 integration cannot claim runtime completion")
+		if str(entry.id) == "F03": assert(bool(entry.enabled), "F03 is accepted")
 		assert(not entry.operations.is_empty() and not entry.research.routes.is_empty())
 		for hook: String in entry.required_hooks: _check_hook(hook)
 		for route: Dictionary in entry.research.routes:

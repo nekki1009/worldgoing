@@ -14,9 +14,12 @@ func _controlled_step(lab: TerrainLab, seconds: float) -> Dictionary:
 	var actions = lab.site_controller.person_actions
 	var requests = actions.work_requests(seconds)
 	_check(requests.size() == 1 and requests[0].provider == "person_actions", "Original PA contributes the one actual held feature job")
-	lab._shared_work_requests = requests
+	# The shared preflight belongs to a prepared step: the WorkTeam prepares its own (here empty) requests first, as
+	# TerrainLab._collect_original_shared_work_requests does.
+	var team_requests: Array = lab.site_controller.work_team.prepare_work_requests(seconds)
+	lab._shared_work_requests = requests + team_requests
 	var refreshed = lab._refresh_shared_work_preflight()
-	_check(refreshed.ok and str(lab._shared_work_requests[0].get("paused", "")).is_empty(), "Original shared preflight admits this SAME PA task and its actual final water context")
+	_check(refreshed.ok and str(lab._shared_work_requests[0].get("paused", "")).is_empty(), "Original shared preflight admits this SAME PA task and its actual final water context: %s / %s" % [str(refreshed), str(lab._shared_work_requests[0].get("paused", ""))])
 	var planned = PersonalFatigue.plan_work_interval(lab._shared_work_requests, seconds)
 	_check(planned.ok, "The original complete-pool planner accepts actual effort, without a surrogate body")
 	lab._shared_work_plan = planned
