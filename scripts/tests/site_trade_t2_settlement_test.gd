@@ -94,6 +94,15 @@ func _run() -> void:
 	var refused: Dictionary = controller.trade_propose_settlement(head, warehouse, {"iron": 1}, {"grain": 2})
 	if refused.ok or str(refused.code) != "NO_AUTHORITY": return _fail_now("the head is refused once a 市正 is seated: " + str(refused))
 	print("SITE_TRADE_T2 OK 5: a seated 市正 takes the duty from the head")
+	# TR-25: a fall ends the bindings of warehouses that changed hands and their open offers.
+	seat["holder"] = -1
+	var open_offer: Dictionary = controller.trade_propose_settlement(head, warehouse, {"iron": 1}, {"grain": 1})
+	if not open_offer.ok or not lab.terrain.site.trade.offers.has(str(open_offer.get("offer_id", ""))): return _fail_now("an offer is open before the fall: " + str(open_offer))
+	var fell: Dictionary = Settlement.fall_to(lab, 2, -1, false)
+	if not fell.ok: return _fail_now("the settlement falls: " + str(fell))
+	if data.site.settlement.has("trade_sources") or lab.terrain.site.trade.offers.has(str(open_offer.offer_id)): return _fail_now("the fall ends the binding and the open offer")
+	if int(data.site.manual.cargo.get("iron", 0)) != 1: return _fail_now("nothing moved at the fall")
+	print("SITE_TRADE_T2 OK 6: a fall ends the warehouse binding and its open offer")
 	print("SITE_TRADE_T2_SETTLEMENT_PASS: head acting, entrance rule, settlement valuation and delivery, seated 市正")
 	lab.free()
 	quit(0)

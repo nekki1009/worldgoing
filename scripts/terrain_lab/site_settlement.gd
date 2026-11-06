@@ -681,6 +681,13 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 			supply.training_requester = -1
 			supply.training_feature_id = ""
 	settlement.owner_faction = attacker
+	# Trade plan TR-25: bindings of warehouses that changed hands end (a kept warehouse keeps its binding; receipts and
+	# other organizations' sources are untouched); open settlement offers end with them.
+	var sources: Dictionary = settlement.get("trade_sources", {})
+	for key: String in changed: sources.erase(key)
+	if settlement.has("trade_sources") and sources.is_empty(): settlement.erase("trade_sources")
+	var trading: Variant = lab.get("site_controller")
+	if trading != null and trading.has_method("trade_drop_sources"): trading.trade_drop_sources(changed)
 	# Reputation (聲望系統規劃): the capturing leader gains village +2 / township +3 / town +5 / city +8; the old lord loses half.
 	var old_lord := int(SiteOffices.head_position(settlement.offices).get("holder", -1))
 	var controller: Variant = lab.get("site_controller")

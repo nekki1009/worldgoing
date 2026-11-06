@@ -207,6 +207,23 @@ func _drop_offers_of(identities: Array) -> void:
 		var offer: Dictionary = trade.offers[key]
 		if identities.has(int(offer.a_representative)) or identities.has(int(offer.b_representative)): trade.offers.erase(key)
 
+## TR-25: open offers and deliveries from these warehouses end (a fall changed their owner); nothing moves.
+func drop_sources(feature_keys: Array) -> int:
+	var site: Dictionary = _lab().terrain.site
+	if not site.has("trade"): return 0
+	var trade := state()
+	var dropped := 0
+	for key: Variant in trade.jobs.keys():
+		var offer: Dictionary = trade.offers.get(trade.jobs[key].offer_id, {})
+		if feature_keys.has(str(offer.get("b", {}).get("holder", "")).trim_prefix("feature:")):
+			_end(str(key), Runtime.fail("CANCELLED", "交易中止：聚落易主；未轉移任何物品"))
+			dropped += 1
+	for key: Variant in trade.offers.keys():
+		if feature_keys.has(str(trade.offers[key].b.holder).trim_prefix("feature:")):
+			trade.offers.erase(key)
+			dropped += 1
+	return dropped
+
 ## One round: the player offers `player_gives` for `npc_gives`. The NPC answers ACCEPT (the offer stands as given),
 ## COUNTER (an offer the NPC accepts, changed by the deterministic counter rule) or REJECT. A round that does not
 ## stand as given costs one concession for today (at most 4: five rounds). Moves no goods.

@@ -10544,6 +10544,10 @@ func trade_source_of(npc_id: int) -> String:
 		if party.ok and int(party.decider) == npc_id and Vector2(person.cell).distance_to(Vector2(party.cell)) <= TradeSession.REACH: return holder
 	return ""
 
+## TR-25 (SiteSettlement.fall_to): trades from warehouses that changed hands end.
+func trade_drop_sources(feature_keys: Array) -> int:
+	return _trade().drop_sources(feature_keys)
+
 func trade_propose_vehicle(npc_id: int, key: String, gives: Dictionary, wants: Dictionary) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	return _trade().propose_vehicle(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants))
