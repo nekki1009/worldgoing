@@ -1336,7 +1336,8 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 	job["progress"] = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
 	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = json_stable_seconds(minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds))
 	if field == "repair":
-		var applied := float(job.amount) * float(job.progress) / float(job.total_work)
+		# JSON-stable: a parked repair keeps the same applied value through a cold save/load.
+		var applied := json_stable_seconds(float(job.amount) * float(job.progress) / float(job.total_work))
 		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
 		job["applied"] = applied
 	var complete := float(job.progress) + 0.000000001 >= float(job.total_work)
@@ -13947,7 +13948,7 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 		prepared.ledger.operator_id = int(prepared.ledger_operator_id)
 	if prepared.endpoint == "feature" and prepared.task.action == "construct" and not prepared.target.has("pending_build"): prepared.target.stage = "building"
 	if not prepared.repair.is_empty():
-		prepared.unit.applied = float(prepared.repair.applied)
+		prepared.unit["applied"] = float(prepared.repair.applied)
 		if prepared.endpoint == "ship_repair":
 			assert(int(prepared.target.holder.version) == int(prepared.repair.holder_version) and int(prepared.target.revision) == int(prepared.repair.revision))
 			add_items(prepared.target.cargo, prepared.repair.consumed, -1)

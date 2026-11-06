@@ -8495,7 +8495,8 @@ func _advance_controlled_vehicle_work(key: String, job: Dictionary, seconds: flo
 	if base <= 0.0 and float(held.remaining) > 0.0: return
 	_controlled_feature_allocation = {"key": key, "held": held, "interval": interval}
 	handled[identity] = effort # Fatigue belongs to the original complete-pool publisher.
-	var result := Runtime.advance_siege_work(lab.terrain, str(job.vehicle_id), "construct", base, context.person.cell,
+	# Repair jobs (S08 spare kit) advance the vehicle's repair, not its construction.
+	var result := Runtime.advance_siege_work(lab.terrain, str(job.vehicle_id), "repair" if str(job.work_task.get("action", "")) == "repair" else "construct", base, context.person.cell,
 		int(job.work_task.work_slot), int(job.team_ref.team_id), job.work_task, identity)
 	_controlled_feature_allocation = {}
 	if _jobs.has(key):

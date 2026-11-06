@@ -535,7 +535,7 @@ const _NODES := [
 	},
 	{
 		"id": "S08", "name": "修造與備件", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["S07"],"any":[],"conditions":["active_settlement_jurisdiction","damaged_live_original_ballista","original_repair_geometry_and_clearance"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
