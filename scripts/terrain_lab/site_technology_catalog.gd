@@ -295,7 +295,7 @@ const _NODES := [
 	},
 	{
 		"id": "F11", "name": "器械木作", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F09"],"any":[],"conditions":["legal_siege_slots_and_qualified_trial_worker"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -316,7 +316,7 @@ const _NODES := [
 	},
 	{
 		"id": "F12", "name": "配重機構", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F11"],"any":[],"conditions":["family_original_traction_build_receipt","legal_counterweight_trial"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
