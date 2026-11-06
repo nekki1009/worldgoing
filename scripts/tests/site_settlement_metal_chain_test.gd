@@ -100,6 +100,13 @@ func _metal_finish(f: Dictionary, key: String) -> void:
 func _metal_scope_begin(f: Dictionary, order_id: String, binding: String, key: String) -> Dictionary:
 	return f.actions.begin_scope_technology_phase(int(f.control), "settlement", str(f.data.site.settlement.settlement_id), binding, "feature:" + key, {"order_id": order_id})
 
+## Holders keep an emptied resource at 0 (add_items never erases); compare the real contents.
+func _metal_nonzero(cargo: Dictionary) -> Dictionary:
+	var result := {}
+	for item: Variant in cargo:
+		if int(cargo[item]) != 0: result[item] = int(cargo[item])
+	return result
+
 func _metal_mass(f: Dictionary) -> int:
 	var total = int(f.actions._person(int(f.control)).cargo.get("iron", 0))
 	for stock: Dictionary in f.data.site.stockpiles.values(): total += int(stock.cargo.get("iron", 0))
@@ -169,7 +176,7 @@ func _metal_known_chain() -> void:
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok)
 	_metal_finish(f, str(f.smithy))
 	if not _disabled_contract.poll(self): return
-	assert(order.status == "completed" and order.payload.spent == Runtime.SETTLEMENT_METAL_CAP and smithy.cargo == {"tools": 1})
+	assert(order.status == "completed" and order.payload.spent == Runtime.SETTLEMENT_METAL_CAP and _metal_nonzero(smithy.cargo) == {"tools": 1})
 	assert(var_to_bytes(data.site.settlement.technology) == scope_before and order.payload.carry_receipts[0].token.is_empty(), "Known operation fabricated new research evidence")
 	f.lab.queue_free()
 	await process_frame
@@ -218,15 +225,18 @@ func _run() -> void:
 	assert(f.lab.character.place(stock.cell, true))
 	var iron_begun: Dictionary = _metal_scope_begin(f, id, "iron", str(f.smelter))
 	assert(iron_begun.ok, str(iron_begun))
-	assert(stock.cargo.is_empty() and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"), "first iron step pays from the order source only: stock=%s camp_same=%s" % [str(stock.cargo), str(data.site.inventory == camp)])
+	# add_items keeps an emptied resource at 0 rather than erasing it; the debit is what counts.
+	var stock_left := 0
+	for item: String in stock.cargo: stock_left += int(stock.cargo[item])
+	assert(stock_left == 0 and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"), "first iron step pays from the order source only: stock=%s camp_same=%s" % [str(stock.cargo), str(data.site.inventory == camp)])
 	assert(f.actions.is_busy(int(f.control)) and not f.actions.save_guard().ok)
 	_metal_finish(f, str(f.smelter))
 	if not _disabled_contract.poll(self): return
-	assert(order.payload.completed == 1 and order.receipts.size() == 1 and _metal_mass(f) == 2 and stock.cargo == {"iron": 2})
+	assert(order.payload.completed == 1 and order.receipts.size() == 1 and _metal_mass(f) == 2 and _metal_nonzero(stock.cargo) == {"iron": 2}, "iron stage completes once: completed=%s receipts=%s mass=%s stock=%s status=%s" % [order.payload.completed, order.receipts.size(), _metal_mass(f), str(stock.cargo), order.status])
 	assert(not data.site.features[f.smelter].has("technology_settlement_order") and not Technology.scope_known(data.site.settlement.technology, "S04"))
 	assert(Technology.active_project(data.site.settlement.technology).receipts.size() == 1)
 	assert(_metal_scope_begin(f, id, "transfer", str(f.smelter)).ok)
-	assert(stock.cargo.is_empty() and int(f.person.cargo.iron) == 2 and _metal_mass(f) == 2 and order.payload.carry_receipts.size() == 1)
+	assert(_metal_nonzero(stock.cargo).is_empty() and int(f.person.cargo.iron) == 2 and _metal_mass(f) == 2 and order.payload.carry_receipts.size() == 1)
 	assert(order.payload.spent == {"iron_ore": 3, "charcoal": 2, "iron": 2})
 	assert(Technology.active_project(data.site.settlement.technology).receipts.size() == 1, "First contact alone completed transfer")
 	before = var_to_bytes([data.site, f.lab.character.capture_state()])
@@ -266,11 +276,11 @@ func _run() -> void:
 	assert(f.actions.grant_settlement_metal_source(int(f.control), scope_id, id).ok)
 	assert(order.payload.source.holder == "feature:" + str(f.smithy) and order.payload.spent.iron == 2)
 	assert(_metal_scope_begin(f, id, "tools", str(f.smithy)).ok)
-	assert(smithy.cargo.is_empty() and _metal_mass(f) == 0 and data.site.inventory == camp)
+	assert(_metal_nonzero(smithy.cargo).is_empty() and _metal_mass(f) == 0 and data.site.inventory == camp)
 	_metal_finish(f, str(f.smithy))
 	if not _disabled_contract.poll(self): return
 	assert(order.status == "completed" and order.receipts.size() == 2 and order.payload.spent == Runtime.SETTLEMENT_METAL_CAP)
-	assert(smithy.cargo == {"tools": 1} and Technology.scope_known(data.site.settlement.technology, "S04"))
+	assert(_metal_nonzero(smithy.cargo) == {"tools": 1} and Technology.scope_known(data.site.settlement.technology, "S04"))
 	project = data.site.settlement.technology.projects[0]
 	assert(project.receipts.size() == 3 and project.budget.payments.size() == 3 and project.budget.spent.iron == 4)
 	before = var_to_bytes([data.site, f.actions._jobs])

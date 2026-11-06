@@ -7552,7 +7552,11 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	assert(prepared.ok and is_same(data.site, prepared.state_ref) and prepared.feature_ref == prepared.feature_before and prepared.cargo_ref == prepared.cargo_before)
 	assert(prepared.holder_ref.is_empty() or prepared.holder_ref == prepared.holder_before)
 	if not prepared.products.is_empty(): _publish_equipment_creation(data, prepared.products)
-	add_items(prepared.cargo_ref, prepared.output)
+	var deposit: Dictionary = prepared.get("settlement_operation", {}).get("deposit", {})
+	if deposit.is_empty(): add_items(prepared.cargo_ref, prepared.output)
+	else:
+		add_items(deposit.cargo, prepared.output)
+		deposit.holder.version = int(deposit.holder.version) + 1
 	if prepared.products.is_empty() and not prepared.holder_ref.is_empty(): prepared.holder_ref.version = int(prepared.holder_before.version) + 1
 	prepared.feature_ref.production = 0.0
 	prepared.feature_ref.batch_paid = false
@@ -12106,7 +12110,7 @@ static func valid_settlement_metal_order(data: TerrainData, site: Dictionary, ra
 			var token: Dictionary = receipt.token
 			if not _technology_trial_shape(token, Env.navigation_for_state(data, site)) or token.scope != "settlement" or token.scope_id != p.settlement_id \
 				or token.project_id != p.project_id or token.purpose != p.purpose or token.tech_id != "S04" or token.binding != "transfer" or token.phase_id != "physical_iron_handoff" \
-				or token.target_id != "feature:" + p.smelter_id or token.person != {"site_id": str(site.get("id", "")), "person_id": int(p.carrier_id)} \
+				or token.target_id != "feature:" + p.smelter_id or not token.person is Dictionary or token.person.size() != 2 or token.person.get("site_id") != str(site.get("id", "")) or not Technology.integer(token.person.get("person_id"), 1) or int(token.person.person_id) != int(p.carrier_id) \
 				or not Technology.material_equal(token.materials, {"iron": 2}) \
 				or receipt.payment_id != JSON.stringify([str(site.get("id", "")), "settlement", str(p.settlement_id), int(p.project_id), str(p.purpose), int(token.attempt), str(token.target_id)]): return false
 			if index == 1 and (receipt.token != p.carry_receipts[0].token or receipt.payment_id != p.carry_receipts[0].payment_id): return false
@@ -13616,6 +13620,67 @@ static func _settlement_typed_method(kind: String, operation: String) -> String:
 		"output": "prepare_settlement_" + str(prefix) + "_output", "publish": "publish_settlement_" + str(prefix) + "_order",
 		"work": "settlement_" + str(prefix) + "_work_context", "binding": "settlement_" + str(prefix) + "_binding_valid"}
 	return str(names.get(operation, ""))
+
+## S04 metal chain typed owner hooks (payment / output / work), mirroring the processing order:
+## each paid stage (iron at the smelter, tools at the smithy) debits its full stage cost once from
+## the order's named source, completes on its real output receipt, and only its named operator works.
+static func prepare_settlement_metal_payment(data: TerrainData, selector: Dictionary, cost: Dictionary) -> Dictionary:
+	if not Technology.keys(selector, ["settlement_id", "order_id"]): return fail("INVALID")
+	var ready := settlement_metal_work_preflight(data, str(selector.settlement_id), str(selector.order_id))
+	if not ready.ok: return ready
+	var spec := settlement_metal_spec(ready.order)
+	if spec.is_empty(): return fail("STALE_PHASE", "鐵料搬運段沿原搬運入口；本入口只付冶煉或鍛造批次")
+	if int(ready.order.revision) >= 2147483646: return fail("LIMIT")
+	if not Technology.material_equal(cost, spec.cost) or ready.feature.has("tech_batch") or ready.order.status == "active": return fail("DUPLICATE")
+	var source := settlement_metal_material_source_candidate(data, str(selector.settlement_id), str(selector.order_id), str(spec.binding))
+	if not source.ok: return source
+	for item: String in cost:
+		if int(source.spent.get(item, 0)) + int(cost[item]) > int(source.cap.get(item, -1)): return fail("NO_BUDGET")
+	var candidate: Dictionary = ready.order.duplicate(true)
+	add_items(candidate.payload.spent, cost)
+	candidate["status"] = "active"
+	candidate["revision"] = int(candidate.revision) + 1
+	return ok("", {"state_ref": data.site, "operations_ref": ready.operations, "order_ref": ready.order, "order_before": ready.order.duplicate(true), "candidate": candidate, "source": source})
+
+static func prepare_settlement_metal_output(data: TerrainData, feature: Dictionary, receipt: Dictionary) -> Dictionary:
+	var ref: Variant = feature.get("technology_settlement_order", {})
+	if not Technology.keys(ref, ["settlement_id", "order_id"]): return fail("STALE_SOURCE")
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if refs.is_empty() or not valid_settlement_metal_order(data, data.site, refs.order): return fail("STALE_SOURCE")
+	var order: Dictionary = refs.order
+	if int(order.revision) >= 2147483646: return fail("LIMIT")
+	if order.status == "cancelled": return ok("", {"order_ref": {}, "candidate": {}})
+	var spec := settlement_metal_spec(order)
+	var ledger: Dictionary = feature.get("tech_batch", {})
+	if spec.is_empty() or not is_same(data.site.features.get(str(spec.feature_id)), feature) or receipt.is_empty() \
+		or receipt.operator_id != order.payload.operator_id or receipt.recipe_id != "" or receipt.id != ledger.get("id") \
+		or receipt.site_id != str(data.site.id) or receipt.feature_id != spec.feature_id \
+		or not Technology.material_equal(receipt.resources, spec.outputs) or not receipt.item_ids.is_empty() \
+		or not Technology.finite_number(receipt.work_seconds, 0.000000001) or not is_equal_approx(float(receipt.work_seconds), float(ledger.get("work_seconds", -1.0))) \
+		or not bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) + 0.000000001 < float(feature_recipe(feature).cycle): return fail("INVALID_RECEIPT")
+	var candidate: Dictionary = order.duplicate(true)
+	candidate.receipts.append(receipt.duplicate(true))
+	candidate.payload.completed = int(candidate.payload.completed) + 1
+	candidate["status"] = "completed" if int(candidate.payload.completed) == 2 else "prepared"
+	candidate["revision"] = int(candidate.revision) + 1
+	var result := {"state_ref": data.site, "operations_ref": refs.operations, "order_ref": order, "order_before": order.duplicate(true), "candidate": candidate, "finished_feature": feature}
+	# Each stage's output stays in its host's own stock (smelted iron in the smelter, tools in the
+	# smithy); the named carrier's transfer leg moves the iron between them.
+	var endpoint := SiteStockpiles.org_endpoint(data, str(spec.feature_id))
+	if endpoint.is_empty() or not _item_holder_shape(endpoint.holder) or int(endpoint.holder.version) >= 2147483645: return fail("STALE_SOURCE", "作坊無原庫存可收成品")
+	result["deposit"] = {"holder": endpoint.holder, "cargo": endpoint.cargo}
+	return ok("", result)
+
+static func settlement_metal_work_context(data: TerrainData, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	var ref: Variant = feature.get("technology_settlement_order", {})
+	if not Technology.keys(ref, ["settlement_id", "order_id"]): return fail("STALE_SOURCE")
+	var existing := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if not existing.is_empty() and existing.order.status == "cancelled": return ok() # Only ordinary already-paid output.
+	var ready := settlement_metal_work_preflight(data, str(ref.settlement_id), str(ref.order_id))
+	if not ready.ok: return ready
+	if not is_same(ready.feature, feature) or int(ready.person.person_id) != identity or not feature.has("tech_batch") \
+		or feature.tech_batch.operator_id != identity or task.get("target") != "feature:" + str(ready.order.payload.feature_id): return fail("WAITING", "本批具名真操作人未在原工位；保留原已付材料")
+	return ok("", {"order": ready.order})
 
 static func settlement_metal_binding_valid(order: Dictionary, binding: String) -> bool:
 	var p: Dictionary = order.get("payload", {})
