@@ -586,6 +586,7 @@ func _build_ui() -> void:
 	_button(launcher.column, "台灣地圖", "OpenRegionMap", _open_region_map)
 	region_travel_button = _button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
 	_build_crowd_split_entry(launcher.column)
+	_button(launcher.column, "與所選人物交易", "OpenTrade", func() -> void: open_trade_dialog(int(lab.selected_army_target)))
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
@@ -10495,6 +10496,90 @@ func trade_propose(npc_id: int, gives: Dictionary, wants: Dictionary) -> Diction
 func trade_accept(offer_id: String) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	return _trade().accept(offer_id)
+
+## The trade dialog (T1-a): what I give from my cargo, what I want from theirs, the NPC's answer, and accepting a
+## standing offer or counter. Quantities are capped by what each side carries; nothing moves until delivery completes.
+func open_trade_dialog(npc_id: int) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	var me: Dictionary = person_actions._person(int(lab.controlled_person_id()))
+	var them: Dictionary = person_actions._person(npc_id)
+	if me.is_empty() or them.is_empty() or npc_id == int(lab.controlled_person_id()):
+		show_result(Runtime.fail("NO_TARGET", "先選一位在場的人物"))
+		return Runtime.fail("NO_TARGET")
+	var dialog := AcceptDialog.new()
+	dialog.name = "TradeDialog"
+	dialog.title = "與 #%d 交易" % npc_id
+	dialog.ok_button_text = "關閉"
+	var column := VBoxContainer.new()
+	dialog.add_child(column)
+	var spins := {"give": {}, "want": {}}
+	for side: String in ["give", "want"]:
+		var heading := Label.new()
+		heading.text = "我出" if side == "give" else "我要"
+		column.add_child(heading)
+		var grid := GridContainer.new()
+		grid.name = "TradeGive" if side == "give" else "TradeWant"
+		grid.columns = 2
+		column.add_child(grid)
+		var cargo: Dictionary = me.cargo if side == "give" else them.cargo
+		var keys: Array = cargo.keys()
+		keys.sort()
+		for resource: Variant in keys:
+			if int(cargo[resource]) <= 0: continue
+			var label := Label.new()
+			label.text = "%s（有 %d）" % [str(Env.ITEM_NAMES.get(str(resource), str(resource))), int(cargo[resource])]
+			grid.add_child(label)
+			var spin := SpinBox.new()
+			spin.name = "Spin_" + str(resource)
+			spin.min_value = 0
+			spin.max_value = int(cargo[resource])
+			grid.add_child(spin)
+			spins[side][str(resource)] = spin
+	var answer := Label.new()
+	answer.name = "TradeAnswer"
+	answer.autowrap_mode = TextServer.AUTOWRAP_WORD
+	answer.custom_minimum_size = Vector2(320, 0)
+	column.add_child(answer)
+	var buttons := HBoxContainer.new()
+	column.add_child(buttons)
+	var standing := {"offer_id": ""}
+	var accept_button := Button.new()
+	accept_button.name = "TradeAccept"
+	accept_button.text = "接受並交付"
+	accept_button.add_theme_font_size_override("font_size", 17)
+	accept_button.disabled = true
+	var propose := func() -> void:
+		var gives := {}
+		var wants := {}
+		for resource: String in spins.give: gives[resource] = int(spins.give[resource].value)
+		for resource: String in spins.want: wants[resource] = int(spins.want[resource].value)
+		var result: Dictionary = trade_propose(npc_id, gives, wants)
+		standing.offer_id = str(result.get("offer_id", ""))
+		accept_button.disabled = standing.offer_id.is_empty()
+		if not result.ok:
+			answer.text = str(result.get("message", result.get("code", "")))
+			return
+		var text := str(result.message)
+		if str(result.decision) == "COUNTER":
+			text += "：你出 %s，換對方 %s" % [_trade_goods_text(result.player_gives), _trade_goods_text(result.npc_gives)]
+		text += "（今日已讓步 %d 次）" % int(result.concessions)
+		answer.text = text
+	_button(buttons, "報價", "TradePropose", propose)
+	buttons.add_child(accept_button)
+	accept_button.pressed.connect(func() -> void:
+		var started := trade_accept(standing.offer_id)
+		answer.text = str(started.get("message", started.get("code", "")))
+		accept_button.disabled = true)
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	_show_dialog(dialog, "trade", "trade:%d" % npc_id)
+	return Runtime.ok("", {"dialog": dialog})
+
+func _trade_goods_text(goods: Dictionary) -> String:
+	var parts: Array = []
+	for resource: String in goods.get("resources", {}):
+		parts.append("%s %d" % [str(Env.ITEM_NAMES.get(resource, resource)), int(goods.resources[resource])])
+	return "、".join(parts) if not parts.is_empty() else "（無）"
 
 ## A settlement fell (SiteSettlement.fall_to): the fall joins the diplomacy record at the next checkpoint.
 func note_settlement_fall(site_id: String, from: int, to: int) -> void:

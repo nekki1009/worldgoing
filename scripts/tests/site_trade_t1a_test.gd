@@ -110,6 +110,25 @@ func _run() -> void:
 	them.holder["version"] = int(them.holder.version) + 1
 	if not _check(await _wait_trade(controller, player), "the changed holder ends the delivery"): return
 	if not _check(int(me.cargo.get("iron", 0)) == 1 and int(them.cargo.get("grain", 0)) == 8, "a cancelled delivery moves nothing", [me.cargo, them.cargo]): return
+
+	# The trade dialog drives the same flow.
+	var opened: Dictionary = controller.open_trade_dialog(npc)
+	var dialog: Window = opened.get("dialog")
+	if not _check(opened.ok and dialog != null, "the trade dialog opens for the selected person", opened): return
+	var give_iron: SpinBox = dialog.find_child("TradeGive", true, false).find_child("Spin_iron", true, false)
+	var want_grain: SpinBox = dialog.find_child("TradeWant", true, false).find_child("Spin_grain", true, false)
+	if not _check(give_iron != null and want_grain != null and int(give_iron.max_value) == 1 and int(want_grain.max_value) == 8, "the dialog lists my iron and their grain with their limits"): return
+	give_iron.value = 1
+	want_grain.value = 2
+	(dialog.find_child("TradePropose", true, false) as Button).pressed.emit()
+	var accept_button: Button = dialog.find_child("TradeAccept", true, false)
+	var answer: Label = dialog.find_child("TradeAnswer", true, false)
+	if not _check(not accept_button.disabled and answer.text.contains("接受"), "the dialog shows the NPC's acceptance", answer.text): return
+	accept_button.pressed.emit()
+	if not _check(actions.is_busy(player) and accept_button.disabled, "accepting from the dialog starts the delivery", answer.text): return
+	if not _check(await _wait_trade(controller, player), "the dialog's delivery completes"): return
+	if not _check(int(me.cargo.get("iron", 0)) == 0 and int(them.cargo.get("grain", 0)) == 6, "the dialog's trade moved the goods once", [me.cargo, them.cargo, controller.trade_session.last_results]): return
+	dialog.queue_free()
 	_finished = true
-	print("SITE_TRADE_T1A_PASS: ", checks, " checks; crowd endpoint, floor refusal, counter, delivery, busy and cancel hold")
+	print("SITE_TRADE_T1A_PASS: ", checks, " checks; crowd endpoint, floor refusal, counter, delivery, busy, cancel and dialog hold")
 	quit(0)
