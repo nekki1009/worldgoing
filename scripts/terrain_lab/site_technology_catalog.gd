@@ -656,7 +656,7 @@ const _NODES := [
 	},
 	{
 		"id": "N01", "name": "度量衡制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["original_nation_and_source_authorization"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -715,7 +715,7 @@ const _NODES := [
 	},
 	{
 		"id": "N04", "name": "工坊驗收制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N01"],"any":["S04","S05","S07"],"conditions":["original_nation_and_workshop_inspector"]},
 		"research": {"version": 1, "routes": [
 			{"id": "metal", "requires_all": ["S04"], "phases": [
