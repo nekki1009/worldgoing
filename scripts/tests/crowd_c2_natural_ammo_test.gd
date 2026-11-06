@@ -322,7 +322,7 @@ func _run() -> void:
 		if not _advance("shooting"): return
 		if _count(10, archer) == 3: break
 		if tick % 30 == 0: await process_frame
-	if not _check(_count(10, archer) == 3 and int(site.soldier_state(archer_index).ammo) == 9 and int(original_cargo.arrow) == 9 and _count(1, archer) == 0, "native releases exactly three real shots and synchronizes original cargo 12 to 9", site.soldier_state(archer_index)): return
+	if not _check(_count(10, archer) == 3 and int(site.soldier_state(archer_index).ammo) == 9 and int(original_cargo.arrow) == 9 and _count(1, archer) == 0, "native releases exactly three real shots and synchronizes original cargo 12 to 9", {"shots": _count(10, archer), "cargo_arrow": original_cargo.arrow, "state": site.soldier_state(archer_index), "order": site.formation_state(int(archer_team.formation))}): return
 	if not _check(float(lab.terrain.site.combat_left) > 0.0 or site.has_projectiles(),
 		"three actual shots leave combat or projectiles busy before the clear-button check",
 		{"combat_left": lab.terrain.site.combat_left, "projectiles": site.has_projectiles()}): return
