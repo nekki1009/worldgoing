@@ -15,7 +15,15 @@ func _f13_named_initial_and_paid_resume() -> void:
 	_check(Family.validate_family(data.site.family, str(data.site.id)) and not Technology.learned(f.row.technology, "F13"), "True original registered family and unlearned person start the genuine ferry trial")
 	_check(actions.prepare_scope_technology(int(f.control), int(f.executor), "F13", family_id).ok, "Original head prepares only this actual F13 executor and F09 prerequisite")
 	var cost := Runtime.Ships.build_cost("ferry")
-	_check(f.lab.character.place(Vector2i(9, 10), true) and actions.grant_scope_technology_budget(int(f.control), "family", family_id, cost).ok and actions.request_scope_technology_consent(int(f.control), "family", family_id, int(f.executor)).ok, "Original camp head grants full finite hull cost and actual team gives purpose-bound consent")
+	# The grant is a hand-craft action at the camp: stand on a free legal cell next to the depot.
+	var placed := false
+	var depot: Vector2i = data.cell_from_index(int(data.site.depot_cell))
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var cell: Vector2i = depot + direction
+		if not placed and data.is_walkable(cell) and data.can_step(depot, cell) and not f.lab.site_controller.reserves_cell(cell): placed = f.lab.character.place(cell, true)
+	var granted: Dictionary = actions.grant_scope_technology_budget(int(f.control), "family", family_id, cost)
+	var consented: Dictionary = actions.request_scope_technology_consent(int(f.control), "family", family_id, int(f.executor)) if granted.ok else {}
+	_check(placed and granted.ok and consented.get("ok", false), "Original camp head grants full finite hull cost and actual team gives purpose-bound consent: %s %s %s" % [str(placed), str(granted), str(consented)])
 	var raw: Dictionary = data.site.family.technology
 	var project := Technology.active_project(raw)
 	var phase := Technology.scope_next_phase(project, project.executor, raw.get("person_links", []))
@@ -59,7 +67,7 @@ func _f13_named_initial_and_paid_resume() -> void:
 	for index: int in range(60):
 		if not yard.has("ship_build"): break
 		_shipyard_work_point(f, 30.0)
-	_check(not yard.has("ship_build") and data.site.vehicles.has(vehicle_id) and data.site.vehicles[vehicle_id].ship_type == "ferry" and int(data.site.next_vehicle) == int(vehicle_id) + 1, "Only original Ships.make_record adopts one genuine completed ferry")
+	_check(not yard.has("ship_build") and data.site.vehicles.has(vehicle_id) and data.site.vehicles[vehicle_id].ship_type == "ferry" and int(data.site.next_vehicle) == int(vehicle_id) + 1, "Only original Ships.make_record adopts one genuine completed ferry: %s" % str({"ship_build": yard.get("ship_build", {}).keys() if yard.get("ship_build") is Dictionary else yard.get("ship_build"), "production": yard.get("production"), "vehicles": data.site.vehicles.keys(), "expected": vehicle_id, "next": data.site.get("next_vehicle"), "task": f.row.get("work_task", {}).get("mode", "")}))
 	_check(Technology.scope_known(data.site.family.technology, "F13") and Technology.learned(f.row.technology, "F13"), "True output evidence teaches only the original full-phase person and archive")
 	var finished: Dictionary = data.site.family.technology.projects[0]
 	_check(finished.receipts.size() == 1 and is_equal_approx(float(finished.receipts[0].work_seconds), 600.0) and data.site.inventory == paid_inventory, "One actual 600-second trial receipt records unweighted original effort and no second payment")
