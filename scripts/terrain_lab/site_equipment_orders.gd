@@ -2361,6 +2361,7 @@ static func _valid_public_order(raw: Variant, people: Dictionary, orders: Dictio
 		var receipt_fields := ["id", "site_id", "binding", "operator_id", "target_id", "work_seconds", "item_ids"]
 		if raw.tech_id == "N08": receipt_fields.append_array(["source_operator_id", "operator_reference", "transfer_token"])
 		if receipt is Dictionary and receipt.has("effective_seconds"): receipt_fields.append("effective_seconds")
+		if receipt is Dictionary and receipt.has("institution_halved"): receipt_fields.append("institution_halved")
 		if not Technology.keys(receipt, receipt_fields) or not _public_reference(receipt.id) \
 			or receipt.site_id != (raw.payload.destination_site_id if raw.tech_id == "N08" else raw.scope_site_id) or not public_receipt_effective_ok(receipt, str(receipt.get("binding", ""))) \
 			or seen.has(receipt.id) or not receipt.binding is String or not PUBLIC_BINDINGS[str(raw.tech_id)].has(receipt.binding) \
@@ -2427,6 +2428,10 @@ static func public_receipt_effective_ok(receipt: Dictionary, binding_id: String)
 		if binding_id != "iron_armor" or not Technology.finite_number(receipt.effective_seconds) or float(receipt.effective_seconds) < 0.0 \
 			or float(receipt.effective_seconds) > float(receipt.work_seconds) * Runtime.max_building_productivity() * 1.000001 + 0.000001: return false
 		effective = float(receipt.effective_seconds)
+	# Research institutions (Nekki 11/07, 4a): a drafted N02/N10 administrative phase needs half.
+	if receipt.has("institution_halved"):
+		if receipt.institution_halved != true or binding_id not in ["labor_register", "mandate"]: return false
+		return effective + 0.00000001 >= _public_receipt_seconds(binding_id) * 0.5
 	return effective + 0.00000001 >= _public_receipt_seconds(binding_id)
 
 static func _public_receipt_seconds(binding_id: String) -> float:
@@ -3075,7 +3080,8 @@ func prepare_public_owner_receipt(nation_id: String, order_id: String, binding_i
 	if not queried.ok: return queried
 	var receipt: Variant = queried.get("receipt")
 	if not (Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids"]) \
-		or Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "effective_seconds"])) \
+		or Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "effective_seconds"]) \
+		or Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "institution_halved"])) \
 		or receipt.id != event_id or receipt.site_id != str(lab.terrain.site.id) or receipt.target_id != target_id or receipt.binding != binding_id \
 		or not _operation_person(receipt.operator_id, {}) or not Technology.finite_number(receipt.work_seconds) or not receipt.item_ids is Array: return Runtime.fail("INVALID_RECEIPT")
 	match str(order.tech_id):

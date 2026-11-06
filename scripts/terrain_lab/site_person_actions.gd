@@ -4565,14 +4565,18 @@ func begin_nation_administration(requester_id: int, nation_id: String, order_id:
 		payment_prepared = technology_phase_payment_candidate(token, token.materials, binding_prepared, source)
 		if not payment_prepared.ok: return payment_prepared
 	var executor: Dictionary = ready.person
+	# Research institutions (Nekki 11/07, 4a): once the 考工院 has prepared this project, the
+	# administrative phase of N02/N10 is drafted there and needs half its original 300 s.
+	var seconds := 300.0
+	if not token.is_empty() and binding in INSTITUTION_DRAFTED_BINDINGS and Technology.active_project(checked.nation.technology).get("institution_halved") == true: seconds = 150.0
 	var job := _new_job(executor, "nation_administration", 0)
-	job.merge({"duration": 300.0, "terrain": lab.terrain, "site_state": lab.terrain.site, "nation_id": nation_id, "nation_order_id": order_id,
+	job.merge({"duration": seconds, "terrain": lab.terrain, "site_state": lab.terrain.site, "nation_id": nation_id, "nation_order_id": order_id,
 		"nation_ref": checked.nation, "nation_order_ref": checked.order, "executor_body": executor.body, "nation_binding": binding,
 		"nation_target": target, "nation_items": required.items.duplicate(), "nation_token": token,
 		"nation_event_id": equipment_orders._public_event_id(checked.order, order_id, "administration", binding)})
 	_jobs[str(identity)] = job
 	if not payment_prepared.is_empty(): publish_phase_payment(payment_prepared)
-	return Runtime.ok("原行政作業開始；真移交／船步已完成才可記制度工作", {"seconds": 300.0})
+	return Runtime.ok("原行政作業開始；真移交／船步已完成才可記制度工作", {"seconds": seconds})
 
 func _nation_administration_context(job: Dictionary) -> Dictionary:
 	if job.has("nation_original_kind"): return _nation_original_administration_context(job)
@@ -4644,9 +4648,15 @@ func nation_scope_receipt_candidate(token: Dictionary, event: Dictionary, paymen
 	return Runtime.ok("", {"owner": checked.owner, "record": checked.record, "state": candidate.state, "person": checked.person,
 		"person_candidate": {}, "complete": candidate.complete, "site_state": lab.terrain.site})
 
+const INSTITUTION_DRAFTED_BINDINGS := ["labor_register", "mandate"]
+
 func _nation_receipt_projection(event: Dictionary) -> Dictionary:
-	return {"id": event.get("id"), "site_id": event.get("site_id"), "target_id": event.get("target_id"), "operator_id": event.get("operator_id"),
+	var receipt := {"id": event.get("id"), "site_id": event.get("site_id"), "target_id": event.get("target_id"), "operator_id": event.get("operator_id"),
 		"binding": event.get("binding"), "work_seconds": event.get("work_seconds"), "item_ids": event.get("item_ids")}
+	# A drafted (halved) administrative phase says so on its public receipt; the order validator
+	# then admits half the fixed seconds for exactly these bindings.
+	if str(event.get("binding", "")) in INSTITUTION_DRAFTED_BINDINGS and Technology.finite_number(event.get("work_seconds")) and float(event.work_seconds) < 300.0: receipt["institution_halved"] = true
+	return receipt
 
 # Pure current/prospective true-owner lookup. Finished jobs are cleared normally;
 # accepted original Nops retains bounded history, not a second job/event ledger.
