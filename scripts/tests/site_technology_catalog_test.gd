@@ -18,7 +18,7 @@ func _run() -> void:
 	for entry: Dictionary in entries:
 		# Accepted nodes (Nekki 2026-11-06 node-by-node acceptance) are enabled and implemented; every other stays off.
 		assert(bool(entry.enabled) == (str(entry.status) == "implemented"), "Only accepted (implemented) nodes are enabled; candidates and P1 integration cannot claim runtime completion")
-		if str(entry.id) in ["F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "S01", "S07", "S12", "N01", "N02", "N04", "N11"]: assert(bool(entry.enabled), "%s is accepted (2026-11-06)" % entry.id)
+		if str(entry.id) in ["F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "S01", "S07", "S12", "N01", "N02", "N03", "N04", "N05", "N09", "N11"]: assert(bool(entry.enabled), "%s is accepted (2026-11-06)" % entry.id)
 		assert(not entry.operations.is_empty() and not entry.research.routes.is_empty())
 		for hook: String in entry.required_hooks: _check_hook(hook)
 		for route: Dictionary in entry.research.routes:

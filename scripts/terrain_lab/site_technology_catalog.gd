@@ -696,7 +696,7 @@ const _NODES := [
 	},
 	{
 		"id": "N03", "name": "糧儲與賑濟制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N01","S06"],"any":[],"conditions":["original_nation","authorized_real_food_reserve","two_original_recipients"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -743,7 +743,7 @@ const _NODES := [
 	},
 	{
 		"id": "N05", "name": "軍需規格制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N04","S07"],"any":[],"conditions":["original_nation_standard","certified_original_smithy","original_equipment_recipient"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -824,7 +824,7 @@ const _NODES := [
 	},
 	{
 		"id": "N09", "name": "稅籍與財政制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N01","N02"],"any":[],"conditions":["original_nation","explicit_original_property_source_consent","authorized_recipient_holder"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
