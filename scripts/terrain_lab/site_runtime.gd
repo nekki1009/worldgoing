@@ -94,6 +94,16 @@ const FEATURES := {
 	"bridge": {"placement": "rect", "min_size": Vector2i(1, 2), "max_size": Vector2i(1, 12), "name": "橋梁", "cost": {"wood": 6}, "work": 10.0, "solid": false, "water": 0.0},
 	"tent": {"placement": "fixed", "size": Vector2i(3, 3), "name": "營帳", "cost": {"camp_tent": 1}, "work": 2.0, "solid": false, "water": 0.0},
 	"settlement_center": {"placement": "fixed", "size": Vector2i(5, 5), "name": "聚落中心", "cost": {"wood": 30, "stone": 20}, "work": 60.0, "solid": true, "water": 0.0},
+	# Research institutions (Nekki 11/07, option C): a second research path beside on-station trials.
+	"craft_room": {"placement": "fixed", "size": Vector2i(3, 3), "name": "工法室", "cost": {"wood": 10, "stone": 4}, "work": 20.0, "solid": true, "water": 0.0},
+	"artisan_academy": {"placement": "fixed", "size": Vector2i(4, 4), "name": "匠作院", "cost": {"wood": 24, "stone": 12, "rope": 2}, "work": 40.0, "solid": true, "water": 0.0},
+	"works_academy": {"placement": "fixed", "size": Vector2i(5, 4), "name": "考工院", "cost": {"wood": 40, "stone": 24, "rope": 4}, "work": 60.0, "solid": true, "water": 0.0},
+}
+## Research institution kinds: the scope each serves and its researcher seats (plan approved 11/07).
+const RESEARCH_INSTITUTIONS := {
+	"craft_room": {"scope": "family", "seats": 1, "min_settlement_level": 0},
+	"artisan_academy": {"scope": "settlement", "seats": 2, "min_settlement_level": 2},
+	"works_academy": {"scope": "nation", "seats": 3, "min_settlement_level": 3},
 }
 # Alternate recipes share the original feature, paid batch and worker pipeline.
 
@@ -11558,6 +11568,9 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 		request["operator_id"] = int(actions._technology_controlled()) if actions != null else 0
 		var authority: Dictionary = technology_irrigation_work_preflight(data, {"irrigation": request})
 		if not authority.ok: return authority
+	if RESEARCH_INSTITUTIONS.has(kind):
+		var institution := research_institution_build_guard(data, kind, cells, int(options.get("quarter", 0)))
+		if not institution.ok: return institution
 	var preview: Dictionary = preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
 	if not preview.ok: return preview
 	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")
@@ -13333,6 +13346,37 @@ static func water_allocation_sample(data: TerrainData, priority: Array) -> Dicti
 	for amount: float in sources.values(): capacity += amount
 	return {"categories": priority.duplicate(), "allocation": allocation, "source_capacity": capacity,
 		"total_demand": total_demand, "total_supply": total_supply}
+
+## Formal art for a fixed building kind facing `quarter` (building_v2 manifest). Never a placeholder.
+static func formal_building_art_available(kind: String, quarter: int) -> bool:
+	if quarter < 0 or quarter > 3: return false
+	const ART_ROOT := "res://assets/map/site/settlement/building_v2/"
+	if not FileAccess.file_exists(ART_ROOT + "art_manifest.json"): return false
+	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(ART_ROOT + "art_manifest.json"))
+	if not manifest is Dictionary or not manifest.get("assets") is Dictionary: return false
+	return manifest.assets.has(kind + ["", "_west", "_north", "_east"][quarter])
+
+## Who may raise a research institution: the family workshop needs a registered family; the
+## settlement and nation academies need the settlement level and a cell in its jurisdiction
+## (the nation academy also an existing nation). Missing art refuses; nothing is placeheld.
+static func research_institution_build_guard(data: TerrainData, kind: String, cells: Array[int], quarter: int) -> Dictionary:
+	var spec: Dictionary = RESEARCH_INSTITUTIONS.get(kind, {})
+	if spec.is_empty(): return fail("INVALID")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	match str(spec.scope):
+		"family":
+			if not data.site.get("family") is Dictionary or data.site.family.is_empty(): return fail("REQUIREMENTS", "工法室須有已登錄的家族")
+		_:
+			var settlement: Dictionary = data.site.get("settlement", {})
+			if settlement.is_empty() or int(settlement.get("level", 0)) < int(spec.min_settlement_level):
+				return fail("REQUIREMENTS", "%s須聚落 %d 級" % [str(FEATURES[kind].name), int(spec.min_settlement_level)])
+			var inside := false
+			for index: int in cells: inside = inside or bool(settlement_script.call("cell_in_jurisdiction", data, data.cell_from_index(index)))
+			if not inside: return fail("REQUIREMENTS", "%s須建在聚落轄區內" % str(FEATURES[kind].name))
+			if str(spec.scope) == "nation" and data.site.get("equipment_nations", {}).is_empty(): return fail("REQUIREMENTS", "考工院須先有國家")
+	if not formal_building_art_available(kind, quarter):
+		return fail("MISSING_ART", "%s缺正式美術資產；不以占位圖替代" % str(FEATURES[kind].name))
+	return ok()
 
 static func survey_stakes_art_available(quarter: int) -> bool:
 	if quarter < 0 or quarter > 3: return false
