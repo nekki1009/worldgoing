@@ -65,11 +65,13 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 		expected_fields.append("technology")
 		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
 	if int(settlement.version) >= 5 and settlement.has("succession"): expected_fields.append("succession")
+	if settlement.has("trade_sources"): expected_fields.append("trade_sources")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
 	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
 	if int(settlement.version) >= 4 and not valid_trade_tax_percent(settlement.get("trade_tax_percent")): return Runtime.fail("CORRUPT_SAVE", "聚落貿易稅率")
 	if settlement.has("technology_operations") and not valid_technology_operations(data, settlement.technology_operations, state): return Runtime.fail("CORRUPT_SAVE", "聚落有限用途格式")
+	if settlement.has("trade_sources") and not valid_trade_sources(settlement.trade_sources, state): return Runtime.fail("CORRUPT_SAVE", "聚落交易來源綁定")
 	if not settlement.settlement_id is String or str(settlement.settlement_id).is_empty() or str(settlement.settlement_id).length() > 96: return Runtime.fail("CORRUPT_SAVE", "聚落身分")
 	if centers.size() != 1: return Runtime.fail("CORRUPT_SAVE", "每個 Site 必須恰有一座聚落中心")
 	if not settlement.center_id is String or str(settlement.center_id) != centers[0]: return Runtime.fail("CORRUPT_SAVE", "聚落中心 ID 不存在")
@@ -248,6 +250,87 @@ static func normalize(state: Dictionary) -> void:
 	if int(settlement.get("version", 0)) >= 2 and settlement.get("technology") is Dictionary:
 		settlement.technology = Technology.normalize_scope_record(settlement.technology, "settlement")
 	if settlement.get("technology_operations") is Dictionary: normalize_technology_operations(settlement.technology_operations)
+	if settlement.get("trade_sources") is Dictionary:
+		for source: Dictionary in settlement.trade_sources.values():
+			source.revision = int(source.revision)
+			for resource: String in source.limits:
+				source.limits[resource].per_trade = int(source.limits[resource].per_trade)
+				source.limits[resource].total = int(source.limits[resource].total)
+			for resource: String in source.used: source.used[resource] = int(source.used[resource])
+
+# --- Trade plan T2: warehouses the head binds to settlement.trade (§4, "授權額度") ---
+## trade_sources {warehouse key: {revision, limits {resource: {per_trade, total}}, used {resource: count}}}. A source
+## exists only by the head's explicit binding; a resource without a limit cannot be paid out; used never exceeds the
+## total and is not reset when a receipt ages out.
+const MAX_TRADE_SOURCES := 16
+
+static func valid_trade_sources(sources: Variant, state: Dictionary) -> bool:
+	if not sources is Dictionary or sources.size() > MAX_TRADE_SOURCES: return false
+	for key: Variant in sources:
+		var source: Variant = sources[key]
+		if not key is String or str(state.get("features", {}).get(key, {}).get("kind", "")) != "warehouse": return false
+		if not source is Dictionary or not Technology.keys(source, ["revision", "limits", "used"]) or not _int(source.revision, 1, 2147483646) \
+			or not source.limits is Dictionary or not source.used is Dictionary: return false
+		for resource: Variant in source.limits:
+			var limit: Variant = source.limits[resource]
+			if not resource is String or not Runtime.Env.ITEM_NAMES.has(resource) or not limit is Dictionary or not Technology.keys(limit, ["per_trade", "total"]) \
+				or not _int(limit.per_trade, 0, 1000000) or not _int(limit.total, 0, 100000000): return false
+		for resource: Variant in source.used:
+			if not resource is String or not source.limits.has(resource) or not _int(source.used[resource], 0, int(source.limits[resource].total)): return false
+	return true
+
+## The head binds (or rebinds) warehouse `key` to settlement.trade with per-resource limits; an empty `limits`
+## unbinds it. Only the controlled head may do it. Rebinding keeps the used counts of resources still limited.
+static func bind_trade_source(lab: Variant, requester: int, key: String, limits: Dictionary) -> Dictionary:
+	var data: TerrainData = lab.terrain
+	var settlement := record(data)
+	if settlement.is_empty() or int(settlement.level) <= 0: return Runtime.fail("NO_TARGET", "此地沒有聚落")
+	if requester != int(lab.controlled_person_id()) or int(SiteOffices.head_position(settlement.offices).get("holder", -1)) != requester:
+		return Runtime.fail("NO_AUTHORITY", "只有聚落首長能綁定交易來源")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if str(feature.get("kind", "")) != "warehouse" or not feature_in_jurisdiction(data, feature) or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction):
+		return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
+	var sources: Dictionary = settlement.get("trade_sources", {})
+	if limits.is_empty():
+		sources.erase(key)
+		if sources.is_empty(): settlement.erase("trade_sources")
+		return Runtime.ok("已解除此倉的交易綁定")
+	var clean := {}
+	for resource: Variant in limits:
+		var limit: Variant = limits[resource]
+		if not Runtime.Env.ITEM_NAMES.has(str(resource)) or not limit is Dictionary: return Runtime.fail("INVALID", "額度格式不合法")
+		var per_trade := int(limit.get("per_trade", 0))
+		var total := int(limit.get("total", 0))
+		if per_trade < 0 or total < 0 or per_trade > 1000000 or total > 100000000: return Runtime.fail("INVALID", "額度超出範圍")
+		clean[str(resource)] = {"per_trade": per_trade, "total": total}
+	if not sources.has(key) and sources.size() >= MAX_TRADE_SOURCES: return Runtime.fail("FULL", "交易來源已達上限")
+	var old: Dictionary = sources.get(key, {"revision": 0, "used": {}})
+	var used := {}
+	for resource: String in old.used:
+		if clean.has(resource): used[resource] = mini(int(old.used[resource]), int(clean[resource].total))
+	sources[key] = {"revision": int(old.revision) + 1, "limits": clean, "used": used}
+	settlement["trade_sources"] = sources
+	return Runtime.ok("已把此倉綁給市正", {"revision": int(sources[key].revision)})
+
+## Does paying `resources` from source `key` stay within its limits? ("" when it does, else the reason.)
+static func trade_quota_refusal(data: TerrainData, key: String, resources: Dictionary) -> String:
+	var source: Dictionary = record(data).get("trade_sources", {}).get(key, {})
+	if source.is_empty(): return "此倉未綁給市正"
+	for resource: String in resources:
+		var amount := int(resources[resource])
+		if amount <= 0: continue
+		if not source.limits.has(resource): return "%s 不在授權額度內" % str(Runtime.Env.ITEM_NAMES.get(resource, resource))
+		var limit: Dictionary = source.limits[resource]
+		if amount > int(limit.per_trade): return "%s 超過單筆上限 %d" % [str(Runtime.Env.ITEM_NAMES.get(resource, resource)), int(limit.per_trade)]
+		if int(source.used.get(resource, 0)) + amount > int(limit.total): return "%s 超過累計上限" % str(Runtime.Env.ITEM_NAMES.get(resource, resource))
+	return ""
+
+## A committed settlement trade records its gross payout once.
+static func record_trade_payout(data: TerrainData, key: String, resources: Dictionary) -> void:
+	var source: Dictionary = record(data).get("trade_sources", {}).get(key, {})
+	if source.is_empty(): return
+	for resource: String in resources:
+		if int(resources[resource]) > 0: source.used[resource] = int(source.used.get(resource, 0)) + int(resources[resource])
 
 # --- Derived projections -----------------------------------------------------
 

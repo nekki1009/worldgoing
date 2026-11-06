@@ -30,9 +30,14 @@ func _run() -> void:
 	if not founded.ok: return _fail_now("the settlement is founded: " + str(founded))
 	_complete_key(data, str(founded.feature))
 	if int(data.site.settlement.level) < 1: data.site.settlement["level"] = 1 # fixture: an effective village
+	var warehouse := _formal_feature(data, "warehouse", Vector2i(28, 20), Vector2i(3, 3))
+	# TR-21: the head (still the player) binds the warehouse to the 市正 with grain limits 2 per trade, 3 in total.
+	if Settlement.bind_trade_source(lab, head, warehouse, {"grain": {"per_trade": 2, "total": 3}}).ok: return _fail_now("only the controlled head may bind a trade source")
+	var bound: Dictionary = Settlement.bind_trade_source(lab, player, warehouse, {"grain": {"per_trade": 2, "total": 3}})
+	if not bound.ok: return _fail_now("the head binds the warehouse: " + str(bound))
+	print("SITE_TRADE_T2 OK 0: the controlled head binds the warehouse with limits")
 	# The NPC is the settlement's head (the player founded it and hands the seat over).
 	SiteOffices.head_position(data.site.settlement.offices)["holder"] = head
-	var warehouse := _formal_feature(data, "warehouse", Vector2i(28, 20), Vector2i(3, 3))
 	var stocked: Dictionary = Stockpiles.ensure_storage(data, warehouse, 1)
 	if not stocked.ok: return _fail_now("the warehouse stock opens: " + str(stocked))
 	data.site.stockpiles[warehouse].cargo["grain"] = 50
@@ -74,6 +79,13 @@ func _run() -> void:
 		return _fail_now("the goods moved between the player and the warehouse: %s %s" % [str(data.site.manual.cargo), str(stock.cargo)])
 	if int(lab.character.item_state.version) != versions[0] + 1 or int(stock.holder.version) != versions[1] + 1: return _fail_now("each version rose once")
 	print("SITE_TRADE_T2 OK 4: the goods moved once between the player and the warehouse")
+	if int(data.site.settlement.trade_sources[warehouse].used.get("grain", 0)) != 2: return _fail_now("the payout is recorded once: " + str(data.site.settlement.trade_sources))
+	var over_total: Dictionary = controller.trade_propose_settlement(head, warehouse, {"iron": 1}, {"grain": 2})
+	if over_total.ok or str(over_total.code) != "QUOTA": return _fail_now("2 more grain would pass the total of 3: " + str(over_total))
+	var unlisted: Dictionary = controller.trade_propose_settlement(head, warehouse, {"grain": 1}, {"iron": 1})
+	if unlisted.ok or str(unlisted.code) != "QUOTA": return _fail_now("iron has no limit and cannot be paid out: " + str(unlisted))
+	if not Settlement.valid_trade_sources(data.site.settlement.trade_sources, data.site): return _fail_now("the bindings validate")
+	print("SITE_TRADE_T2 OK 4b: the total limit and an unlisted resource refuse; the bindings validate")
 
 	# A seated 市正 takes the duty from the head.
 	var offices: Dictionary = data.site.settlement.offices

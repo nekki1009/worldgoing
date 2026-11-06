@@ -587,6 +587,11 @@ func _build_ui() -> void:
 	region_travel_button = _button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
 	_build_crowd_split_entry(launcher.column)
 	_button(launcher.column, "與所選人物交易", "OpenTrade", func() -> void: open_trade_dialog(int(lab.selected_army_target)))
+	var trade_limits := LineEdit.new()
+	trade_limits.name = "TradeSourceLimits"
+	trade_limits.placeholder_text = "倉庫額度，如 grain:20/200"
+	launcher.column.add_child(trade_limits)
+	_button(launcher.column, "把所選倉庫綁給市正", "BindTradeSource", func() -> void: show_result(bind_trade_warehouse(trade_limits.text)))
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
@@ -10501,6 +10506,22 @@ func trade_accept(offer_id: String) -> Dictionary:
 func trade_propose_settlement(npc_id: int, key: String, gives: Dictionary, wants: Dictionary) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	return _trade().propose_settlement(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants))
+
+## T2: the head binds the warehouse at the selected cell to the 市正 with limits written "grain:20/200, wood:10/100"
+## (per trade / in total); empty text unbinds it.
+func bind_trade_warehouse(limits_text: String) -> Dictionary:
+	var key := ""
+	for feature_key: Variant in lab.terrain.site.get("features", {}):
+		var feature: Dictionary = lab.terrain.site.features[feature_key]
+		if str(feature.get("kind", "")) == "warehouse" and feature.get("cells", []).has(lab.terrain.index(selected)): key = str(feature_key)
+	if key.is_empty(): return Runtime.fail("NO_TARGET", "先選一座倉庫")
+	var limits := {}
+	for part: String in limits_text.split(",", false):
+		var pair := part.strip_edges().split(":")
+		var counts := pair[1].split("/") if pair.size() == 2 else PackedStringArray()
+		if pair.size() != 2 or counts.size() != 2 or not counts[0].strip_edges().is_valid_int() or not counts[1].strip_edges().is_valid_int(): return Runtime.fail("INVALID", "額度格式：資源:單筆/累計，以逗號分隔")
+		limits[pair[0].strip_edges()] = {"per_trade": int(counts[0]), "total": int(counts[1])}
+	return Settlement.bind_trade_source(lab, int(lab.controlled_person_id()), key, limits)
 
 ## The settlement warehouse `npc_id` trades for: he is its `settlement.trade` decider and stands at its entrance.
 func trade_warehouse_of(npc_id: int) -> String:

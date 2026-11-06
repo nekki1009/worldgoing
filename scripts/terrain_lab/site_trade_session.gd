@@ -143,6 +143,7 @@ func settlement_party(key: String) -> Dictionary:
 		or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
 	var endpoint: Dictionary = Stockpiles.stock_endpoint(data, key)
 	if endpoint.is_empty(): return Runtime.fail("NO_TARGET", "倉庫尚無庫存")
+	if not settlement.get("trade_sources", {}).has(key): return Runtime.fail("NOT_BOUND", "此倉未經首長綁給市正")
 	var offices: Dictionary = settlement.get("offices", {})
 	SiteOffices.ensure_catalog(offices, "settlement")
 	var head := int(SiteOffices.head_position(offices).get("holder", 0))
@@ -170,8 +171,10 @@ func _legal(player: int, npc_holder: String) -> Callable:
 	var data: TerrainData = _lab().terrain
 	var a_ref := _ref(player)
 	var b_ref := _holder_ref(npc_holder)
+	var source := npc_holder.trim_prefix("feature:") if npc_holder.begins_with("feature:") else ""
 	# receive = what the NPC receives (the player gives), give = what the NPC gives.
 	return func(receive: Dictionary, give: Dictionary) -> bool:
+		if not source.is_empty() and not Settlement.trade_quota_refusal(data, source, give.resources).is_empty(): return false
 		return bool(Runtime.exchange_items(data, a_ref, b_ref, receive, give, true).ok)
 
 func _drop_offers_of(identities: Array) -> void:
@@ -196,6 +199,9 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 	if not pair.ok: return pair
 	if Trade._unit_count(player_gives) == 0 or Trade._unit_count(npc_gives) == 0: return Runtime.fail("EMPTY", "雙方都要有付出的東西")
 	var holder := npc_holder if not npc_holder.is_empty() else _holder_id(npc)
+	if npc_holder.begins_with("feature:"):
+		var quota := Settlement.trade_quota_refusal(_lab().terrain, npc_holder.trim_prefix("feature:"), npc_gives.resources)
+		if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
 	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, _ref(player), _holder_ref(holder), player_gives, npc_gives, true)
 	if not preview.ok: return preview
 	var used := holder_concessions(holder, _holder_id(player))
@@ -300,7 +306,14 @@ func advance() -> Array[Dictionary]:
 		job["elapsed"] = minf(float(job.required), at - float(job.started_action))
 		job["pending"] = float(job.elapsed) >= float(job.required)
 		if not bool(job.pending): continue
+		var source := str(offer.b.holder).trim_prefix("feature:") if str(offer.b.holder).begins_with("feature:") else ""
+		if not source.is_empty():
+			var quota := Settlement.trade_quota_refusal(_lab().terrain, source, offer.b_gives.resources)
+			if not quota.is_empty():
+				results.append(_end(str(key), Runtime.fail("QUOTA", "交易中止：%s；未轉移任何物品" % quota)))
+				continue
 		var committed: Dictionary = Runtime.exchange_items(_lab().terrain, offer.a, offer.b, offer.a_gives, offer.b_gives)
+		if committed.ok and not source.is_empty(): Settlement.record_trade_payout(_lab().terrain, source, offer.b_gives.resources)
 		results.append(_end(str(key), Runtime.ok("交易完成") if committed.ok else committed))
 	if not results.is_empty(): last_results = results.duplicate()
 	return results
