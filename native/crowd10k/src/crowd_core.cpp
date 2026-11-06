@@ -3932,7 +3932,7 @@ void World::measure() {
 	stats.fighting = fighting; stats.engaging = engaging; stats.alive = al; stats.down = down; stats.captive = cap;
 }
 
-uint64_t World::state_hash() const {
+uint64_t World::state_hash(std::vector<int64_t> *marks) const {
 	// Full simulation state (Astra review 2026-09-29): every soldier array that feeds the next step,
 	// projectiles in flight, formation orders / command / timers / RNG, and the world counters.
 	// Derived scratch (spatial hash, block counts, render buffers, flow-field caches) is excluded;
@@ -3944,22 +3944,29 @@ uint64_t World::state_hash() const {
 	};
 	auto mv = [&](const auto &v) { if (!v.empty()) mixb(v.data(), v.size() * sizeof(v[0])); };
 	auto m = [&](const auto &x) { mixb(&x, sizeof(x)); };
+	auto mark = [&]() { if (marks) marks->push_back((int64_t)h); }; // diagnostic section boundaries
 	m(terrain.w); m(terrain.h);
 	for (const auto *v : {&terrain.height, &terrain.flags, &terrain.ramp_edges, &terrain.static_blocked, &terrain.facility, &terrain.base_height}) mv(*v);
+	mark();
 	for (auto *v : {&px, &py, &nx, &ny, &vx, &vy, &face, &anim_t, &knock_dx, &knock_dy}) mv(*v);
 	mv(rest_hold); mv(rest_x); mv(rest_y); mv(rest_best); mv(rest_t);
 	for (auto *v : {&hp, &stun, &grace, &ko, &getup, &stagger, &exch_cd, &ranged_cd, &skill_cd, &knock_t, &act_t, &escape_t}) mv(*v);
 	for (auto *v : {&team, &state, &los_ok, &skill, &role, &captive, &present, &troop, &running, &near_enemy, &fire_blocked, &bandaged}) mv(*v);
 	for (auto *v : {&host_ctl, &host_run, &host_engage}) mv(*v);
-	mv(prison_id); mv(escort_goal); mv(escort_mode); mv(housing_attendance_cell);
-	mv(contact_revision);
-	mv(siege_crew); mv(siege_member_group); mv(siege_step_source); mv(siege_person_blocked);
-	for(const auto &cells:siege_wreck_exit)mv(cells); // Derived person-purpose inputs are rebuilt by Site after load.
+	mark(); mv(prison_id); mv(escort_goal); mv(escort_mode); mark(); mv(housing_attendance_cell); mark();
+	mv(contact_revision); mark();
+	mv(siege_crew); mark(); mv(siege_member_group); mark(); mv(siege_step_source); mark();
+	// siege_person_blocked is a host input rebuilt by Site after load (not saved): an all-clear array and none are the
+	// same state, so only the blocked cells are hashed.
+	for (size_t c = 0; c < siege_person_blocked.size(); ++c) if (siege_person_blocked[c]) m(c);
+	mark();
+	for(const auto &cells:siege_wreck_exit)mv(cells); mark(); // Derived person-purpose inputs are rebuilt by Site after load.
 	for (const auto &g:siege_compounds) {
 		m(g.token); m(g.elapsed); m(g.duration); m(g.cancelled); m(g.complete); m(g.aborted); mv(g.claims); mv(g.heights);
 		for (const auto &member:g.members) { m(member.soldier); m(member.person); m(member.from); m(member.to); }
 	}
 	mv(host_vx); mv(host_vy);
+	mark();
 	mv(convoy_of); m(convoy_serial);
 	for (const auto &cv : convoys) {
 		m(cv.id); m(cv.x); m(cv.y); m(cv.facing); m(cv.has_goal); m(cv.gx); m(cv.gy); m(cv.gfacing); m(cv.goal_cell); m(cv.field);
@@ -3978,6 +3985,7 @@ uint64_t World::state_hash() const {
 		m(p.stats.ability); m(p.stats.training); m(p.stats.fatigue); m(p.stats.skill);
 		m(p.stats.equip.family); m(p.stats.equip.material); m(p.stats.equip.armor); m(p.stats.equip.shield);
 	}
+	mark();
 	for (int v : rescuers_) m(v);
 	for (int v : capturers_) m(v);
 	for (int v : captives_) m(v);
@@ -3998,12 +4006,16 @@ uint64_t World::state_hash() const {
 		m(f.cols); m(f.spacing); m(f.field); m(f.lag); m(f.command_dirty); m(f.commander_present); m(f.resupplying); m(f.charged_this_step);
 		m(f.shape.size()); mv(f.shape); // G7b preset
 	}
+	mark();
 	m(tick); m(exchange_round); m(shot_serial); m(time);
 	m(host_ranged_delegate); m(host_last_release_id);
 	m(combat_left); m(game_dt); m(combat_mark); m(external_clock);
-	mv(life_ck); mv(hostile_); mv(slot_tx_); mv(slot_ty_); mv(slot_clip_); mv(lag_acc_); mv(lag_cnt_); mv(attackers_); m(attackers_tick_); mv(touch_); mv(field_queue_);
+	mark();
+	mv(life_ck); mark(); mv(hostile_); mark(); mv(slot_tx_); mv(slot_ty_); mv(slot_clip_); mark(); mv(lag_acc_); mv(lag_cnt_); mark(); mv(attackers_); m(attackers_tick_); mark(); mv(touch_); mark(); mv(field_queue_); mark();
 	for(const auto &f:fields_) {m(f.goal);m(f.last_used);m(f.body_aware);const bool built=!f.dir.empty();m(built);}
+	mark();
 	for(const auto &e:events) {m(e.kind);m(e.soldier);m(e.formation);m(e.person);m(e.other);m(e.time);m(e.fatigue);m(e.fatigue_rest);}
+	mark();
 	m(cfg.radius);
 	m(cfg.wall_margin);
 	m(cfg.march_speed);
@@ -4036,6 +4048,7 @@ uint64_t World::state_hash() const {
 	m(cfg.seed);
 	m(cfg.ai);
 
+	mark();
 	return h;
 }
 

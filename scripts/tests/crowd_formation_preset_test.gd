@@ -82,14 +82,12 @@ func _run() -> void:
 				on_slot += 1
 				break
 	if not _check(state.has("cx") and on_slot == count, "every member stands near a wedge slot", [on_slot, count, state.get("cx"), state.get("cy")]): return
-	# A live Site's crowd and a fresh copy loaded from its blob differ in state_hash even without a shape (pre-existing,
-	# see fail_triage crowd_c2_c3); so the round trip is checked copy to copy.
 	var copy: RefCounted = ClassDB.instantiate("ArmyCrowd")
 	copy.setup(1, 581)
 	var again: RefCounted = ClassDB.instantiate("ArmyCrowd")
 	again.setup(1, 581)
 	var loaded: bool = copy.load_state(site.crowd.save_state()) and again.load_state(copy.save_state())
-	if not _check(loaded and int(copy.get_formation_shape(formation)) == count and int(again.get_formation_shape(formation)) == count and again.state_hash() == copy.state_hash(), "the shape survives native save / load with the same hash"): return
+	if not _check(loaded and int(copy.get_formation_shape(formation)) == count and int(again.get_formation_shape(formation)) == count and again.state_hash() == copy.state_hash() and copy.state_hash() == site.crowd.state_hash(), "the shape survives native save / load with the same hash"): return
 	if not _check(site.set_team_preset(team_id, "auto", "player").ok and int(site.crowd.get_formation_shape(formation)) == 0, "auto clears the shape"): return
 	# The formation UI path under crowd.
 	for index: int in range(controller.formation_preset_choice.item_count):

@@ -1372,6 +1372,8 @@ void m_fire_motion_segment(CALL_ARGS) {
 
 void m_has_projectiles(CALL_ARGS) { SELF; NEED(0); WORLD; ret_bool(r,!w.projectiles.empty()); }
 void m_validate(CALL_ARGS) { SELF; NEED(0); WORLD; ret_bool(r,w.validate()); }
+// state_hash_parts() -> the running state hash at each section end (diagnostics: which section two worlds differ in)
+void m_hash_parts(CALL_ARGS) { SELF; NEED(0); WORLD; std::vector<int64_t> marks; w.state_hash(&marks); return_longs(r, marks); }
 void m_person_ids(CALL_ARGS) { SELF; NEED(0); WORLD; return_longs(r,w.person_id); }
 void m_soldier_index(CALL_ARGS) { SELF; NEED(1); WORLD; int64_t id; ret_int(r,arg_int(a[0],id) ? w.soldier_index(id) : -1); }
 void m_blob_person_ids(CALL_ARGS) {
@@ -1488,6 +1490,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("hud_stats", m_hud_stats, {}, DOUBLES);
 	add_method("soldier_count", m_count, {}, INT);
 	add_method("state_hash", m_hash, {}, INT);
+	add_method("state_hash_parts", m_hash_parts, {}, LONGS);
 	add_method("save_state", m_save, {}, BYTES);
 	add_method("load_state", m_load, {{BYTES, "data"}}, BOOL);
 	add_method("load_state_with_siege_navigation", m_load_with_siege_navigation, {{BYTES, "data"}, {INTS, "blocked"}, {LONGS, "wreck_exit"}}, BOOL);

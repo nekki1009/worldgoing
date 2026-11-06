@@ -831,7 +831,7 @@ public:
 	float vis_window[V_COUNT] = {0, 0, 0, 0.85f, 0.85f, 0.3f, 0.45f, 0.75f, 0.85f, 2.875f, 0, 2.2f, 0};
 	int pack_rows(std::vector<float> &out, std::vector<int32_t> &spans, std::vector<float> &bounds, float cell_pixels);
 	void set_visual(int i, VisualSlot v) { vis_kind[i] = (uint8_t)v; vis_t0[i] = time; }
-	uint64_t state_hash() const;
+	uint64_t state_hash(std::vector<int64_t> *marks = nullptr) const; // marks: the running hash at each section end (diagnostics)
 	bool update_terrain(Terrain ground);
 	std::vector<uint8_t> terrain_state() const;
 	std::vector<uint8_t> occupancy_mask(const std::vector<int64_t> &ignored) const;
