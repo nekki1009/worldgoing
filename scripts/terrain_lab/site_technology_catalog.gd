@@ -238,7 +238,7 @@ const _NODES := [
 	},
 	{
 		"id": "F08", "name": "弩機裝配", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F07"],"any":[],"conditions":["original_camp_source_budget"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -256,7 +256,7 @@ const _NODES := [
 	},
 	{
 		"id": "F09", "name": "丈量放樣", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["legal_building_site"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -275,7 +275,7 @@ const _NODES := [
 	},
 	{
 		"id": "F10", "name": "木石營造", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F09"],"any":[],"conditions":["legal_civil_and_wall_worksites"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -354,7 +354,7 @@ const _NODES := [
 	},
 	{
 		"id": "F14", "name": "鞣革", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["usable_tannery_and_water"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -373,7 +373,7 @@ const _NODES := [
 	},
 	{
 		"id": "F15", "name": "引火配方", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F03"],"any":[],"conditions":["usable_original_traction_trebuchet","safe_original_firing_target"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
