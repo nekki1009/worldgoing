@@ -84,24 +84,18 @@ func _earned_dock(data: TerrainData) -> Dictionary:
 	return {}
 
 func _earned_component_job(actual_lab: TerrainLab, identity: int, kind: String) -> float:
-	# This named test collects only original PA requests/Fatigue pools. It does
-	# not claim a whole World/Region/Fire/main-caller scheduling interval.
+	# The original main shared point advances the job, fatigue, team sustain and the Site clock
+	# together; stepping the fatigue pool alone left team sustain ahead of the Site clock and the
+	# strict save refused it (CORRUPT_SAVE 供養時鐘超前 Site).
 	var actions: SitePersonActions = actual_lab.site_controller.person_actions
+	var job: Dictionary = actions._jobs.get(actions._job_key_for(identity), {})
+	assert(not job.is_empty() and job.kind == kind and is_equal_approx(float(job.duration), 300.0), "True original 300-second job, no copied timer or completion")
 	var elapsed := 0.0
-	for tick: int in 400:
+	for tick: int in 4000:
 		if not actions.is_busy(identity): break
-		var job: Dictionary = actions._jobs.get(actions._job_key_for(identity), {})
-		assert(not job.is_empty() and job.kind == kind and is_equal_approx(float(job.duration), 300.0), "True original 300-second job, no copied timer or completion")
-		var requests := actions.work_requests(30.0)
-		var plan := PersonFatigue.plan_work_interval(requests, 30.0)
-		assert(plan.ok, str(plan))
-		actual_lab._shared_work_plan = plan
-		actual_lab._shared_work_pools_committed = false
-		actual_lab.site_controller._shared_work_plan = plan
-		elapsed += float(plan.jobs.get("person_actions", {}).get(str(identity), {}).get("effective_seconds", 0.0))
-		actual_lab._advance_fatigue(30.0) # Original provider/one original shared pool debit.
-		actions.settle_after_contacts()
-		actual_lab._clear_shared_work_step()
+		var point: Dictionary = actual_lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if actual_lab.exchange_enabled else TerrainLab.ACTION_STEP)
+		assert(point.ok, "Original main shared point: " + str(point))
+		if point.get("completed") == true: elapsed += float(point.game_seconds)
 	assert(not actions.is_busy(identity) and elapsed >= 300.0-0.0001, "Actual accepted joint/admin effort completes the full original job")
 	return elapsed
 

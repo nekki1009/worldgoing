@@ -887,7 +887,7 @@ const _NODES := [
 	},
 	{
 		"id": "N12", "name": "水師編制", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N05","S12"],"any":[],"conditions":["original_nation_and_corps","two_original_ships","original_legal_helm_crews"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
