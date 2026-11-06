@@ -3879,7 +3879,7 @@ func _rebind_nation_order_source(nation: Dictionary, nation_id: String, project:
 			if int(project.budget.cap[resource]) > int(order.source.cap.get(resource, 0)): return {}
 		for resource: String in project.budget.spent:
 			if int(project.budget.spent[resource]) > int(order.source.spent.get(resource, 0)): return {}
-		var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.feature_id))
+		var stock := SiteStockpiles.org_endpoint(lab.terrain, str(order.feature_id))
 		if stock.is_empty(): return {}
 		return Runtime.ok("", {"kind": "nation_order", "holder": holder, "source_site_id": _technology_site_id(), "grantor": grantor,
 			"cap": order.source.cap.duplicate(), "spent": {}, "physical_holder": stock.holder, "physical_cargo": stock.cargo,
@@ -3893,7 +3893,7 @@ func _rebind_nation_order_source(nation: Dictionary, nation_id: String, project:
 	if project.budget.grantor != grantor: return {}
 	for resource: String in project.budget.cap:
 		if int(project.budget.cap[resource]) > int(authorization.cap.get(resource, 0)): return {}
-	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
+	var stock := SiteStockpiles.org_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
 	if stock.is_empty(): return {}
 	return Runtime.ok("", {"kind": "nation_order", "holder": holder, "source_site_id": _technology_site_id(), "grantor": grantor,
 		"cap": authorization.cap.duplicate(), "spent": {}, "physical_holder": stock.holder, "physical_cargo": stock.cargo,
@@ -4417,7 +4417,7 @@ func nation_research_source_candidate(token: Dictionary, order_id: String) -> Di
 	var source: Dictionary = order.payload.source
 	for resource: String in token.materials:
 		if int(source.cap.get(resource, 0)) < int(token.materials[resource]) or int(source.spent.get(resource, 0)) < int(token.materials[resource]): return Runtime.fail("NO_BUDGET")
-	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
+	var stock := SiteStockpiles.org_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
 	if stock.is_empty(): return Runtime.fail("NO_SOURCE")
 	var result := Runtime.ok("", {"kind": "nation_order", "holder": "nation-order:" + JSON.stringify([_technology_site_id(), str(token.scope_id), order_id]),
 		"source_site_id": _technology_site_id(), "grantor": {"site_id": _technology_site_id(), "person_id": int(source.person_id)},
@@ -4862,7 +4862,7 @@ func prepare_nation_procurement_delivery(nation_id: String, spec_id: String, nex
 		or next_spec.receipts.size() != spec.receipts.size() + 1 \
 		or next_spec.receipts.size() > 2 or next_spec.receipts[-1].source_person_id != token.person.person_id \
 		or not Technology.material_equal(next_spec.receipts[-1].resources, {"wood": 1, "grain": 1}): return Runtime.fail("INVALID_DELIVERY", "首次研究須兩次本原人各交真木1／糧1")
-	var destination: Dictionary = SiteStockpiles.stock_endpoint(lab.terrain, str(spec.destination_feature_id))
+	var destination: Dictionary = SiteStockpiles.org_endpoint(lab.terrain, str(spec.destination_feature_id))
 	if destination.is_empty() or not is_same(transfer.get("destination"), destination.holder) or not is_same(transfer.get("destination_cargo"), destination.cargo): return Runtime.fail("STALE_SOURCE")
 	var binding := {}
 	if not spec.has("tech_trial"):
@@ -7101,7 +7101,7 @@ func nation_operation_material_source_candidate(nation_id: String, order_id: Str
 	if not order.payload.has("source"): return Runtime.ok("", {"source": {}})
 	if not equipment_orders._public_source_paid(order): return Runtime.fail("NO_BUDGET")
 	var source: Dictionary = order.payload.source
-	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.payload.get("reserve_feature_id", "")))
+	var stock := SiteStockpiles.org_endpoint(lab.terrain, str(order.payload.get("reserve_feature_id", "")))
 	if stock.is_empty(): return Runtime.fail("NO_SOURCE")
 	return Runtime.ok("", {"source": Runtime.ok("", {"kind": "nation_order", "holder": "nation-order:" + JSON.stringify([_technology_site_id(), nation_id, order_id]),
 		"source_site_id": _technology_site_id(), "grantor": {"site_id": _technology_site_id(), "person_id": int(source.person_id)},
@@ -7771,7 +7771,7 @@ func _nation_military_material_source(nation_id: String, order_id: String, requi
 	if not checked.ok: return checked
 	if require_known and not Technology.scope_known(checked.nation.get("technology", {}), "N05"): return Runtime.fail("STALE_PROJECT")
 	var order: Dictionary = checked.order
-	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.feature_id))
+	var stock := SiteStockpiles.org_endpoint(lab.terrain, str(order.feature_id))
 	if stock.is_empty() or str(checked.feature.get("supply_mode", "")) != "local": return Runtime.fail("NO_SOURCE")
 	# source.spent proves the earlier REAL donor->localstock transfer. It is never
 	# copied into the new Scope payment or deducted from the donor a second time.

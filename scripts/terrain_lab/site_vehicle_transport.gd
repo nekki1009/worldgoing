@@ -3499,6 +3499,14 @@ func prepare_transfer(source_id: String, destination_id: String, resources: Dict
 			var guard: Dictionary = controller.person_actions.crowd_action_guard([int(identity.trim_prefix("person:"))])
 			if not guard.ok: return guard
 	var involves_feature := source_id.begins_with("feature:") or destination_id.begins_with("feature:")
+	# Trade plan §4.1: a family estate warehouse is loaded and unloaded only by family members (the requester and the
+	# executor alike).
+	for identity: String in [source_id, destination_id]:
+		if identity.begins_with("feature:"):
+			var estate_key := identity.trim_prefix("feature:")
+			var estate_executor := int(source_id.trim_prefix("person:")) if source_id.begins_with("person:") else (int(destination_id.trim_prefix("person:")) if destination_id.begins_with("person:") else requester_id)
+			if not Stockpiles.estate_access(lab.terrain, estate_key, requester_id) or not Stockpiles.estate_access(lab.terrain, estate_key, estate_executor):
+				return Runtime.fail("NO_AUTHORITY", "家產倉庫只有族人能存取")
 	var source := _stock(source_id, involves_feature)
 	var destination := _stock(destination_id, involves_feature)
 	if source.is_empty() or destination.is_empty(): return Runtime.fail("NO_TARGET")

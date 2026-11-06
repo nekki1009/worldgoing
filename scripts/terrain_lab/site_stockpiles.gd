@@ -54,6 +54,25 @@ static func set_local_supply(data: TerrainData, key: String, enabled: bool, fact
 	data.environment_revision += 1
 	return Runtime.ok("加工由本人實際卸入的現場物資供料" if enabled else "加工沿原營地供料")
 
+## The stock an organization (settlement or nation operation, procurement, treasury, research, food order) may bind or
+## draw: as stock_endpoint, except that a family estate warehouse is never an organization's source (§4.1, TR-22).
+static func org_endpoint(data: TerrainData, key: String) -> Dictionary:
+	return {} if family_estate(data, key) else stock_endpoint(data, key)
+
+## Trade plan §4.1: is warehouse `key` this Site's family estate?
+static func family_estate(data: TerrainData, key: String) -> bool:
+	return bool(storage(data, key).get("family_estate", false))
+
+## May `identity` load or unload family estate `key`? Only members of this Site's family (non-members and the stock of
+## other organizations never touch it). Any other warehouse: always.
+static func estate_access(data: TerrainData, key: String, identity: int) -> bool:
+	if not family_estate(data, key): return true
+	var family: Variant = data.site.get("family")
+	if not family is Dictionary: return false
+	for member: Variant in family.get("members", []):
+		if member is Dictionary and int(member.get("person_id", -1)) == identity and str(member.get("site_id", "")) == str(data.site.get("id", "")): return true
+	return false
+
 static func removal_guard(data: TerrainData, key: String) -> Dictionary:
 	var stock := storage(data, key)
 	if not stock.is_empty() and (Runtime.inventory_size(stock.cargo) != 0 or not stock.holder.item_ids.is_empty()):
@@ -77,7 +96,7 @@ static func validate(state: Dictionary) -> Dictionary:
 		if not state.features[key] is Dictionary: return Runtime.fail("CORRUPT_SAVE", "設施庫存引用格式")
 		var feature: Dictionary = state.features[key]
 		var stock: Variant = stockpiles[key]
-		if not eligible(feature) or str(feature.get("stage", "")) != "complete" or not stock is Dictionary or stock.size() != 3 + int(stock.has("nation_id")) \
+		if not eligible(feature) or str(feature.get("stage", "")) != "complete" or not stock is Dictionary or stock.size() != 3 + int(stock.has("nation_id")) + int(stock.has("family_estate")) \
 			or not Runtime._building_integer(stock.get("version"), 1, 1) or not stock.get("cargo") is Dictionary \
 			or not stock.get("holder") is Dictionary or stock.holder.size() != 4 \
 			or not stock.holder.get("holder") is String or stock.holder.holder != identity(key) \
@@ -87,6 +106,9 @@ static func validate(state: Dictionary) -> Dictionary:
 			return Runtime.fail("CORRUPT_SAVE", "設施庫存版本／原持物位置")
 		if stock.has("nation_id") and (not stock.nation_id is String or stock.nation_id.is_empty()):
 			return Runtime.fail("CORRUPT_SAVE", "公用國庫的明示國家引用")
+		# Trade plan §4.1 (Q5 A): a family estate warehouse, bound to this Site's family; never also a treasury.
+		if stock.has("family_estate") and (stock.family_estate != true or str(feature.get("kind", "")) != "warehouse" or stock.has("nation_id") or not state.get("family") is Dictionary):
+			return Runtime.fail("CORRUPT_SAVE", "家產倉庫引用")
 		for item: Variant in stock.cargo:
 			if not item is String or not Runtime.Env.ITEM_NAMES.has(item) or not Runtime._building_integer(stock.cargo[item], 0, 1000000):
 				return Runtime.fail("CORRUPT_SAVE", "設施庫存資源數量")

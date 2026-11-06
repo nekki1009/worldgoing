@@ -302,6 +302,7 @@ func bind_nation_treasury(requester_id: int, nation_id: String, feature_id: Stri
 	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_TARGET", "須為已建立職位的正式國家")
 	var resolved: Dictionary = nation_duty_resolve(nation, "nation.ransom", true)
 	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, nation.offices)
+	if Stockpiles.family_estate(lab.terrain, feature_id): return Runtime.fail("BUSY", "此倉是家產倉庫，不能綁國庫") # TR-22
 	var candidate: Dictionary = RansomData.bind_candidate(lab.terrain.site, nation_id, nation, feature_id)
 	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫綁定未通過，原狀未變")
 	nation_offices(nation) # Stores the complete seat list (one revision step) only after authority is proven.
@@ -1333,7 +1334,7 @@ func _original_stock_transport() -> Variant:
 func _procurement_destination(requester_id: int, feature_id: String) -> Dictionary:
 	var person: Dictionary = actions._person(requester_id)
 	var feature: Dictionary = lab.terrain.site.get("features", {}).get(feature_id, {})
-	var stock := Stockpiles.stock_endpoint(lab.terrain, feature_id)
+	var stock := Stockpiles.org_endpoint(lab.terrain, feature_id)
 	if person.is_empty() or feature.is_empty() or stock.is_empty() or str(feature.kind) != "warehouse" \
 		or not Runtime.feature_usable(feature) or int(stock.faction) != int(person.faction):
 		return Runtime.fail("NO_TARGET", "採購接收處須為已存在、可用、同管理方的原倉庫")
@@ -3631,7 +3632,7 @@ func prepare_funded_course_source(nation_id: String, order_id: String, original_
 		if receipt.target_id == "person:" + str(student_id): return Runtime.fail("NO_CHANGE")
 	var teacher: Dictionary = actions._person(teacher_id)
 	var student: Dictionary = actions._person(student_id)
-	var stock: Dictionary = Stockpiles.stock_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
+	var stock: Dictionary = Stockpiles.org_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
 	if teacher.is_empty() or student.is_empty() or stock.is_empty() or teacher.cell != stock.cell \
 		or int(teacher.faction) != int(stock.faction) or int(student.faction) != int(stock.faction) \
 		or absi(teacher.cell.x - student.cell.x) + absi(teacher.cell.y - student.cell.y) > 1 \
@@ -3663,7 +3664,7 @@ func validate_funded_course_source(source: Dictionary) -> Dictionary:
 	if not lesson.ok: return lesson
 	var teacher: Dictionary = actions._person(int(job.executor_id))
 	var student: Dictionary = actions._person(int(job.target_id))
-	var stock: Dictionary = Stockpiles.stock_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
+	var stock: Dictionary = Stockpiles.org_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
 	if teacher.is_empty() or student.is_empty() or stock.is_empty() or not is_same(teacher.body, source.teacher_body) \
 		or not is_same(student.body, source.student_body) or teacher.cell != stock.cell \
 		or int(teacher.faction) != int(stock.faction) or int(student.faction) != int(stock.faction) \

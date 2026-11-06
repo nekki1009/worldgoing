@@ -290,6 +290,9 @@ static func bind_trade_source(lab: Variant, requester: int, key: String, limits:
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
 	if str(feature.get("kind", "")) != "warehouse" or not feature_in_jurisdiction(data, feature) or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction):
 		return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
+	# TR-22: one facility serves one organization.
+	var bound_stock: Dictionary = data.site.get("stockpiles", {}).get(key, {})
+	if not limits.is_empty() and (bound_stock.has("nation_id") or bool(bound_stock.get("family_estate", false))): return Runtime.fail("BUSY", "此倉已綁給國庫或家產")
 	var sources: Dictionary = settlement.get("trade_sources", {})
 	if limits.is_empty():
 		sources.erase(key)
@@ -324,6 +327,34 @@ static func trade_quota_refusal(data: TerrainData, key: String, resources: Dicti
 		if amount > int(limit.per_trade): return "%s 超過單筆上限 %d" % [str(Runtime.Env.ITEM_NAMES.get(resource, resource)), int(limit.per_trade)]
 		if int(source.used.get(resource, 0)) + amount > int(limit.total): return "%s 超過累計上限" % str(Runtime.Env.ITEM_NAMES.get(resource, resource))
 	return ""
+
+## Trade plan §4.1 (TR-23): the family head registers a complete warehouse of his faction as the family estate. A
+## warehouse in the settlement's jurisdiction needs the settlement head's consent (given here when the family head is
+## that head himself); a warehouse bound to a treasury or to the settlement's trade cannot be an estate. Registering
+## does not move or take any goods.
+static func register_family_estate(lab: Variant, requester: int, key: String) -> Dictionary:
+	var data: TerrainData = lab.terrain
+	var family: Variant = data.site.get("family")
+	if not family is Dictionary or not family.has("offices"): return Runtime.fail("NO_TARGET", "此地沒有家族")
+	if requester != int(lab.controlled_person_id()) or int(SiteOffices.head_position(family.offices).get("holder", -1)) != requester:
+		return Runtime.fail("NO_AUTHORITY", "只有家主能登記家產")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if str(feature.get("kind", "")) != "warehouse" or str(feature.get("stage", "")) != "complete": return Runtime.fail("INVALID", "家產只能是一座完工的倉庫（住宅沒有庫存）")
+	var person: Dictionary = lab.site_controller.person_actions._person(requester, false)
+	if person.is_empty() or int(feature.get("owner_faction", -1)) != int(person.faction): return Runtime.fail("NO_AUTHORITY", "只能登記本陣營的倉庫")
+	var settlement := record(data)
+	if not settlement.is_empty() and feature_in_jurisdiction(data, feature):
+		if int(SiteOffices.head_position(settlement.offices).get("holder", -1)) != requester: return Runtime.fail("CONSENT_REQUIRED", "聚落管轄內的倉庫須聚落首長同意劃撥")
+		if settlement.get("trade_sources", {}).has(key): return Runtime.fail("BUSY", "此倉已綁給聚落交易")
+	for other: Variant in data.site.get("stockpiles", {}):
+		if str(other) != key and bool(data.site.stockpiles[other].get("family_estate", false)): return Runtime.fail("BUSY", "家族已有一座家產倉庫")
+	var opened: Dictionary = SiteStockpiles.ensure_storage(data, key, int(feature.owner_faction))
+	if not opened.ok: return opened
+	var stock: Dictionary = data.site.stockpiles[key]
+	if stock.has("nation_id"): return Runtime.fail("BUSY", "此倉已綁國庫")
+	stock["family_estate"] = true
+	data.environment_revision += 1
+	return Runtime.ok("已登記為家產倉庫；只有族人能存取")
 
 ## A committed settlement trade records its gross payout once.
 static func record_trade_payout(data: TerrainData, key: String, resources: Dictionary) -> void:
@@ -685,6 +716,10 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 	# other organizations' sources are untouched); open settlement offers end with them.
 	var sources: Dictionary = settlement.get("trade_sources", {})
 	for key: String in changed: sources.erase(key)
+	# §4.1: a family estate warehouse that changed hands is no longer the family's (its goods go with the building).
+	for key: String in changed:
+		var estate: Dictionary = data.site.get("stockpiles", {}).get(key, {})
+		if estate.has("family_estate"): estate.erase("family_estate")
 	if settlement.has("trade_sources") and sources.is_empty(): settlement.erase("trade_sources")
 	var trading: Variant = lab.get("site_controller")
 	if trading != null and trading.has_method("trade_drop_sources"): trading.trade_drop_sources(changed)

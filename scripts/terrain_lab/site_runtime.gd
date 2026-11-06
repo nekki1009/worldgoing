@@ -8476,7 +8476,7 @@ static func grant_settlement_operation_source(data: TerrainData, settlement_id: 
 			var camp: Dictionary = actions._ranged_craft_context(person)
 			if not camp.ok: return camp
 		else:
-			var endpoint := SiteStockpiles.stock_endpoint(data, source_feature_id)
+			var endpoint := SiteStockpiles.org_endpoint(data, source_feature_id)
 			if endpoint.is_empty() or endpoint.get("withdraw_only", true) or int(endpoint.get("faction", -1)) != int(person.faction) \
 				or absi(person.cell.x - endpoint.cell.x) + absi(person.cell.y - endpoint.cell.y) > 1 \
 				or not data.is_walkable(person.cell) or person.cell != endpoint.cell and not data.can_step(person.cell, endpoint.cell) \
@@ -8569,7 +8569,7 @@ static func request_settlement_processing_order(data: TerrainData, kind: String,
 		var camp: Dictionary = actions._ranged_craft_context(authorizer)
 		if not camp.ok: return camp
 	else:
-		var endpoint := SiteStockpiles.stock_endpoint(data, source_feature_id)
+		var endpoint := SiteStockpiles.org_endpoint(data, source_feature_id)
 		if endpoint.is_empty() or endpoint.get("withdraw_only", true) or int(endpoint.get("faction", -1)) != int(authorizer.faction) \
 			or absi(authorizer.cell.x - endpoint.cell.x) + absi(authorizer.cell.y - endpoint.cell.y) > 1 \
 			or not data.is_walkable(authorizer.cell) or authorizer.cell != endpoint.cell and not data.can_step(authorizer.cell, endpoint.cell) \
@@ -8796,7 +8796,7 @@ static func request_warehouse_food_order(data: TerrainData, warehouse_id: String
 		for previous: Dictionary in candidate.orders.values():
 			if previous.get("kind") == "food_order" and previous.get("payload", {}).get("project_id") == project_id: return fail("DUPLICATE")
 	elif TechnologyCatalog.get_node("S06").get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S06"): return fail("NO_TECHNOLOGY")
-	var stock: Dictionary = SiteStockpiles.stock_endpoint(data, warehouse_id)
+	var stock: Dictionary = SiteStockpiles.org_endpoint(data, warehouse_id)
 	if stock.is_empty(): return fail("NO_TARGET")
 	var initial := int(stock.cargo.get("grain", 0))
 	if project_id == 0 and initial >= 4: return fail("COMPLETE", "原倉庫未低於4糧；不自動補貨")
@@ -9403,7 +9403,7 @@ static func settlement_operation_material_source_candidate(data: TerrainData, se
 		or not Technology.material_stack(payload.cap) or not Technology.material_stack(payload.spent): return fail("STALE_SOURCE")
 	var source_key := str(payload.source.holder).trim_prefix("feature:") if str(payload.source.holder).begins_with("feature:") else ""
 	var endpoint := {"holder": data.site.get("depot_items", {}), "cargo": data.site.get("inventory", {}), "faction": int(refs.settlement.get("owner_faction", -1)), "withdraw_only": false} \
-		if payload.source.holder == "depot" else SiteStockpiles.stock_endpoint(data, source_key)
+		if payload.source.holder == "depot" else SiteStockpiles.org_endpoint(data, source_key)
 	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or not _item_holder_shape(endpoint.get("holder", {})) \
 		or endpoint.holder.holder != payload.source.holder or not endpoint.get("cargo") is Dictionary \
 		or int(endpoint.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
@@ -11110,7 +11110,7 @@ static func _technology_material_source(data: TerrainData, selector: Dictionary,
 		or not is_same(refs.holder, source.physical_holder) or not is_same(refs.cargo, source.physical_cargo): return fail("STALE_SOURCE")
 	var reserve_key := str(order.get("feature_id", "")) if str(ref.order_id).begins_with("production_") else str(order.get("payload", {}).get("reserve_feature_id", ""))
 	if str(ref.order_id).begins_with("production_") and (binding != "workshop_bow" or not Technology.material_equal(cost, RANGED_RECIPES.bow.cost)): return fail("SPEC_MISMATCH")
-	var endpoint: Dictionary = SiteStockpiles.stock_endpoint(data, reserve_key)
+	var endpoint: Dictionary = SiteStockpiles.org_endpoint(data, reserve_key)
 	if endpoint.is_empty() or not is_same(endpoint.holder, source.physical_holder) or not is_same(endpoint.cargo, source.physical_cargo) \
 		or not _item_holder_shape(source.physical_holder) or str(source.physical_holder.holder) != str(endpoint.holder.holder) \
 		or int(source.physical_holder.version) != int(source.holder_version): return fail("STALE_SOURCE")
@@ -12023,7 +12023,7 @@ static func settlement_metal_material_source_candidate(data: TerrainData, settle
 	var p: Dictionary = ready.order.payload
 	var expected := "feature:" + (str(p.smithy_id) if str(binding) == "tools" or p.carry_receipts.size() == 2 else str(p.smelter_id))
 	if p.source.status != "granted" or p.source.holder != expected: return fail("NO_BUDGET", "搬入鍛坊後須在原鍛坊重新明示來源；累計上限與支出保留")
-	var endpoint := SiteStockpiles.stock_endpoint(data, str(p.source.holder).trim_prefix("feature:"))
+	var endpoint := SiteStockpiles.org_endpoint(data, str(p.source.holder).trim_prefix("feature:"))
 	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or endpoint.holder.get("holder") != p.source.holder or not _item_holder_shape(endpoint.holder) \
 		or not endpoint.get("cargo") is Dictionary or int(endpoint.get("faction", -1)) != int(ready.settlement.get("owner_faction", -2)) \
 		or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
@@ -12221,7 +12221,7 @@ static func settlement_food_material_source_candidate(data: TerrainData, settlem
 static func _settlement_food_warehouse(data: TerrainData, refs: Dictionary) -> Dictionary:
 	var feature: Dictionary = data.site.features.get(str(refs.order.payload.warehouse_id), {})
 	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
-	var stock: Dictionary = SiteStockpiles.stock_endpoint(data, str(refs.order.payload.warehouse_id))
+	var stock: Dictionary = SiteStockpiles.org_endpoint(data, str(refs.order.payload.warehouse_id))
 	if feature.get("kind") != "warehouse" or stock.is_empty() or stock.get("withdraw_only", true) \
 		or int(stock.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) \
 		or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_TARGET")
@@ -13726,7 +13726,7 @@ static func settlement_ship_material_source_candidate(data: TerrainData, settlem
 	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order) or not binding.is_empty() and binding != "ferry_build": return fail("NO_TARGET")
 	var p: Dictionary = refs.order.payload
 	if refs.order.status not in ["prepared", "active", "suspended"] or p.source.status != "granted" or not settlement_ship_delivery_complete(p) or not p.spent.is_empty(): return fail("NO_BUDGET")
-	var endpoint := SiteStockpiles.stock_endpoint(data, str(p.feature_id))
+	var endpoint := SiteStockpiles.org_endpoint(data, str(p.feature_id))
 	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or not _item_holder_shape(endpoint.get("holder", {})) or endpoint.holder.holder != p.source.holder \
 		or int(endpoint.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
 	return ok("", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), settlement_id, order_id]), "source_site_id": str(data.site.id),
