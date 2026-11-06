@@ -635,7 +635,7 @@ const _NODES := [
 	},
 	{
 		"id": "S13", "name": "甲冑作坊", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F14","F04"],"any":[],"conditions":["settlement_level_3","active_settlement_jurisdiction","usable_tannery_and_smithy","learned_F14_and_F04_operators"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
