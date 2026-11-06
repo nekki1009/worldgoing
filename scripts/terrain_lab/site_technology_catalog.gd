@@ -675,7 +675,7 @@ const _NODES := [
 	},
 	{
 		"id": "N02", "name": "戶籍與勞役登記", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["original_nation","active_settlement_jurisdiction","consenting_original_labor_person"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -863,7 +863,7 @@ const _NODES := [
 	},
 	{
 		"id": "N11", "name": "軍器監", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N04"],"any":["S11","S13"],"conditions":["original_nation_and_arsenal_duty"]},
 		"research": {"version": 1, "routes": [
 			{"id": "siege", "requires_all": ["S11"], "phases": [
