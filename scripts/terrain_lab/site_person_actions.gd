@@ -4568,7 +4568,7 @@ func begin_nation_administration(requester_id: int, nation_id: String, order_id:
 	# Research institutions (Nekki 11/07, 4a): once the 考工院 has prepared this project, the
 	# administrative phase of N02/N10 is drafted there and needs half its original 300 s.
 	var seconds := 300.0
-	if not token.is_empty() and binding in INSTITUTION_DRAFTED_BINDINGS and Technology.active_project(checked.nation.technology).get("institution_halved") == true: seconds = 150.0
+	if not token.is_empty() and binding in INSTITUTION_HALVED_ADMIN_BINDINGS and Technology.active_project(checked.nation.technology).get("institution_halved") == true: seconds = 150.0
 	var job := _new_job(executor, "nation_administration", 0)
 	job.merge({"duration": seconds, "terrain": lab.terrain, "site_state": lab.terrain.site, "nation_id": nation_id, "nation_order_id": order_id,
 		"nation_ref": checked.nation, "nation_order_ref": checked.order, "executor_body": executor.body, "nation_binding": binding,
@@ -4649,6 +4649,8 @@ func nation_scope_receipt_candidate(token: Dictionary, event: Dictionary, paymen
 		"person_candidate": {}, "complete": candidate.complete, "site_state": lab.terrain.site})
 
 const INSTITUTION_DRAFTED_BINDINGS := ["labor_register", "mandate"]
+## 4b: single-act nation phases (N03 aid, N09 tax) also take half once the 考工院 prepared the project.
+const INSTITUTION_HALVED_ADMIN_BINDINGS := ["labor_register", "mandate", "aid_order", "tax"]
 
 func _nation_receipt_projection(event: Dictionary) -> Dictionary:
 	var receipt := {"id": event.get("id"), "site_id": event.get("site_id"), "target_id": event.get("target_id"), "operator_id": event.get("operator_id"),
@@ -6683,7 +6685,9 @@ func begin_nation_original_administration(requester_id: int, nation_id: String, 
 
 func _nation_original_administration_job(person: Dictionary, nation: Dictionary, original: Dictionary, kind: String, key: String, token: Dictionary, expected: Dictionary) -> Dictionary:
 	var job := _new_job(person, "nation_administration", 0)
-	job.merge({"duration": 300.0, "terrain": lab.terrain, "site_state": lab.terrain.site, "executor_body": person.body,
+	# 4b: the N01 procurement check takes half once the 考工院 prepared this project.
+	var seconds := 150.0 if kind == "procurement" and Technology.active_project(nation.get("technology", {})).get("institution_halved") == true else 300.0
+	job.merge({"duration": seconds, "terrain": lab.terrain, "site_state": lab.terrain.site, "executor_body": person.body,
 		"nation_id": str(token.scope_id), "nation_order_id": key, "nation_original_kind": kind, "nation_ref": nation,
 		"nation_order_ref": original, "nation_original_expected": expected.duplicate(true), "nation_binding": str(token.binding),
 		"nation_target": str(token.target_id), "nation_items": [], "nation_token": token,
@@ -8088,7 +8092,8 @@ func _technology_scope_consent_candidate(person: Dictionary, purpose: String, re
 func _commit_nation_original_administration(job: Dictionary) -> Dictionary:
 	var checked := _nation_original_administration_context(job)
 	if not checked.ok: return checked
-	if float(job.elapsed) + 0.00000001 < 300.0: return Runtime.fail("INCOMPLETE")
+	if float(job.duration) not in [300.0, 150.0] or float(job.duration) == 150.0 and str(job.nation_original_kind) != "procurement": return Runtime.fail("INVALID_WORK")
+	if float(job.elapsed) + 0.00000001 < float(job.duration): return Runtime.fail("INCOMPLETE")
 	var phase := nation_scope_receipt_candidate(job.nation_token, _nation_administration_event(job))
 	if not phase.ok: return phase
 	# All original operator/source/product/Scope checks precede this tail.
