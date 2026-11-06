@@ -113,7 +113,8 @@ func _earned_cold(actual_lab: TerrainLab, nation_id: String, technology_id: Stri
 	var source_fingerprint: String = actual_lab.terrain.fingerprint()
 	var path: String = "user://nation_"+label+"_first_earned_"+str(Time.get_ticks_usec())+".json"
 	controller.save_path = path
-	assert(controller.save_to(path).ok, "Original strict Store saves completed actual source, not a minimal/erased pin")
+	var saved: Dictionary = controller.save_to(path)
+	assert(saved.ok, "Original strict Store saves completed actual source, not a minimal/erased pin: " + str(saved))
 	var read: Dictionary = SiteStore.load_site(path)
 	assert(read.ok, "True original generated source/strict technology/operations/ship cold reader: "+str(read))
 	assert(JSON.stringify(read.data.site.equipment_nations[nation_id], "", true, true) == before, "True cold read keeps exact accepted owner history and knowledge")

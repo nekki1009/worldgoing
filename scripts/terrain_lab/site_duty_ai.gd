@@ -1043,27 +1043,30 @@ static func technology_work_consent(team: TerrainArmy, person_id: int, purpose: 
 	var decider := int(resolved.decider)
 	if decider != controlled_id and not bool(team.team_offices().duty_ai):
 		return SiteRuntime.fail("DUTY_AI_OFF")
-	if bool(team.data.site.get("paused", false)) or team.combat_order != TerrainArmy.CombatOrder.HOLD \
-		or team.moving_member_count() > 0 or team.get_active_move_plan() != null \
-		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed() \
-		or team.has_ship_journey() or team._team_ship_activity():
-		return SiteRuntime.fail("BUSY")
 	var n08_driver := false
+	var n12_fleet := false
 	if team.vehicle_transport != null and team.vehicle_transport.lab != null:
 		var original_actions: Variant = team.vehicle_transport.lab.site_controller.person_actions
 		if original_actions.has_method("_nation_n08_driver_context"):
 			n08_driver = original_actions._nation_n08_driver_context(person_id, purpose).get("ok", false) == true
+		if original_actions.has_method("nation_n12_fleet_executor"):
+			n12_fleet = bool(original_actions.nation_n12_fleet_executor(person_id, purpose))
+	if bool(team.data.site.get("paused", false)) or team.combat_order != TerrainArmy.CombatOrder.HOLD \
+		or team.moving_member_count() > 0 or team.get_active_move_plan() != null \
+		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed() \
+		or team.has_ship_journey() or team._team_ship_activity() and not n12_fleet:
+		return SiteRuntime.fail("BUSY")
 	var supply: Dictionary = team.data.site.get("team_supply", {}).get(str(team.team_id), {})
 	if bool(supply.get("training_order", false)): return SiteRuntime.fail("BUSY")
-	if team.person_busy_query.is_valid() and bool(team.person_busy_query.call(person_id)):
+	if team.person_busy_query.is_valid() and bool(team.person_busy_query.call(person_id)) and not n12_fleet: # The N12 executor's helm is the research work.
 		return SiteRuntime.fail("BUSY")
 	if index != TerrainArmy.PLAYER_MEMBER:
-		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver or not team.combat_units[index].get("work_task", {}).is_empty() \
+		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver and not n12_fleet or not team.combat_units[index].get("work_task", {}).is_empty() \
 			or team.moving_to[index] != TerrainArmy.INVALID_CELL or team._combat_action_blocks_step(index) \
-			or team._ship_embarked(index) or team._siege_crew(index) \
+			or team._ship_embarked(index) and not n12_fleet or team._siege_crew(index) \
 			or team._unit_rescues.has(index) or team.patient_has_rescuer(index):
 			return SiteRuntime.fail("BUSY")
-	if team.vehicle_transport != null and team.vehicle_transport.is_operator(person_id) and not n08_driver:
+	if team.vehicle_transport != null and team.vehicle_transport.is_operator(person_id) and not n08_driver and not n12_fleet:
 		return SiteRuntime.fail("BUSY")
 	return SiteRuntime.ok("", {"consent": {"site_id": str(team.data.site.id), "team_id": int(team.team_id),
 		"person_id": person_id, "purpose": purpose, "decider_id": decider,

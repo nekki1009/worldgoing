@@ -2924,17 +2924,18 @@ func _technology_consent_valid(identity: int, consents: Array, project_purpose: 
 	var team: Variant = _technology_team(person)
 	if team == null: return true
 	var n08_driver: bool = _nation_n08_driver_context(identity, project_purpose).get("ok", false) == true
+	var n12_fleet: bool = nation_n12_fleet_executor(identity, project_purpose)
 	if team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() > 0 or team.get_active_move_plan() != null or team.is_sustain_routed() \
-		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.has_ship_journey() or team._team_ship_activity(): return false
+		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.has_ship_journey() or team._team_ship_activity() and not n12_fleet: return false
 	var index: int = team.index_for_identity(identity)
 	if (index < 0 and index != TerrainArmy.PLAYER_MEMBER) or not team._member_can_serve(index): return false
 	var supply: Dictionary = team.data.site.get("team_supply", {}).get(str(team.team_id), {})
 	if bool(supply.get("training_order", false)): return false
 	if index != TerrainArmy.PLAYER_MEMBER:
-		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver or not team.combat_units[index].get("work_task", {}).is_empty() and not _technology_matching_original_task(person, bound_token) and not _technology_matching_public_task(person, bound_order) and not _technology_matching_settlement_task(person, project_purpose) \
+		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver and not n12_fleet or not team.combat_units[index].get("work_task", {}).is_empty() and not _technology_matching_original_task(person, bound_token) and not _technology_matching_public_task(person, bound_order) and not _technology_matching_settlement_task(person, project_purpose) \
 			or team.moving_to[index] != TerrainArmy.INVALID_CELL or team._combat_action_blocks_step(index) \
-			or team._ship_embarked(index) or team._siege_crew(index) or team._unit_rescues.has(index) or team.patient_has_rescuer(index): return false
-	if team.vehicle_transport != null and team.vehicle_transport.is_operator(identity) and not n08_driver: return false
+			or team._ship_embarked(index) and not n12_fleet or team._siege_crew(index) or team._unit_rescues.has(index) or team.patient_has_rescuer(index): return false
+	if team.vehicle_transport != null and team.vehicle_transport.is_operator(identity) and not n08_driver and not n12_fleet: return false
 	if (int(team.duty_resolve_readonly("team.work").get("decider", -1)) if read_only else team.duty_decider("team.work")) <= 0: return false
 	for consent: Dictionary in consents:
 		if int(consent.person_id) == identity and int(consent.team_id) == int(team.team_id) and str(consent.site_id) == _technology_site_id() \
@@ -8492,6 +8493,15 @@ func prepare_nation_route_load_phase(nation_id: String, order_id: String, origin
 
 ## Research work-consent still comes from the original team.work owner.
 ## Only the exact current N08 project/order may use its actual wagon operator.
+
+## N12 水師編制 is researched by the named executor ordering the original ships, so that one
+## person may take the work while embarked or at the helm (Nekki 11/07, option C). Nothing else
+## about ships is relaxed: journeys, combat, movement and other people stay as before.
+func nation_n12_fleet_executor(identity: int, purpose: String) -> bool:
+	for nation_id: String in lab.terrain.site.get("equipment_nations", {}):
+		var project := Technology.active_project(lab.terrain.site.equipment_nations[nation_id].get("technology", {}))
+		if project.get("tech_id") == "N12" and project.get("purpose") == purpose and int(project.get("executor", {}).get("person_id", -1)) == identity: return true
+	return false
 
 func _nation_n08_driver_context(identity: int, purpose: String) -> Dictionary:
 	if lab.site_controller == null or lab.site_controller.region_slot == null: return Runtime.fail("NO_REGION_SLOT")
