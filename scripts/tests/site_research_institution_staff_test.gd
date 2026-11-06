@@ -5,6 +5,7 @@ extends SceneTree
 
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Institutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
+const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 
 var checks := 0
 
@@ -31,7 +32,7 @@ func _initialize() -> void:
 	data.site.inventory["grain"] = 3
 	data.site["minute"] = 0
 	data.site["family"] = {"family_id": "fam1", "technology": {"version": 2, "known": [], "holder_site_id": str(data.site.id), "epoch": 1, "next_project": 2, "active": 1,
-		"projects": [{"id": 1, "epoch": 1, "tech_id": "F01", "closed": false}]}}
+		"projects": [{"id": 1, "epoch": 1, "tech_id": "F03", "closed": false, "rules_version": 2}]}}
 	data.site.features["7"] = {"kind": "craft_room", "stage": "complete", "entrance": data.index(Vector2i(10, 10)), "cells": [data.index(Vector2i(10, 9))]}
 	var actions := FakeActions.new()
 	actions.people = {11: {"person_id": 11, "cell": Vector2i(10, 11)}, 12: {"person_id": 12, "cell": Vector2i(10, 11)}}
@@ -53,6 +54,8 @@ func _initialize() -> void:
 	actions.busy[11] = false
 	Institutions.advance(data, actions, 79200.0)
 	check(Institutions.prepared(data, "family", "fam1", project), "one researcher-day reaches the halving threshold")
+	check(project.get("institution_halved") == true, "crossing the threshold marks the live project halved for good")
+	check(Technology.phase_repeat(project, {"repeat": 3}) == 1 and Technology.phase_repeat(project, {"repeat": 1}) == 1 and Technology.phase_repeat({}, {"repeat": 3}) == 3, "halving rounds down, keeps at least one real trial, and only applies to marked projects")
 	data.site.inventory["grain"] = 0
 	data.site["minute"] = Institutions.DAY_MINUTES
 	var before := Institutions.preparation(data, "family", "fam1", project)

@@ -149,3 +149,7 @@ static func advance(data: TerrainData, actions: Variant, seconds: float) -> void
 			var cell: Vector2i = person.cell
 			if absi(cell.x - entrance.x) + absi(cell.y - entrance.y) > 1: continue
 			record.preparation[ref] = float(record.preparation.get(ref, 0.0)) + seconds
+		# Crossing the threshold marks the live project for good (a later loss of the institution
+		# never re-lengthens a trial already halved).
+		if project.get("institution_halved") != true and prepared(data, str(owner.scope), str(owner.scope_id), project) and int(project.get("rules_version", 0)) == 2:
+			project["institution_halved"] = true

@@ -7951,7 +7951,7 @@ static func technology_remaining_work(data: TerrainData, project: Dictionary, re
 		var count := 0
 		for receipt: Variant in project.get("receipts", []):
 			if receipt is Dictionary and str(receipt.get("phase_id", "")) == str(phase.id) and Technology.same_person_ref({"site_id": str(receipt.get("site_id", "")), "person_id": int(receipt.get("person_id", 0))}, reference, links): count += 1
-		var left := maxi(0, int(phase.repeat) - count)
+		var left := maxi(0, Technology.phase_repeat(project, phase) - count)
 		remaining += float(phase.seconds) * left
 		if left > 0: outstanding[str(phase.id)] = phase
 	var pending_phase := ""

@@ -364,6 +364,13 @@ static func scope_known(raw: Variant, tech_id: String) -> bool:
 	if scope == "family" and valid_family_tech(raw): return not is_holder_reference(raw) and raw.known.has(tech_id)
 	return valid_scope_record(raw, scope) and raw.known.has(tech_id)
 
+## Research institutions (Nekki 11/07): once a project holds one researcher-day of preparation it is
+## marked institution_halved for good, and each phase needs half its trials (rounded down, at
+## least 1). Durations and materials per trial are unchanged.
+static func phase_repeat(project: Dictionary, phase: Dictionary) -> int:
+	var repeat := int(phase.repeat)
+	return maxi(1, repeat / 2) if project.get("institution_halved") == true else repeat
+
 static func scope_next_phase(project: Dictionary, reference: Dictionary, links: Array = []) -> Dictionary:
 	var route := scope_route(str(project.get("tech_id", "")), str(project.get("route_id", "")))
 	var personal := str(Catalog.get_node(str(project.get("tech_id", ""))).get("scope", "")) == "family"
@@ -371,8 +378,10 @@ static func scope_next_phase(project: Dictionary, reference: Dictionary, links: 
 		var count := 0
 		for receipt: Dictionary in project.get("receipts", []):
 			if receipt.get("phase_id") == phase.id and (not personal or same_person_ref({"site_id": receipt.site_id, "person_id": int(receipt.person_id)}, reference, links)): count += 1
-		if count < int(phase.repeat):
+		var required := phase_repeat(project, phase)
+		if count < required:
 			var result: Dictionary = phase.duplicate(true)
+			result["repeat"] = required
 			result["occurrence"] = count + 1
 			return result
 	return {}
@@ -471,7 +480,11 @@ static func valid_scope_record(raw: Variant, scope: String) -> bool:
 		if scope == "family" and project is Dictionary and project.get("rules_version") == 1 and project.get("tech_id") == "F07":
 			if not valid_project(project, raw.holder_site_id, links): return false
 		else:
-			if not keys(project, ["id", "purpose", "tech_id", "rules_version", "closed", "executor", "next_attempt", "receipts", "budget", "consents", "route_id"]) \
+			var project_fields: Array = ["id", "purpose", "tech_id", "rules_version", "closed", "executor", "next_attempt", "receipts", "budget", "consents", "route_id"]
+			if project is Dictionary and project.has("institution_halved"):
+				if project.institution_halved != true: return false
+				project_fields.append("institution_halved")
+			if not keys(project, project_fields) \
 				or not integer(project.id, 1, int(raw.next_project) - 1) or Catalog.get_node(str(project.tech_id)).get("scope", "") != scope or not integer(project.rules_version, 2, 2) \
 				or not project.purpose is String or not project.closed is bool or not project.executor is Dictionary \
 				or not integer(project.next_attempt, 1) or not project.receipts is Array or not project.consents is Array \
