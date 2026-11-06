@@ -215,7 +215,7 @@ func _run() -> void:
 	var death_stats_before: PackedFloat64Array = site.crowd.stats()
 	started_game = _time()
 	_step()
-	if not _check(int(guard_entry.life_checkpoint[str(captive_id)]) == 1 and float(cold_captive.hp) > HUNGER_DEATH_HP and float(cold_captive.ko) == 0.0, "real crowd sustain checkpoint reads foreign native low HP and KO through original cold row"): return
+	if not _check(int(guard_entry.life_checkpoint[str(captive_id)]) == 1 and float(cold_captive.hp) > HUNGER_DEATH_HP and float(cold_captive.ko) == 0.0, "real crowd sustain checkpoint reads foreign native low HP and KO through original cold row", {"checkpoint": guard_entry.get("life_checkpoint", {}), "cold_hp": cold_captive.hp, "cold_ko": cold_captive.ko, "native": _hot(captive_id)}): return
 	for entry: Dictionary in cases:
 		var hp := float(_hot(int(entry.person)).hp)
 		if not _check(hp > 0.0 and hp < HUNGER_DEATH_HP and not controller._pending_deaths.has(int(entry.person)), "first common step crosses 48 hours with injury before death", {"case": entry.kind, "hp": hp, "game_seconds": _time() - started_game}): return
