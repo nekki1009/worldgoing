@@ -368,6 +368,21 @@ func _settlement_ordinary_ballista(lab: TerrainLab, team: TerrainArmy, control: 
 	_check(false, "Natural Settlement source supplies a genuine ordinary paid ballista fixture")
 	return {}
 
+## Move the Actor and its team off `cells` (fixture station, not travel proof).
+func _settlement_clear_footprint(f: Dictionary, cells: Array[int]) -> void:
+	var data: TerrainData = f.data
+	var actor_cell: Vector2i = f.lab.character.terrain_cell
+	if cells.has(data.index(actor_cell)):
+		for radius: int in range(1, 6):
+			var moved := false
+			for y: int in range(-radius, radius + 1):
+				for x: int in range(-radius, radius + 1):
+					var cell: Vector2i = actor_cell + Vector2i(x, y)
+					if moved or absi(x) + absi(y) != radius or not data.contains(cell) or not data.is_walkable(cell) or cells.has(data.index(cell)) or int(data.feature_at[data.index(cell)]) != 0: continue
+					moved = f.lab.character.place(cell, true)
+			if moved: break
+	_settlement_team_with_actor(f, cells)
+
 func _settlement_natural_geometry(f: Dictionary, binding: String) -> Dictionary:
 	var data: TerrainData = f.data
 	var kind = "house" if binding == "house_build" else "stone_wall" if binding == "wall_build" else "wall_stairs"
@@ -393,11 +408,12 @@ func _settlement_natural_geometry(f: Dictionary, binding: String) -> Dictionary:
 				if not local: break
 				local = local and int(data.height_levels[data.index(next)]) == int(data.height_levels[index]) and int(data.foundation[data.index(next)]) >= 35
 			if not local: continue
+		if binding == "stairs_build": _settlement_clear_footprint(f, cells) # The wall builders still stand on the stair cell.
 		var preview = Runtime.preview_build(data, kind, cells, f.controller.reserves_cell, options, {}, {"token": _settlement_token(f, target)})
 		if not preview.ok or not preview.get("clearing", []).is_empty(): continue
 		_check(f.lab.character.place(data.cell_from_index(int(preview.entrance)), true), "Actual Actor reaches this pure original natural geometry station")
 		_settlement_team_with_actor(f, cells) # the team stands clear of the footprint it is about to build
 		if binding == "wall_build": f.keys.wall_anchor = anchor
 		return {"target": target, "work_target": {"cells": cells, "options": options}}
-	_check(false, "Original natural scan finds the legal current Settlement trial geometry")
+	_check(false, "Original natural scan finds the legal current Settlement trial geometry: binding=" + binding)
 	return {}

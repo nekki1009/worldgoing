@@ -556,7 +556,7 @@ const _NODES := [
 	},
 	{
 		"id": "S09", "name": "工程標準化", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F10"],"any":[],"conditions":["active_settlement_jurisdiction","legal_building_site"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -575,7 +575,7 @@ const _NODES := [
 	},
 	{
 		"id": "S10", "name": "防禦工務", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["S09"],"any":[],"conditions":["active_settlement_jurisdiction","legal_wall_and_stair_geometry"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
