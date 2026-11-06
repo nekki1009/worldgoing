@@ -134,9 +134,31 @@ func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
 
 ## The organization side of a trade by its holder: a settlement warehouse or a team's stopped cart / wagon.
 func source_party(holder: String) -> Dictionary:
+	if holder.begins_with("feature:") and Stockpiles.family_estate(_lab().terrain, holder.trim_prefix("feature:")): return family_party(holder.trim_prefix("feature:"))
 	if holder.begins_with("feature:"): return settlement_party(holder.trim_prefix("feature:"))
 	if holder.begins_with("vehicle:"): return vehicle_party(holder.trim_prefix("vehicle:"))
 	return Runtime.fail("UNSUPPORTED")
+
+## T2 §4.1: the family estate trades through whoever SiteOffices resolves for `family.estate` (管家; the family head
+## acts when it is vacant), a family member standing at the estate's door; the family values with its local members
+## × 14 days of food.
+func family_party(key: String) -> Dictionary:
+	var data: TerrainData = _lab().terrain
+	var family: Variant = data.site.get("family")
+	if not family is Dictionary or not family.has("offices") or not Stockpiles.family_estate(data, key): return Runtime.fail("NO_TARGET", "不是家產倉庫")
+	var endpoint: Dictionary = Stockpiles.stock_endpoint(data, key)
+	if endpoint.is_empty(): return Runtime.fail("NO_TARGET", "家產倉庫尚無庫存")
+	SiteOffices.ensure_catalog(family.offices, "family")
+	var head := int(SiteOffices.head_position(family.offices).get("holder", 0))
+	var resolved: Dictionary = SiteOffices.resolve(family.offices, "family.estate", head,
+		func(identity: int) -> bool: return Stockpiles.estate_access(data, key, identity) and _able(_person(identity)), true)
+	if not resolved.ok: return Runtime.fail(str(resolved.code), str(resolved.get("message", "職責暫停")))
+	if not Stockpiles.estate_access(data, key, int(resolved.decider)): return Runtime.fail("NO_AUTHORITY", "管家須是族人")
+	var members := 0
+	for member: Variant in family.get("members", []):
+		if member is Dictionary and str(member.get("site_id", "")) == str(data.site.get("id", "")): members += 1
+	return Runtime.ok("", {"decider": int(resolved.decider), "position_name": str(resolved.position_name), "cell": endpoint.cell,
+		"holder": Stockpiles.identity(key), "cargo": endpoint.cargo, "members": members})
 
 ## T2 TR-27: a team's stopped cart or wagon trades through the team's current commander standing beside it; the
 ## team values with its members × 3 days of food (the personal target per member).
@@ -194,7 +216,8 @@ func _legal(player: int, npc_holder: String) -> Callable:
 	var data: TerrainData = _lab().terrain
 	var a_ref := _ref(player)
 	var b_ref := _holder_ref(npc_holder)
-	var source := npc_holder.trim_prefix("feature:") if npc_holder.begins_with("feature:") else ""
+	# Only a settlement warehouse has trade limits (a family estate has none).
+	var source := npc_holder.trim_prefix("feature:") if npc_holder.begins_with("feature:") and not Stockpiles.family_estate(data, npc_holder.trim_prefix("feature:")) else ""
 	# receive = what the NPC receives (the player gives), give = what the NPC gives.
 	return func(receive: Dictionary, give: Dictionary) -> bool:
 		if not source.is_empty() and not Settlement.trade_quota_refusal(data, source, give.resources).is_empty(): return false
@@ -243,7 +266,7 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 	if not pair.ok: return pair
 	if Trade._unit_count(player_gives) == 0 or Trade._unit_count(npc_gives) == 0: return Runtime.fail("EMPTY", "雙方都要有付出的東西")
 	var holder := npc_holder if not npc_holder.is_empty() else _holder_id(npc)
-	if npc_holder.begins_with("feature:"):
+	if npc_holder.begins_with("feature:") and not Stockpiles.family_estate(_lab().terrain, npc_holder.trim_prefix("feature:")):
 		var quota := Settlement.trade_quota_refusal(_lab().terrain, npc_holder.trim_prefix("feature:"), npc_gives.resources)
 		if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
 	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, _ref(player), _holder_ref(holder), player_gives, npc_gives, true)
@@ -256,6 +279,8 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 		terms["stock"] = Runtime.trade_endpoint(_lab().terrain, holder).cargo
 		if npc_holder.begins_with("vehicle:"):
 			terms["targets"] = {"food": float(int(vehicle_party(npc_holder.trim_prefix("vehicle:")).get("members", 1)) * FOOD_TARGET_DAYS)}
+		elif Stockpiles.family_estate(_lab().terrain, npc_holder.trim_prefix("feature:")):
+			terms["targets"] = {"food": float(int(family_party(npc_holder.trim_prefix("feature:")).get("members", 1)) * SETTLEMENT_FOOD_DAYS)}
 		else:
 			terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
 	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.a.cargo, _legal(player, holder),
@@ -355,6 +380,7 @@ func advance() -> Array[Dictionary]:
 		job["pending"] = float(job.elapsed) >= float(job.required)
 		if not bool(job.pending): continue
 		var source := str(offer.b.holder).trim_prefix("feature:") if str(offer.b.holder).begins_with("feature:") else ""
+		if Stockpiles.family_estate(_lab().terrain, source): source = "" # an estate has no trade limits
 		if not source.is_empty():
 			var quota := Settlement.trade_quota_refusal(_lab().terrain, source, offer.b_gives.resources)
 			if not quota.is_empty():

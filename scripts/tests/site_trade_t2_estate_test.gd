@@ -52,6 +52,32 @@ func _run() -> void:
 	var loaded: Dictionary = controller.vehicles.transfer("feature:" + warehouse, "person:%d" % player, {"grain": 2}, [], int(stock.holder.version), int(person.holder.version), player, false)
 	if not loaded.ok or int(stock.cargo.grain) != 8: return _fail_now("a family member loads from the estate: " + str(loaded))
 	print("SITE_TRADE_T2_ESTATE OK 4: a family member loads from the estate")
-	print("SITE_TRADE_T2_ESTATE_PASS: registration, schema, member-only access")
+	# Trading the estate: the family passes to the NPC (head, and 管家 by acting); the player becomes an outsider.
+	var family: Dictionary = data.site.family
+	family.members = [{"site_id": site_id, "person_id": npc, "path": "", "label": "estate heir", "age_years": -1}]
+	SiteOffices.head_position(family.offices)["holder"] = npc
+	var stand := Vector2i(-1, -1)
+	for offset: Vector2i in [Vector2i.ZERO, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP]:
+		if stand == Vector2i(-1, -1) and lab.npc.place(entrance + offset, true): stand = entrance + offset
+	var beside := false
+	for offset: Vector2i in [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i(1, 1), Vector2i(-1, 1)]:
+		if not beside and stand + offset != entrance and lab.character.place(stand + offset, true): beside = true
+	if stand == Vector2i(-1, -1) or not beside: return _fail_now("the 管家 stands at the estate door and the player beside him")
+	var party: Dictionary = controller._trade().source_party("feature:" + warehouse)
+	if not party.ok or int(party.decider) != npc or not data.site.family.offices.duties.has("family.estate"): return _fail_now("the head acts as the vacant 管家: " + str(party))
+	if controller.trade_source_of(npc) != "feature:" + warehouse: return _fail_now("the dialog finds the estate its 管家 stands at")
+	data.site.manual.cargo.clear()
+	data.site.manual.cargo["iron"] = 1
+	var food_floor: Dictionary = controller.trade_propose_settlement(npc, warehouse, {"iron": 1}, {"grain": 2})
+	if not food_floor.ok or str(food_floor.decision) != "REJECT": return _fail_now("8 grain against a 14-day target keeps its floor: " + str(food_floor))
+	stock.cargo["grain"] = 30
+	var offer: Dictionary = controller.trade_propose_settlement(npc, warehouse, {"iron": 1}, {"grain": 2})
+	if not offer.ok or str(offer.decision) != "ACCEPT": return _fail_now("the family accepts 1 iron for 2 grain: " + str(offer))
+	if not controller.trade_accept(str(offer.offer_id)).ok: return _fail_now("the estate delivery starts")
+	lab.fire_action_cursor += 3.0
+	var results: Array[Dictionary] = controller._trade().advance()
+	if results.size() != 1 or not results[0].ok or int(stock.cargo.get("grain", 0)) != 28 or int(stock.cargo.get("iron", 0)) != 1: return _fail_now("the estate trade delivers once: %s %s" % [str(results), str(stock.cargo)])
+	print("SITE_TRADE_T2_ESTATE OK 5: the 管家 trades the estate with an outsider")
+	print("SITE_TRADE_T2_ESTATE_PASS: registration, schema, member-only access, estate trade")
 	lab.free()
 	quit(0)
