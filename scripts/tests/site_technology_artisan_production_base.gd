@@ -392,7 +392,8 @@ func _build(f: Dictionary, kind: String, anchor: Vector2i) -> String:
 	for tick: int in 2500:
 		if str(feature.stage) == "complete": break
 		_interval(f)
-	_require(str(feature.stage) == "complete" and _work_effective - effective >= initial_work - 0.0001, "Real full original construction work completes " + kind)
+	_require(str(feature.stage) == "complete" and _work_effective - effective >= initial_work - 0.0001, "Real full original construction work completes " + kind,
+		{"stage": feature.get("stage"), "progress": feature.get("progress"), "work": feature.get("work"), "effective": _work_effective - effective, "needed": initial_work, "zones": f.data.site.zones.size(), "busy": f.lab.site_controller.work_team.active_ids()})
 	_require(prior != f.data.site.inventory and f.data.fingerprint() == f.geography and not f.data.parameters.has("fixed_base"), "Construction spends actual stock without editing generated geographic source")
 	_idle_all(f)
 	return key
