@@ -84,6 +84,7 @@ func _run() -> void:
 
 	var refused: Dictionary = controller.trade_propose(official, {"iron": 1}, {"grain": 2})
 	if not _check(not refused.ok and refused.code == "HOSTILE" and int(them.cargo.grain) == 10, "hostile factions cannot trade", refused): return
+	if not _check(preload("res://scripts/terrain_lab/site_settlement.gd")._hostile_to_owner(lab, other, mine), "TR-1A: while hostile, 乙國 people in 甲國's capture zone would be attackers"): return
 
 	controller._npc_diplomacy_day = -1
 	controller.npc_diplomacy_day()
@@ -91,6 +92,7 @@ func _run() -> void:
 	if not _check(controller.answer_oldest_letter(true).ok, "the player accepts 乙國's truce letter"): return
 	controller.settle_diplomacy()
 	if not _check(not RegionDiplomacy.hostile(slot.control.faction_registry, mine, other, float(slot.control.logical_game_seconds)), "the two factions are at truce"): return
+	if not _check(not preload("res://scripts/terrain_lab/site_settlement.gd")._hostile_to_owner(lab, other, mine), "TR-1A: at truce, 乙國 people in 甲國's capture zone are not attackers"): return
 	var offer: Dictionary = controller.trade_propose(official, {"iron": 1}, {"grain": 2})
 	if not _check(offer.ok and offer.decision == "ACCEPT" and controller.trade_accept(str(offer.offer_id)).ok, "at truce the trade is accepted and the delivery starts", offer): return
 	if not _check(await _wait_idle(controller, player), "the delivery completes"): return
