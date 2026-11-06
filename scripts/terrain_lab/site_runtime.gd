@@ -8464,7 +8464,11 @@ static func begin_settlement_processing_operation(data: TerrainData, settlement_
 		if ready.feature.get("technology_settlement_order", {}) != selector: return fail("STALE_SOURCE")
 		var resume := _technology_feature_resume_work(data, str(ready.order.payload.feature_id), ready.feature, selector)
 		if not resume.ok: return resume
-		if not preview: _technology_publish_feature_resume(data, resume)
+		if not preview:
+			_technology_publish_feature_resume(data, resume)
+			# A paused (suspended) order resumes active, as the ship order does; otherwise its own
+			# named worker no longer matches the order and the batch stalls half done.
+			if ready.order.status == "suspended": ready.order.status = "active"
 		return ok("原已付批次恢復同一真工位；不重扣、不退已用工时", {"resumed": true})
 	return _technology_begin_feature_operation(data, selector, str(ready.order.payload.feature_id), str(_settlement_processing_spec(str(ready.order.kind)).binding), preview)
 

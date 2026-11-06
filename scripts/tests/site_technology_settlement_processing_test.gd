@@ -52,7 +52,7 @@ func _processing_finish(fixture: Dictionary, key: String) -> void:
 	while feature.batch_paid and intervals < 200:
 		_processing_point(fixture)
 		intervals += 1
-	_check(not feature.batch_paid, "Real original output endpoint ends this paid finite batch: production=%s water=%s" % [feature.get("production"), str(fixture.data.site.get("water_status", {}).get(key, {}))] + " preflight=" + str(Runtime.work_preflight(fixture.data, fixture.row.get("work_task", {}), fixture.row.get("cargo", {}), 40, 1, int(fixture.executor))).left(300) + " task=" + str(fixture.row.get("work_task", {}).get("status")) + " intervals=" + str(intervals))
+	_check(not feature.batch_paid, "Real original output endpoint ends this paid finite batch: production=%s" % [feature.get("production")])
 	_check(not fixture.row.has("work_task") or fixture.row.work_task.is_empty(), "Actual original named worker stops after one batch")
 	_check(not Runtime._feature_operation_active(fixture.data, key), "The original zone cannot automatically buy a fourth or third batch")
 
@@ -158,14 +158,16 @@ func _paid_history_survives_source_demolition() -> void:
 	_check(Stocks.ensure_storage(data, str(fixture.warehouse), 1).ok, "Original Stockpiles owns the genuine named Warehouse source")
 	var actor: Dictionary = actions._person(int(fixture.control))
 	actor.cargo.clear()
-	actor.cargo.wood = 4 # Actual bounded starting-person stock, then true transfer.
+	actor.cargo["wood"] = 4 # Actual bounded starting-person stock, then true transfer (bracket write keeps a String key).
 	var stock := Stocks.storage(data, str(fixture.warehouse))
 	_check(fixture.lab.character.place(data.cell_from_index(int(data.site.features[fixture.warehouse].entrance)), true), "True head/grantor contacts the original Warehouse")
 	_check(fixture.lab.site_controller.vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.warehouse), {"wood": 4}, [], int(actor.holder.version), int(stock.holder.version), int(fixture.control)).ok, "Actual source funding transfers four real wood once, without paying manufacture")
 	var issued := Runtime.request_settlement_processing_order(data, "charcoal_batch", str(fixture.kiln), int(fixture.executor), 3, int(fixture.control), str(fixture.warehouse), project_id)
 	_check(issued.ok, "Real contact grants finite three-batch cap without reserving nonexistent future wood")
 	var camp = data.site.inventory.duplicate(true)
-	_check(actions.begin_scope_technology_phase(int(fixture.control), "settlement", scope_id, "charcoal", "feature:" + str(fixture.kiln), {"order_id": str(issued.order_id)}).ok and stock.cargo.is_empty() and data.site.inventory == camp, "Actual private manufacture debits the real Warehouse once and leaves camp unchanged")
+	var private_begun: Dictionary = actions.begin_scope_technology_phase(int(fixture.control), "settlement", scope_id, "charcoal", "feature:" + str(fixture.kiln), {"order_id": str(issued.order_id)})
+	# The paid Warehouse may keep an emptied resource key at 0; the debit is what counts.
+	_check(private_begun.ok and int(stock.cargo.get("wood", 0)) == 0 and data.site.inventory == camp, "Actual private manufacture debits the real Warehouse once and leaves camp unchanged")
 	_at_feature(fixture.lab, fixture.team, int(fixture.executor), str(fixture.kiln))
 	_processing_point(fixture)
 	var feature: Dictionary = data.site.features[fixture.kiln]

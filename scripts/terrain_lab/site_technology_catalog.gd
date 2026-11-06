@@ -435,7 +435,7 @@ const _NODES := [
 	},
 	{
 		"id": "S03", "name": "炭窯工序", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F03"],"any":[],"conditions":["active_settlement_jurisdiction","usable_charcoal_kiln","learned_F03_operator"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -476,7 +476,7 @@ const _NODES := [
 	},
 	{
 		"id": "S05", "name": "紡織工序", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F06"],"any":[],"conditions":["active_settlement_jurisdiction","usable_weaver","learned_F06_operator"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
