@@ -50,8 +50,16 @@ func begin(tree: SceneTree, required_enabled: Array) -> bool:
 		if not _accept(tree, node.get("enabled") is bool and node.get("id") is String, "Invalid catalog node metadata"): return false
 		if bool(node.enabled): _enabled_ids.append(str(node.id))
 	_enabled_ids.sort()
+	# 2026-11-06 node-by-node acceptance: the formal catalog enables accepted nodes. Without an explicit profile, a test
+	# whose required nodes are all accepted runs the enabled profile; otherwise its disabled boundary needs only its own
+	# required nodes disabled (other accepted nodes are outside its scope).
+	var required_open := not required_enabled.is_empty()
+	for identity: Variant in required_enabled:
+		required_open = required_open and identity is String and _enabled_ids.has(identity)
+	if not explicit and required_open: profile = "enabled_isolated"
 	if profile == "formal_disabled":
-		if not _accept(tree, _enabled_ids.is_empty(), "Formal disabled profile requires every catalog node disabled"): return false
+		for identity: Variant in required_enabled:
+			if not _accept(tree, not _enabled_ids.has(str(identity)), "Formal disabled profile requires this test's nodes disabled"): return false
 	else:
 		for identity: Variant in required_enabled:
 			if not _accept(tree, identity is String and _enabled_ids.has(identity), "Explicit enabled profile is missing a required node"): return false
@@ -65,7 +73,7 @@ func ready(tree: SceneTree) -> bool:
 
 func emit_disabled(tree: SceneTree, identity: String, serial: int) -> bool:
 	if not ready(tree): return false
-	if not _accept(tree, profile == "formal_disabled" and _enabled_ids.is_empty(), "Disabled scope cannot describe an enabled profile"): return false
+	if not _accept(tree, profile == "formal_disabled", "Disabled scope cannot describe an enabled profile"): return false
 	var result := {"version": 1, "test_id": identity, "serial": serial, "profile": profile,
 		"scope": "DISABLED_BOUNDARY", "boundary": "PASS",
 		"public_enabled_productive": {"applicability": "NOT_APPLICABLE", "execution": "NOT_RUN", "reason": "CATALOG_DISABLED"},
