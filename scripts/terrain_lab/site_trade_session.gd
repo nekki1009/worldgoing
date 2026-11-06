@@ -106,10 +106,22 @@ func _check_pair(player: int, npc: int) -> Dictionary:
 	if not _able(a) or not _able(b): return Runtime.fail("BUSY", "交易雙方須清醒、自由")
 	if not _face_to_face(a, b): return Runtime.fail("TOO_FAR", "須當面交易（兩格內）")
 	if controller.person_actions.is_busy(player) or controller.person_actions.is_busy(npc): return Runtime.fail("BUSY", "交易雙方須空閒")
+	if hostile(a, b): return Runtime.fail("HOSTILE", "敵對勢力之間不能交易")
 	for side: Dictionary in [a, b]:
 		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, _holder_id(int(side.person_id)))
 		if not endpoint.ok: return endpoint
 	return Runtime.ok("", {"a": a, "b": b})
+
+## T1-b (§5.5 with the diplomacy table): people of one side trade freely; different factions only when not hostile
+## (peace or truce in RegionDiplomacy). A Site without a Region slot keeps every other faction hostile.
+func hostile(a: Dictionary, b: Dictionary) -> bool:
+	var fa := int(a.get("faction", -1))
+	var fb := int(b.get("faction", -1))
+	if RegionFactionQuery.same_side(fa, fb): return false
+	# One team is one side, the neutral player's own start team included (neutral is not an alliance across teams).
+	if a.get("owner") != null and a.owner == b.get("owner"): return false
+	if controller.region_slot == null: return true
+	return RegionDiplomacy.hostile(controller.region_slot.control.get("faction_registry", {}), fa, fb, float(controller.region_slot.control.logical_game_seconds))
 
 func _npc_terms(npc: Dictionary) -> Dictionary:
 	var axes: Dictionary = PersonPersonality.read(npc.body.get("personality") if npc.body is Dictionary else npc.body.get("personality"))
@@ -225,6 +237,7 @@ func advance() -> Array[Dictionary]:
 			elif int(person.hit) != int(job[side + "_hit"]): reason = "交易一方受擊"
 			elif int(person.holder.version) != int(offer[side].expected_version): reason = "持物已改變"
 			if not reason.is_empty(): break
+		if reason.is_empty() and hostile(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方勢力已敵對"
 		if reason.is_empty() and not _face_to_face(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方已不在面前"
 		if not reason.is_empty():
 			results.append(_end(str(key), Runtime.fail("CANCELLED", "交易中止：%s；未轉移任何物品" % reason)))
