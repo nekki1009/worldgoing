@@ -13140,6 +13140,498 @@
       },
       "source": "built-in image_gen; CC-20261013-007; separate call per direction",
       "scale_basis": "Each source stake is drawn separately at 0.55 original CELL height; both real cell contacts and rows retained; GPU NOT_RUN."
+    },
+    "craft_room": {
+      "file": "craft_room_v1.png",
+      "name": "工法室",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        38,
+        17,
+        1178,
+        1205
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        38,
+        17,
+        38,
+        32
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 361108,
+      "low_alpha_pixels": 17925,
+      "opaque_pixels": 771,
+      "sha256": "74D25017E2957B85B8D75C6E56422BBA3122ED70C4787A30C5AF867628E164E9",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "craft_room_west": {
+      "file": "craft_room_west_v1.png",
+      "name": "工法室",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        46,
+        18,
+        1163,
+        1209
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        46,
+        18,
+        45,
+        27
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 522756,
+      "low_alpha_pixels": 15832,
+      "opaque_pixels": 785,
+      "sha256": "AC97F20CCB6315CCB85E260299F0E71906624A6CA1535319491F631481CE9001",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "craft_room_north": {
+      "file": "craft_room_north_v1.png",
+      "name": "工法室",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        32,
+        17,
+        1190,
+        1201
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        32,
+        17,
+        32,
+        36
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 356611,
+      "low_alpha_pixels": 20326,
+      "opaque_pixels": 297,
+      "sha256": "24FF9860972C2B6E99502D234E5C5E261EB59CD1C22FB9FFB24B512B8D52C235",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "craft_room_east": {
+      "file": "craft_room_east_v1.png",
+      "name": "工法室",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        67,
+        25,
+        1128,
+        1201
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        67,
+        25,
+        59,
+        28
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 482778,
+      "low_alpha_pixels": 10216,
+      "opaque_pixels": 1005,
+      "sha256": "2A77F07A0CE41F89AD4A201AFFFCBFA4A37F12B0AECF4AC7FF81AD0BCFEF8049",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "artisan_academy": {
+      "file": "artisan_academy_v1.png",
+      "name": "匠作院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        14,
+        75,
+        1226,
+        1071
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        14,
+        75,
+        14,
+        108
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 378030,
+      "low_alpha_pixels": 15307,
+      "opaque_pixels": 826,
+      "sha256": "DAE8E7FC22F20B342D3752961535BE133DE044BAA4C132C4F73A7C1120168481",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "artisan_academy_west": {
+      "file": "artisan_academy_west_v1.png",
+      "name": "匠作院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        45,
+        50,
+        1137,
+        1157
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        45,
+        50,
+        72,
+        47
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 355671,
+      "low_alpha_pixels": 15902,
+      "opaque_pixels": 890,
+      "sha256": "5156E28D0CB819AC31C4AA48489B3700D0E661BB798B7B30C1AADE919A9D1F20",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "artisan_academy_north": {
+      "file": "artisan_academy_north_v1.png",
+      "name": "匠作院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        19,
+        74,
+        1217,
+        1097
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        19,
+        74,
+        18,
+        83
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 326050,
+      "low_alpha_pixels": 24317,
+      "opaque_pixels": 465,
+      "sha256": "AD20941A0ACF0AE3695C613D387712467AF53B6679AFCEF7FBADB760E77DB6B0",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "artisan_academy_east": {
+      "file": "artisan_academy_east_v1.png",
+      "name": "匠作院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        43,
+        10,
+        1171,
+        1220
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        43,
+        10,
+        40,
+        24
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 290640,
+      "low_alpha_pixels": 23967,
+      "opaque_pixels": 425,
+      "sha256": "15FE606ECF9F66211244BB3F85E867C65DD2CC17332C88311CAF77FD3614A073",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "works_academy": {
+      "file": "works_academy_v1.png",
+      "name": "考工院",
+      "mode": "structure",
+      "art_size": [
+        5,
+        4
+      ],
+      "base_art_size": [
+        5,
+        4
+      ],
+      "pixels": [
+        1402,
+        1122
+      ],
+      "bbox": [
+        17,
+        21,
+        1368,
+        1056
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        17,
+        21,
+        17,
+        45
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 251827,
+      "low_alpha_pixels": 23265,
+      "opaque_pixels": 445,
+      "sha256": "A4332DE3BE8B59AA182DF516B85167BD3A791A8F886705CA9C233BD646699A8A",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "works_academy_west": {
+      "file": "works_academy_west_v1.png",
+      "name": "考工院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        5
+      ],
+      "base_art_size": [
+        5,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        69,
+        38,
+        1116,
+        1180
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        69,
+        38,
+        69,
+        36
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 448407,
+      "low_alpha_pixels": 22578,
+      "opaque_pixels": 660,
+      "sha256": "C9A086BD2E942FCF28654A77D8FEC7CD88302D42F995FEC3976D7FDAAD1722EC",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "works_academy_north": {
+      "file": "works_academy_north_v1.png",
+      "name": "考工院",
+      "mode": "structure",
+      "art_size": [
+        5,
+        4
+      ],
+      "base_art_size": [
+        5,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        105,
+        130,
+        1045,
+        967
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        105,
+        130,
+        104,
+        157
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 691874,
+      "low_alpha_pixels": 19815,
+      "opaque_pixels": 563,
+      "sha256": "DE6CCBFC8CF0665298A88FBD84B61964013BBA764E9CBA28873345183EFFAFE3",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "works_academy_east": {
+      "file": "works_academy_east_v1.png",
+      "name": "考工院",
+      "mode": "structure",
+      "art_size": [
+        4,
+        5
+      ],
+      "base_art_size": [
+        5,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        112,
+        63,
+        1049,
+        1144
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        112,
+        63,
+        93,
+        47
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 488549,
+      "low_alpha_pixels": 15804,
+      "opaque_pixels": 1113,
+      "sha256": "0F41156E093CBE794B7D398045BD95D09E5D06CF2A90C51CB6B9A6D2A39F1C7F",
+      "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
+      "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
     }
   },
   "auxiliary_images": {

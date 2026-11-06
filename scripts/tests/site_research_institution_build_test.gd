@@ -62,6 +62,11 @@ func _initialize() -> void:
 	var no_art := Runtime.request_build(data, "craft_room", _cells(data, "craft_room", Vector2i(20, 20)), Callable(), options)
 	if Runtime.formal_building_art_available("craft_room", 0):
 		check(no_art.ok, "craft room builds once its formal art is published: " + str(no_art))
+		data.site.erase("family") # The fixture family is only the build requirement, not a valid saved family.
+		var path := "user://research_institution_build_%d.json" % Time.get_ticks_usec()
+		var saved: Dictionary = SiteStore.save(data, path)
+		check(saved.ok, "a site with a craft room under construction saves: " + str(saved))
+		# Load needs a generated map; this synthetic grid only proves the strict save validator admits the kind.
 	else:
 		check(not no_art.ok and no_art.code == "MISSING_ART" and var_to_bytes(data.site) == before_art, "missing formal art refuses with no change and no placeholder: " + str(no_art))
 	print("SITE_RESEARCH_INSTITUTION_BUILD_PASS: checks=", checks, "; kinds, requirements, MISSING_ART refusal")
