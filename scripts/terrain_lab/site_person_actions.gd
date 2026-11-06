@@ -107,8 +107,11 @@ func crowd_peace_guard(identities: Array) -> Dictionary:
 			return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理")
 	return Runtime.ok()
 
+## Trade T1-a: a delivery job's representatives are busy too (SiteTradeSession.busy).
+var trade_busy: Callable
+
 func is_busy(identity: int) -> bool:
-	return not _job_key_for(identity).is_empty()
+	return not _job_key_for(identity).is_empty() or (trade_busy.is_valid() and bool(trade_busy.call(identity)))
 
 func _job_key_for(identity: int) -> String:
 	var direct := str(identity)

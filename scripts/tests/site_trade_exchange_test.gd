@@ -4,6 +4,10 @@ const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const Stocks = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Tent = preload("res://scripts/tests/site_tent_logistics_test.gd")
+
+## Nekki 2026-11-06 "A": a crowd person may trade in peace; a crowd person in a fight may not (BUSY).
+class FightingCrowd extends Tent.CrowdFixture:
+	func person_fighting(_identity: int) -> bool: return true
 var fixture: Variant
 
 func _initialize() -> void:
@@ -181,8 +185,8 @@ func _run() -> void:
 	fixture.army.combat_units[0].embarked_vehicle_id = "missing"
 	if not _reject(a, b, _goods({"grain": 1}), _goods({}, [bow.item_id]), "UNSUPPORTED"): return
 	fixture.army.combat_units[0].erase("embarked_vehicle_id")
-	fixture.crowd_site = Tent.CrowdFixture.new()
-	if not _reject(a, b, _goods({"grain": 1}), _goods({}, [bow.item_id]), "UNSUPPORTED"): return
+	fixture.crowd_site = FightingCrowd.new()
+	if not _reject(a, b, _goods({"grain": 1}), _goods({}, [bow.item_id]), "BUSY"): return
 	fixture.crowd_site = null
 	if not _reject(a, {"holder": "team_supply:1", "expected_version": 0}, _goods({"grain": 1}), _goods({"grain": 1}), "UNSUPPORTED"): return
 	if not _schema_checks(data): return

@@ -208,13 +208,11 @@ static func _saved_people(state: Dictionary) -> Dictionary:
 	var people: Dictionary = {}
 	for actor: Dictionary in state.get("actors", {}).values():
 		if actor.has("person_id") and actor.has("item_state"): people[int(actor.person_id)] = actor
+	# Nekki 2026-11-06 "A": crowd people trade too; their saved rows are the crowd teams' units.
 	for team: Dictionary in state.get("armies", []):
-		if team.get("crowd", false): continue
-		var original: Dictionary = TerrainArmy.normalize_roster_snapshot(team)
-		for body: Dictionary in original.get("units", []):
-			if body.has("person_id") and body.has("item_state"): people[int(body.person_id)] = body
-	for team: Dictionary in state.get("crowd", {}).get("teams", []):
-		for identity: Variant in team.get("person_ids", []): people.erase(int(identity))
+		var original: Dictionary = team if team.get("crowd", false) else TerrainArmy.normalize_roster_snapshot(team)
+		for body: Variant in original.get("units", []):
+			if body is Dictionary and body.has("person_id") and body.has("item_state"): people[int(body.person_id)] = body
 	return people
 
 static func _saved_holder(state: Dictionary, people: Dictionary, holder_id: String) -> Dictionary:

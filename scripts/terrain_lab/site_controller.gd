@@ -227,6 +227,9 @@ var _summary_revision := -1
 var _summary_text := ""
 var _supply_rout_review: Dictionary = {}
 var person_actions := PersonActions.new()
+const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
+## Trade T1-a: face-to-face personal trade (offers, concessions, delivery jobs in site.trade).
+var trade_session := TradeSession.new()
 var captivity_supply := CaptivitySupply.new()
 var equipment_orders := EquipmentOrders.new()
 var captive_escort := CaptiveEscort.new()
@@ -2940,6 +2943,7 @@ func _crowd_active() -> bool:
 	return lab != null and lab.get("crowd_site") != null and lab.crowd_site.active
 
 func _capture_for_save() -> Dictionary:
+	_trade().sync_cursor()
 	var boarding: Dictionary = vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
 	var captured := {}
@@ -5116,6 +5120,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 	settle_diplomacy()
 	npc_diplomacy_day()
 	npc_rebellion_day()
+	for traded: Dictionary in _trade().advance(): show_result(traded)
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10475,6 +10480,22 @@ func settle_diplomacy() -> Dictionary:
 
 var _diplomacy_retry_at := 0.0
 
+## --- Trade T1-a: face-to-face personal trade (reports/trade-plan.md §5.1) ---
+func _trade() -> RefCounted:
+	if trade_session.controller == null:
+		trade_session.controller = self
+		person_actions.trade_busy = trade_session.busy
+	return trade_session
+
+## The controlled person offers `gives` (resources) for `wants` from `npc_id`; the NPC accepts, counters or refuses.
+func trade_propose(npc_id: int, gives: Dictionary, wants: Dictionary) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	return _trade().propose(int(lab.controlled_person_id()), npc_id, TradeSession.goods(gives), TradeSession.goods(wants))
+
+func trade_accept(offer_id: String) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	return _trade().accept(offer_id)
+
 ## A settlement fell (SiteSettlement.fall_to): the fall joins the diplomacy record at the next checkpoint.
 func note_settlement_fall(site_id: String, from: int, to: int) -> void:
 	if region_slot != null: region_slot.pending_falls.append({"site_id": site_id, "from": from, "to": to, "at": float(region_slot.control.logical_game_seconds)})
@@ -11318,6 +11339,7 @@ func _trial_fire_weather() -> void:
 func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 		endpoint_payload: Dictionary = {}, token: String = "", read_only: bool = false) -> Dictionary:
 	if region_slot == null or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
+	_trade().sync_cursor()
 	var boarding: Dictionary = vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
 	# A live CrowdSite joins the checkpoint only as a non-read-only capture. The same

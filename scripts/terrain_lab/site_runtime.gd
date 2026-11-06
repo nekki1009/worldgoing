@@ -14266,11 +14266,13 @@ static func trade_endpoint(data: TerrainData, holder_id: String) -> Dictionary:
 		if not suffix.is_valid_int() or str(int(suffix)) != suffix or not _building_integer(int(suffix), 1, 2147483647): return fail("INVALID")
 		var actions: Variant = _technology_actions(data)
 		if actions == null: return fail("UNSUPPORTED", "原人物 owner 尚未綁定")
-		var guard: Dictionary = actions.crowd_action_guard([int(suffix)])
-		if not guard.ok: return fail("UNSUPPORTED", "T0不支援Crowd人物")
+		# Nekki 2026-11-06 "A" (trade T1): a crowd person trades like anyone else, in peace only (the same rule as
+		# crowd equipment orders: no Site combat and the person is not fighting).
+		var guard: Dictionary = actions.crowd_equipment_guard([int(suffix)])
+		if not guard.ok: return fail("BUSY", "戰鬥中不能交易")
 		var person: Dictionary = actions._person(int(suffix))
 		if person.is_empty(): return fail("NO_TARGET")
-		if not person.owner is TerrainArmy and not person.owner is TerrainTestCharacter: return fail("UNSUPPORTED")
+		if not person.owner is TerrainArmy and not person.owner is TerrainTestCharacter and not person.owner is CrowdPersonOwner: return fail("UNSUPPORTED")
 		if person.body is Dictionary and str(person.body.get("embarked_vehicle_id", "")) != "": return fail("UNSUPPORTED", "T0不支援登船人物")
 		if actions.lab.site_controller != null and actions.lab.site_controller.vehicles.is_embarked(int(suffix)): return fail("UNSUPPORTED")
 		endpoint = {"holder": person.holder, "cargo": person.cargo, "capacity": CARRY_CAPACITY}
