@@ -592,6 +592,7 @@ func _build_ui() -> void:
 	trade_limits.placeholder_text = "倉庫額度，如 grain:20/200"
 	launcher.column.add_child(trade_limits)
 	_button(launcher.column, "把所選倉庫綁給市正", "BindTradeSource", func() -> void: show_result(bind_trade_warehouse(trade_limits.text)))
+	_button(launcher.column, "把所選倉庫登記為家產", "RegisterFamilyEstate", func() -> void: show_result(register_estate_at_selection()))
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
@@ -10522,6 +10523,14 @@ func bind_trade_warehouse(limits_text: String) -> Dictionary:
 		if pair.size() != 2 or counts.size() != 2 or not counts[0].strip_edges().is_valid_int() or not counts[1].strip_edges().is_valid_int(): return Runtime.fail("INVALID", "額度格式：資源:單筆/累計，以逗號分隔")
 		limits[pair[0].strip_edges()] = {"per_trade": int(counts[0]), "total": int(counts[1])}
 	return Settlement.bind_trade_source(lab, int(lab.controlled_person_id()), key, limits)
+
+## Trade plan §4.1: the family head registers the warehouse at the selected cell as the family estate.
+func register_estate_at_selection() -> Dictionary:
+	for feature_key: Variant in lab.terrain.site.get("features", {}):
+		var feature: Dictionary = lab.terrain.site.features[feature_key]
+		if feature.get("cells", []).has(lab.terrain.index(selected)):
+			return Settlement.register_family_estate(lab, int(lab.controlled_person_id()), str(feature_key))
+	return Runtime.fail("NO_TARGET", "先選一座倉庫")
 
 ## The settlement warehouse `npc_id` trades for: he is its `settlement.trade` decider and stands at its entrance.
 func trade_warehouse_of(npc_id: int) -> String:

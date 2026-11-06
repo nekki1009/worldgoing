@@ -28,7 +28,9 @@ func _run() -> void:
 	var house := _formal_feature(data, "house", Vector2i(28, 30))
 	if Settlement.register_family_estate(lab, npc, warehouse).ok: return _fail_now("a non-head registered an estate")
 	if Settlement.register_family_estate(lab, player, house).ok: return _fail_now("a house became an estate")
-	var registered: Dictionary = Settlement.register_family_estate(lab, player, warehouse)
+	# Through the launcher's selection entry, as the player does it.
+	controller.selected = data.cell_from_index(int(data.site.features[warehouse].cells[0]))
+	var registered: Dictionary = controller.register_estate_at_selection()
 	if not registered.ok or not Stockpiles.family_estate(data, warehouse): return _fail_now("the family head registers the warehouse: " + str(registered))
 	if Settlement.register_family_estate(lab, player, second).ok: return _fail_now("a second estate was registered")
 	print("SITE_TRADE_T2_ESTATE OK 1: only the family head registers one warehouse as the estate")
