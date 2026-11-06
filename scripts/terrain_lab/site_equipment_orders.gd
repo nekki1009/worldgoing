@@ -3633,9 +3633,11 @@ func prepare_funded_course_source(nation_id: String, order_id: String, original_
 	var teacher: Dictionary = actions._person(teacher_id)
 	var student: Dictionary = actions._person(student_id)
 	var stock: Dictionary = Stockpiles.org_endpoint(lab.terrain, str(order.payload.reserve_feature_id))
+	# Teacher and student each stand one legal step beside the camp (the lesson context checks that),
+	# so they flank it two steps apart; requiring one step could never also hold.
 	if teacher.is_empty() or student.is_empty() or stock.is_empty() or teacher.cell != stock.cell \
 		or int(teacher.faction) != int(stock.faction) or int(student.faction) != int(stock.faction) \
-		or absi(teacher.cell.x - student.cell.x) + absi(teacher.cell.y - student.cell.y) > 1 \
+		or absi(teacher.cell.x - student.cell.x) + absi(teacher.cell.y - student.cell.y) > 2 \
 		or Technology.learned(actions._body_get(student, "technology"), str(order.payload.skill_id)): return Runtime.fail("UNREACHABLE")
 	var source: Dictionary = Runtime.ok("原有限糧儲／真師徒付款來源已純核", {"nation_id": nation_id, "order_id": order_id,
 		"nation_ref": context.nation, "operations_ref": context.nation.technology_operations, "order": order,
@@ -3668,7 +3670,7 @@ func validate_funded_course_source(source: Dictionary) -> Dictionary:
 	if teacher.is_empty() or student.is_empty() or stock.is_empty() or not is_same(teacher.body, source.teacher_body) \
 		or not is_same(student.body, source.student_body) or teacher.cell != stock.cell \
 		or int(teacher.faction) != int(stock.faction) or int(student.faction) != int(stock.faction) \
-		or absi(teacher.cell.x - student.cell.x) + absi(teacher.cell.y - student.cell.y) > 1 \
+		or absi(teacher.cell.x - student.cell.x) + absi(teacher.cell.y - student.cell.y) > 2 \
 		or not is_same(stock.holder, source.source) or not is_same(stock.cargo, source.source_cargo) \
 		or not is_same(teacher.holder, source.destination) or not is_same(teacher.cargo, source.destination_cargo): return Runtime.fail("STALE_SOURCE")
 	var transfer: Dictionary = source.get("transfer", {})

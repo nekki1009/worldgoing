@@ -30,6 +30,33 @@ func _earned_place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	team.settle_combat_command()
 
 
+func _earned_aside(f: Dictionary, camp: Vector2i) -> Vector2i:
+	var data: TerrainData = f.data
+	for radius: int in range(3, 8):
+		for y: int in range(-radius, radius + 1):
+			for x: int in range(-radius, radius + 1):
+				if absi(x) + absi(y) != radius: continue
+				var cell: Vector2i = camp + Vector2i(x, y)
+				if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0: continue
+				var taken := false
+				for other: Vector2i in f.team.cells: taken = taken or other == cell
+				for actor: TerrainTestCharacter in f.lab.combat_actors: taken = taken or actor.terrain_cell == cell
+				if not taken: return cell
+	assert(false, "no free cell beside the camp")
+	return camp
+
+## Manual work needs the person one legal step beside the camp, not on the camp cell.
+func _earned_camp_contact(f: Dictionary, camp: Vector2i) -> Vector2i:
+	var data: TerrainData = f.data
+	for side: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]:
+		var cell: Vector2i = camp + side
+		if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0 or not data.can_step(cell, camp): continue
+		var taken := false
+		for actor: TerrainTestCharacter in f.lab.combat_actors: taken = taken or actor.terrain_cell == cell
+		if not taken: return cell
+	assert(false, "no legal camp contact cell")
+	return camp
+
 func _run() -> void:
 	deadline = Time.get_ticks_msec()+120000
 	_check_actual_completed_lesson_candidate_forgeries()
@@ -67,8 +94,8 @@ func _run() -> void:
 		var identity: int = students[at]
 		var camp: Vector2i = data.cell_from_index(int(data.site.depot_cell))
 		for other: int in students:
-			if other != identity: _earned_place(f,other,camp+Vector2i(0,3+students.find(other)))
-		_earned_place(f,identity,camp)
+			if other != identity: _earned_place(f,other,_earned_aside(f,camp))
+		_earned_place(f,identity,_earned_camp_contact(f,camp))
 		assert(not Technology.learned(f.team.combat_units[f.team.index_for_identity(identity)].get("technology",{}),"F07"))
 		var before: PackedByteArray = var_to_bytes([data.site,actual_lab.character.capture_state(),f.team.capture_combat_state()])
 		var refused: Dictionary = orders.begin_funded_course(identity,"n1",order_id,identity)
@@ -90,6 +117,12 @@ func _run() -> void:
 	quit(0)
 func _nation_fixture(known: Array[String]) -> Dictionary:
 	var data := _building_fixture()
+	# The paid build source is the camp depot holder; this synthetic fixture must own one.
+	if not data.site.get("depot_items") is Dictionary:
+		var storage_ready: Dictionary = Runtime.initialize_item_storage(data.site)
+		assert(storage_ready.ok, str(storage_ready))
+	# Warehouses now cost rope; the finite setup supplies carry just enough for these buildings.
+	data.site.inventory["rope"] = int(data.site.inventory.get("rope", 0)) + 20
 	var warehouse := _formal_feature(data, "warehouse", Vector2i(13, 13))
 	var home := _formal_feature(data, "house", Vector2i(13, 18), Vector2i(2, 2))
 	var smithy := _formal_feature(data, "smithy", Vector2i(25, 18))
@@ -222,8 +255,8 @@ func _check_actual_completed_lesson_candidate_forgeries() -> void:
 	assert(opened.ok,str(opened))
 	_fund(actual_lab,str(opened.order_id),{"grain":4},str(f.warehouse))
 	var camp: Vector2i=f.data.cell_from_index(int(f.data.site.depot_cell))
-	_earned_place(f,f.team.combat_identity(1),camp+Vector2i(0,4))
-	_earned_place(f,student,camp)
+	_earned_place(f,f.team.combat_identity(1),_earned_aside(f,camp))
+	_earned_place(f,student,_earned_camp_contact(f,camp))
 	assert(orders.begin_funded_course(teacher,"n1",str(opened.order_id),student).ok)
 	var job: Dictionary=actions._jobs[str(teacher)]
 	for tick: int in range(400):

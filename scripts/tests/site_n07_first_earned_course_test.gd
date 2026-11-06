@@ -21,14 +21,42 @@ func _earned_place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	# SAME original GD hot person fixture endpoint, excludes navigation proof.
 	var team: TerrainArmy = f.team
 	var index: int = team.index_for_identity(identity)
-	assert(index >= 0 and f.data.is_walkable(cell) and team.moving_to[index] == TerrainArmy.INVALID_CELL)
-	for at: int in team.cells.size(): assert(at == index or team.cells[at] != cell)
-	for actor: TerrainTestCharacter in f.lab.combat_actors: assert(actor.person_id == identity or actor.terrain_cell != cell)
+	assert(index >= 0 and f.data.is_walkable(cell) and team.moving_to[index] == TerrainArmy.INVALID_CELL, "place %d at %s: index=%d walkable=%s moving=%s" % [identity, cell, index, f.data.is_walkable(cell), team.moving_to[index] if index >= 0 else null])
+	for at: int in team.cells.size(): assert(at == index or team.cells[at] != cell, "place %d at %s: row %d already there" % [identity, cell, at])
+	for actor: TerrainTestCharacter in f.lab.combat_actors: assert(actor.person_id == identity or actor.terrain_cell != cell, "place %d at %s: actor %d there" % [identity, cell, actor.person_id])
 	team.cells[index] = cell
 	team.combat_slots[index] = cell
 	team._rebuild_ground_cell_owners()
 	team.settle_combat_command()
 
+
+## A free walkable natural cell a few steps from the camp, for the student waiting its turn.
+func _earned_aside(f: Dictionary, camp: Vector2i) -> Vector2i:
+	var data: TerrainData = f.data
+	for radius: int in range(3, 8):
+		for y: int in range(-radius, radius + 1):
+			for x: int in range(-radius, radius + 1):
+				if absi(x) + absi(y) != radius: continue
+				var cell: Vector2i = camp + Vector2i(x, y)
+				if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0: continue
+				var taken := false
+				for other: Vector2i in f.team.cells: taken = taken or other == cell
+				for actor: TerrainTestCharacter in f.lab.combat_actors: taken = taken or actor.terrain_cell == cell
+				if not taken: return cell
+	assert(false, "no free cell beside the camp")
+	return camp
+
+## Manual work needs the person one legal step beside the camp, not on the camp cell.
+func _earned_camp_contact(f: Dictionary, camp: Vector2i) -> Vector2i:
+	var data: TerrainData = f.data
+	for side: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]:
+		var cell: Vector2i = camp + side
+		if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0 or not data.can_step(cell, camp): continue
+		var taken := false
+		for actor: TerrainTestCharacter in f.lab.combat_actors: taken = taken or actor.terrain_cell == cell
+		if not taken: return cell
+	assert(false, "no legal camp contact cell")
+	return camp
 
 func _run() -> void:
 	deadline = Time.get_ticks_msec()+120000
@@ -66,8 +94,8 @@ func _run() -> void:
 		var identity: int = students[at]
 		var camp: Vector2i = data.cell_from_index(int(data.site.depot_cell))
 		for other: int in students:
-			if other != identity: _earned_place(f,other,camp+Vector2i(0,3))
-		_earned_place(f,identity,camp)
+			if other != identity: _earned_place(f,other,_earned_aside(f,camp))
+		_earned_place(f,identity,_earned_camp_contact(f,camp))
 		assert(not Technology.learned(f.team.combat_units[f.team.index_for_identity(identity)].get("technology",{}),"F07"))
 		var before: PackedByteArray = var_to_bytes([data.site,actual_lab.character.capture_state(),f.team.capture_combat_state()])
 		var refused: Dictionary = orders.begin_funded_course(identity,"n1",order_id,identity)
@@ -77,7 +105,7 @@ func _run() -> void:
 		assert(not Technology.scope_known(nation.technology,"N07") if at == 0 else Technology.scope_known(nation.technology,"N07"), "Only true first completed original course may earn institution")
 		elapsed.append(_earned_component_job(actual_lab,teacher,"technology_lesson"))
 		assert(Technology.learned(f.team.combat_units[f.team.index_for_identity(identity)].get("technology",{}),"F07") and Technology.scope_known(nation.technology,"N07"))
-		assert(int(reserve.cargo.grain) == 4-2*(at+1) and int(actions._person(teacher).cargo.get("grain",0)) == teacher_cargo+2*(at+1), "Exactly two true grain per actual completed original 300s lesson")
+		assert(int(reserve.cargo.get("grain",0)) == 4-2*(at+1) and int(actions._person(teacher).cargo.get("grain",0)) == teacher_cargo+2*(at+1), "Exactly two true grain per actual completed original 300s lesson")
 		before = var_to_bytes([data.site,actual_lab.character.capture_state(),f.team.capture_combat_state()])
 		assert(not orders.begin_funded_course(teacher,"n1",order_id,identity).ok and var_to_bytes([data.site,actual_lab.character.capture_state(),f.team.capture_combat_state()]) == before, "Same accepted seat cannot replay payment/learning/research")
 	assert(order.status == "complete" and order.receipts.size() == 2 and int(data.site.next_item) == next_item and data.site.inventory == inventory)
@@ -89,6 +117,12 @@ func _run() -> void:
 	quit(0)
 func _nation_fixture(known: Array[String]) -> Dictionary:
 	var data := _building_fixture()
+	# The paid build source is the camp depot holder; this synthetic fixture must own one.
+	if not data.site.get("depot_items") is Dictionary:
+		var storage_ready: Dictionary = Runtime.initialize_item_storage(data.site)
+		assert(storage_ready.ok, str(storage_ready))
+	# Warehouses now cost rope; the finite setup supplies carry just enough for these buildings.
+	data.site.inventory["rope"] = int(data.site.inventory.get("rope", 0)) + 20
 	var warehouse := _formal_feature(data, "warehouse", Vector2i(13, 13))
 	var home := _formal_feature(data, "house", Vector2i(13, 18), Vector2i(2, 2))
 	var smithy := _formal_feature(data, "smithy", Vector2i(25, 18))
@@ -151,7 +185,8 @@ func _earned_component_job(actual_lab: TerrainLab, identity: int, kind: String) 
 		actual_lab._advance_fatigue(30.0) # Original provider/one original shared pool debit.
 		actions.settle_after_contacts()
 		actual_lab._clear_shared_work_step()
-	assert(not actions.is_busy(identity) and elapsed >= 300.0-0.0001, "Actual accepted joint/admin effort completes the full original job")
+	var last: Dictionary = actions._jobs.get(actions._job_key_for(identity), {})
+	assert(not actions.is_busy(identity) and elapsed >= 300.0-0.0001, "Actual accepted joint/admin effort completes the full original job: busy=%s elapsed=%s job_elapsed=%s paused=%s requests=%s" % [actions.is_busy(identity), elapsed, last.get("elapsed"), last.get("paused"), actions.work_requests(30.0).size()])
 	return elapsed
 
 

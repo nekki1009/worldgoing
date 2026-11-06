@@ -783,7 +783,7 @@ const _NODES := [
 	},
 	{
 		"id": "N07", "name": "技藝傳習制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":["F01","F02","F03","F04","F05","F06","F07","F08","F09","F10","F11","F12","F13","F14","F15"],"conditions":["original_nation","real_master_of_selected_family_skill","registered_original_student","authorized_stipend_source"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
