@@ -155,7 +155,7 @@ const _NODES := [
 	},
 	{
 		"id": "F04", "name": "冶煉鍛打", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": false,
 		"prerequisites": {"all":["F03"],"any":[],"conditions":["usable_smelter_and_smithy","water_and_tool_access"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
