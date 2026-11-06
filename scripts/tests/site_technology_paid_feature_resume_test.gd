@@ -46,7 +46,8 @@ func _controlled_resume() -> void:
 	_check(lab.site_controller.family_continuity.register_members(refs, true, control).ok \
 		and lab.site_controller.family_continuity.appoint_head(control, control).ok, "Original registry and duty explicitly establish the family; no test ID window supplies authority")
 	_check(lab.character.place(Vector2i(9, 10), true), "Actual Actor reaches the camp material grant contact")
-	_check(actions.prepare_scope_technology(control, control, "F03").ok, "Original controlled member prepares F03")
+	var prepared_f03: Dictionary = actions.prepare_scope_technology(control, control, "F03")
+	_check(prepared_f03.ok, "Original controlled member prepares F03: " + str(prepared_f03))
 	var family_id = str(data.site.family.family_id)
 	_check(actions.request_scope_technology_consent(control, "family", family_id, control).ok \
 		and actions.grant_scope_technology_budget(control, "family", family_id, {"wood": 12}).ok, "Actual original person accepts the purpose and grants the finite full three-batch budget")
