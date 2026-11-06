@@ -59,7 +59,12 @@ func _settlement_fixture() -> Dictionary:
 	# the original pure candidate. Never graft technology onto strict Family v2.
 	data.site.family = actions._technology_candidate()
 	_check(Family.validate_family(data.site.family, str(data.site.id)), "Original strict Family v3 with stable ID remains valid")
-	if identity == "S09": data.site.family.technology.known = ["F10"] # Explicit prerequisite archive, never the tested target.
+	if identity == "S09":
+		# A version-1 family record admits only F07 as known (Technology.IDS). The F10 prerequisite archive needs the
+		# scope record that holds any family node, as an accepted F10 family would have.
+		data.site.family.technology = Technology.empty_scope_record(str(data.site.id))
+		data.site.family.technology.known = ["F10"] # Explicit prerequisite archive, never the tested target.
+		_check(Family.validate_family(data.site.family, str(data.site.id)), "The F10 prerequisite archive keeps the strict family valid")
 	var settlement: Dictionary = data.site.settlement
 	if identity in ["S08", "S10"]:
 		settlement.version = 2
