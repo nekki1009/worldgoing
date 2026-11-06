@@ -225,7 +225,8 @@ func _shipyard_guards_and_true_local_holder() -> void:
 	var lab: TerrainLab = fixture.lab
 	var feature: Dictionary = data.site.features[fixture.yard]
 	var before := var_to_bytes([data.site, fixture.row])
-	_check(Runtime.configure_shipyard_work(data, str(fixture.yard), int(fixture.control), int(fixture.executor), true, true).ok and var_to_bytes([data.site, fixture.row]) == before, "True original head/F13 adoption preview is entirely readonly")
+	var preview: Dictionary = Runtime.configure_shipyard_work(data, str(fixture.yard), int(fixture.control), int(fixture.executor), true, true)
+	_check(preview.ok and var_to_bytes([data.site, fixture.row]) == before, "True original head/F13 adoption preview is entirely readonly: " + str(preview))
 	_check(not Runtime.configure_shipyard_work(data, str(fixture.yard), int(fixture.executor), int(fixture.executor)).ok and var_to_bytes([data.site, fixture.row]) == before, "A real non-head cannot obtain two stations by caller identity")
 	var learned: Dictionary = fixture.row.technology
 	fixture.row.technology = {}

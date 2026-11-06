@@ -335,7 +335,7 @@ const _NODES := [
 	},
 	{
 		"id": "F13", "name": "舟楫工法", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F09"],"any":[],"conditions":["usable_shipyard_and_original_team"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -615,7 +615,7 @@ const _NODES := [
 	},
 	{
 		"id": "S12", "name": "船塢工序", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F13"],"any":[],"conditions":["settlement_level_2","active_settlement_jurisdiction","usable_shipyard","original_ship_workers_and_carrier","learned_F13_build_worker"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
