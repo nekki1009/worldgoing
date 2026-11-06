@@ -612,6 +612,9 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(prison_id, int64_t(0)); push(escort_goal, -1); push(escort_mode, (uint8_t)0); push(housing_attendance_cell, -1);
 	push(contact_revision, int64_t(0));
 	push(siege_crew, (uint8_t)0); push(siege_member_group, -1); push(siege_step_source,-1);
+	// The host's per-person wreck exits (set_siege_person_inputs) are all-or-none: a person appended after they were
+	// set gets an empty exit list, so validate's size rule holds until the Site sends its next inputs.
+	if (!siege_wreck_exit.empty()) siege_wreck_exit.emplace_back();
 	push(convoy_of, (int32_t)0);
 	push(start_x, NAN); push(start_y, NAN);
 	push(host_ctl, (uint8_t)0); push(host_run, (uint8_t)0); push(host_engage, (uint8_t)0); push(host_vx, 0.f); push(host_vy, 0.f);

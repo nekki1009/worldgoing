@@ -1402,6 +1402,13 @@ void m_build_id(CALL_ARGS) {
 	destroy(r); from_string(r,&id); destroy_string(&id);
 }
 
+// validate_reason() -> "" when the world validates, else the first failed validation check (diagnostics)
+void m_validate_reason(CALL_ARGS) {
+	SELF; NEED(0); WORLD; std::string error; const bool valid = w.validate(&error);
+	TextStorage text; make_string(&text, valid ? "" : (error.empty() ? "invalid" : error.c_str()));
+	destroy(r); from_string(r, &text); destroy_string(&text);
+}
+
 // ---------------------------------------------------------------- class registration
 GDExtensionObjectPtr create(void *, GDExtensionBool) {
 	GDExtensionObjectPtr object = construct_object(&parent_name);
@@ -1597,6 +1604,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("fire_motion_segment",m_fire_motion_segment,{{INT,"soldier"}},DOUBLES);
 	add_method("has_projectiles", m_has_projectiles, {}, BOOL);
 	add_method("validate", m_validate, {}, BOOL);
+	add_method("validate_reason", m_validate_reason, {}, STRING);
 	add_method("person_ids", m_person_ids, {}, LONGS);
 	add_method("person_ground_cells", m_siege_ground_cells, {}, LONGS);
 	add_method("soldier_index", m_soldier_index, {{INT,"person_id"}}, INT);

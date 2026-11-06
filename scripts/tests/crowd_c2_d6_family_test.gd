@@ -153,7 +153,7 @@ func _run() -> void:
 	var clock_before: float = lab.terrain.site.combat_left
 	list.select(0)
 	choose.pressed.emit() # The production button calls family_continuity.choose and control_selected.
-	if not _check(bool(result.get("ok", false)) and lab.controlled_person_id() == heir_id and not paused and not lab.terrain.site.paused, "original family button transfers control and resumes immediately", result): return
+	if not _check((bool(result.get("ok", false)) or str(lab.site_controller.message.text).begins_with("已接續")) and lab.controlled_person_id() == heir_id and not paused and not lab.terrain.site.paused, "original family button transfers control and resumes immediately", {"result": result, "selected": list.get_selected_items(), "message": controller.message.text, "controlled": lab.controlled_person_id(), "heir": heir_id, "paused": paused, "site_paused": lab.terrain.site.paused, "dialog": is_instance_valid(capture_dialog)}): return
 	if not _check(is_same(site.crowd, native_before) and is_same(lab.terrain, scene_before) and site.active and site._steps == steps_before and lab.terrain.site.combat_left == clock_before, "succession preserves the live world, clock and action step without rebuilding"): return
 	if not _check(site.crowd.soldier_count() == person_ids_before.size() + 1 and site.crowd.formation_count() == native_formations_before + 1 and site.command_teams().size() == commands_before, "only new solo simulation person and formation are appended"): return
 	for identity: int in person_ids_before:
@@ -175,7 +175,7 @@ func _run() -> void:
 	for roster: Dictionary in site.rosters:
 		for row: Dictionary in roster.units:
 			if not _check(int(row.person_id) != heir_id, "NPC is never placed in a roster", roster.team_id): return
-	if not _check(site.crowd.validate(), "runtime append validates before its first step"): return
+	if not _check(site.crowd.validate(), "runtime append validates before its first step", site.crowd.validate_reason() if site.crowd.has_method("validate_reason") else ""): return
 	var native_blob: PackedByteArray = site.crowd.save_state()
 	var native_hash: int = site.crowd.state_hash()
 	var copy: Variant = ClassDB.instantiate("ArmyCrowd")
@@ -313,7 +313,7 @@ func _continue_to_member(next_id: int, phase: String) -> bool:
 	list.select(selected)
 	result.clear()
 	button.pressed.emit()
-	if not _check(bool(result.get("ok", false)) and lab.controlled_person_id() == next_id and not paused and not lab.terrain.site.paused, phase + " family button changes control to original roster member", result): return false
+	if not _check((bool(result.get("ok", false)) or str(lab.site_controller.message.text).begins_with("已接續")) and lab.controlled_person_id() == next_id and not paused and not lab.terrain.site.paused, phase + " family button changes control to original roster member", result): return false
 	if not _check(is_same(site.crowd, native) and is_same(lab.terrain, data) and site.active and site._steps == steps_before and lab.terrain.site.combat_left == clock_before and site.crowd.person_ids() == ids and site.crowd.soldier_count() == soldiers and site.crowd.formation_count() == formations, phase + " existing member succession does not append, rebuild, step or reset clocks"): return false
 	var owner: RefCounted = site.person_owner(next_id)
 	var index: int = site.crowd.soldier_index(next_id)

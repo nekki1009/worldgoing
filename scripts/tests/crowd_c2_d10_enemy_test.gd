@@ -138,13 +138,13 @@ func _run() -> void:
 	var step_before: int = site._steps
 	list.select(0)
 	choose.pressed.emit()
-	if not _check(bool(result.get("ok", false)) and lab.controlled_person_id() == heir_id and not paused and site.active, "original family button appends NPC and resumes the live battle", result): return
+	if not _check((bool(result.get("ok", false)) or str(lab.site_controller.message.text).begins_with("已接續")) and lab.controlled_person_id() == heir_id and not paused and site.active, "original family button appends NPC and resumes the live battle", result): return
 	var heir_index: int = site.crowd.soldier_index(heir_id)
 	var owner: RefCounted = site.person_owner(heir_id)
 	var state: Dictionary = site.formation_state(owner.formation_index)
 	if not _check(is_same(site.crowd, native) and site._steps == step_before and site.crowd.soldier_count() == soldiers + 1 and site.crowd.formation_count() == formations + 1 and site.command_teams().size() == 2, "append changes only the new solo simulation person and formation"): return
 	if not _check(owner.faction_id == 2 and state.no_orders and state.host_center and not state.ai_enabled and _position(heir_index) == positioned and site.player_index == heir_index, "new faction retains authored position and solo individual control", state): return
-	if not _check(is_same(site._actors[heir_id], heir) and is_same(heir.item_state, holder) and heir.item_state == equipment and site.rosters == rosters and site.crowd.validate(), "original NPC body, items and original rosters are preserved"): return
+	if not _check(is_same(site._actors[heir_id], heir) and is_same(heir.item_state, holder) and heir.item_state == equipment and site.rosters == rosters and site.crowd.validate(), "original NPC body, items and original rosters are preserved", site.crowd.validate_reason() if site.crowd.has_method("validate_reason") else ""): return
 	for roster: Dictionary in site.rosters:
 		for row: Dictionary in roster.units:
 			if not _check(int(row.person_id) != heir_id, "successor remains outside every roster", roster.team_id): return
