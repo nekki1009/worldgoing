@@ -76,6 +76,8 @@ const CATALOG := {
 		{"id": "settlement.ecology", "name": "虞衡"},
 		# User decision 2026-10-08: barracks rosters belong to the settlement's 營務官.
 		{"id": "settlement.garrison", "name": "營務官"},
+		# Trade plan T2: the settlement's trade from its warehouses.
+		{"id": "settlement.trade", "name": "市正"},
 	],
 }
 # Legacy nation records (no offices) keep all three equipment powers on the
@@ -88,12 +90,12 @@ const DUTY_LABELS := {
 	"nation.corps": "軍團編成", "nation.dispatch": "跨地派遣", "nation.equip_standard": "配裝標準", "nation.culture": "國家裝備文化", "nation.dye": "本國人物配色", "nation.institutions": "制度研究",
 	"nation.procurement": "採購", "nation.labor": "勞役", "nation.relief": "賑濟", "nation.workshop": "作坊驗收", "nation.production": "標準生產", "nation.public_works": "公共工程", "nation.education": "教養", "nation.transport": "公共運輸", "nation.finance": "財產徵支", "nation.administration": "地方委任", "nation.arsenal": "軍器驗收", "nation.fleet": "船隊編入", "nation.admission": "收受歸降", "nation.ransom": "贖金收支",
 	"settlement.head": "聚落首長", "family.roster": "家族名冊", "family.research": "研習", "family.teach": "授徒",
-	"team.roster": "名冊調整", "team.salvage": "搜刮調度", "team.ship": "船務", "team.recruit": "募兵", "settlement.prison": "俘虜看管", "settlement.ecology": "生態管理", "settlement.garrison": "軍營名冊",
+	"team.roster": "名冊調整", "team.salvage": "搜刮調度", "team.ship": "船務", "team.recruit": "募兵", "settlement.prison": "俘虜看管", "settlement.ecology": "生態管理", "settlement.garrison": "軍營名冊", "settlement.trade": "聚落交易",
 }
 # Duties wired after a kind's first release. A saved record may lack them;
 # ensure_catalog() adds each as a vacant seat on first use (3.2), so the head
 # keeps exercising it and old saves behave exactly as before.
-const LATER_DUTIES := {"team": ["team.roster", "team.salvage", "team.ship", "team.recruit"], "settlement": ["settlement.prison", "settlement.ecology", "settlement.garrison"], "nation": ["nation.dispatch", "nation.institutions", "nation.procurement", "nation.labor", "nation.relief", "nation.workshop", "nation.production", "nation.public_works", "nation.education", "nation.transport", "nation.finance", "nation.administration", "nation.arsenal", "nation.fleet", "nation.admission", "nation.ransom"], "family": ["family.research", "family.teach"]}
+const LATER_DUTIES := {"team": ["team.roster", "team.salvage", "team.ship", "team.recruit"], "settlement": ["settlement.prison", "settlement.ecology", "settlement.garrison", "settlement.trade"], "nation": ["nation.dispatch", "nation.institutions", "nation.procurement", "nation.labor", "nation.relief", "nation.workshop", "nation.production", "nation.public_works", "nation.education", "nation.transport", "nation.finance", "nation.administration", "nation.arsenal", "nation.fleet", "nation.admission", "nation.ransom"], "family": ["family.research", "family.teach"]}
 # Duties the AI never executes (plan A.3, D15); the decider is always a player.
 const MANUAL_ONLY := ["family.roster", "family.teach"] # research uses original SiteDutyAI / PersonActions.
 

@@ -8,12 +8,18 @@ extends RefCounted
 ## - Delivery: 2 action s + 0.1 per unit (at most 30); both representatives are busy; a move, an effective hit, KO,
 ##   capture, death, or a holder version change cancels it with nothing moved; completion commits once through
 ##   SiteRuntime.exchange_items.
+## T2 (first slice): a settlement trades from one of its warehouses through whoever SiteOffices resolves for
+## `settlement.trade` (市正; the head acts when it is vacant). The decider stands at the warehouse entrance and the
+## outsider face to face with him (TR-26); the settlement values with its own food target (residents × 14 days).
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const FOOD_TARGET_DAYS := 3
 const OFFER_SECONDS := 60.0
 const MAX_CONCESSIONS := 4
+const SETTLEMENT_FOOD_DAYS := 14
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const REACH := 2.0 # cells between the two representatives (face to face; crowd bodies keep about one cell apart)
 
 var controller: Variant
@@ -56,25 +62,34 @@ func _person(identity: int) -> Dictionary:
 func _holder_id(identity: int) -> String:
 	return "person:%d" % identity
 
-func _ref(identity: int) -> Dictionary:
-	var person := _person(identity)
-	return {"holder": _holder_id(identity), "expected_version": int(person.holder.version) if not person.is_empty() else 0}
+func _holder_version(holder_id: String) -> int:
+	var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, holder_id)
+	return int(endpoint.holder.version) if endpoint.ok else -1
 
-func _concession_key(npc: int, player: int, day: int) -> String:
-	return JSON.stringify([_holder_id(npc), _holder_id(player), day])
+func _ref(identity: int) -> Dictionary:
+	return _holder_ref(_holder_id(identity))
+
+func _holder_ref(holder_id: String) -> Dictionary:
+	return {"holder": holder_id, "expected_version": maxi(0, _holder_version(holder_id))}
+
+func _concession_key(npc_holder: String, player_holder: String, day: int) -> String:
+	return JSON.stringify([npc_holder, player_holder, day])
 
 func concessions(npc: int, player: int) -> int:
-	var entry: Variant = state().concessions.get(_concession_key(npc, player, game_day()))
+	return holder_concessions(_holder_id(npc), _holder_id(player))
+
+func holder_concessions(npc_holder: String, player_holder: String) -> int:
+	var entry: Variant = state().concessions.get(_concession_key(npc_holder, player_holder, game_day()))
 	return int(entry.count) if entry is Dictionary else 0
 
-func _concede(npc: int, player: int) -> void:
+func _concede(npc_holder: String, player_holder: String) -> void:
 	var trade := state()
 	var day := game_day()
 	# Yesterday's counts reset: only today's entries are kept.
 	for key: Variant in trade.concessions.keys():
 		if int(trade.concessions[key].day) != day: trade.concessions.erase(key)
-	var key := _concession_key(npc, player, day)
-	var entry: Dictionary = trade.concessions.get(key, {"a": _holder_id(npc), "b": _holder_id(player), "day": day, "count": 0})
+	var key := _concession_key(npc_holder, player_holder, day)
+	var entry: Dictionary = trade.concessions.get(key, {"a": npc_holder, "b": player_holder, "day": day, "count": 0})
 	entry["count"] = mini(MAX_CONCESSIONS, int(entry.count) + 1)
 	trade.concessions[key] = entry
 
@@ -97,7 +112,7 @@ func job_of(identity: int) -> String:
 func busy(identity: int) -> bool:
 	return not job_of(identity).is_empty()
 
-func _check_pair(player: int, npc: int) -> Dictionary:
+func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
 	if player == npc: return Runtime.fail("INVALID", "不能和自己交易")
 	var a := _person(player)
 	var b := _person(npc)
@@ -107,10 +122,34 @@ func _check_pair(player: int, npc: int) -> Dictionary:
 	if not _face_to_face(a, b): return Runtime.fail("TOO_FAR", "須當面交易（兩格內）")
 	if controller.person_actions.is_busy(player) or controller.person_actions.is_busy(npc): return Runtime.fail("BUSY", "交易雙方須空閒")
 	if hostile(a, b): return Runtime.fail("HOSTILE", "敵對勢力之間不能交易")
-	for side: Dictionary in [a, b]:
-		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, _holder_id(int(side.person_id)))
+	for holder: String in [_holder_id(player), npc_holder if not npc_holder.is_empty() else _holder_id(npc)]:
+		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, holder)
 		if not endpoint.ok: return endpoint
+	if npc_holder.begins_with("feature:"):
+		var party := settlement_party(npc_holder.trim_prefix("feature:"))
+		if not party.ok: return party
+		if int(party.decider) != npc: return Runtime.fail("NO_AUTHORITY", "此倉由「%s」負責交易" % str(party.position_name))
+		if Vector2(b.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "聚落代表須站在倉庫門口")
 	return Runtime.ok("", {"a": a, "b": b})
+
+## T2: the settlement side of a warehouse trade. The warehouse lies in the jurisdiction, belongs to the settlement's
+## faction and has its stock; the decider is SiteOffices' `settlement.trade` (the head acts when it is vacant).
+func settlement_party(key: String) -> Dictionary:
+	var data: TerrainData = _lab().terrain
+	var settlement: Dictionary = Settlement.record(data)
+	if settlement.is_empty() or int(settlement.get("level", 0)) <= 0: return Runtime.fail("NO_TARGET", "此地沒有聚落")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if str(feature.get("kind", "")) != "warehouse" or not Settlement.feature_in_jurisdiction(data, feature) \
+		or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
+	var endpoint: Dictionary = Stockpiles.stock_endpoint(data, key)
+	if endpoint.is_empty(): return Runtime.fail("NO_TARGET", "倉庫尚無庫存")
+	var offices: Dictionary = settlement.get("offices", {})
+	SiteOffices.ensure_catalog(offices, "settlement")
+	var head := int(SiteOffices.head_position(offices).get("holder", 0))
+	var resolved: Dictionary = SiteOffices.resolve(offices, "settlement.trade", head, func(identity: int) -> bool: return _able(_person(identity)), true)
+	if not resolved.ok: return Runtime.fail(str(resolved.code), str(resolved.get("message", "職責暫停")))
+	return Runtime.ok("", {"decider": int(resolved.decider), "position_name": str(resolved.position_name), "cell": endpoint.cell,
+		"holder": Stockpiles.identity(key), "cargo": endpoint.cargo, "faction": int(settlement.owner_faction)})
 
 ## T1-b (§5.5 with the diplomacy table): people of one side trade freely; different factions only when not hostile
 ## (peace or truce in RegionDiplomacy). A Site without a Region slot keeps every other faction hostile.
@@ -127,10 +166,10 @@ func _npc_terms(npc: Dictionary) -> Dictionary:
 	var axes: Dictionary = PersonPersonality.read(npc.body.get("personality") if npc.body is Dictionary else npc.body.get("personality"))
 	return {"stock": npc.cargo, "targets": {"food": float(FOOD_TARGET_DAYS)}, "thrift": float(axes.get("thrift", 50))}
 
-func _legal(player: int, npc: int) -> Callable:
+func _legal(player: int, npc_holder: String) -> Callable:
 	var data: TerrainData = _lab().terrain
 	var a_ref := _ref(player)
-	var b_ref := _ref(npc)
+	var b_ref := _holder_ref(npc_holder)
 	# receive = what the NPC receives (the player gives), give = what the NPC gives.
 	return func(receive: Dictionary, give: Dictionary) -> bool:
 		return bool(Runtime.exchange_items(data, a_ref, b_ref, receive, give, true).ok)
@@ -146,21 +185,33 @@ func _drop_offers_of(identities: Array) -> void:
 ## COUNTER (an offer the NPC accepts, changed by the deterministic counter rule) or REJECT. A round that does not
 ## stand as given costs one concession for today (at most 4: five rounds). Moves no goods.
 func propose(player: int, npc: int, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
-	var pair := _check_pair(player, npc)
+	return _propose(player, npc, "", player_gives, npc_gives)
+
+## T2: trade with the settlement's warehouse `key` through its decider `npc`.
+func propose_settlement(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
+	return _propose(player, npc, Stockpiles.identity(key), player_gives, npc_gives)
+
+func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
+	var pair := _check_pair(player, npc, npc_holder)
 	if not pair.ok: return pair
 	if Trade._unit_count(player_gives) == 0 or Trade._unit_count(npc_gives) == 0: return Runtime.fail("EMPTY", "雙方都要有付出的東西")
-	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, _ref(player), _ref(npc), player_gives, npc_gives, true)
+	var holder := npc_holder if not npc_holder.is_empty() else _holder_id(npc)
+	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, _ref(player), _holder_ref(holder), player_gives, npc_gives, true)
 	if not preview.ok: return preview
-	var used := concessions(npc, player)
+	var used := holder_concessions(holder, _holder_id(player))
 	var terms := _npc_terms(pair.b)
-	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.a.cargo, _legal(player, npc),
+	if not npc_holder.is_empty():
+		# The settlement values its own stock: this warehouse, residents × 14 days of food.
+		terms["stock"] = Runtime.trade_endpoint(_lab().terrain, holder).cargo
+		terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
+	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.a.cargo, _legal(player, holder),
 		float(terms.thrift), used, _lab().terrain.site)
 	if not answer.ok: return answer
 	var decision := str(answer.decision)
 	if decision == "ACCEPT" and (answer.receive != player_gives or answer.give != npc_gives): decision = "COUNTER"
-	if decision != "ACCEPT": _concede(npc, player)
+	if decision != "ACCEPT": _concede(holder, _holder_id(player))
 	_drop_offers_of([player, npc])
-	var result := {"decision": decision, "concessions": concessions(npc, player)}
+	var result := {"decision": decision, "concessions": holder_concessions(holder, _holder_id(player))}
 	if decision == "REJECT":
 		var last := used >= MAX_CONCESSIONS
 		return Runtime.ok("對方拒絕%s" % ("；今日議價已到底" if last else ""), result)
@@ -168,7 +219,7 @@ func propose(player: int, npc: int, player_gives: Dictionary, npc_gives: Diction
 	var key := "%s:%d" % [str(trade.site_id), int(trade.next_seq)]
 	trade["next_seq"] = int(trade.next_seq) + 1
 	var at := now()
-	trade.offers[key] = {"revision": 1, "a": _ref(player), "b": _ref(npc), "a_gives": answer.receive.duplicate(true), "b_gives": answer.give.duplicate(true),
+	trade.offers[key] = {"revision": 1, "a": _ref(player), "b": _holder_ref(holder), "a_gives": answer.receive.duplicate(true), "b_gives": answer.give.duplicate(true),
 		"a_representative": player, "b_representative": npc, "created_action": at, "expires_action": at + OFFER_SECONDS,
 		"accepted_a": false, "accepted_b": true}
 	result["offer_id"] = key
@@ -186,9 +237,10 @@ func accept(offer_id: String) -> Dictionary:
 		return Runtime.fail("EXPIRED", "報價已過期")
 	var player := int(offer.a_representative)
 	var npc := int(offer.b_representative)
-	var pair := _check_pair(player, npc)
+	var b_holder := str(offer.b.holder)
+	var pair := _check_pair(player, npc, b_holder if b_holder != _holder_id(npc) else "")
 	if not pair.ok: return pair
-	if int(pair.a.holder.version) != int(offer.a.expected_version) or int(pair.b.holder.version) != int(offer.b.expected_version):
+	if _holder_version(str(offer.a.holder)) != int(offer.a.expected_version) or _holder_version(b_holder) != int(offer.b.expected_version):
 		trade.offers.erase(offer_id)
 		return Runtime.fail("STALE", "持物已改變，請重新報價")
 	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, offer.a, offer.b, offer.a_gives, offer.b_gives, true)
@@ -235,9 +287,12 @@ func advance() -> Array[Dictionary]:
 			# is moving away.
 			elif absi(person.cell.x - int(cell[0])) > 1 or absi(person.cell.y - int(cell[1])) > 1: reason = "交易一方離開位置"
 			elif int(person.hit) != int(job[side + "_hit"]): reason = "交易一方受擊"
-			elif int(person.holder.version) != int(offer[side].expected_version): reason = "持物已改變"
+			elif _holder_version(str(offer[side].holder)) != int(offer[side].expected_version): reason = "持物已改變"
 			if not reason.is_empty(): break
 		if reason.is_empty() and hostile(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方勢力已敵對"
+		if reason.is_empty() and str(offer.b.holder).begins_with("feature:"):
+			var party := settlement_party(str(offer.b.holder).trim_prefix("feature:"))
+			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "聚落交易職責已變更"
 		if reason.is_empty() and not _face_to_face(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方已不在面前"
 		if not reason.is_empty():
 			results.append(_end(str(key), Runtime.fail("CANCELLED", "交易中止：%s；未轉移任何物品" % reason)))

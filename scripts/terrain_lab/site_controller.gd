@@ -10497,6 +10497,23 @@ func trade_accept(offer_id: String) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	return _trade().accept(offer_id)
 
+## T2: trade with the settlement warehouse `key` through its trade decider `npc_id`.
+func trade_propose_settlement(npc_id: int, key: String, gives: Dictionary, wants: Dictionary) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	return _trade().propose_settlement(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants))
+
+## The settlement warehouse `npc_id` trades for: he is its `settlement.trade` decider and stands at its entrance.
+func trade_warehouse_of(npc_id: int) -> String:
+	var person: Dictionary = person_actions._person(npc_id)
+	if person.is_empty(): return ""
+	var keys: Array = lab.terrain.site.get("features", {}).keys()
+	keys.sort()
+	for key: Variant in keys:
+		if str(lab.terrain.site.features[key].get("kind", "")) != "warehouse": continue
+		var party: Dictionary = _trade().settlement_party(str(key))
+		if party.ok and int(party.decider) == npc_id and Vector2(person.cell).distance_to(Vector2(party.cell)) <= TradeSession.REACH: return str(key)
+	return ""
+
 ## The trade dialog (T1-a): what I give from my cargo, what I want from theirs, the NPC's answer, and accepting a
 ## standing offer or counter. Quantities are capped by what each side carries; nothing moves until delivery completes.
 func open_trade_dialog(npc_id: int) -> Dictionary:
@@ -10506,9 +10523,11 @@ func open_trade_dialog(npc_id: int) -> Dictionary:
 	if me.is_empty() or them.is_empty() or npc_id == int(lab.controlled_person_id()):
 		show_result(Runtime.fail("NO_TARGET", "先選一位在場的人物"))
 		return Runtime.fail("NO_TARGET")
+	var warehouse := trade_warehouse_of(npc_id)
+	var their_cargo: Dictionary = them.cargo if warehouse.is_empty() else Runtime.trade_endpoint(lab.terrain, "feature:" + warehouse).get("cargo", {})
 	var dialog := AcceptDialog.new()
 	dialog.name = "TradeDialog"
-	dialog.title = "與 #%d 交易" % npc_id
+	dialog.title = "與 #%d 交易" % npc_id if warehouse.is_empty() else "與聚落倉庫交易（代表 #%d）" % npc_id
 	dialog.ok_button_text = "關閉"
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
@@ -10521,7 +10540,7 @@ func open_trade_dialog(npc_id: int) -> Dictionary:
 		grid.name = "TradeGive" if side == "give" else "TradeWant"
 		grid.columns = 2
 		column.add_child(grid)
-		var cargo: Dictionary = me.cargo if side == "give" else them.cargo
+		var cargo: Dictionary = me.cargo if side == "give" else their_cargo
 		var keys: Array = cargo.keys()
 		keys.sort()
 		for resource: Variant in keys:
@@ -10553,7 +10572,7 @@ func open_trade_dialog(npc_id: int) -> Dictionary:
 		var wants := {}
 		for resource: String in spins.give: gives[resource] = int(spins.give[resource].value)
 		for resource: String in spins.want: wants[resource] = int(spins.want[resource].value)
-		var result: Dictionary = trade_propose(npc_id, gives, wants)
+		var result: Dictionary = trade_propose(npc_id, gives, wants) if warehouse.is_empty() else trade_propose_settlement(npc_id, warehouse, gives, wants)
 		standing.offer_id = str(result.get("offer_id", ""))
 		accept_button.disabled = standing.offer_id.is_empty()
 		if not result.ok:
