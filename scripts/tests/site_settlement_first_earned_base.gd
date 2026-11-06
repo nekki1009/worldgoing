@@ -178,7 +178,9 @@ func _settlement_cold(f: Dictionary, complete: bool) -> void:
 	var personal: Dictionary = actor.technology.duplicate(true)
 	var cargo: Dictionary = f.actions._person(int(f.control)).cargo.duplicate(true)
 	var ammo: Dictionary = actor.ammo_inventory.duplicate(true)
-	var path = "user://settlement_first_earned_" + str(f.tech_id) + "_" + str(f.cold_count) + "_" + str(Time.get_ticks_usec()) + ".json"
+	# Under an isolated --crowd-test run the Controller admits saves only inside its own crowd_test save root.
+	var save_dir: String = str(f.controller.save_root) if not str(f.controller.crowd_test_run_id).is_empty() else "user://"
+	var path = save_dir.path_join("settlement_first_earned_" + str(f.tech_id) + "_" + str(f.cold_count) + "_" + str(Time.get_ticks_usec()) + ".json")
 	f.controller.save_path = path
 	var saved: Dictionary = f.controller.save_to(path)
 	_check(saved.ok, "Actual Controller captures original bodies and strict Store saves the real paid project: " + str(saved))
