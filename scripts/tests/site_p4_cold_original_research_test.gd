@@ -113,17 +113,22 @@ func _p4_f07_ranged() -> Dictionary:
 		if f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell): contact = cell; break
 	_check(contact.x >= 0, "Actual unoccupied original camp contact for the original NPC")
 	_p4_station(f, contact)
-	_check(f.actions.prepare_technology(int(f.control), int(f.worker)).ok
-		and f.actions.request_technology_consent(int(f.control), int(f.worker)).ok
-		and f.actions.grant_technology_budget(int(f.control), {"wood": 12, "fiber": 6}).ok,
-		"Original F07 selects genuine unknown NPC, real team consent and finite material grant")
+	# The grant is a hand-craft action of the controlled person: he stands on another legal cell next to the camp.
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var cell: Vector2i = depot + direction
+		if cell != contact and f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell) and f.lab.character.place(cell, true): break
+	var f07_prepared: Dictionary = f.actions.prepare_technology(int(f.control), int(f.worker))
+	var f07_consent: Dictionary = f.actions.request_technology_consent(int(f.control), int(f.worker)) if f07_prepared.ok else {}
+	var f07_grant: Dictionary = f.actions.grant_technology_budget(int(f.control), {"wood": 12, "fiber": 6}) if f07_consent.get("ok", false) else {}
+	_check(f07_prepared.ok and f07_consent.get("ok", false) and f07_grant.get("ok", false),
+		"Original F07 selects genuine unknown NPC, real team consent and finite material grant: %s %s %s" % [str(f07_prepared), str(f07_consent), str(f07_grant)])
 	_check(f.actions.begin_technology_trial(int(f.control), int(f.worker)).ok, "Actual original NPC bow job starts")
 	for index: int in 8:
 		var point: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
 		_check(point.ok and point.get("completed", false), "Original warm main point")
 	var job: Dictionary = f.actions._jobs[str(f.worker)]
 	_check(float(job.elapsed) > 0.0 and float(job.elapsed) < 120.0 and f.actions.save_guard().code == "BUSY"
-		and not f.actions.export_fire_jobs().ok and not f.lab.capture_fire_owner_state().ok
+		and not f.actions.export_fire_jobs(float(f.lab.fire_action_cursor)).ok and not f.lab.capture_fire_owner_state().ok
 		and not Technology.learned(_p4_body(f).get("technology", {}), "F07"), "Partial original job does not fabricate a bow or permit ordinary manual save")
 	var path := _p4_checkpoint(f)
 	var left := _p4_open(f, path, false)
