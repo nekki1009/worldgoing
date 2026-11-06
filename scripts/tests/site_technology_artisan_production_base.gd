@@ -347,6 +347,11 @@ func _feature_assign(f: Dictionary, key: String, identity: int, action: String) 
 	_clear_station(f, identity, cell)
 	_place(f, identity, cell)
 	_park(f, int(f.commander), cell + Vector2i(0, 3))
+	if action == "construct":
+		# A generated map can leave natural resources in the footprint; the original clearing owner handles them first
+		# (WorkTeam refuses CLEARING_REQUIRED). The fixture stands in for that clearing.
+		for resource_key: String in feature.get("pending_build", feature).get("clearing", []):
+			if not SiteEnvironment.resource(f.data, resource_key).is_empty(): SiteEnvironment.change(f.data, resource_key, {"cleared": true, "remaining": 0})
 	var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_feature(f.team, [identity], int(f.commander), key, action)
 	_require(prepared.ok, "Original named feature assignment", prepared)
 	_require(f.lab.site_controller.work_team.publish_assign_feature(prepared).ok, "Original prevalidated assignment publisher")
