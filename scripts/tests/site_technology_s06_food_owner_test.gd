@@ -9,13 +9,13 @@ const FOOD_SAVE := "res://.godot-temp/site_s06_owner/food.v1.json"
 func _food_fixture() -> Dictionary:
 	var fixture := _s01_fixture()
 	fixture.source = _cold_natural_feature(fixture.data, "warehouse", Vector2i(14, 10) + Vector2i(fixture.natural_offset))
-	fixture.warehouse = _cold_natural_feature(fixture.data, "warehouse", Vector2i(25, 10) + Vector2i(fixture.natural_offset))
+	fixture.warehouse = _cold_natural_feature(fixture.data, "warehouse", Vector2i(27, 17) + Vector2i(fixture.natural_offset))
 	_check(Stockpiles.ensure_storage(fixture.data, str(fixture.source), 1).ok and Stockpiles.ensure_storage(fixture.data, str(fixture.warehouse), 1).ok, "Original constructed warehouses initialize their true original holders")
 	fixture.source_stock = Stockpiles.storage(fixture.data, str(fixture.source))
 	fixture.destination_stock = Stockpiles.storage(fixture.data, str(fixture.warehouse))
 	# Explicit starting inventory in the genuine original warehouse. Every tested
 	# later mutation is the actual transfer owner; no extra inventory is created.
-	fixture.source_stock.cargo.grain = 16
+	fixture.source_stock.cargo["grain"] = 16 # Bracket write keeps a String key (a dot write makes a StringName).
 	_check(fixture.lab.character.place(Stockpiles.stock_endpoint(fixture.data, str(fixture.source)).cell, true), "Real head physically touches the named original source")
 	fixture.actions = fixture.lab.site_controller.person_actions
 	return fixture
@@ -35,7 +35,8 @@ func _food_order(fixture: Dictionary) -> Dictionary:
 		_check(actions.prepare_scope_technology(int(fixture.control), int(fixture.control), "S06").ok, "Enabled public original owner creates S06 project")
 	var project := Technology.active_project(owner.technology)
 	var preview := actions.request_warehouse_food_order(int(fixture.control), str(fixture.warehouse), int(fixture.control), "feature:" + str(fixture.source), int(project.id), true)
-	_check(preview.ok, "True original source/contact/head/carrier and finite cap preflight purely")
+	var wf: Dictionary = fixture.data.site.features.get(str(fixture.warehouse), {})
+	_check(preview.ok, "True original source/contact/head/carrier and finite cap preflight purely: " + str(preview) + " wh=" + str(fixture.warehouse) + " stage=" + str(wf.get("stage")) + " kind=" + str(wf.get("kind")) + " eligible=" + str(Stockpiles.eligible(wf)) + " ep=" + str(Stockpiles.org_endpoint(fixture.data, str(fixture.warehouse)).get("faction")) + "/" + str(Stockpiles.org_endpoint(fixture.data, str(fixture.warehouse)).get("withdraw_only")) + " owner=" + str(fixture.data.site.settlement.get("owner_faction")) + " juris=" + str(Settlement.feature_in_jurisdiction(fixture.data, wf)))
 	var created := actions.request_warehouse_food_order(int(fixture.control), str(fixture.warehouse), int(fixture.control), "feature:" + str(fixture.source), int(project.id))
 	_check(created.ok, "Original adopted food order is registered without debit")
 	fixture.order_id = str(created.order_id)
@@ -120,7 +121,8 @@ func _food_cold(fixture: Dictionary) -> void:
 	_check(fixture.actions.cancel(int(fixture.control)).ok and fixture.actions.save_guard().ok, "Original cancel releases only the transient held job before cold save")
 	_check(order.payload.work_seconds == 100.0 and order.payload.spent == {"grain": 8}, "Cancelling preserves canonical productive history and the single paid source debit")
 	fixture.lab.site_controller._capture_positions()
-	_check(Store.save(fixture.data, FOOD_SAVE).ok, "Original Store saves strict order and real carrier/warehouse holders")
+	var food_saved: Dictionary = Store.save(fixture.data, FOOD_SAVE)
+	_check(food_saved.ok, "Original Store saves strict order and real carrier/warehouse holders: " + str(food_saved))
 	var source_fingerprint = fixture.data.fingerprint()
 	var source_conditions := _cold_natural_conditions(fixture.data)
 	var loaded := Store.load_site(FOOD_SAVE)
@@ -135,7 +137,7 @@ func _food_cold(fixture: Dictionary) -> void:
 	_check(Runtime.valid_settlement_food_order(fixture.data, fixture.data.site, order) and is_same(order.payload.token, order.payload.paid.token), "JSON numbers normalize and true bind restores ONE token reference on original order")
 	_check(order.payload.work_seconds == 100.0 and fixture.actions._jobs.is_empty(), "Original saved productive evidence remains 100; bind never invents another timer")
 	var resumed = fixture.actions.begin_settlement_food_work(int(fixture.control), str(order.payload.settlement_id), str(order.id))
-	_check(resumed.ok and resumed.remaining == 200.0 and fixture.actions._jobs[str(int(fixture.control))].elapsed == 100.0, "Explicit actual head resumes original saved progress without source repayment")
+	_check(resumed.ok and resumed.remaining == 200.0 and fixture.actions._jobs[str(int(fixture.control))].elapsed == 100.0, "Explicit actual head resumes original saved progress without source repayment: " + str(resumed))
 	_s01_point(fixture, 200.0)
 	_check(order.status == "completed" and order.payload.spent == {"grain": 8} and order.receipts.size() == 3, "Cold continuation completes original 300 seconds and one finite transfer history")
 	var window: SiteTechWindow = fixture.lab.site_controller._tech_window

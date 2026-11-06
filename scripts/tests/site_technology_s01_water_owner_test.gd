@@ -27,7 +27,7 @@ func _s01_fixture(intakes: bool = false) -> Dictionary:
 		{"kind": "well", "anchor": Vector2i(22, 22), "extent": Vector2i.ONE},
 		{"kind": "well", "anchor": Vector2i(23, 22), "extent": Vector2i.ONE},
 		{"kind": "warehouse", "anchor": Vector2i(14, 10), "extent": Vector2i.ONE},
-		{"kind": "warehouse", "anchor": Vector2i(25, 10), "extent": Vector2i.ONE},
+		{"kind": "warehouse", "anchor": Vector2i(27, 17), "extent": Vector2i.ONE}, # Inside the radius-12 jurisdiction (S06 destination).
 	]
 	var extras: Array[Vector2i] = [Vector2i(21, 20)]
 	var selected = _cold_natural_template(specs, "technology-s01-natural", extras, 8)
@@ -159,7 +159,8 @@ func _s01_prefix_point(fixture: Dictionary, seconds: float, endpoint: String = "
 	actions.end_shared_work_prefix_consumption()
 	actions.finish_shared_job_prefix_timers(admitted)
 	actions.finish_shared_work_prefix(admitted)
-	if elapsed >= 300.0 - PersonalFatigue.WORK_PLAN_EPS and endpoint.is_empty():
+	# Only the water schedule job has a water receipt; S06 reuses this point for its food order job.
+	if elapsed >= 300.0 - PersonalFatigue.WORK_PLAN_EPS and endpoint.is_empty() and str(actions._jobs[str(int(fixture.control))].get("kind", "")) == "water_schedule":
 		var job: Dictionary = actions._jobs[str(int(fixture.control))]
 		var samples = actions.water_schedule_receipt_query(job.nation_token, actions._water_schedule_event(job))
 		_check(samples.ok and is_same(samples.first, job.water_first_sample) and not is_same(samples.first.allocation, samples.second.allocation), "Original current completion query reads stored first sample and computes a fresh second allocation")

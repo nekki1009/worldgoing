@@ -200,7 +200,8 @@ func _run() -> void:
 	var orders: SiteEquipmentOrders = lab.site_controller.equipment_orders
 	assert(not Tech.scope_known(lab.terrain.site.equipment_nations.n1.technology,"N12"))
 	assert(actions.prepare_scope_technology(people[0],people[0],"N12","n1").ok,"True original first N12 purpose")
-	assert(actions.request_scope_technology_consent(people[0],"nation","n1",people[0]).ok,"Actual original controlled team decider names this original researcher")
+	var consent: Dictionary = actions.request_scope_technology_consent(people[0],"nation","n1",people[0])
+	assert(consent.ok,"Actual original controlled team decider names this original researcher: " + str(consent))
 	var issued := orders.request_fleet_order(people[0], "n1", "real_fleet", ship_ids)
 	assert(issued.ok, str(issued))
 	var order_id := str(issued.order_id)

@@ -13192,6 +13192,19 @@ static func valid_settlement_ship_target(data: TerrainData, key: String, feature
 		or not token.is_empty() and token.get("scope") == "settlement" and token.get("scope_id") == ref.settlement_id and token.get("tech_id") == "S12" \
 		and token.get("project_id") == refs.order.payload.project_id and token.get("purpose") == refs.order.payload.purpose and token.get("person", {}).get("person_id") == refs.order.payload.operator_id
 
+## A deep copy of a Site (load's ecology candidate, retiring the default worker) splits the ONE
+## token a paid food order shares with its paid record; restore that single reference.
+static func relink_settlement_order_aliases(state: Dictionary) -> void:
+	var settlement: Variant = state.get("settlement")
+	if not settlement is Dictionary or not settlement.get("technology_operations") is Dictionary: return
+	var orders: Variant = settlement.technology_operations.get("orders")
+	if not orders is Dictionary: return
+	for order: Variant in orders.values():
+		if not order is Dictionary or order.get("kind") != "food_order" or not order.get("payload") is Dictionary: continue
+		var p: Dictionary = order.payload
+		if p.get("paid") is Dictionary and not p.paid.is_empty() and p.get("token") is Dictionary and p.paid.get("token") == p.token:
+			p.paid["token"] = p.token
+
 static func normalize_settlement_food_order(raw: Dictionary) -> void:
 	for key: String in ["authorizer_id", "revision"]: raw[key] = int(raw[key])
 	var p: Dictionary = raw.payload

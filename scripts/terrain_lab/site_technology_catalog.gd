@@ -495,7 +495,7 @@ const _NODES := [
 	},
 	{
 		"id": "S06", "name": "糧食乾燥與倉儲", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["active_settlement_jurisdiction","usable_authorized_warehouse","legal_real_carrier"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [

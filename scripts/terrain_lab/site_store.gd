@@ -871,6 +871,7 @@ static func retire_default_worker(data: TerrainData) -> Dictionary:
 		return Runtime.ok()
 	var original: Dictionary = data.site
 	data.site = original.duplicate(true)
+	Runtime.relink_settlement_order_aliases(data.site)
 	var result := _retire_default_worker_copy(data)
 	if not result.ok:
 		data.site = original
@@ -2311,6 +2312,7 @@ static func prepare_ecology_candidate(data: TerrainData, region_context: Diction
 	var source_validation := _validate_state(data, data.site.duplicate(true), 1, null, context)
 	if not source_validation.ok: return source_validation
 	var candidate := Env.navigation_for_state(data, data.site.duplicate(true))
+	Runtime.relink_settlement_order_aliases(candidate.site)
 	for field: String in ["height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation", "fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body"]:
 		candidate.set(field, data.get(field).duplicate())
 	candidate["parameters"] = data.parameters.duplicate(true)

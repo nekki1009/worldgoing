@@ -6566,7 +6566,7 @@ func prepare_settlement_food_work(checked: Dictionary, transfer: Dictionary = {}
 	job.merge({"duration": 300.0, "elapsed": float(order.payload.work_seconds), "terrain": lab.terrain, "site_state": lab.terrain.site,
 		"executor_body": person.body, "food_settlement": checked.settlement, "food_operations": checked.operations, "food_order": order,
 		"food_warehouse": checked.feature, "food_holder": checked.stock.holder, "food_cargo": checked.stock.cargo, "nation_token": order.payload.token,
-		"food_event_id": str(order.payload.paid.payment_id)})
+		"food_event_id": str(order.payload.paid.payment_id)}, true) # Overwrite _new_job's elapsed 0: resume saved work.
 	return Runtime.ok("原PA300秒作業候選；尚未佔用或扣時", {"owner": self, "jobs": _jobs, "job": job, "person_id": int(person.person_id), "site": lab.terrain.site, "terrain": lab.terrain})
 
 func publish_settlement_food_work(prepared: Dictionary) -> void:

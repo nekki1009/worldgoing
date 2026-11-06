@@ -125,7 +125,13 @@ func _settlement_target(f: Dictionary, phase: Dictionary) -> Dictionary:
 		_settlement_team_with_actor(f)
 		return {"target": "feature:" + key, "work_target": {}}
 	if binding == "spares":
-		_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.depot_cell)), true), "Actual craftsman reaches the original camp source contact")
+		# Manual craft needs the craftsman one legal step beside the camp, not on the camp cell.
+		var camp: Vector2i = f.data.cell_from_index(int(f.data.site.depot_cell))
+		var contact := Vector2i(-1, -1)
+		for side: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]:
+			var cell: Vector2i = camp + side
+			if contact.x < 0 and f.data.contains(cell) and f.data.is_walkable(cell) and int(f.data.feature_at[f.data.index(cell)]) == 0 and f.data.can_step(cell, camp): contact = cell
+		_check(contact.x >= 0 and f.lab.character.place(contact, true), "Actual craftsman reaches the original camp source contact")
 		_settlement_team_with_actor(f)
 		return {"target": "depot", "work_target": {}}
 	if binding == "spare_repair":
