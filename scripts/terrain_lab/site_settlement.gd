@@ -487,6 +487,13 @@ static func zone_people(lab: Variant, zone: Dictionary) -> Array[Dictionary]:
 	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.person_id) < int(b.person_id))
 	return result
 
+## Trade plan TR-1A: people of a faction at peace or truce with the owner (RegionDiplomacy) stand in the capture zone
+## without being attackers. A Site without a Region slot keeps every other faction hostile.
+static func _hostile_to_owner(lab: Variant, faction: int, owner: int) -> bool:
+	var controller: Variant = lab.get("site_controller")
+	if controller == null or controller.region_slot == null: return true
+	return RegionDiplomacy.hostile(controller.region_slot.control.get("faction_registry", {}), faction, owner, float(controller.region_slot.control.logical_game_seconds))
+
 ## Eligibility is sampled before the interval. The original fall_record owns
 ## elapsed progress; handoff never resamples old time using a new roster.
 static func capture_sample(lab: Variant) -> Dictionary:
@@ -501,7 +508,7 @@ static func capture_sample(lab: Variant) -> Dictionary:
 		var conscious := float(person.hp) > 0.0 and float(person.ko) <= 0.0
 		if int(person.faction) == owner:
 			defended = defended or conscious and not bool(person.captive)
-		elif _fit(person) and str(person.role) != "civilian":
+		elif _fit(person) and str(person.role) != "civilian" and _hostile_to_owner(lab, int(person.faction), owner):
 			attackers[int(person.faction)] = int(attackers.get(int(person.faction), 0)) + 1
 			if not first_attacker.has(int(person.faction)): first_attacker[int(person.faction)] = person
 	var attacker := -1
