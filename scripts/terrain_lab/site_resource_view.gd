@@ -641,6 +641,8 @@ func _draw_row_features(canvas: Node2D, row_index: int) -> void:
 	var batcher := TriangleBatcher.new(canvas.get_canvas_item())
 	canvas.set_meta(&"batcher", batcher)
 	for key: String in feature_keys:
+		# The row index can trail a removed feature (a refused or rolled-back build) until the next rebuild.
+		if not data.site.features.has(key): continue
 		_draw_feature(canvas, data.site.features[key], row_index)
 	batcher.flush()
 	canvas.remove_meta(&"batcher")

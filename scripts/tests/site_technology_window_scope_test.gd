@@ -62,9 +62,13 @@ func run() -> void:
 	# The Window also lists the 12 nation nodes (N01-N12) added to the catalog.
 	check(window._scope_node.item_count == 40, "All 15 family, 13 settlement and 12 nation nodes are visible")
 	check(window._buttons.has("F07BeginTrial") and window._buttons.has("F07BeginLesson"), "Original F07 inputs are retained")
-	# Most family nodes, S01 and S07 were accepted on 2026-11-06; S02 (still a candidate) is the undelivered node this boundary covers.
-	select_node(window, "S02")
-	check(not bool(Catalog.get_node("S02").enabled), "This fixture covers the undelivered S02 activation boundary")
+	# Nodes open one by one during acceptance (11/06-11/07); the boundary uses the first node still a candidate.
+	var undelivered := ""
+	for node_id: String in Catalog.ids():
+		if undelivered.is_empty() and not bool(Catalog.get_node(node_id).enabled): undelivered = node_id
+	check(not undelivered.is_empty(), "At least one undelivered node remains for the activation boundary")
+	select_node(window, undelivered)
+	check(not bool(Catalog.get_node(undelivered).enabled), "This fixture covers the undelivered %s activation boundary" % undelivered)
 	check(window._scope_buttons.ScopeGrantBudget.disabled and window._scope_buttons.ScopeBeginPhase.disabled, "Undelivered node cannot collect research budget or begin work")
 	check(not window._scope_submit_query().ok and window._scope_submit_query().code == "NOT_DELIVERED", "Submitting rechecks delivery rather than trusting a disabled button")
 	window._scope_prepare("first") # Forced signal path must still be harmless.

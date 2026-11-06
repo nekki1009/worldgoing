@@ -414,7 +414,7 @@ const _NODES := [
 	},
 	{
 		"id": "S02", "name": "灌排工程", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["S01","F09"],"any":[],"conditions":["active_settlement_jurisdiction","connected_channel_site"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
