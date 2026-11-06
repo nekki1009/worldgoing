@@ -2819,6 +2819,14 @@ func _technology_operator_for_task(task: Dictionary, identity: int = 0) -> Dicti
 	if identity <= 0:
 		if is_same(task, lab.terrain.site.get("manual", {})): identity = _technology_controlled()
 		elif is_same(task, lab.terrain.site.get("worker", {})) and lab.npc != null: identity = int(lab.npc.person_id)
+		else:
+			# The fire-boundary zero-work completion passes no identity; a physical PA job's
+			# task names its SAME executor (a controlled team row since the neutral-team start).
+			for key: String in _jobs:
+				var held: Dictionary = _jobs[key]
+				if str(held.get("kind", "")) in ["technology_feature", "technology_vehicle"] and is_same(held.get("work_task"), task):
+					identity = int(held.executor_id)
+					break
 	var person := _person(identity)
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving): return {}
 	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return {}
@@ -6953,6 +6961,16 @@ func finish_shared_nonwork_timers(prepared: Dictionary) -> void:
 #   original PA.settle_after_contacts / true Native death event handoff.
 # Native suppression approach stays ORIGINAL prepare/actions before World;
 # final P5 classification/cost comes only from its already prevalidated pack.
+
+## Fire-boundary completion owner for a physical technology job: null when no PA job holds
+## this exact task; otherwise whether its SAME executor still stands ready at the work cell.
+func fire_physical_job_owner(worker: Dictionary, cargo: Dictionary, cell: Vector2i) -> Variant:
+	for key: String in _jobs:
+		var job: Dictionary = _jobs[key]
+		if str(job.get("kind", "")) not in ["technology_feature", "technology_vehicle"] or not is_same(job.get("work_task"), worker): continue
+		var context := _controlled_feature_job_context(job)
+		return context.ok and is_same(context.person.cargo, cargo) and Vector2i(context.person.cell) == cell
+	return null
 
 func _controlled_feature_job_context(job: Dictionary) -> Dictionary:
 	if job.get("kind") == "technology_vehicle": return _controlled_vehicle_job_context(job)

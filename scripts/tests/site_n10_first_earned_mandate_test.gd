@@ -71,7 +71,7 @@ func _run() -> void:
 	before = _earned_bytes(f)
 	_check(not f.controller._nation_ui_command("n1", "construction", {"order": order_id, "x": road_cell.x, "y": road_cell.y}).ok and _earned_bytes(f) == before,
 		"Actual controlled executor outside the original prospective work station rejects the entire paid start")
-	_check(f.lab.character.place(f.data.cell_from_index(int(geometry.entrance)), true), "The same true original Actor reaches the actual road construction entrance; no automatic worker replacement")
+	_check(_earned_place_controlled(f.lab, f.data.cell_from_index(int(geometry.entrance))), "The same true original Actor reaches the actual road construction entrance; no automatic worker replacement")
 	var built: Dictionary = f.controller._nation_ui_command("n1", "construction", {"order": order_id, "x": road_cell.x, "y": road_cell.y})
 	_check(built.ok and f.data.site.inventory.stone == stone - 1 and f.data.site.next_feature == next_feature + 1,
 		"Actual one-cell road and one original material payment start together: " + str(built))

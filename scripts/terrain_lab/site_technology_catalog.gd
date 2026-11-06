@@ -843,7 +843,7 @@ const _NODES := [
 	},
 	{
 		"id": "N10", "name": "地方行政制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N02","N09"],"any":[],"conditions":["original_nation","active_original_settlement","legal_current_local_exerciser"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [

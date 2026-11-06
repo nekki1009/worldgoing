@@ -11192,6 +11192,10 @@ func fire_resource_owner_guard(worker: Dictionary, cargo: Dictionary, cell: Vect
 			and not actor.is_moving() and actor.action_time <= 0.0 and not actor.guarding \
 			and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 and actor._rescue_left <= 0.0 \
 			and str(worker.get("mode", "")) == "work"
+	# A physical technology job (controlled Actor or team row) holds its task in the PA job,
+	# not in site.manual or a work-team row; re-admit that SAME person at the SAME cell.
+	var physical: Variant = person_actions.fire_physical_job_owner(worker, cargo, cell)
+	if physical != null: return bool(physical)
 	for identity: int in work_team.active_ids():
 		var person: Dictionary = work_team._person(identity)
 		if person.is_empty() or not (person.owner is TerrainArmy or person.owner is CrowdPersonOwner): continue

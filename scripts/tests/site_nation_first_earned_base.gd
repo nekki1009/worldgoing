@@ -133,6 +133,19 @@ func _earned_pinned_manifest() -> String:
 	_check(map.load_manifest(path).ok, "Original RegionData validates checksums and the actual fixed map contract")
 	return path
 
+## Since the neutral-team start the controlled person is the captain row of a one-person team,
+## not the legacy Actor. Stand both at the cell and join that team to the fixture's faction 1
+## (neutral cannot found or govern), as region_crowd_save_slot_test does for its founder.
+func _earned_place_controlled(lab: TerrainLab, cell: Vector2i) -> bool:
+	var placed: bool = lab.character.place(cell, true)
+	var control := int(lab.controlled_person_id())
+	for own_team: TerrainArmy in lab.combat_armies:
+		var index := own_team.index_for_identity(control)
+		if own_team.has_army() and index >= 0 and index < own_team.cells.size():
+			own_team.faction_id = 1
+			own_team.cells[index] = cell
+	return placed
+
 func _earned_pinned_lab() -> TerrainLab:
 	var path = _earned_pinned_manifest()
 	var lab = _earned_natural_lab(_earned_natural_data())
@@ -234,12 +247,13 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 						if data.contains(ring_cell): army_excluded.append(data.index(ring_cell))
 		team = _earned_army(lab, 40, army_excluded)
 		executor = control if target == "N10" else team.combat_identity(1)
-	_check(lab.character.place(data.cell_from_index(int(center.fixture_preview.entrance)), true), "The actual controlled founder reaches the true original founding radius")
+	var founding_cell: Vector2i = data.cell_from_index(int(center.fixture_preview.entrance))
+	_check(_earned_place_controlled(lab, founding_cell), "The actual controlled founder reaches the true original founding radius")
 	var center_cells: Array[int] = []
 	center_cells.assign(center.cells)
 	for key: String in center.fixture_preview.get("clearing", []): Env.change(data, key, {"cleared": true, "remaining": 0})
 	var founded = Settlement.found(lab, control, center_cells)
-	_check(founded.ok, "Original founding transaction creates the true local head and same original center")
+	_check(founded.ok, "Original founding transaction creates the true local head and same original center: " + str(founded))
 	_complete_key(data, str(founded.feature))
 	# Initial NPC housing is a strict prior-world relation to the finite original
 	# people and actual original house slots; no population or permission field.
@@ -331,8 +345,9 @@ func _earned_prepare(f: Dictionary, node: String, route: String = "default") -> 
 
 func _earned_depot_grant(f: Dictionary, cap: Dictionary) -> void:
 	var contact: Vector2i = f.data.cell_from_index(int(f.data.site.depot_cell)) + Vector2i.RIGHT
-	_check(f.lab.character.place(contact, true), "The true controlled grantor reaches the actual original camp contact")
-	_check(f.actions.grant_scope_technology_budget(f.control, "nation", "n1", cap).ok, "The original camp grants an explicit finite material purpose; zero-material prior work is not a second debit")
+	_check(_earned_place_controlled(f.lab, contact), "The true controlled grantor reaches the actual original camp contact")
+	var granted: Dictionary = f.actions.grant_scope_technology_budget(f.control, "nation", "n1", cap)
+	_check(granted.ok, "The original camp grants an explicit finite material purpose; zero-material prior work is not a second debit: " + str(granted) + " cap=" + str(cap))
 
 func _earned_road_preview(f: Dictionary, cell: Vector2i) -> Dictionary:
 	for radius: int in range(20):
@@ -369,7 +384,17 @@ func _earned_cold(f: Dictionary, node: String, expected_known: bool = true) -> v
 	var path = "user://technology_first_%s_%d_%d.json" % [node, OS.get_process_id(), Time.get_ticks_usec()]
 	var saved = Store.save(f.data, path)
 	_check(saved.ok, "Original Store saves genuinely earned owner history: " + str(saved))
-	var loaded = Store.load_site(path)
+	# A pinned fixed-world Site saves only its fixed_base identity; rebuild that base from the
+	# same original manifest, as the region tests do. Generated Sites never call the loader.
+	var fixed_loader := func(saved_base: Dictionary) -> Dictionary:
+		var source := RegionData.new()
+		if not source.load_manifest(earned_out.path_join("manifest.json")).ok or not saved_base.get("site") is Array or saved_base.site.size() != 2:
+			return Runtime.fail("SAVE_VERSION", "fixture fixed base source")
+		var rebuilt: Dictionary = RegionRoute.fresh_fixed_base(source, Vector2i(int(saved_base.site[0]), int(saved_base.site[1])))
+		if not bool(rebuilt.get("ok", false)) or not Store._same_fixed_base(rebuilt.get("base"), saved_base):
+			return Runtime.fail("SAVE_VERSION", "fixture fixed base rebuild")
+		return rebuilt
+	var loaded = Store.load_site(path, fixed_loader)
 	_check(loaded.ok and Technology.scope_known(loaded.data.site.equipment_nations.n1.technology, node) == expected_known, "Original JSON loader preserves exactly the actual partial/earned knowledge and accepted receipts: " + str(loaded))
 	_check(loaded.data.fingerprint() == source_fingerprint and _earned_land_bytes(loaded.data) == land_conditions,
 		"Original cold generated/fixed source and all five original land-condition arrays remain identical")
