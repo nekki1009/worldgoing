@@ -10,9 +10,15 @@ const JoineryCatalog = preload("res://scripts/terrain_lab/site_technology_catalo
 
 func _f11_team(lab: TerrainLab) -> TerrainArmy:
 	var cells: Array[Vector2i] = []
-	for index: int in range(lab.terrain.flags.size()):
-		var cell := lab.terrain.cell_from_index(index)
-		if lab.terrain.is_walkable(cell) and not lab.site_controller.reserves_cell(cell): cells.append(cell)
+	# Deploy beside the controlled Actor: a joined member counts as present only
+	# within the formation's command radius.
+	var origin: Vector2i = lab.character.terrain_cell
+	for radius: int in range(1, 20):
+		for y: int in range(-radius, radius + 1):
+			for x: int in range(-radius, radius + 1):
+				if absi(x) + absi(y) != radius or cells.size() == 2: continue
+				var cell := origin + Vector2i(x, y)
+				if lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and not lab.site_controller.reserves_cell(cell): cells.append(cell)
 		if cells.size() == 2: break
 	_check(cells.size() == 2, "Two distinct original generated NPC deployment cells exist")
 	var team := TerrainArmy.new()
@@ -49,7 +55,7 @@ func _f11_geometry(f: Dictionary, kind: String, near: Vector2i) -> Dictionary:
 				_check(var_to_bytes([data.site,f.actions._jobs,f.lab.character.technology]) == before, "Every original natural geometry preview is pure")
 				if not checked.ok: continue
 				var station := data.cell_from_index(int(slots[0].cell))
-				_check(f.lab.character.place(station,true), "Actual named operator reaches this real prospective station")
+				_check(_f11_place(f.lab, station), "Actual named operator reaches this real prospective station")
 				before = var_to_bytes([data.site,f.actions._jobs,f.lab.character.technology])
 				checked = Runtime.begin_siege_build(data,kind,anchor,Vector2i.RIGHT,int(f.team.team_id),int(f.control),f.controller.reserves_cell,true,{},{},int(f.control))
 				_check(var_to_bytes([data.site,f.actions._jobs,f.lab.character.technology]) == before, "Actual operator preview pays or publishes nothing")
@@ -93,7 +99,11 @@ func _f11_fixture() -> Dictionary:
 func _f11_point(f: Dictionary, seconds: float) -> Dictionary:
 	var requests: Array = f.actions.work_requests(seconds)
 	_check(requests.size() == 1, "One original controlled work request participates in this point")
-	f.lab._shared_work_requests = requests
+	# As the original collector: the WorkTeam prepares its interval (none of its own here) first.
+	var team_requests: Array = f.lab.site_controller.work_team.prepare_work_requests(seconds, seconds / 60.0, requests)
+	var shared: Array = team_requests.duplicate()
+	shared.append_array(requests)
+	f.lab._shared_work_requests = shared
 	_check(f.lab._refresh_shared_work_preflight().ok, "Actual original task/station/source revalidates before the held interval")
 	requests = f.lab._shared_work_requests
 	var captured = f.actions.prepare_shared_work_prefix(requests, seconds)
@@ -102,7 +112,9 @@ func _f11_point(f: Dictionary, seconds: float) -> Dictionary:
 	var before := var_to_bytes([f.data.site, f.lab.character.capture_state()])
 	var admitted = f.actions.validate_shared_work_prefix(captured, plan, requests)
 	var priors: Array = []
-	var checked = f.actions.prepare_checked_controlled_prefixes(admitted, priors) if admitted.ok else admitted
+	# The original registry registers the allocation first, then validates the Runtime prefix.
+	var registered = f.actions.prepare_checked_controlled_prefix_allocations(admitted, priors) if admitted.ok else admitted
+	var checked = f.actions.validate_checked_controlled_runtime_prefixes(registered) if registered.ok else registered
 	_check(checked.ok and var_to_bytes([f.data.site, f.lab.character.capture_state()]) == before, "All true Runtime work candidates are pure before original pool/material publication")
 	f.lab._shared_work_plan = plan
 	f.lab.site_controller._shared_work_plan = plan
@@ -126,7 +138,7 @@ func _f11_finish(f: Dictionary, key: String) -> void:
 func _f11_bind_ordinary(f: Dictionary, key: String) -> void:
 	var vehicle: Dictionary = f.data.site.vehicles[key]
 	var stations := Runtime.siege_work_slots(f.data, vehicle)
-	_check(f.lab.character.place(f.data.cell_from_index(int(stations[0].cell)), true), "Actual original Actor stands at the retained vehicle's true construction station")
+	_check(_f11_place(f.lab, f.data.cell_from_index(int(stations[0].cell))), "Actual original Actor stands at the retained vehicle's true construction station")
 	var prepared = f.actions.prepare_controlled_vehicle_work({}, vehicle, f.data.site.vehicles, int(f.control))
 	_check(prepared.ok, "Original pure PA admission binds the retained ordinary paid vehicle without another payment")
 	f.actions.publish_controlled_vehicle_work(prepared)
@@ -142,10 +154,16 @@ func _f11_unlearned_helper_point(f: Dictionary, key: String) -> void:
 	workers.publish_assign_vehicle(assigned)
 	var task: Dictionary = row.work_task
 	f.team.cells[1] = f.data.cell_from_index(int(task.work_cell))
+	# The placed body has no pending step or walking pose left from its cancelled route.
+	f.team.moving_to[1] = TerrainArmy.INVALID_CELL
+	f.team.combat_hot_set(1, &"pose", "idle")
 	task.cell = int(task.work_cell)
 	task.mode = "work"
 	var facts := Runtime.work_preflight(f.data, task, row.cargo, 100, 1, identity, f.lab.site_controller.reserves_cell)
 	_check(facts.ok and is_equal_approx(float(facts.productivity), 1.0), "True original unlearned helper gets basic productivity on the improved paid target")
+	# This helper point starts rested: the earlier research pooled the team fatigue up to its 80 rest line.
+	f.team.team_fatigue.fatigue = 0.0
+	row["work_resting"] = false
 	f.lab._shared_work_requests = workers.prepare_work_requests(30.0)
 	_check(f.lab._refresh_shared_work_preflight().ok, "The true original NPC helper request is admitted at its exact original station")
 	var captured = workers.prepare_shared_work_prefix(30.0)
@@ -173,11 +191,11 @@ func _f11_true_research_then_ordinary_ui() -> void:
 	var original := _f11_geometry(f,"ram",Vector2i(20,35))
 	var before := var_to_bytes([data.site, lab.character.technology, f.actions._jobs])
 	_check(not Runtime.begin_siege_build(data, "ram", original.anchor, Vector2i.RIGHT, int(f.team.team_id), control, Callable(), true, {}, {}, control, "joinery").ok and var_to_bytes([data.site, lab.character.technology, f.actions._jobs]) == before, "Unlearned actual operator cannot obtain the improved new method or pay any cost")
-	_check(lab.character.place(original.station, true), "True Actor reaches the original basic pre-learning ram station")
+	_check(_f11_place(lab, original.station), "True Actor reaches the original basic pre-learning ram station")
 	var old_key := str(data.site.next_vehicle)
 	_check(Runtime.begin_siege_build(data, "ram", original.anchor, Vector2i.RIGHT, int(f.team.team_id), control, controller.reserves_cell, false, {}, {}, control).ok, "Original eleven-argument basic admission starts one genuine pre-learning paid job")
 	_check(not data.site.vehicles[old_key].has("technology_siege_method") and f.actions.cancel(control).ok, "Retained original paid job has no marker; stopping its person does not apply a future skill")
-	_check(lab.character.place(data.cell_from_index(int(data.site.depot_cell)), true), "Same original grantor returns to the real camp contact")
+	_check(_f11_camp_contact(lab), "Same original grantor returns to the real camp contact")
 	_check(f.actions.prepare_scope_technology(control, control, "F11").ok and f.actions.grant_scope_technology_budget(control, "family", str(f.family_id), {"wood": 144, "iron": 36, "fiber": 34, "cloth": 20}).ok and f.actions.request_scope_technology_consent(control, "family", str(f.family_id), control).ok, "Original head/source/actual work decider bind exactly the two full actual F11 phases")
 	var stock = data.site.inventory.duplicate()
 	for stage: Dictionary in [{"kind": "ballista", "binding": "ballista_build", "anchor": Vector2i(20, 20), "seconds": 5400.0}, {"kind": "siege_tower", "binding": "tower_build", "anchor": Vector2i(36, 20), "seconds": 28800.0}]:
@@ -185,7 +203,7 @@ func _f11_true_research_then_ordinary_ui() -> void:
 		stage.anchor = real.anchor
 		var key := str(data.site.next_vehicle)
 		var request := {"anchor": stage.anchor, "facing": Vector2i.RIGHT, "team_id": int(f.team.team_id)}
-		_check(lab.character.place(real.station, true), "Actual same unlearned trial executor stands at the distinct real phase station")
+		_check(_f11_place(lab, real.station), "Actual same unlearned trial executor stands at the distinct real phase station")
 		_check(f.actions.begin_scope_technology_phase(control, "family", str(f.family_id), str(stage.binding), "vehicle:" + key, request).ok, "Original Scope phase admits this one genuine paid basic construction before F11 learning")
 		var vehicle: Dictionary = data.site.vehicles[key]
 		_check(float(vehicle.build.total_work) == float(stage.seconds) and not vehicle.has("technology_siege_method") and not vehicle.has("tech_work_credit"), "True research keeps the complete immutable baseline and no pre-awarded improved/analysis method")
@@ -213,7 +231,7 @@ func _f11_true_research_then_ordinary_ui() -> void:
 	form.siege_method.select(1)
 	var improved := _f11_geometry(f,"ram",Vector2i(40,35))
 	controller.selected = improved.anchor
-	_check(lab.character.place(improved.station, true), "Actual human-selected learned operator stands at the new original ram station")
+	_check(_f11_place(lab, improved.station), "Actual human-selected learned operator stands at the new original ram station")
 	before = var_to_bytes([data.site, lab.character.technology, f.actions._jobs])
 	controller._build_siege_ui(form, true)
 	_check(var_to_bytes([data.site, lab.character.technology, f.actions._jobs]) == before, "Actual original UI preview gives no marker, stock debit, task or extra knowledge")
@@ -259,3 +277,36 @@ func _run() -> void:
 	print("SITE_F11_FIRST_EARNED_NATURAL_SHARED_COLD_FIXTURE: checks=%d; true shared research vehicles and Controller cold; ordinary UI/oncefactor components; NOT_RUN until canonical launch" % checks)
 	quit(0)
 
+
+
+## Camp contact is a walkable side cell of the depot (the depot cell itself is not adjacent).
+func _f11_camp_contact(lab: TerrainLab) -> bool:
+	var depot: Vector2i = lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell))
+	for side: Vector2i in TerrainData.DIRECTIONS:
+		var cell := depot + side
+		if lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and lab.terrain.can_step(cell, depot) and _f11_place(lab, cell): return true
+	return false
+
+
+## The joined Actor is present (and keeps its delegated office) only within the
+## formation's command radius; the fixture keeps the small team beside it.
+func _f11_place(lab: TerrainLab, cell: Vector2i) -> bool:
+	if not lab.character.place(cell, true): return false
+	for team: TerrainArmy in lab.combat_armies:
+		if int(team.team_id) != 301: continue
+		var used := {cell: true}
+		for index: int in team.combat_units.size():
+			if not team.is_member(index): continue
+			var placed := false
+			for radius: int in range(1, 6):
+				for y: int in range(-radius, radius + 1):
+					for x: int in range(-radius, radius + 1):
+						if placed or absi(x) + absi(y) != radius: continue
+						var near := cell + Vector2i(x, y)
+						if used.has(near) or not lab.terrain.contains(near) or not lab.terrain.is_walkable(near) or lab.site_controller.reserves_cell(near): continue
+						team.cells[index] = near
+						team.moving_to[index] = TerrainArmy.INVALID_CELL
+						used[near] = true
+						placed = true
+		team._refresh_reference_presence()
+	return true

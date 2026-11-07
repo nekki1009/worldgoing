@@ -367,6 +367,7 @@ func _build(f: Dictionary, kind: String, anchor: Vector2i) -> String:
 				if not candidate.ok: continue
 				var candidate_cells: Array[int] = []
 				candidate_cells.assign(candidate.cells)
+				if _artisan_cells_hold_person(f, candidate_cells): continue # The work selector refuses a footprint someone stands on.
 				var preview: Dictionary = Runtime.preview_build(f.data, kind, candidate_cells, Callable(f.lab.site_controller, "reserves_cell"), options)
 				if preview.ok:
 					layout = candidate

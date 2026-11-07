@@ -97,7 +97,17 @@ func _earned_setup(f: Dictionary) -> Array:
 	f.data.site.family.technology.known = ["F03"] if f.category == "F04" else ["F05"]
 	_require(Family.validate_family(f.data.site.family, str(f.data.site.id)) and not Technology.scope_known(f.data.site.family.technology, str(f.category)), "Only explicit prerequisite archive input; target never preset")
 	var depot: Vector2i = f.data.cell_from_index(int(f.data.site.depot_cell))
-	_park(f, int(f.commander), depot + Vector2i.RIGHT)
+	# Camp contact needs one of the four side cells; the right one may already be taken.
+	var camp_side := depot + Vector2i.RIGHT
+	for side: Vector2i in TerrainData.DIRECTIONS:
+		var candidate := depot + side
+		var taken := false
+		for index: int in f.team.cells.size():
+			if f.team.combat_identity(index) != int(f.commander) and f.team.cells[index] == candidate: taken = true
+		for actor: TerrainTestCharacter in f.lab.combat_actors:
+			if actor.person_id != int(f.commander) and actor.terrain_cell == candidate: taken = true
+		if not taken and f.data.is_walkable(candidate) and int(f.data.feature_at[f.data.index(candidate)]) == 0: camp_side = candidate; break
+	_park(f, int(f.commander), camp_side)
 	_require(actions._ranged_craft_context(actions._person(int(f.commander))).ok, "Current controlled original person truly contacts the original camp source")
 	_require(actions.prepare_scope_technology(int(f.commander), int(f.executor), str(f.category)).ok, "Public original Family prepares unknown first research")
 	f.family_id = str(f.data.site.family.family_id)
@@ -133,6 +143,7 @@ func _earned_phase(f: Dictionary, key: String, binding: String, expected: Dictio
 	var actions: SitePersonActions = f.lab.site_controller.person_actions
 	var feature: Dictionary = f.data.site.features[key]
 	var station: Vector2i = f.data.cell_from_index(int(feature.entrance))
+	_clear_station(f, int(f.executor), station) # The builder may still stand at the new host's doorway.
 	_place(f, int(f.executor), station)
 	_park(f, int(f.commander), station + Vector2i(0, 3))
 	var before_stock: Dictionary = f.data.site.inventory.duplicate(true)

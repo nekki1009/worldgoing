@@ -352,6 +352,7 @@ func _feature_assign(f: Dictionary, key: String, identity: int, action: String) 
 		# (WorkTeam refuses CLEARING_REQUIRED). The fixture stands in for that clearing.
 		for resource_key: String in feature.get("pending_build", feature).get("clearing", []):
 			if not SiteEnvironment.resource(f.data, resource_key).is_empty(): SiteEnvironment.change(f.data, resource_key, {"cleared": true, "remaining": 0})
+		SiteEnvironment.rebuild_indexes(f.data) # As the real clearing owner does: cleared cells walk again.
 	var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_feature(f.team, [identity], int(f.commander), key, action)
 	_require(prepared.ok, "Original named feature assignment", prepared)
 	_require(f.lab.site_controller.work_team.publish_assign_feature(prepared).ok, "Original prevalidated assignment publisher")
@@ -374,6 +375,7 @@ func _build(f: Dictionary, kind: String, anchor: Vector2i) -> String:
 				if not candidate.ok: continue
 				var candidate_cells: Array[int] = []
 				candidate_cells.assign(candidate.cells)
+				if _artisan_cells_hold_person(f, candidate_cells): continue # The work selector refuses a footprint someone stands on.
 				var preview: Dictionary = Runtime.preview_build(f.data, kind, candidate_cells, Callable(f.lab.site_controller, "reserves_cell"), options)
 				if preview.ok:
 					layout = candidate
@@ -911,3 +913,20 @@ func _finish(reason: String = "") -> void:
 		"store": FileAccess.get_sha256("res://scripts/terrain_lab/site_store.gd"), "catalog": FileAccess.get_sha256("res://scripts/terrain_lab/site_technology_catalog.gd")}}, "", true, true))
 	print("TECH_AI_02_ENGINEERING_SUBSET_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=separate_fixed_birth_Store_and_generated_original_full_cost_products; hypothetical_fixed_release_only; FULL_G06_D10_fixed_productive_work_and_master_interruption_OPEN; Native_Taiwan_GPU_performance_autonomous_AI_full40_excluded")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Since 11/03 the player's start team stands in the field too; a building may not
+## be laid over any person or formation slot, as the original work selector checks.
+func _artisan_cells_hold_person(f: Dictionary, cells: Array[int]) -> bool:
+	var footprint := {}
+	for cell: int in cells: footprint[cell] = true
+	for army: TerrainArmy in f.lab.combat_armies:
+		if not army.has_army(): continue
+		for index: int in army.cells.size():
+			if army.is_member(index) and footprint.has(f.data.index(army.cells[index])): return true
+		if army.combat_enabled:
+			for cell: int in cells:
+				if army.reserves_terrain_cell(f.data.cell_from_index(cell)): return true # Formation slots, as the selector checks.
+	for actor: TerrainTestCharacter in f.lab.combat_actors:
+		if f.lab.actor_present(actor) and footprint.has(f.data.index(actor.terrain_cell)): return true
+	return false

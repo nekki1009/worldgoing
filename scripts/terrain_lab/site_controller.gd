@@ -13008,7 +13008,10 @@ func _refresh_siege_build_people(form: Dictionary) -> void:
 	choice.set_meta(&"siege_build_context", {"data": lab.terrain, "team": team, "requester_id": requester, "controlled_id": lab.controlled_person_id()})
 	var kind: String = str(form.siege_kind.get_item_metadata(form.siege_kind.selected)) if form.siege_kind.selected >= 0 else ""
 	var category: String = preload("res://scripts/terrain_lab/site_technology_policy.gd").siege_category(kind)
-	for index: int in _siege_ui_indices(team):
+	var builder_indices: Array = _siege_ui_indices(team)
+	# A controlled Actor that joined this team is its PLAYER_MEMBER, not a row; it may build too.
+	if team is TerrainArmy and is_instance_valid(team.player_member): builder_indices.append(TerrainArmy.PLAYER_MEMBER)
+	for index: int in builder_indices:
 		if not team.is_member(index): continue
 		var identity: int = team.combat_identity(index)
 		var person: Dictionary = person_actions._person(identity)

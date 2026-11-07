@@ -2758,7 +2758,9 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 				# A completed wall has no permanent operating doorway. A stair
 				# must be allowed to meet its former construction-side cell.
 				var retired_wall_entry := str(other.kind) in ["palisade", "stone_wall"] and str(other.stage) == "complete" and not other.has("pending_build") and not other.has("repair")
-				if other_key != existing_key and not retired_wall_entry and int(other.entrance) == i:
+				# Completed F09 survey stakes only mark the plan to be built over; they keep no doorway.
+				var survey_marker := str(other.kind) == "survey_stakes" and str(other.stage) == "complete"
+				if other_key != existing_key and not retired_wall_entry and not survey_marker and int(other.entrance) == i:
 					return fail("UNREACHABLE", "需保留既有建築工作入口")
 		if data.ramp_edges[i] != 0 and kind not in ["road", "level"]:
 			return fail("TERRAIN", "保留現有坡口")
@@ -4325,11 +4327,18 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 			return
 		if not feature.has("pending_build"):
 			feature["stage"] = "building"
+		var method_factor := 1.0
 		if work_time.is_valid():
-			minutes = float(work_time.call(false, minutes))
+			minutes = float(work_time.call(false, minutes)) # The shared planner already weighted the F10 method.
+		else:
+			var method_facts := family_construction_method_facts(data, feature, worker, original_identity)
+			if not method_facts.ok:
+				worker["status"] = str(method_facts.message)
+				return
+			method_factor = float(method_facts.factor)
 		technology_record_work(feature, minutes, int(trial_guard.get("operator_id", 0)))
 		var audio_before_progress := float(job.progress)
-		job["progress"] = minf(float(job.work), float(job.progress) + minutes)
+		job["progress"] = minf(float(job.work), float(job.progress) + minutes * method_factor)
 		worker["status"] = "施工 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
 		_audio_p3_work_progress_notice(data, key, worker, feature, "construct", audio_before_progress, float(job.progress), original_identity)
 		if float(job.progress) + 0.00000001 < float(job.work):
@@ -4343,6 +4352,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		var fire_paid: Dictionary = job.get("cost", {}).duplicate(true)
 		var candidate := feature.duplicate(true)
 		candidate["stage"] = "complete"
+		candidate.erase("construction_method") # F10's method belongs to the build; a complete feature may not keep it (Store).
 		if feature.has("pending_build"):
 			candidate["cells"] = job.cells.duplicate()
 			candidate["entrance"] = int(job.entrance)
@@ -4381,6 +4391,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 				if str(zone.get("feature", "")) == key:
 					zone.cells = feature.cells.duplicate()
 		feature["stage"] = "complete"
+		feature.erase("construction_method")
 		_fire_feature_completed(data, key, fire_previous, fire_paid)
 		publish_settlement_defense_completion(defense_completion)
 		publish_technology_geometry_completion(technology_completed)
@@ -4430,6 +4441,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 			worker["status"] = str(payment.message)
 			return
 		feature["batch_paid"] = true
+		_farm_trial_protocol_capture_paid(data, key, feature, slot_id)
 	var water: Dictionary = data.site.water_status.get(key, {})
 	if not service.is_empty():
 		water = water.get("slots", {}).get(str(slot_id), {})
@@ -4462,7 +4474,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	var production_minutes := feature_production_minutes(minutes, water_ratio, productivity)
 	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)), production_minutes)
 	var audio_before_production := float(feature.production)
-	feature["production"] = minf(float(definition.cycle), float(feature.production) + production_minutes)
+	feature["production"] = json_stable_seconds(minf(float(definition.cycle), float(feature.production) + production_minutes))
 	feature["status"] = "生產 %.1f / %.1f 分" % [float(feature.production), float(definition.cycle)]
 	_audio_p3_work_progress_notice(data, key, worker, feature, "operate", audio_before_production, float(feature.production), original_identity)
 	worker["status"] = feature.status
@@ -7084,6 +7096,10 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 		if not trial_facts.ok: return trial_facts
 		base["required_skill"] = str(trial_facts.required_skill)
 		base["eligible_master"] = bool(trial_facts.eligible_master)
+		# F10: only the selected learned person's effort is faster (1/0.9).
+		var method_facts := family_construction_method_facts(data, feature, task, original_identity)
+		if not method_facts.ok: return method_facts
+		base["productivity"] = float(method_facts.factor)
 		return ok("原施工工作預檢", base)
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"): return fail("BUSY")
 	if not definition.has("cycle"): return fail("NO_TARGET")
@@ -7444,6 +7460,10 @@ static func technology_batch_operator_guard(data: TerrainData, key: String, feat
 		if not public_guard.ok: return public_guard
 	var processing := settlement_processing_work_context(data, feature, task, int(person.get("person_id", 0)))
 	if not processing.ok: return processing
+	# An F01 single-batch farm protocol admits only its named learned operator at its
+	# named service slot, and no further batch once its one result is recorded.
+	var protocol := farm_trial_protocol_operator_guard(data, key, feature, task, person)
+	if not protocol.ok: return protocol
 	var physical := _technology_armor_new_work_guard(data, key, feature)
 	if not physical.ok: return physical
 	var checked := technology_recipe_guard(data, key, feature, int(person.get("person_id", 0)), token)
@@ -7550,7 +7570,12 @@ static func prepare_feature_output(data: TerrainData, feature: Dictionary, worke
 	if not processing_prepared.ok: return processing_prepared
 	var military_prepared := _technology_prepare_military_output(data, feature, receipt)
 	if not military_prepared.ok: return military_prepared
-	return ok("", {"state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
+	var protocol_prepared := ok("", {"packet": {}})
+	if feature.has("farm_trial_protocol"):
+		if receipt.is_empty(): return fail("STALE_SOURCE", "原農事試驗須有真原paid/output完成收據")
+		protocol_prepared = prepare_farm_trial_protocol_output(data, key, feature, worker, person, receipt)
+		if not protocol_prepared.ok: return protocol_prepared
+	return ok("", {"farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
 		"cargo_ref": cargo, "cargo_before": cargo.duplicate(true), "output": output.duplicate(true), "products": item_prepared,
 		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared, "public_operation": public_prepared, "military_operation": military_prepared, "settlement_operation": processing_prepared})
 
@@ -7585,6 +7610,9 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	_technology_publish_public_output(prepared.public_operation)
 	_technology_publish_military_output(prepared.military_operation)
 	publish_settlement_processing_order(prepared.settlement_operation)
+	if not prepared.get("farm_protocol", {}).is_empty():
+		prepared.feature_ref.farm_trial_protocol = prepared.farm_protocol
+		_stop_feature_zones(data, str(prepared.receipt.get("feature_id", "")), "operate")
 	if prepared.feature_before.has("technology_settlement_order"):
 		var key := str(prepared.feature_before.technology_settlement_order.order_id)
 		var settlement: Dictionary = data.site.get("settlement", {})
@@ -10544,6 +10572,12 @@ static func valid_farm_trial_protocol(raw: Variant, data: TerrainData, key: Stri
 	if raw.state == "pending": return raw.result.is_empty()
 	return valid_technology_output(raw.result, data, key) and int(raw.result.operator_id) == int(raw.operator.person_id) \
 		and raw.result.recipe_id == raw.recipe_id and Technology.material_equal(raw.result.resources, feature_recipe(feature).get("output", {})) and raw.result.item_ids.is_empty()
+
+## A pending F01 protocol records the actual soil/water/inputs of its first paid batch.
+static func _farm_trial_protocol_capture_paid(data: TerrainData, key: String, feature: Dictionary, slot: int) -> void:
+	var packet: Variant = feature.get("farm_trial_protocol")
+	if not packet is Dictionary or packet.get("state") != "pending" or slot != int(packet.get("work_slot", -2)): return
+	packet["conditions"] = _farm_trial_protocol_conditions(data, key, feature, slot)
 
 static func _farm_trial_protocol_conditions(data: TerrainData, key: String, feature: Dictionary, slot: int) -> Dictionary:
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {}).get("slots", {}).get(str(slot), {})
@@ -13962,7 +13996,9 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 		prepared.payment.holder.version = int(prepared.payment.version) + 1
 		prepared.target.tech_batch = prepared.ledger
 		prepared.target.batch_paid = true
-	prepared.unit[prepared.field] = float(prepared.progress)
+		if prepared.endpoint == "feature": _farm_trial_protocol_capture_paid(prepared.data, str(prepared.task.get("target", "")).trim_prefix("feature:"), prepared.target, int(prepared.task.get("work_slot", -1)))
+	# JSON-stable, as the ledger: a cold save/load restores this exact progress.
+	prepared.unit[prepared.field] = json_stable_seconds(float(prepared.progress))
 	if not prepared.ledger.is_empty():
 		prepared.ledger.work_seconds = json_stable_seconds(float(prepared.ledger_seconds))
 		if bool(prepared.get("ledger_effective_tracked", false)): prepared.ledger.effective_seconds = json_stable_seconds(float(prepared.ledger_effective))
