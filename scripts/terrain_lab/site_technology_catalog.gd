@@ -94,7 +94,7 @@ const _BINDINGS := {
 const _NODES := [
 	{
 		"id": "F01", "name": "農事記錄", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":[],"any":[],"conditions":["legal_farm_trial_plots"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
@@ -115,7 +115,7 @@ const _NODES := [
 	},
 	{
 		"id": "F02", "name": "適地留種", "scope": "family",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F01"],"any":[],"conditions":["legal_farm_and_local_conditions"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [

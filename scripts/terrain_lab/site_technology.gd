@@ -163,6 +163,11 @@ static func valid_project(raw: Variant, holder_site: String, links: Array = []) 
 	return true
 
 static func valid_family_tech(raw: Variant) -> bool:
+	var held: Variant = _memo_verdict("family_tech", raw)
+	if held != null: return bool(held)
+	return _remember_verdict("family_tech", raw, _valid_family_tech_checked(raw))
+
+static func _valid_family_tech_checked(raw: Variant) -> bool:
 	if is_holder_reference(raw): return true
 	if raw is Dictionary and (integer(raw.get("version"), 2, 2) or integer(raw.get("version"), 4, 5)): return valid_scope_record(raw, "family")
 	if not keys(raw, ["version", "known", "holder_site_id", "epoch", "next_project", "active", "projects"]) or not integer(raw.version, VERSION, VERSION) \
@@ -462,7 +467,30 @@ static func _scope_budget(raw: Variant, project: Dictionary, site_id: String, li
 		if available.is_empty() or available.id != payment.phase_id: return false
 	return true
 
+## Read-only verdict memo for the two strict record validators below. A verdict
+## is reused only for the SAME Dictionary whose full content hash is unchanged;
+## any edit or a different (even equal) record revalidates. Both validators are
+## pure functions of the record and the constant catalog.
+static var _verdict_memo: Dictionary = {}
+const _VERDICT_MEMO_MAX := 64
+
+static func _memo_verdict(kind: String, raw: Variant) -> Variant:
+	if not raw is Dictionary: return null
+	var held: Dictionary = _verdict_memo.get(kind + ":" + str(raw.hash()), {})
+	return held.valid if is_same(held.get("raw"), raw) else null
+
+static func _remember_verdict(kind: String, raw: Variant, valid: bool) -> bool:
+	if not raw is Dictionary: return valid
+	if _verdict_memo.size() >= _VERDICT_MEMO_MAX: _verdict_memo.clear()
+	_verdict_memo[kind + ":" + str(raw.hash())] = {"raw": raw, "valid": valid}
+	return valid
+
 static func valid_scope_record(raw: Variant, scope: String) -> bool:
+	var held: Variant = _memo_verdict("scope_" + scope, raw)
+	if held != null: return bool(held)
+	return _remember_verdict("scope_" + scope, raw, _valid_scope_record_checked(raw, scope))
+
+static func _valid_scope_record_checked(raw: Variant, scope: String) -> bool:
 	var extended := raw is Dictionary and integer(raw.get("version"), 4, 5)
 	var history := raw is Dictionary and integer(raw.get("version"), 5, 5)
 	var fields := ["version", "known", "holder_site_id", "epoch", "next_project", "active", "projects"]

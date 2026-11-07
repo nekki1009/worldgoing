@@ -2859,7 +2859,33 @@ func _technology_controlled() -> int:
 
 func _technology_family() -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family", {})
-	return family if Family.validate_family(family, _technology_site_id()) and family.has("offices") else {}
+	return family if _valid_family_memo(family, _technology_site_id()) and family.has("offices") else {}
+
+## Read-only memo of the strict family validator. The verdict is reused only for
+## the SAME family Dictionary whose full content hash and Site id are unchanged;
+## any edit (a new key, a changed value or a replaced record) revalidates.
+var _family_valid_memo: Dictionary = {}
+func _valid_family_memo(family: Variant, site_id: String) -> bool:
+	if not family is Dictionary: return Family.validate_family(family, site_id)
+	var content_hash: int = family.hash()
+	if is_same(_family_valid_memo.get("family"), family) and _family_valid_memo.get("hash") == content_hash and _family_valid_memo.get("site_id") == site_id:
+		return bool(_family_valid_memo.valid)
+	var valid := Family.validate_family(family, site_id)
+	_family_valid_memo = {"family": family, "hash": content_hash, "site_id": site_id, "valid": valid}
+	return valid
+
+## The upgraded working copy of the family offices that _technology_duty resolves
+## against. SiteOffices.resolve only reads it; the copy is rebuilt whenever the
+## stored offices Dictionary or its content changes.
+var _family_offices_memo: Dictionary = {}
+func _family_resolved_offices(stored: Dictionary) -> Dictionary:
+	var content_hash: int = stored.hash()
+	if is_same(_family_offices_memo.get("stored"), stored) and _family_offices_memo.get("hash") == content_hash: return _family_offices_memo.offices
+	var offices: Dictionary = stored.duplicate(true)
+	SiteOffices.upgrade(offices)
+	SiteOffices.ensure_catalog(offices, "family")
+	_family_offices_memo = {"stored": stored, "hash": content_hash, "offices": offices}
+	return offices
 
 func _technology_member(identity: int) -> bool:
 	return Family.member_ids(_technology_family(), _technology_site_id()).has(identity)
@@ -2868,9 +2894,7 @@ func _technology_duty(duty: String) -> Dictionary:
 	var family := _technology_family()
 	if family.is_empty(): return Runtime.fail("UNREGISTERED", "先明確登錄原族人並指定合法家主")
 	if family.has("technology") and not Technology.local_holder(family.technology, _technology_site_id()): return Runtime.fail("REMOTE_HOLDER", "原家族科技由另一處 holder 持有；須沿 Region 原引用接續")
-	var offices: Dictionary = family.offices.duplicate(true)
-	SiteOffices.upgrade(offices)
-	SiteOffices.ensure_catalog(offices, "family")
+	var offices: Dictionary = _family_resolved_offices(family.offices)
 	var eligible := func(identity: int) -> bool:
 		var person := _person(identity)
 		return Family.member_ids(family, _technology_site_id()).has(identity) and not person.is_empty() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive)
@@ -8234,6 +8258,16 @@ func finish_native_fire_point(prepared: Dictionary) -> void:
 					person.owner.work_fatigue_rest(int(job.executor_id))
 			if int(job.supply_q) <= 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY", "本人有限補給已用盡"))
 		if bool(job.cancelled): _settle_cancelled_fire_suppress(str(row.key), job)
+
+## The shared step retimed its prepared interval to a shorter one (an endpoint
+## such as a batch completing inside the step). Held controlled requests follow
+## the same shorter interval; without this their work was skipped as a stale
+## clock, and a farm needing only the last fraction of a second stalled forever.
+func retime_controlled_work_interval(game_seconds: float) -> void:
+	if not is_finite(game_seconds) or game_seconds <= 0.0 or game_seconds > _controlled_feature_seconds + Fatigue.WORK_PLAN_EPS: return
+	# The held requests keep their prepared values (their facts snapshot is
+	# compared exactly); the planner already bounds them by the shorter interval.
+	_controlled_feature_seconds = game_seconds
 
 func _advance_controlled_feature_work(key: String, job: Dictionary, seconds: float, work_plan: Dictionary, handled: Dictionary) -> void:
 	if job.get("kind") == "technology_vehicle":

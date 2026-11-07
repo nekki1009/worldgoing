@@ -4835,9 +4835,19 @@ func deploy_trial_armies(setups: Array[Dictionary]) -> Dictionary:
 	if not journey_guard.ok: return journey_guard
 	if setups.is_empty() or setups.size() > SiteStore.MAX_ARMIES:
 		return SiteRuntime.fail("INVALID", "隊伍數須在 1 至 %d 隊之間" % SiteStore.MAX_ARMIES)
-	for team: TerrainArmy in combat_armies:
-		if team.has_army() and not (crowd_site != null and not crowd_site.active):
-			return SiteRuntime.fail("BUSY", "請先清除現有隊伍；原人物未修改")
+	# Trial teams never overwrite or move people already on the field. Since the
+	# player starts as a one-person team (2026-11-03), the grid path takes the
+	# first run of EMPTY team slots instead of requiring an empty field (Nekki
+	# 2026-11-07). The crowd path keeps its own rule: it adopts existing grid
+	# teams while inactive and refuses while active.
+	var first_slot := 0
+	if crowd_site == null:
+		first_slot = _first_free_army_slots(setups.size())
+		if first_slot < 0: return SiteRuntime.fail("BUSY", "沒有足夠的空隊伍位置；原人物未修改")
+	else:
+		for team: TerrainArmy in combat_armies:
+			if team.has_army() and crowd_site.active:
+				return SiteRuntime.fail("BUSY", "請先清除現有隊伍；原人物未修改")
 	var sides: Array[Dictionary] = []
 	for setup: Dictionary in setups:
 		var normalized := {"third_faction": setup.get("faction", -1)}
@@ -4851,7 +4861,16 @@ func deploy_trial_armies(setups: Array[Dictionary]) -> Dictionary:
 	var formations := _independent_trial_formations(sides)
 	if formations.size() != sides.size():
 		return SiteRuntime.fail("NO_SPACE", "沒有足夠合法格位容納全部隊伍（%s）；原人物與地形未修改" % str(_trial_formation_failure))
-	return _deploy_trial_teams(sides, formations, 0)
+	return _deploy_trial_teams(sides, formations, first_slot)
+
+## The first index of `count` consecutive team slots that hold nobody, or -1.
+func _first_free_army_slots(count: int) -> int:
+	for start: int in range(0, SiteStore.MAX_ARMIES - count + 1):
+		var free := true
+		for index: int in range(start, start + count):
+			if index < combat_armies.size() and combat_armies[index].has_army(): free = false; break
+		if free: return start
+	return -1
 
 func start_melee_trial(setup: Dictionary = {}) -> Dictionary:
 	var journey_guard := _ship_journey_guard()
@@ -8401,6 +8420,7 @@ func _retime_shared_work_step(action_seconds: float, game_seconds: float) -> Dic
 		return SiteRuntime.fail("SHARED_WORK_RETIME")
 	var retimed: Dictionary = site_controller.work_team.retime_prepared_interval(game_seconds, action_seconds)
 	if not retimed.ok: return retimed
+	site_controller.person_actions.retime_controlled_work_interval(game_seconds)
 	var planned := _plan_shared_vehicle_work_interval(_shared_work_requests, game_seconds)
 	if not planned.ok: return planned
 	if crowd_site != null and crowd_site.active:

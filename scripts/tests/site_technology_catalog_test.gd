@@ -88,7 +88,12 @@ func _run() -> void:
 	invalid[0].research.routes[0].phases[0].policy_exception = "F01"
 	assert(not Catalog.validate_catalog(invalid), "Only the four bound D10 self-trials may waive their own gate")
 	invalid = Catalog.all()
-	invalid[0].enabled = true
+	# Nodes open one by one through acceptance; take the first still-unimplemented entry.
+	var unimplemented := -1
+	for index: int in invalid.size():
+		if invalid[index].enabled != true and invalid[index].status != "implemented": unimplemented = index; break
+	assert(unimplemented >= 0, "At least one node remains unimplemented for this negative check")
+	invalid[unimplemented].enabled = true
 	assert(not Catalog.validate_catalog(invalid), "An unimplemented operation cannot become enabled")
 	invalid = Catalog.all()
 	invalid[0].research.routes[0].phases[0].binding = "fictional-owner"
