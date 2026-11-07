@@ -13,7 +13,7 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	assert(condition, message)
 
-func _ai_fixture(prepared: bool = true) -> Dictionary:
+func _ai_fixture(prepared: bool = true, cap: Dictionary = {"wood": 12, "fiber": 6}) -> Dictionary:
 	var data := _building_fixture()
 	var lab := _building_lab(data)
 	var controller: SiteController = lab.site_controller
@@ -36,7 +36,7 @@ func _ai_fixture(prepared: bool = true) -> Dictionary:
 	_check(controller.family_continuity.register_members(members, true, control).ok and controller.family_continuity.appoint_head(control, control).ok, "The true controlled original head explicitly registers only the actual local people")
 	if prepared:
 		_check(actions.prepare_technology(control, executor).ok and actions.request_technology_consent(control, executor).ok, "One manual arrangement names the original NPC and acquires the original scope consent")
-		_check(actions.grant_technology_budget(control, {"wood": 12, "fiber": 6}).ok, "The true camp user explicitly grants the finite cumulative 12/6 authorization")
+		_check(actions.grant_technology_budget(control, cap).ok, "The true camp user explicitly grants the finite cumulative authorization")
 	else:
 		# Install the original public duty catalog through the same owner resolver;
 		# no research project, source grant or permission is created by this query.
@@ -107,7 +107,8 @@ func _two_of_three_store_and_resume() -> void:
 	var fixture := _ai_fixture()
 	await _drive_stages(fixture, 2)
 	_check(not fixture.actions.is_busy(int(fixture.executor)) and bool(fixture.data.site.family.offices.duty_ai), "Between real stages, two settled receipts are saveable with the original AI still enabled")
-	var before := var_to_bytes([_project(fixture), fixture.data.site.inventory, fixture.data.site.item_records])
+	# Canonical sorted JSON: a cold load keeps every value, but not dictionary key order.
+	var before := JSON.stringify([_project(fixture), fixture.data.site.inventory, fixture.data.site.item_records], "", true, true)
 	var captured: Dictionary = fixture.lab.site_controller._capture_for_save()
 	_check(captured.ok, "The original Controller admits and captures the actual idle 2/3 endpoint: " + str(captured))
 	var saved := Store.save(fixture.data, AI_SAVE)
@@ -117,7 +118,7 @@ func _two_of_three_store_and_resume() -> void:
 	fixture.lab.bind_terrain(loaded.data)
 	fixture.data = loaded.data
 	fixture.actions = fixture.lab.site_controller.person_actions
-	_check(var_to_bytes([_project(fixture), fixture.data.site.inventory, fixture.data.site.item_records]) == before, "Actual original bind reestablishes source refs without replaying prior goods or spent quota")
+	_check(JSON.stringify([_project(fixture), fixture.data.site.inventory, fixture.data.site.item_records], "", true, true) == before, "Actual original bind reestablishes source refs without replaying prior goods or spent quota")
 	await _drive_stages(fixture, 3)
 	_check(_bow_count(fixture.data) == int(fixture.bows) + 3 and _project(fixture).budget.spent == {"wood": 12, "fiber": 6} and Technology.learned(fixture.lab.npc.technology), "Loaded original NPC autonomously completes only the remaining paid stage")
 	_close_ai(fixture)
@@ -125,7 +126,7 @@ func _two_of_three_store_and_resume() -> void:
 
 func _current_permission_and_source_refusals() -> void:
 	for failure: String in ["off", "player", "busy", "combat", "rest", "stock", "quota", "revoked", "away", "captive"]:
-		var fixture := _ai_fixture()
+		var fixture := _ai_fixture(true, {"wood": 3, "fiber": 1} if failure == "quota" else {"wood": 12, "fiber": 6})
 		var lab: TerrainLab = fixture.lab
 		var continuity: Variant = lab.site_controller.family_continuity
 		match failure:
@@ -139,7 +140,8 @@ func _current_permission_and_source_refusals() -> void:
 			"combat": Runtime.mark_combat(fixture.data)
 			"rest": lab.npc.fatigue = 90.0
 			"stock": fixture.data.site.inventory.wood = 0
-			"quota": _check(fixture.actions.grant_technology_budget(int(fixture.control), {"wood": 3, "fiber": 1}).ok, "Explicit original finite authorization is too small for one trial")
+			# A cumulative grant can only rise, so the too-small quota is granted from the start.
+			"quota": _check(_project(fixture).budget.cap == {"wood": 3, "fiber": 1}, "Explicit original finite authorization is too small for one trial")
 			"revoked": _check(fixture.actions.grant_technology_budget(int(fixture.control), {}, "revoke").ok, "True original camp grantor revokes its own source")
 			"away": _check(lab.npc.place(Vector2i(12, 9), true), "The actual NPC leaves original camp contact")
 			"captive": lab.npc.captive = true
