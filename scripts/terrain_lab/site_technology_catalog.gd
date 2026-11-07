@@ -803,7 +803,7 @@ const _NODES := [
 	},
 	{
 		"id": "N08", "name": "道路驛運制度", "scope": "nation",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["N06"],"any":[],"conditions":["original_nation","legal_original_route","original_transport_and_driver","authorized_source_and_destination"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [

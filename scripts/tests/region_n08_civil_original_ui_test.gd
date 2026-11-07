@@ -241,7 +241,9 @@ func _n08_final_and_replay() -> bool:
 		if original_event.kind == "player_encounter" and original_event.status == "complete" and original_event.player == true \
 			and original_event.owner == owner_id and original_event.payload.get("token") == n08_trip:
 			genuine_p0 = true
-	if not _check(genuine_p0, "The original stationary Source head caused one genuine completed P0 before carrier resume"): return false
+	# Region round 13 (10/12): a party just extracted from the player's own active Site does not meet
+	# the player on its departure segment, so the carrier unloads directly without a P0 resume.
+	if not _check(not genuine_p0, "The stationary Source head makes no road contact with its own departing carrier"): return false
 	var physical_event := str(reference.get("nation_delivery_event", ""))
 	var receipt: Dictionary = slot.region_nation_route_receipt(lab, "feature:" + n08_destination_warehouse, physical_event)
 	if not _check(receipt.ok and receipt.receipt.transfer_token == n08_trip and receipt.physical_event.status == "complete"

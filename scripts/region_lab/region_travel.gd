@@ -2366,7 +2366,13 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			var chosen := false
 			for anchor: Vector2i in cells:
 				if blocked.has(anchor): continue
-				for facing: Vector2i in TerrainData.DIRECTIONS:
+				# Park heading into the Site: a wagon parked along the map edge cannot
+				# turn inward through its swept footprint and would never drive on.
+				var inward := Vector2(nav.size) * 0.5 - Vector2(anchor)
+				var facings: Array[Vector2i] = []
+				facings.assign(TerrainData.DIRECTIONS)
+				facings.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return Vector2(a).dot(inward) > Vector2(b).dot(inward) or Vector2(a).dot(inward) == Vector2(b).dot(inward) and TerrainData.DIRECTIONS.find(a) < TerrainData.DIRECTIONS.find(b))
+				for facing: Vector2i in facings:
 					var footprint: Array[Vector2i] = []
 					var fits := true
 					for step: int in range(length):

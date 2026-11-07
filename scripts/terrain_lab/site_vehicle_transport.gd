@@ -1219,6 +1219,28 @@ func can_offer_operator_team(vehicle: Dictionary, team: Variant) -> bool:
 		if original.has_army() and original.team_id == old_team: return original.faction_id == team.faction_id
 	return false
 
+## A Region-owned public route (N08) resumes its OWN named driver on its OWN wagon,
+## which arrival parked without an operator. The accepted order is the authority;
+## every physical check of assign_operator still applies, and nothing else is taken.
+func region_route_reboard(vehicle_id: String, person_id: int) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if vehicle.is_empty() or str(vehicle.get("kind", "")) != "wagon" or int(vehicle.operator_id) != 0 or not vehicle.move.is_empty(): return Runtime.fail("NO_TARGET")
+	var person := _operator(person_id)
+	if not _available(person) or not person.owner is TerrainArmy or int(person.owner.team_id) != int(vehicle.team_id): return Runtime.fail("NO_DRIVER")
+	var team: TerrainArmy = person.owner
+	if is_operator(person_id) or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY")
+	if not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))): return Runtime.fail("MISSING_ASSET")
+	var position := operator_cell(vehicle)
+	if person.cell == position: return Runtime.fail("UNREACHABLE")
+	if absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position):
+		return Runtime.fail("UNREACHABLE", "車伕須先走到馬格相鄰合法格")
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
+	if not team._reserve_combat_step(int(person.unit), position):
+		vehicle["operator_id"] = 0
+		return Runtime.fail("UNREACHABLE", "上馬一步被阻擋")
+	return Runtime.ok("原車伕重新上馬")
+
 func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var vehicle: Dictionary = records().get(vehicle_id, {})
 	if is_ship(vehicle):

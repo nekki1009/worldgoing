@@ -10749,9 +10749,35 @@ func _region_n08_resume_carrier(context: Dictionary) -> Dictionary:
 		"binding": binding, "request": context.transfer_receipt.duplicate(true), "vacated_housing": extracted.vacated_housing})
 
 
+func _region_n08_remount(lab: TerrainLab, vehicle_id: String, driver_id: int) -> Dictionary:
+	var transport: Variant = lab.site_controller.vehicles
+	var vehicle: Dictionary = transport.records().get(vehicle_id, {})
+	if vehicle.is_empty() or str(vehicle.kind) != "wagon" or int(vehicle.operator_id) != 0: return fail("NO_DRIVER")
+	var driver: Dictionary = transport._operator(driver_id)
+	if driver.is_empty() or not driver.owner is TerrainArmy or int(driver.owner.team_id) != int(vehicle.team_id): return fail("NO_DRIVER")
+	var team: TerrainArmy = driver.owner
+	if team.moving_member_count() != 0 or team.get_active_move_plan() != null: return {"ok": true, "mounted": false, "moving": true}
+	var boarded: Dictionary = transport.region_route_reboard(vehicle_id, driver_id)
+	if boarded.ok: return {"ok": true, "mounted": true}
+	if boarded.get("code") != "UNREACHABLE": return boarded
+	# Walk to a legal cell beside the horse through the true team order; no cell write.
+	var horse: Vector2i = transport.operator_cell(vehicle)
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var beside := horse + direction
+		if not lab.terrain.contains(beside) or not lab.terrain.can_step(beside, horse) or beside == driver.cell: continue
+		var moved: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, beside)
+		if moved.ok: return {"ok": true, "mounted": false, "moving": true}
+	return fail("UNREACHABLE", "車伕無法走回馬格旁")
+
 func _region_n08_last_mile(context: Dictionary) -> Dictionary:
 	var lab: TerrainLab = context.destination_lab
 	var carrier := _region_n08_wagon(lab, str(context.vehicle_id), int(context.driver_id))
+	if not carrier.ok and carrier.get("code") == "NO_DRIVER":
+		# Arrival parks the wagon without an operator. The named driver walks back
+		# to the horse cell and remounts through the original operator step.
+		var remount := _region_n08_remount(lab, str(context.vehicle_id), int(context.driver_id))
+		if not remount.ok or not bool(remount.get("mounted", false)): return remount
+		carrier = _region_n08_wagon(lab, str(context.vehicle_id), int(context.driver_id))
 	if not carrier.ok: return carrier
 	var holder := str(context.order.payload.destination_holder)
 	var stock: Dictionary = carrier.transport._stock(holder, true)
@@ -10796,6 +10822,20 @@ func _region_n08_research_candidate(context: Dictionary, candidate_nation: Dicti
 
 
 func _region_n08_publish_delivery(token: String) -> Dictionary:
+	# As the NPC dispatch and arrival do: a Source or Destination whose selected
+	# publication lags this frame is published at this same point first (no clock
+	# moves); the bind preflight below requires that exact published frame.
+	var lagging := _region_n08_entered_context(token)
+	if not lagging.ok: return lagging
+	for owner_lab: TerrainLab in [lagging.source_lab, lagging.destination_lab]:
+		var source_check: Dictionary = owner_lab._region_selected_bind_source(owner_lab.terrain, self)
+		if source_check.ok or str(source_check.get("code", "")) not in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]: continue
+		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
+		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "civil_delivery", "token": token})
+		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
+		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "交貨前發布不得推進時鐘")
+		break # One joint publication covers every original owner.
 	var generation := int(_marker.get("generation", 0)) + 1
 	var next_control := control.duplicate(true)
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
