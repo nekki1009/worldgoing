@@ -24,7 +24,7 @@ func _f12_lab() -> TerrainLab:
 	lab.simulation_speed = 4.0
 	lab.character.faction_id = 1
 	lab.npc.faction_id = 1
-	_check(lab.character.place(data.spawn_cell, true), "Original Actor reaches the generated camp source")
+	_check(_f12_place(lab, data.spawn_cell), "Original Actor reaches the generated camp source")
 	var npc_cell := Vector2i(-1, -1)
 	for direction: Vector2i in TerrainData.DIRECTIONS:
 		var cell := data.spawn_cell + direction
@@ -35,9 +35,15 @@ func _f12_lab() -> TerrainLab:
 
 func _f12_team(lab: TerrainLab) -> TerrainArmy:
 	var cells: Array[Vector2i] = []
-	for index: int in range(lab.terrain.flags.size()):
-		var cell := lab.terrain.cell_from_index(index)
-		if lab.terrain.is_walkable(cell) and not lab.site_controller.reserves_cell(cell): cells.append(cell)
+	# Deploy beside the controlled Actor: a joined member counts as present only
+	# within the formation's command radius.
+	var origin: Vector2i = lab.character.terrain_cell
+	for radius: int in range(1, 20):
+		for y: int in range(-radius, radius + 1):
+			for x: int in range(-radius, radius + 1):
+				if absi(x) + absi(y) != radius or cells.size() == 2: continue
+				var cell := origin + Vector2i(x, y)
+				if lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and not lab.site_controller.reserves_cell(cell): cells.append(cell)
 		if cells.size() == 2: break
 	_check(cells.size() == 2, "Generated source supplies two legal original Army deployment cells")
 	var team := TerrainArmy.new()
@@ -73,7 +79,7 @@ func _f12_geometry(lab: TerrainLab, team: TerrainArmy, kind: String) -> Dictiona
 		_check(var_to_bytes([data.site, lab.site_controller.person_actions._jobs, lab.character.technology]) == before,
 			"Original prospective geometry remains pure for each real generated site candidate")
 		if not preview.ok: continue
-		_check(lab.character.place(station, true), "Actual named Actor occupies this pure original station")
+		_check(_f12_place(lab, station), "Actual named Actor occupies this pure original station")
 		before = var_to_bytes([data.site, lab.site_controller.person_actions._jobs, lab.character.technology])
 		preview = Runtime.begin_siege_build(data, kind, anchor, Vector2i.RIGHT, int(team.team_id), control,
 			lab.site_controller.reserves_cell, true, {}, {}, control)
@@ -89,6 +95,10 @@ func _f12_fixture() -> Dictionary:
 	var data := lab.terrain
 	var team := _f12_team(lab)
 	var control := lab.controlled_person_id()
+	# The ordinary vehicle work admission needs the controlled person as the team's work head.
+	var offices := team.team_offices()
+	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": control}]).ok
+		and team.duty_resolve_readonly("team.work", team).decider == control, "Actual living captain delegates team.work to the joined controlled Actor")
 	var refs: Array = []
 	for person_id: int in [control, int(lab.npc.person_id), team.combat_identity(0), team.combat_identity(1)]:
 		refs.append({"site_id": str(data.site.id), "person_id": person_id, "path": "", "label": "原配重首研人物", "age_years": -1})
@@ -127,7 +137,7 @@ func _f12_first_earned() -> void:
 		and Technology.family_traction_recorded(f.data.site.family.technology), "Only true complete paid original traction supplies the required original named Family history")
 	_check(not Technology.scope_known(f.data.site.family.technology, "F12") and not Technology.learned(f.lab.character.technology, "F12"),
 		"Ordinary traction completion earns neither target project nor F12 skill")
-	_check(f.lab.character.place(f.data.spawn_cell, true), "Actual grantor returns to original generated camp contact")
+	_check(_f12_camp_contact(f.lab), "Actual grantor returns to original generated camp contact")
 	_check(f.actions.prepare_scope_technology(int(f.control), int(f.control), "F12").ok, "Actual traction witness now admits first F12 preparation")
 	var phase: Dictionary = EarnedCatalog.get_node("F12").research.routes[0].phases[0]
 	var cap: Dictionary = phase.materials.duplicate(true)
@@ -185,3 +195,38 @@ func _run() -> void:
 	print("F12_ORIGINAL_FIRST_EARNED_TRACTION_COUNTERWEIGHT_SHARED_COLD_PASS checks=", checks,
 		"; actual ordinary traction prerequisite, full 21600 named work, original cold/resume; fixed World policy/UI/travel/contact geometry/Native/full40 excluded")
 	quit(0)
+
+
+## The joined Actor is present (and keeps any delegated office) only within the
+## formation's command radius; the fixture keeps the small team beside it.
+func _f12_place(lab: TerrainLab, cell: Vector2i) -> bool:
+	# Move the team beside the target first, so none of it stands on the target cell.
+	for team: TerrainArmy in lab.combat_armies:
+		if int(team.team_id) != 301: continue
+		var used := {cell: true}
+		for index: int in team.combat_units.size():
+			if not team.is_member(index): continue
+			var placed := false
+			for radius: int in range(7, 9): # Clear of a whole engine footprint/crew, still within the command radius.
+				for y: int in range(-radius, radius + 1):
+					for x: int in range(-radius, radius + 1):
+						if placed or absi(x) + absi(y) != radius: continue
+						var near := cell + Vector2i(x, y)
+						if used.has(near) or not lab.terrain.contains(near) or not lab.terrain.is_walkable(near) or lab.site_controller.reserves_cell(near): continue
+						team.cells[index] = near
+						team.moving_to[index] = TerrainArmy.INVALID_CELL
+						used[near] = true
+						placed = true
+	if not lab.character.place(cell, true): return false
+	for team: TerrainArmy in lab.combat_armies:
+		if int(team.team_id) == 301: team._refresh_reference_presence()
+	return true
+
+
+## Camp contact is a walkable side cell of the depot (the depot cell itself is not adjacent).
+func _f12_camp_contact(lab: TerrainLab) -> bool:
+	var depot: Vector2i = lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell))
+	for side: Vector2i in TerrainData.DIRECTIONS:
+		var cell := depot + side
+		if lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and lab.terrain.can_step(cell, depot) and _f12_place(lab, cell): return true
+	return false

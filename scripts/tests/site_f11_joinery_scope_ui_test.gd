@@ -291,7 +291,7 @@ func _f11_camp_contact(lab: TerrainLab) -> bool:
 ## The joined Actor is present (and keeps its delegated office) only within the
 ## formation's command radius; the fixture keeps the small team beside it.
 func _f11_place(lab: TerrainLab, cell: Vector2i) -> bool:
-	if not lab.character.place(cell, true): return false
+	# Move the team beside the target first, so none of it stands on the target cell.
 	for team: TerrainArmy in lab.combat_armies:
 		if int(team.team_id) != 301: continue
 		var used := {cell: true}
@@ -308,5 +308,7 @@ func _f11_place(lab: TerrainLab, cell: Vector2i) -> bool:
 						team.moving_to[index] = TerrainArmy.INVALID_CELL
 						used[near] = true
 						placed = true
-		team._refresh_reference_presence()
+	if not lab.character.place(cell, true): return false
+	for team: TerrainArmy in lab.combat_armies:
+		if int(team.team_id) == 301: team._refresh_reference_presence()
 	return true
