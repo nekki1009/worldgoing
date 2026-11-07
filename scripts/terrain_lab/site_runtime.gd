@@ -9615,6 +9615,10 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 			ledger_operator_id = int(prefix.person_id)
 			ledger_seconds += productive
 			envelope_counted = true
+		elif action == "construct" and envelope.target.has("technology_yard_id") and ledger_operator_id == 0 and ledger.get("token", {}).is_empty():
+			# The ordinary six-station yard ledger is shared (operator 0), as on the direct path.
+			ledger_seconds += productive
+			envelope_counted = true
 		elif ledger_operator_id == int(prefix.person_id):
 			ledger_seconds += productive
 			envelope_counted = true
@@ -10134,6 +10138,10 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 		if endpoint == "feature" and action == "operate" and productive_seconds > 0.0 and _technology_unbound_ordinary_feature_ledger(target, ledger):
 			# Temporary scalars only: preserve SAME paid ledger/id/material/source.
 			ledger_operator_id = identity
+			ledger_seconds += float(prefix_ref.productive_seconds)
+			ledger_counted = true
+		elif action == "construct" and target.has("technology_yard_id") and int(ledger.operator_id) == 0 and ledger.get("token", {}).is_empty():
+			# The ordinary six-station yard ledger is shared (operator 0), as on the direct path.
 			ledger_seconds += float(prefix_ref.productive_seconds)
 			ledger_counted = true
 		elif int(ledger.operator_id) == identity:
@@ -11352,14 +11360,23 @@ static func technology_siege_ground_geometry(data: TerrainData, vehicle: Diction
 	var four := _technology_original_siege_stations(data, vehicle, false)
 	if footprint.is_empty() or four.size() != 4: return fail("TERRAIN")
 	var ground_key := ""
-	for cell: Vector2i in footprint:
-		var key := str(int(data.feature_at[data.index(cell)]))
-		if key == "0": return fail("NO_TARGET")
-		if ground_key.is_empty(): ground_key = key
-		elif key != ground_key: return fail("NO_TARGET")
+	if vehicle.has("id") and vehicle.has("technology_yard_id"):
+		# A stored yard vehicle names its ground; the Store validates it before the
+		# terrain feature index is rebuilt, so membership comes from the ground's cells.
+		ground_key = str(vehicle.technology_yard_id)
+	else:
+		for cell: Vector2i in footprint:
+			var key := str(int(data.feature_at[data.index(cell)]))
+			if key == "0": return fail("NO_TARGET")
+			if ground_key.is_empty(): ground_key = key
+			elif key != ground_key: return fail("NO_TARGET")
 	var ground: Dictionary = data.site.get("features", {}).get(ground_key, {})
 	if ground.get("kind") != "training_ground" or not valid_technology_siege_yard(ground): return fail("NO_TARGET")
 	if vehicle.has("id") and vehicle.get("technology_yard_id") != ground_key: return fail("NO_TARGET")
+	var ground_cells := {} # Loaded JSON cell ids are floats; compare as ints.
+	for ground_cell: Variant in ground.get("cells", []): ground_cells[int(ground_cell)] = true
+	for cell: Vector2i in footprint:
+		if not ground_cells.has(data.index(cell)): return fail("NO_TARGET")
 	var configured := ground.has("technology_siege_yard")
 	if configured:
 		var geometry := technology_siege_yard_context(data, ground_key, false)
@@ -11369,7 +11386,7 @@ static func technology_siege_ground_geometry(data: TerrainData, vehicle: Diction
 	for station: Dictionary in slots: all_cells.append(data.cell_from_index(int(station.cell)))
 	for index: int in range(int(SIEGE_DEFINITIONS[str(vehicle.kind)].standard_crew)): all_cells.append(siege_crew_cell(data, vehicle, index))
 	for cell: Vector2i in all_cells:
-		if not data.contains(cell) or not ground.get("cells", []).has(data.index(cell)) or int(data.feature_at[data.index(cell)]) != int(ground_key): return fail("TERRAIN", "整具器械及所有原工位須留在同一校場地塊")
+		if not data.contains(cell) or not ground_cells.has(data.index(cell)): return fail("TERRAIN", "整具器械及所有原工位須留在同一校場地塊")
 	return ok("", {"key": ground_key, "feature": ground, "configured": configured, "slots": slots})
 
 static func _checked_work_prefix_owner(data: TerrainData, task: Dictionary, identity: int, prefix: Dictionary) -> Variant:

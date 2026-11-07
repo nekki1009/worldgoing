@@ -66,13 +66,19 @@ func run() -> void:
 	var undelivered := ""
 	for node_id: String in Catalog.ids():
 		if undelivered.is_empty() and not bool(Catalog.get_node(node_id).enabled): undelivered = node_id
-	check(not undelivered.is_empty(), "At least one undelivered node remains for the activation boundary")
-	select_node(window, undelivered)
-	check(not bool(Catalog.get_node(undelivered).enabled), "This fixture covers the undelivered %s activation boundary" % undelivered)
-	check(window._scope_buttons.ScopeGrantBudget.disabled and window._scope_buttons.ScopeBeginPhase.disabled, "Undelivered node cannot collect research budget or begin work")
-	check(not window._scope_submit_query().ok and window._scope_submit_query().code == "NOT_DELIVERED", "Submitting rechecks delivery rather than trusting a disabled button")
-	window._scope_prepare("first") # Forced signal path must still be harmless.
-	check(fixture.commit_snapshot() == before, "Opening/querying/forced disabled input leave original state byte-identical")
+	if undelivered.is_empty():
+		# Since 11/07 all 40 nodes are delivered; the shipped catalog has no activation boundary left.
+		var delivered := 0
+		for node_id: String in Catalog.ids():
+			if bool(Catalog.get_node(node_id).enabled) and Catalog.get_node(node_id).status == "implemented": delivered += 1
+		check(delivered == 40, "Every catalog node is delivered and implemented")
+	else:
+		select_node(window, undelivered)
+		check(not bool(Catalog.get_node(undelivered).enabled), "This fixture covers the undelivered %s activation boundary" % undelivered)
+		check(window._scope_buttons.ScopeGrantBudget.disabled and window._scope_buttons.ScopeBeginPhase.disabled, "Undelivered node cannot collect research budget or begin work")
+		check(not window._scope_submit_query().ok and window._scope_submit_query().code == "NOT_DELIVERED", "Submitting rechecks delivery rather than trusting a disabled button")
+		window._scope_prepare("first") # Forced signal path must still be harmless.
+		check(fixture.commit_snapshot() == before, "Opening/querying/forced disabled input leave original state byte-identical")
 	var held: Dictionary = lab.terrain.site
 	lab.terrain.site = held.duplicate(true)
 	check(not window._scope_submit_query(true).ok and window._scope_submit_query(true).code == "STALE_SOURCE", "Equal replacement Site is not the original held reference")

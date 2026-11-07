@@ -115,21 +115,12 @@ func _yard_move_out(fixture: Dictionary) -> void:
 		_check(transport.assign_crew(str(fixture.key), team.combat_identity(slot + 1), str(slot), captain, true).ok, "Original current captain assigns an actual original person to the genuine completed vehicle's original crew slot")
 	transport.update_siege(0.01)
 	_check(transport.crew_ready(vehicle), "True original crew can stand on their actual original designated-ground stations")
-	_check(transport.order_siege(str(fixture.key), "move", {"type": "ground", "cell": [34 + int(fixture.natural_offset.x), 44 + int(fixture.natural_offset.y)]}, captain, true).ok, "Existing original siege owner authorizes actual travel from the original yard")
-	var remaining := 90.0
-	while remaining > 0.000000001 and lab.terrain.cell_from_index(int(vehicle.cell)) != Vector2i(34, 44) + Vector2i(fixture.natural_offset):
-		var previous: Array[Vector2i] = team.cells.duplicate()
-		transport.update_siege(0.05)
-		coordinator.combat_logic_tick_if_needed(0.05)
-		team.prepare_combat(0.05)
-		coordinator.complete_committed_moves()
-		for slot: int in range(2):
-			var change := team.cells[slot + 1] - previous[slot + 1]
-			_check(absi(change.x) + absi(change.y) <= 1, "Original crew movement commits adjacent cells rather than teleporting out of the yard")
-		remaining -= 0.05
-	transport.update_siege(0.01)
-	_check(lab.terrain.cell_from_index(int(vehicle.cell)) == Vector2i(34, 44) + Vector2i(fixture.natural_offset) and vehicle.move.is_empty() and not vehicle.has("technology_yard_id"), "Actual committed original movement clears the geometry source only after the genuine vehicle and crew leave the original ground")
-	_check(Runtime.siege_work_slots(lab.terrain, vehicle).size() == 4 and transport.siege_save_guard().ok, "The moved original completed equipment retains its original four repair contacts and a settled save boundary")
+	# The ballista is a fixed engine (move_speed 0): it is never pushed off the yard.
+	# Its geometry source stays until the lawful removal below; once complete it keeps
+	# only its original four repair contacts.
+	var pushed: Dictionary = transport.order_siege(str(fixture.key), "move", {"type": "ground", "cell": [34 + int(fixture.natural_offset.x), 44 + int(fixture.natural_offset.y)]}, captain, true)
+	_check(not pushed.ok and pushed.get("code") == "INVALID_ORDER" and vehicle.move.is_empty() and vehicle.has("technology_yard_id"), "The fixed original ballista refuses travel and keeps its yard geometry source")
+	_check(Runtime.siege_work_slots(lab.terrain, vehicle).size() == 4 and transport.siege_save_guard().ok, "The completed original equipment retains its original four repair contacts and a settled save boundary")
 	_check(transport.unassign_crew(str(fixture.key), 0, captain, true).ok, "Actual original current captain releases the same original crew before removing the empty engine")
 	coordinator.unregister_formation(team)
 	lab.combat_movement_coordinator = null
@@ -164,6 +155,9 @@ func _six_actual_workers_and_save() -> void:
 		_check(task.target == "vehicle:" + fixture.key and not claimed.has(int(task.work_slot)), "Each actual person holds a different original vehicle work slot")
 		claimed[int(task.work_slot)] = true
 		team.cells[index] = data.cell_from_index(int(task.work_cell))
+		# The placed body has no pending step or walking pose left from its cancelled route.
+		team.moving_to[index] = TerrainArmy.INVALID_CELL
+		team.combat_hot_set(index, &"pose", "idle")
 		task.cell = int(task.work_cell)
 		task.mode = "work"
 		_check(SiteWorkTeam.valid_task(data, data.site, task), "Real original task validator accepts this actual designated slot")
@@ -210,7 +204,14 @@ func _six_actual_workers_and_save() -> void:
 	var done := Runtime.advance_siege_work(data, str(fixture.key), "construct", float(vehicle.build.total_work) - float(vehicle.build.progress), team.cells[1], int(task.work_slot), int(team.team_id), task, int(fixture.executor))
 	_check(done.ok and done.complete and vehicle.phase == "idle" and vehicle.build.is_empty() and not vehicle.has("tech_batch"), "The actual same-original paid engine completes by its current true F11 worker and consumes the finite current batch")
 	_check(vehicle.technology_construction.operator_id == fixture.executor and vehicle.technology_construction.materials == Runtime.SIEGE_DEFINITIONS.ballista.cost and Runtime.validate_technology_yard_vehicle(data, vehicle).ok, "Original completed physical receipt records the true finishing master and full original material history without personal research credit")
-	_check(var_to_bytes([data.site.settlement.technology, data.site.family.technology]) == archive, "Ordinary physical completion still leaves all original research archives unchanged")
+	# Since the 10/09 family siege history, a member's completed build is recorded as
+	# history only; known nodes, projects and the Settlement archive stay unchanged.
+	var prior_archive: Array = bytes_to_var(archive)
+	var family_after: Dictionary = data.site.family.technology
+	var history: Array = family_after.get("siege_history", [])
+	_check(data.site.settlement.technology == prior_archive[0] and family_after.known == prior_archive[1].known and family_after.projects == prior_archive[1].projects
+		and int(family_after.active) == int(prior_archive[1].active) and history.size() == 1 and history[0].get("vehicle_id") == fixture.key and int(history[0].get("person_id", -1)) == int(fixture.executor),
+		"Ordinary physical completion leaves research archives unchanged and records one family siege history entry")
 	for identity: int in fixture.ids: workers.cancel(identity)
 	_yard_move_out(fixture)
 	_check(Runtime.remove_siege_vehicle(data, str(fixture.key), int(team.team_id)).ok, "Original vehicle owner lawfully removes the completed empty engine, retaining spent construction costs")

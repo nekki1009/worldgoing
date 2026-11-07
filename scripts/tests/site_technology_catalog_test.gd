@@ -92,7 +92,11 @@ func _run() -> void:
 	var unimplemented := -1
 	for index: int in invalid.size():
 		if invalid[index].enabled != true and invalid[index].status != "implemented": unimplemented = index; break
-	assert(unimplemented >= 0, "At least one node remains unimplemented for this negative check")
+	if unimplemented < 0:
+		# All 40 are delivered (11/07): build the unimplemented case from a copy.
+		unimplemented = 0
+		invalid[0].status = "candidate"
+		invalid[0].tuning_confirmed = false
 	invalid[unimplemented].enabled = true
 	assert(not Catalog.validate_catalog(invalid), "An unimplemented operation cannot become enabled")
 	invalid = Catalog.all()

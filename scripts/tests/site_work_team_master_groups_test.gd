@@ -16,8 +16,8 @@ func _masters_fixture(alternate: bool = false) -> Dictionary:
 	# the existing civil work duty to the actual joined Actor. No controlled-ID
 	# swap, vacant-captain bypass, synthetic consent or parallel roster is used.
 	for index: int in range(40): team.cells[index] = Vector2i(9 + index, 50)
-	team.cells[0] = Vector2i(25, 39)
-	_check(lab.character.place(Vector2i(24, 39), true) and team.join_player(lab.character).ok, "Actual controlled Actor legally joins the living original captain's formation")
+	team.cells[0] = Vector2i(25, 40) + Vector2i(fixture.natural_offset) # Template-relative: row 40 lies between the house row and the yard.
+	_check(lab.character.place(Vector2i(24, 40) + Vector2i(fixture.natural_offset), true) and team.join_player(lab.character).ok, "Actual controlled Actor legally joins the living original captain's formation")
 	team.settle_combat_command()
 	var offices := team.team_offices()
 	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": int(fixture.control)}]).ok, "Original living current captain delegates its real existing civil work duty through the original office transaction")
@@ -27,20 +27,20 @@ func _masters_fixture(alternate: bool = false) -> Dictionary:
 	team.combat_units[3].technology = Technology.learned_candidate({}, "F11") if alternate else {}
 	data.site.family.technology.known = ["F04", "F11", "F12", "F14"]
 	data.site.world_pin = {"format": 2, "technology_policy": MasterPolicy.new_policy(["F12"]).policy}
-	team.cells[1] = Vector2i(22, 41)
+	team.cells[1] = Vector2i(22, 42) + Vector2i(fixture.natural_offset) # Row 41 holds the ground's own racks.
 	_check(Runtime.configure_siege_yard(data, str(fixture.yard), int(fixture.control), team.combat_identity(1)).ok, "Actual same-settlement head configures the genuine ground while the real F11 master is present")
-	var prospective := {"kind": "counterweight_trebuchet", "cell": data.index(Vector2i(26, 43)), "facing": [0, 1]}
+	var prospective := {"kind": "counterweight_trebuchet", "cell": data.index(Vector2i(26, 43) + Vector2i(fixture.natural_offset)), "facing": [0, 1]}
 	var stations := Runtime.siege_work_slots(data, prospective)
 	_check(stations.size() == 6, "Actual frozen S11 geometry gives six genuine original construction stations")
 	team.cells[2] = data.cell_from_index(int(stations[0].cell))
 	var paid_before = data.site.inventory.duplicate(true)
-	var begun := Runtime.begin_siege_build(data, "counterweight_trebuchet", Vector2i(26, 43), Vector2i.DOWN, int(team.team_id), int(fixture.control), lab.site_controller.reserves_cell, false, {}, {}, team.combat_identity(2))
+	var begun := Runtime.begin_siege_build(data, "counterweight_trebuchet", Vector2i(26, 43) + Vector2i(fixture.natural_offset), Vector2i.DOWN, int(team.team_id), int(fixture.control), lab.site_controller.reserves_cell, false, {}, {}, team.combat_identity(2))
 	_check(begun.ok, "Original finite new construction admits a genuine named F12 operator and a different genuinely available F11 master before real cost: " + str(begun))
 	fixture.key = str(begun.vehicle)
 	fixture.vehicle = data.site.vehicles[fixture.key]
 	for material: String in Runtime.SIEGE_DEFINITIONS.counterweight_trebuchet.cost:
 		_check(int(data.site.inventory[material]) == int(paid_before[material]) - int(Runtime.SIEGE_DEFINITIONS.counterweight_trebuchet.cost[material]), "Actual original full %s construction cost is paid once" % material)
-	var others: Array = []
+	var others: Array[int] = [] # The owner takes Array[int].
 	for index: int in [1, 3, 4, 5, 6]: others.append(team.combat_identity(index))
 	_check(lab.site_controller.work_team.assign(team, others, int(fixture.control)).ok, "Original actual work decider assigns the five other real helpers through the unchanged selector")
 	lab.site_controller.work_team.prepare_work_requests(30.0)
@@ -48,6 +48,9 @@ func _masters_fixture(alternate: bool = false) -> Dictionary:
 		var row: Dictionary = team.combat_units[index]
 		_check(row.work_task.target == "vehicle:" + fixture.key, "Each real original row holds this SAME genuine paid target")
 		team.cells[index] = data.cell_from_index(int(row.work_task.work_cell))
+		# The placed body has no pending step or walking pose left from its cancelled route.
+		team.moving_to[index] = TerrainArmy.INVALID_CELL
+		team.combat_hot_set(index, &"pose", "idle")
 		row.work_task.cell = int(row.work_task.work_cell)
 		row.work_task.mode = "work"
 		_check(SiteWorkTeam.valid_task(data, data.site, row.work_task), "Each held original named/helper task validates its actual original slot")

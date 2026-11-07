@@ -595,7 +595,7 @@ const _NODES := [
 	},
 	{
 		"id": "S11", "name": "器械場", "scope": "settlement",
-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
+		"enabled": true, "status": "implemented", "tuning_confirmed": true,
 		"prerequisites": {"all":["F11"],"any":[],"conditions":["settlement_level_3","active_settlement_jurisdiction","legal_siege_yard_geometry","learned_F11_master"]},
 		"research": {"version": 1, "routes": [
 			{"id": "default", "requires_all": [], "phases": [
