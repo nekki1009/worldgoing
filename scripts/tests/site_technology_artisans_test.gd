@@ -197,6 +197,9 @@ func _check_family_optional_and_original_roundtrip() -> void:
 	actor.person_id = int(restored.units[4].person_id)
 	actor.data = f.terrain
 	actor.terrain_cell = team.cells[4]
+	# A standing Actor saves its ground at the cell centre and its last step source on that cell.
+	actor.movement_from_cell = team.cells[4]
+	actor.position = (Vector2(team.cells[4]) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	actor.item_state = Runtime.new_item_state("person:" + str(actor.person_id))
 	actor.technology = restored.units[4].technology.duplicate(true)
 	var actor_state := actor.capture_state()

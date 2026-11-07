@@ -22,6 +22,8 @@ class Fixture extends Node2D:
 	var controller := Controller.new()
 	# Core SitePersonActions._person checks lab.site_controller (ship positions); none here.
 	var site_controller: Variant = null
+	# Vehicle/transport owners read the Lab's crowd backend; this fixture has none.
+	var crowd_site: Variant = null
 	func _init() -> void:
 		terrain.site.inventory = {}
 		terrain.site.capacity = 100
@@ -39,7 +41,8 @@ class Fixture extends Node2D:
 		army.cape_departure_guard = controller.cape_departure_guard
 		for actor: TerrainTestCharacter in [character, npc]:
 			actor._saved_appearance = HumanCharacter3DEditor.default_appearance(0)
-			for slot: String in SiteRuntime.EQUIPMENT_SLOTS: actor._saved_appearance.parts[slot] = "none"
+			# Appearance parts are the APPEARANCE slots; the CAV-3 mount slot is an item slot, not a part.
+			for slot: String in SiteRuntime.APPEARANCE_EQUIPMENT_SLOTS: actor._saved_appearance.parts[slot] = "none"
 			controller.equipment_changed(actor.person_id)
 		var row: Dictionary = army.combat_units[0]
 		row.merge({"appearance": character._saved_appearance.duplicate(true), "visual_role": "male_live", "present": true, "member": true, "military_role": "officer"})
