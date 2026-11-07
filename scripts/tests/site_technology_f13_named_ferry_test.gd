@@ -39,6 +39,8 @@ func _f13_named_initial_and_paid_resume() -> void:
 	_check(not yard.has("technology_shipyard_work") and int(task.work_slot) == -1 and yard.ship_build.total_work == 600.0, "Unconfigured original one-station shipyard retains the ordinary 600 baseline")
 	for material: String in cost: _check(int(data.site.inventory.get(material, 0)) == int(inventory.get(material, 0)) - int(cost[material]), "Original finite trial pays actual %s once" % material)
 	f.team.cells[1] = data.cell_from_index(int(task.work_cell))
+	f.team.moving_to[1] = TerrainArmy.INVALID_CELL # No stale step or walking pose from the cancelled route.
+	f.team.combat_hot_set(1, &"pose", "idle")
 	task.cell = int(task.work_cell)
 	task.mode = "work"
 	_check(SiteWorkTeam.valid_task(data, data.site, task), "Original cold task accepts the actual unconfigured ship station")
@@ -62,11 +64,15 @@ func _f13_named_initial_and_paid_resume() -> void:
 	_check(not f.row.work_task.is_empty() and yard.tech_batch == paid and yard.tech_trial == original_token and float(yard.production) == physical and data.site.inventory == paid_inventory and int(Technology.active_project(data.site.family.technology).next_attempt) == attempts, "Paid resume retains SAME payment/attempt/progress and material, with a real task")
 	task = f.row.work_task
 	f.team.cells[1] = data.cell_from_index(int(task.work_cell))
+	f.team.moving_to[1] = TerrainArmy.INVALID_CELL # No stale step or walking pose from the cancelled route.
+	f.team.combat_hot_set(1, &"pose", "idle")
 	task.cell = int(task.work_cell)
 	task.mode = "work"
 	for index: int in range(60):
 		if not yard.has("ship_build"): break
 		_shipyard_work_point(f, 30.0)
+		# The original point clock then launches a fully built hull (finish_checked_work_clock).
+		Runtime.advance_ship_builds(data, f.lab.site_controller.reserves_cell)
 	_check(not yard.has("ship_build") and data.site.vehicles.has(vehicle_id) and data.site.vehicles[vehicle_id].ship_type == "ferry" and int(data.site.next_vehicle) == int(vehicle_id) + 1, "Only original Ships.make_record adopts one genuine completed ferry: %s" % str({"ship_build": yard.get("ship_build", {}).keys() if yard.get("ship_build") is Dictionary else yard.get("ship_build"), "production": yard.get("production"), "vehicles": data.site.vehicles.keys(), "expected": vehicle_id, "next": data.site.get("next_vehicle"), "task": f.row.get("work_task", {}).get("mode", "")}))
 	_check(Technology.scope_known(data.site.family.technology, "F13") and Technology.learned(f.row.technology, "F13"), "True output evidence teaches only the original full-phase person and archive")
 	var finished: Dictionary = data.site.family.technology.projects[0]
