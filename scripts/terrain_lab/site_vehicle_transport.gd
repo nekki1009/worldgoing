@@ -1487,7 +1487,9 @@ func _stock(identity: String, allow_independent_person: bool = false) -> Diction
 			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not is_convoy(_operated(int(value))): return {}
 		elif not person.owner is TerrainArmy:
 			if not allow_independent_person or not person.owner is TerrainTestCharacter: return {}
-		elif int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not bool(person.body.get("logistics", false)) and not is_siege(_operated(int(value))): return {}
+		elif int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not bool(person.body.get("logistics", false)) and not is_siege(_operated(int(value))) 			and not (allow_independent_person and int(value) == int(lab.controlled_person_id())): return {}
+		# Since 11/03 the controlled person is a row of their own start team; the same feature
+		# exchange an independent controlled person had keeps working from that row.
 		return {"holder": person.holder, "cargo": person.cargo, "cell": person.cell, "capacity": Runtime.CARRY_CAPACITY,
 			"team_id": int(person.owner.team_id) if person.owner is TerrainArmy or person.owner is CrowdPersonOwner else 0, "person_id": int(value)}
 	var vehicle: Dictionary = records().get(identity, {})

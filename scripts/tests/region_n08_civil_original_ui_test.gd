@@ -1,4 +1,4 @@
-extends "res://scripts/tests/region_controlled_death_restriction_test.gd"
+﻿extends "res://scripts/tests/region_controlled_death_restriction_test.gd"
 ## Only the pinned manifest/freeze helpers are reused. No accepted arrival,
 ## owner receipt, N08 completion, elapsed clock or successful permission is seeded.
 const N08Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -65,12 +65,23 @@ func _run() -> void:
 
 ## Explicit initial scenario antecedents use original building and deployment
 ## constructors, before the first N08 command. These are not delivery receipts.
-func _n08_birth_warehouse(original: TerrainLab, anchor: Vector2i) -> String:
+## Since 11/03 the controlled head is a row of their own start team: place that row too.
+func _n08_place_controlled(original: TerrainLab, cell: Vector2i) -> bool:
+	var placed: bool = original.character.place(cell, true)
+	var control := int(original.controlled_person_id())
+	for own_team: TerrainArmy in original.combat_armies:
+		var index := own_team.index_for_identity(control)
+		if own_team.has_army() and index >= 0 and index < own_team.cells.size():
+			# As the nation earned fixtures do: the scenario's civil head acts for a real side, not the neutral start.
+			own_team.faction_id = int(original.character.faction_id)
+			own_team.cells[index] = cell
+	return placed
+
+func _n08_birth_warehouse(original: TerrainLab, anchor: Vector2i, faction: int) -> String:
 	var data := original.terrain
 	data.site.inventory.wood = 64; data.site.inventory.stone = 64; data.site.inventory.rope = 64 # Original warehouse cost: wood, stone and rope.
 	# Construction keeps (does not consume) one tool; a fixed-geography Site starts with none.
 	if int(data.site.inventory.get("tools", 0)) < 1: data.site.inventory["tools"] = 1
-	var faction := int(original.character.faction_id)
 	var settings := {"layout_version": 1, "quarter": 0, "owner_faction": faction}
 	var placement: Dictionary = N08Runtime.building_cells(data, "warehouse", anchor, Vector2i.ONE, settings)
 	if not _check(placement.ok, "Original warehouse blueprint has legal cells", placement): return ""
@@ -89,11 +100,11 @@ func _n08_birth_warehouse(original: TerrainLab, anchor: Vector2i) -> String:
 	return key
 
 func _n08_genesis() -> bool:
-	n08_source_warehouse = _n08_birth_warehouse(lab, Vector2i(78, 48))
-	n08_destination_warehouse = _n08_birth_warehouse(cold, Vector2i(20, 48))
+	n08_source_warehouse = _n08_birth_warehouse(lab, Vector2i(78, 48), int(lab.character.faction_id))
+	n08_destination_warehouse = _n08_birth_warehouse(cold, Vector2i(20, 48), int(lab.character.faction_id))
 	if n08_source_warehouse.is_empty() or n08_destination_warehouse.is_empty(): return false
 	var entrance: Vector2i = lab.terrain.cell_from_index(int(lab.terrain.site.features[n08_source_warehouse].entrance))
-	if not _check(lab.character.place(entrance, true), "Genesis Source head physically stands at its warehouse"): return false
+	if not _check(_n08_place_controlled(lab, entrance), "Genesis Source head physically stands at its warehouse"): return false
 	var setups: Array[Dictionary] = [{"count": 2, "role": "logistics", "faction": int(lab.character.faction_id),
 		"wagon_count": 1, "spawn": entrance + Vector2i.RIGHT, "entry": "east", "attack": false, "ai_enabled": false}]
 	var deployed: Dictionary = lab.deploy_trial_armies(setups)
@@ -110,7 +121,7 @@ func _n08_genesis() -> bool:
 	carrier.team.team_offices().duty_ai = true
 	var supply: Dictionary = controller._enable_team_supply(carrier.team)
 	if not _check(not supply.is_empty(), "Original team sustenance holder exists"): return false
-	supply.inventory.grain = 2
+	supply.inventory["grain"] = 2
 	var technology: Dictionary = N08Technology.empty_scope_record(owner_id)
 	technology.known = ["N06"] # Named prerequisite antecedent only; N08 stays unknown.
 	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
@@ -118,7 +129,7 @@ func _n08_genesis() -> bool:
 		"members": [lab.controlled_person_id(), n08_driver], "standards": {}, "technology": technology}
 	var funding_person: Dictionary = controller.person_actions._person(lab.controlled_person_id())
 	if not _check(not funding_person.is_empty(), "Finite genesis cargo belongs to the true original controlled person"): return false
-	funding_person.cargo.grain = 4 # Finite unspent genesis property, before any route.
+	funding_person.cargo["grain"] = 4 # Finite unspent genesis property, before any route.
 	if not _check(int(N08Stocks.storage(cold.terrain, n08_destination_warehouse).cargo.get("grain", 0)) == 0,
 		"Destination begins with no delivered grain"): return false
 	return true
@@ -144,14 +155,16 @@ func _n08_choose(key: String, wanted: Variant) -> bool:
 	var choice := n08_form.controls.get(key) as OptionButton
 	if choice == null: return _check(false, "Original UI field exists: " + key)
 	for index: int in choice.item_count:
-		if choice.get_item_metadata(index) == wanted: choice.select(index); return true
+		var metadata: Variant = choice.get_item_metadata(index)
+		# Mixed metadata types (a String placeholder beside Dictionary routes) never compare across types.
+		if typeof(metadata) == typeof(wanted) and metadata == wanted: choice.select(index); return true
 	return _check(false, "Original UI exposes actual metadata: " + key, wanted)
 
 func _n08_press(action: String) -> bool:
 	var button := n08_form.body.find_child("NationOperation_" + action, true, false) as Button
 	if not _check(button != null and not button.disabled, "Actual original action button: " + action): return false
 	button.pressed.emit()
-	return _check(str(n08_form.status.text).begins_with("OK:"), "Original button accepts: " + action, n08_form.status.text)
+	return _check((str(n08_form.status.text).begins_with("OK:") or str(n08_form.status.text).begins_with("OK：")), "Original button accepts: " + action, n08_form.status.text)
 
 func _n08_ui_and_refusals() -> bool:
 	var options: Dictionary = controller.nation_route_options()
@@ -166,7 +179,7 @@ func _n08_ui_and_refusals() -> bool:
 		n08_source_warehouse, str(n08_route.route_id), cold_id, "feature:" + n08_destination_warehouse, n08_vehicle, n08_driver)
 	if not _check(not unauthorized.ok and unauthorized.get("code") == "NO_AUTHORITY", "NPC driver cannot impersonate controlled civil authorizer", unauthorized): return false
 	if not _check(before == JSON.stringify([slot._marker, slot.control, lab.terrain.site, cold.terrain.site], "", true, true), "Rejected route and authority change no original owner or marker"): return false
-	if not _n08_press("route"): return false
+	if not _n08_press("approve_route"): return false
 	var keys: Array = _n08_nation().technology_operations.public_orders.keys()
 	if not _check(keys.size() == 1, "Actual UI creates exactly one original order"): return false
 	n08_order = str(keys[0])
@@ -175,7 +188,8 @@ func _n08_ui_and_refusals() -> bool:
 	controller._nation_ui_render(n08_form)
 	if not _n08_choose("order", n08_order): return false
 	n08_form.resources.grain.quantity.value = 4
-	if not _n08_press("grant_source") or not _n08_press("fund"): return false
+	if not _n08_press("grant_source"): return false
+	if not _n08_press("fund"): return false
 	var funding_person: Dictionary = controller.person_actions._person(lab.controlled_person_id())
 	return _check(not funding_person.is_empty() and int(funding_person.cargo.get("grain", 0)) == 0 and int(N08Stocks.storage(lab.terrain, n08_source_warehouse).cargo.get("grain", 0)) == 4,
 		"UI funding physically transfers the same four finite grains into Source warehouse")
@@ -243,7 +257,7 @@ func _n08_final_and_replay() -> bool:
 		and int(N08Stocks.storage(destination_saved.data, n08_destination_warehouse).cargo.get("grain", 0)) == 4,
 		"Single original marker durably selects both paid Source research and received Destination cargo"): return false
 	report.merge({"steps": n08_steps, "world_seconds": float(slot.control.logical_game_seconds), "event_id": physical_event,
-		"source_site": owner_id, "destination_site": cold_id, "original_ui": ["route", "grant_source", "fund", "load_route", "begin_route"],
+		"source_site": owner_id, "destination_site": cold_id, "original_ui": ["approve_route", "grant_source", "fund", "load_route", "begin_route"],
 		"receipt": receipt.receipt}, true)
 	return true
 

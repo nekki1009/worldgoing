@@ -12346,7 +12346,7 @@ func _nation_ui_command(nation_id: String, action: String, selected_values: Dict
 					if not lab.terrain.contains(cell): return Runtime.fail("TERRAIN")
 					cells.append(lab.terrain.index(cell))
 			return equipment_orders.begin_nation_construction(requester, nation_id, order_id, cells)
-		"route":
+		"approve_route":
 			var route: Variant = s.get("route")
 			if not route is Dictionary: return Runtime.fail("NO_ROUTE", "請選原 Region 已驗路線")
 			return equipment_orders.authorize_public_transport_route(requester, nation_id, str(s.get("reserve", "")), str(route.get("route_id", "")), str(route.get("destination_site_id", "")), str(route.get("destination_holder", "")), str(route.get("vehicle_id", "")), int(route.get("driver_id", 0)))
@@ -13227,7 +13227,8 @@ func _nation_ui_render(form: Dictionary) -> void:
 					if route is Dictionary and route.get("label") is String: routes.append({"id": route, "label": route.label})
 		_nation_ui_choice(form, "route", "原 Region 可用路線與真車船／目的倉", routes)
 		if routes.is_empty(): _label(form.body, "目前沒有原 Region 可批准的具名公共運輸路線。", 14)
-		_nation_ui_button(form, "批准所選原路線的四糧運輸單", "route")
+		# The action is not "route": that node name belongs to the route choice above.
+		_nation_ui_button(form, "批准所選原路線的四糧運輸單", "approve_route")
 		_nation_ui_button(form, "真裝四糧至本單原車船", "load_route")
 		_nation_ui_button(form, "沿原 Region 行程開始運輸", "begin_route")
 	elif tech_id == "N09":

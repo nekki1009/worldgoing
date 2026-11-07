@@ -10294,7 +10294,7 @@ func _region_n08_route(lab: TerrainLab, destination_site_id: String, vehicle_id:
 	var stocks: GDScript = load("res://scripts/terrain_lab/site_stockpiles.gd")
 	var stock: Dictionary = stocks.stock_endpoint(destination.data, feature_id)
 	if feature.get("kind") != "warehouse" or stock.is_empty() or bool(stock.get("withdraw_only", true)) \
-		or int(stock.faction) != int(carrier.driver.faction) \
+		or int(stock.faction) != int(carrier.team.faction_id) \
 		or Runtime.carried_load(destination.data.site, stock.cargo, stock.holder) + 4 > int(stock.capacity):
 		return fail("NO_WAREHOUSE", "目的須是同管理方可進料且有真容量的原倉庫")
 	var state := _region_n08_actor_state(lab)
@@ -10544,6 +10544,15 @@ func _region_n08_prepare_departure(lab: TerrainLab, context: Dictionary, route: 
 	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
 		{"civil_transport": true, "token": token, "nation_id": context.nation_id, "order_id": context.order_id}, token)
 	if not captured.ok: return captured
+	# As the NPC dispatch does: a source whose selected publication lags this frame
+	# (the loaded wagon, the funded warehouse) is published first; no clock moves.
+	var source_check: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
+	if not source_check.ok and str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]:
+		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
+		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "civil_transport", "token": token})
+		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
+		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "派遣前發布不得推進時鐘")
 	var original: Dictionary = lab.terrain.site.duplicate(true)
 	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
 	if not fire_capture.ok: return fire_capture
@@ -10586,6 +10595,7 @@ func _region_n08_prepare_departure(lab: TerrainLab, context: Dictionary, route: 
 	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
 	candidate.set_meta(&"region_bind_source", lab.terrain)
 	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(control.active_site_id) == str(candidate.site.id) else "cold_exact")
+	if not binding.get("ok", false) and binding.has("code"): return binding # The bind preflight's own refusal, not a missing adapter.
 	for hook: String in ["can_publish", "publish", "save_candidate"]:
 		if not binding.get("ok", false) or not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_REGION_ADAPTER")
 	var coordinate := _coordinate(lab.terrain)
@@ -10729,6 +10739,7 @@ func _region_n08_resume_carrier(context: Dictionary) -> Dictionary:
 	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
 	candidate.set_meta(&"region_bind_source", lab.terrain)
 	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(control.active_site_id) == str(candidate.site.id) else "cold_exact")
+	if not binding.get("ok", false) and binding.has("code"): return binding # The bind preflight's own refusal, not a missing adapter.
 	for hook: String in ["can_publish", "publish", "save_candidate"]:
 		if not binding.get("ok", false) or not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_REGION_ADAPTER")
 	return commit_npc_region_dispatch({"ok": true, "token": str(context.token), "generation": int(_marker.get("generation", 0)),
@@ -10745,7 +10756,7 @@ func _region_n08_last_mile(context: Dictionary) -> Dictionary:
 	var holder := str(context.order.payload.destination_holder)
 	var stock: Dictionary = carrier.transport._stock(holder, true)
 	if stock.is_empty() or lab.terrain.site.features.get(str(stock.get("feature_id", "")), {}).get("kind") != "warehouse": return fail("NO_WAREHOUSE")
-	if bool(stock.get("withdraw_only", true)) or int(stock.faction) != int(carrier.driver.faction): return fail("NO_AUTHORITY")
+	if bool(stock.get("withdraw_only", true)) or int(stock.faction) != int(carrier.team.faction_id): return fail("NO_AUTHORITY")
 	if Runtime.carried_load(lab.terrain.site, stock.cargo, stock.holder) + 4 > int(stock.capacity): return fail("STORAGE_FULL")
 	var ticket := _region_n08_transfer_permit(context.source_lab, context, lab, str(context.vehicle_id), int(context.driver_id), str(context.vehicle_id), holder)
 	if not ticket.ok: return ticket

@@ -1058,7 +1058,13 @@ static func technology_work_consent(team: TerrainArmy, person_id: int, purpose: 
 		return SiteRuntime.fail("BUSY")
 	var supply: Dictionary = team.data.site.get("team_supply", {}).get(str(team.team_id), {})
 	if bool(supply.get("training_order", false)): return SiteRuntime.fail("BUSY")
-	if team.person_busy_query.is_valid() and bool(team.person_busy_query.call(person_id)) and not n12_fleet: # The N12 executor's helm is the research work.
+	var person_busy: bool = team.person_busy_query.is_valid() and bool(team.person_busy_query.call(person_id))
+	if person_busy and n08_driver:
+		# The named N08 driver's own wagon is the research work: only its operator role is
+		# exempt (as in the operator check below); any other duty still refuses.
+		var duty_controller: Variant = team.vehicle_transport.lab.site_controller
+		person_busy = duty_controller.person_actions.is_busy(person_id) or duty_controller.person_actions.is_guarding(person_id) 			or duty_controller.work_team.is_assigned(person_id) or duty_controller._is_delivering_person(person_id)
+	if person_busy and not n12_fleet: # The N12 executor's helm is the research work.
 		return SiteRuntime.fail("BUSY")
 	if index != TerrainArmy.PLAYER_MEMBER:
 		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver and not n12_fleet or not team.combat_units[index].get("work_task", {}).is_empty() \
