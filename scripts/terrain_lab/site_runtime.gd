@@ -8004,7 +8004,8 @@ static func technology_remaining_work(data: TerrainData, project: Dictionary, re
 			var expected := ("feature:" if owner_kind == "features" else "vehicle:") + key
 			var ledger: Dictionary = target.get("tech_batch", {})
 			if token.target_id != expected or ledger.get("token", {}) != token or not Technology.material_equal(ledger.get("materials", {}), token.materials): return fail("STALE_PROJECT")
-			if not pending_phase.is_empty(): return fail("CORRUPT_STATE", "同一原人／項目不得同時綁兩個物理試作")
+			# A person may hold a parked paid attempt and a second one: only the greatest
+			# unfinished fraction reduces the baseline, never the sum of both.
 			pending_phase = str(token.phase_id)
 			var fraction := 0.0
 			if owner_kind == "vehicles":
@@ -8018,7 +8019,7 @@ static func technology_remaining_work(data: TerrainData, project: Dictionary, re
 				var definition := feature_recipe(target)
 				if bool(target.get("batch_paid", false)) and float(definition.get("cycle", 0.0)) > 0.0: fraction = float(target.get("production", 0.0)) / float(definition.cycle)
 			if not is_finite(fraction): return fail("CORRUPT_STATE")
-			reduction = float(outstanding[pending_phase].seconds) * clampf(fraction, 0.0, 1.0)
+			reduction = maxf(reduction, float(outstanding[pending_phase].seconds) * clampf(fraction, 0.0, 1.0))
 	return ok("", {"remaining_baseline": maxf(0.0, remaining - reduction)})
 
 static func cancel_farm_trial_protocol(data: TerrainData, key: String, requester_id: int, preview: bool = false) -> Dictionary:

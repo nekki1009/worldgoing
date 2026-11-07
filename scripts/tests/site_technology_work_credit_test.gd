@@ -44,7 +44,8 @@ func _work_task(lab: TerrainLab, team: TerrainArmy, executor: int, key: String) 
 	var work = lab.site_controller.work_team
 	var row: Dictionary = team.combat_units[team.index_for_identity(executor)]
 	var already_named = work.is_assigned(executor) and row.get("work_task", {}).get("version") == 3 and row.work_task.get("named") == true and row.work_task.get("target") == "vehicle:" + key
-	if not already_named: _check(work.assign(team, [executor], team.duty_decider("team.work")).ok, "Actual original team.work authority assigns the true ordinary member")
+	var executor_ids: Array[int] = [executor] # The owner takes Array[int].
+	if not already_named: _check(work.assign(team, executor_ids, team.duty_decider("team.work")).ok, "Actual original team.work authority assigns the true ordinary member")
 	var slots := Runtime.siege_work_slots(lab.terrain, lab.terrain.site.vehicles[key])
 	_check(not slots.is_empty(), "Actual original vehicle computes its original work slots")
 	# The fixture places the ORIGINAL Army hot cell at this real station. This
