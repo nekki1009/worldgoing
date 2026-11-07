@@ -17,7 +17,7 @@ func _yard_fixture(known: bool = true) -> Dictionary:
 	data.site.family.technology.known = ["F04", "F11", "F14"]
 	data.site.settlement.technology.known = ["S11"] if known else []
 	fixture.yard = _cold_natural_feature(data, "training_ground", Vector2i(21, 41) + Vector2i(fixture.natural_offset), Vector2i(10, 10))
-	team.cells[1] = Vector2i(22, 41) + Vector2i(fixture.natural_offset)
+	team.cells[1] = Vector2i(22, 42) + Vector2i(fixture.natural_offset) # Rows 41 and 50 hold the ground's own racks; rows 44-46 hold the ballista stations.
 	fixture.ids = []
 	for index: int in range(1, 7): fixture.ids.append(team.combat_identity(index))
 	return fixture
@@ -36,7 +36,7 @@ func _yard_guards_and_revoke() -> void:
 	before = var_to_bytes([data.site, row])
 	_check(not Runtime.configure_siege_yard(data, str(fixture.yard), int(fixture.control), int(fixture.executor)).ok and var_to_bytes([data.site, row]) == before, "Unlearned actual person fails before any config/stock/effort change")
 	row.technology = old_skill
-	for index: int in range(40): fixture.team.cells[index] = Vector2i(21 + index % 10, 41 + floori(float(index) / 10.0)) + Vector2i(fixture.natural_offset)
+	for index: int in range(40): fixture.team.cells[index] = Vector2i(21 + index % 10, [42, 43, 47, 48][floori(float(index) / 10.0)]) + Vector2i(fixture.natural_offset)
 	var captain_index = fixture.team.index_for_identity(fixture.team.duty_decider("team.training"))
 	_check(fixture.lab.site_controller.order_team_training(fixture.team, captain_index, true, str(fixture.yard)).ok, "Original Training/Supply owners establish their actual bounded training order on the true ground")
 	before = var_to_bytes(data.site)
@@ -66,7 +66,7 @@ func _yard_guards_and_revoke() -> void:
 	_check(Runtime.technology_siege_yard_context(data, str(fixture.yard), false).ok and not Runtime.technology_siege_yard_context(data, str(fixture.yard)).ok, "Loss of true residents suspends work while retaining six-slot geometry")
 	_check(Runtime.configure_siege_yard(data, str(fixture.yard), int(fixture.control), 0, false).ok and Runtime.is_training_facility(feature), "Original current head may revoke a clear suspended yard and recover its actual training use")
 	data.site.housing = housing
-	for index: int in range(40): fixture.team.cells[index] = Vector2i(21 + index % 10, 41 + floori(float(index) / 10.0)) + Vector2i(fixture.natural_offset)
+	for index: int in range(40): fixture.team.cells[index] = Vector2i(21 + index % 10, [42, 43, 47, 48][floori(float(index) / 10.0)]) + Vector2i(fixture.natural_offset)
 	_check(YardTraining.inspect(fixture.lab.site_controller, int(fixture.team.team_id), str(fixture.yard)).ok, "After revocation the original training owner again admits the real original team on the same genuine ground")
 	_cleanup_fixture(fixture.lab, fixture.team)
 	await process_frame
@@ -152,7 +152,9 @@ func _six_actual_workers_and_save() -> void:
 		_check(int(data.site.inventory[material]) == int(camp[material]) - int(Runtime.SIEGE_DEFINITIONS.ballista.cost[material]), "Original ballista consumes its entire actual %s cost once" % material)
 	var slots := Runtime.siege_work_slots(data, vehicle)
 	_check(slots.size() == 6 and slots[4].cell != slots[5].cell, "The genuine vehicle has six unique actual original work cells")
-	_check(workers.assign(team, fixture.ids, team.duty_decider("team.work")).ok, "Actual original current team duty assigns six real existing members")
+	var worker_ids: Array[int] = []
+	worker_ids.assign(fixture.ids) # A Dictionary field holds an untyped Array; the owner takes Array[int].
+	_check(workers.assign(team, worker_ids, team.duty_decider("team.work")).ok, "Actual original current team duty assigns six real existing members")
 	workers.prepare_work_requests(30.0)
 	var claimed := {}
 	for identity: int in fixture.ids:
@@ -167,7 +169,8 @@ func _six_actual_workers_and_save() -> void:
 		_check(SiteWorkTeam.valid_task(data, data.site, task), "Real original task validator accepts this actual designated slot")
 	_check(claimed.has(4) and claimed.has(5), "The fifth and sixth genuine Army people actually claim slots 4 and 5")
 	var seventh := team.combat_identity(7)
-	_check(workers.assign(team, [seventh], team.duty_decider("team.work")).ok, "Original current team duty may assign another actual member through its existing operation")
+	var seventh_ids: Array[int] = [seventh]
+	_check(workers.assign(team, seventh_ids, team.duty_decider("team.work")).ok, "Original current team duty may assign another actual member through its existing operation")
 	workers.prepare_work_requests(30.0)
 	_check(team.combat_units[7].work_task.get("target", "") != "vehicle:" + fixture.key, "The actual original selector leaves the seventh worker waiting instead of overbooking any of the six claimed slots")
 	workers.cancel(seventh)

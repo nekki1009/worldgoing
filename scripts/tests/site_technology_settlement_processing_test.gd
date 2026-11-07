@@ -12,9 +12,9 @@ func _processing_fixture(known: bool) -> Dictionary:
 	fixture.row.technology = Technology.learned_candidate(Technology.learned_candidate(fixture.row.technology, "F03"), "F06")
 	data.site.settlement.technology.known = ["S03", "S05"] if known else []
 	fixture.kiln = _cold_natural_feature(data, "charcoal", Vector2i(15, 29) + Vector2i(fixture.natural_offset))
-	fixture.weaver = _cold_natural_feature(data, "weaver", Vector2i(24, 33) + Vector2i(fixture.natural_offset))
+	fixture.weaver = _cold_natural_feature(data, "weaver", Vector2i(24, 32) + Vector2i(fixture.natural_offset))
 	# The weaver needs a water supply now; a real well beside it serves its demand.
-	_cold_natural_feature(data, "well", Vector2i(24, 31) + Vector2i(fixture.natural_offset))
+	_cold_natural_feature(data, "well", Vector2i(24, 30) + Vector2i(fixture.natural_offset))
 	Runtime.rebuild_water(data)
 	data.site.inventory["wool"] = 12 # Explicit real starting-world camp stock (bracket write keeps a String key).
 	_check(fixture.lab.character.place(Vector2i(9, 10) + Vector2i(fixture.natural_offset), true), "Actual head reaches original camp contact for the finite source grant")

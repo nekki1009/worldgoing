@@ -13,10 +13,11 @@ func _armor_fixture(known: bool, upgrade_to_three: bool = true) -> Dictionary:
 		{"kind": "smithy", "anchor": Vector2i(21, 25), "extent": Vector2i.ONE},
 		{"kind": "tannery", "anchor": Vector2i(34, 29), "extent": Vector2i.ONE},
 		{"kind": "charcoal", "anchor": Vector2i(15, 29), "extent": Vector2i.ONE},
-		{"kind": "weaver", "anchor": Vector2i(24, 33), "extent": Vector2i.ONE},
+		{"kind": "weaver", "anchor": Vector2i(24, 32), "extent": Vector2i.ONE}, # Its south entrance stays clear of the house row at y=36.
 		{"kind": "training_ground", "anchor": Vector2i(21, 41), "extent": Vector2i(10, 10)},
 	]
-	for y: int in [15, 37]:
+	# The south row sits one row higher so its doors and rest cells stay north of the 10x10 yard (row 41).
+	for y: int in [15, 36]:
 		for x: int in [15, 21, 27, 33, 39]: specs.append({"kind": "house", "anchor": Vector2i(x, y), "extent": Vector2i.ONE, "options": {"variant": "large"}})
 	var extras: Array[Vector2i] = [Vector2i(9, 9), Vector2i(9, 10), Vector2i(9, 8), Vector2i(40, 24)]
 	for x: int in range(9, 49): extras.append(Vector2i(x, 49))
@@ -70,7 +71,8 @@ func _armor_fixture(known: bool, upgrade_to_three: bool = true) -> Dictionary:
 	_check(founded.ok, "Original Settlement owner establishes its actual center")
 	_complete_key(data, str(founded.feature))
 	var houses: Array[String] = []
-	for y: int in [15, 37]:
+	# The south row sits one row higher so its doors and rest cells stay north of the 10x10 yard (row 41).
+	for y: int in [15, 36]:
 		for x: int in [15, 21, 27, 33, 39]: houses.append(_cold_natural_feature(data, "house", Vector2i(x, y) + offset, Vector2i.ONE, {"variant": "large"}))
 	var housing_slots: Array[Dictionary] = []
 	# Fixture worlds carry generated natural resources; clear any on each house's

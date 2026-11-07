@@ -12684,10 +12684,14 @@ static func _technology_siege_ground_context(data: TerrainData, key: String) -> 
 	if int(settlement.get("owner_faction", -1)) < 0 or int(feature.get("owner_faction", -2)) != int(settlement.owner_faction) \
 		or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_AUTHORITY", "器械場須同管理方且在原聚落管轄內")
 	var base := -1
+	# The ground's own fixed training racks are part of the built yard, not blockers on it.
+	var racks := {}
+	for module: Dictionary in military_modules(data, feature):
+		for rack_cell: int in module.cells: racks[rack_cell] = true
 	for index: int in feature.get("cells", []):
 		if not Technology.integer(index, 0, data.size.x * data.size.y - 1): return fail("TERRAIN")
 		var cell := data.cell_from_index(index)
-		if not data.is_walkable(cell) or int(data.feature_at[index]) != int(key) or data.effective_height(cell) != int(data.height_levels[index]) \
+		if not data.is_walkable(cell) and not racks.has(index) or int(data.feature_at[index]) != int(key) or data.effective_height(cell) != int(data.height_levels[index]) \
 			or int(data.surface_types[index]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: return fail("TERRAIN", "原校場地塊須平整乾燥可通行")
 		if base < 0: base = data.effective_height(cell)
 		elif base != data.effective_height(cell): return fail("TERRAIN", "原校場地塊須同高")
