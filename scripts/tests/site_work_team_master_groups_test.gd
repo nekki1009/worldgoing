@@ -79,7 +79,8 @@ func _master_point(fixture: Dictionary, requests: Array[Dictionary], seconds: fl
 	lab._commit_shared_work_pools()
 	var handled = workers.publish_shared_work_prefix(admitted)
 	workers.finish_shared_work_prefix(admitted)
-	return {"plan": plan, "admitted": admitted, "handled": handled}
+	# The publisher reports per-person seconds under handled_seconds.
+	return {"plan": plan, "admitted": admitted, "handled": handled.get("handled_seconds", {}) if handled is Dictionary else {}}
 
 func _distinct_masters_and_boundary() -> void:
 	var fixture := _masters_fixture()
