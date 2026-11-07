@@ -1695,7 +1695,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	var region_request_slot: RegionSaveSlot = null
 	var region_originals: Array[TerrainLab] = []
 	var gd_original: bool = crowd_site == null or not crowd_site.active
-	var region_callers: bool = gd_original and not replaying and site_controller.region_slot != null and site_controller.region_slot.source != null and not site_controller.region_slot.pin.is_empty()
+	# A live crowd Site joins the Region joint interval too (2026-11-08): travelling NPC parties, cold owners and formula
+	# battles advance with the live step; the crowd original prepares its own work in its native begin window.
+	var region_callers: bool = not replaying and site_controller.region_slot != null and site_controller.region_slot.source != null and not site_controller.region_slot.pin.is_empty()
 	# Ship owns the permission schema and publisher. A valid permit captures
 	# eligibility BEFORE work/death can open the family pause UI.
 	if not replaying and site_controller.region_slot != null and not region_callers:
@@ -1816,9 +1818,16 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if not native_begin.is_empty():
 		var native_gate: Dictionary = validate_native_begin_shared_window(native_begin)
 		if not native_gate.ok: return _region_preflight_failure(region_originals, native_gate)
-		_region_point_pending = {"fire_action_begin": fire_action_cursor, "fire_action_end": fire_action_cursor + elapsed,
+		var native_point := {"fire_action_begin": fire_action_cursor, "fire_action_end": fire_action_cursor + elapsed,
 			"interval_complete": false, "native_checked": {}, "game_begin": SiteRuntime.now(terrain) * 60.0,
 			"game_end": SiteRuntime.now(terrain) * 60.0 + completed_game_seconds}
+		# A live crowd Site in the Region joint interval (2026-11-08) keeps the joint interval's identity (epoch, sequence,
+		# action and game ends) on its pending point, as the GD live point does; the native window adds its own fields.
+		if (not replaying or formula_interval) and not region_interval.is_empty():
+			var joint_point: Dictionary = region_interval.duplicate(true)
+			for key: String in ["fire_action_begin", "fire_action_end", "interval_complete", "native_checked"]: joint_point[key] = native_point[key]
+			native_point = joint_point
+		_region_point_pending = native_point
 		_publish_native_begin_shared_window(native_begin)
 	var site_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	site_controller.prepare_settlement_interval()
@@ -2179,6 +2188,13 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			siege_begin_contact_batch()
 			_advance_siege(elapsed)
 			if crowd_site.fire_host_active(): _advance_ranged(elapsed)
+			# Ships stay GD-owned under the crowd (G1 S2): the hulls, the ship jobs and the native deck points of crowd passengers
+			# advance on this same tick, after the native step (the site_ship_crowd_test tick order). Without this a live crowd
+			# Site never moved a ship or finished a boarding/helm job (found 2026-11-08 by the ship base crowd port).
+			if site_controller != null:
+				site_controller.vehicles.update_ships(elapsed)
+				site_controller.person_actions.advance_ship_jobs(elapsed)
+				site_controller.vehicles.sync_ship_decks()
 		else:
 			if site_controller != null: site_controller.vehicles.update_siege(elapsed)
 			if site_controller != null:
@@ -8588,6 +8604,18 @@ func _region_owner_references() -> Dictionary:
 		if not actor_present(actor): continue
 		var person: Dictionary = site_controller.person_actions._person(actor.person_id, false)
 		if not person.is_empty(): RegionOwnerSnapshot.register_person(refs, actor.person_id, person)
+	# A live crowd's people are referenced by their jobs (a food delivery holds its sender and receiver bodies), as the grid
+	# rows above are; a checkpoint rewrites the Site rosters, so their records are registered by person (2026-11-08).
+	if crowd_site != null and crowd_site.active:
+		for owner: Variant in crowd_site.person_owners():
+			if not owner is CrowdPersonOwner: continue
+			for index: int in owner.records:
+				var identity: int = owner.combat_identity(index)
+				if refs.has("person:" + str(identity) + ":body"): continue
+				var person: Dictionary = site_controller.person_actions._person(identity, false)
+				if person.is_empty(): continue
+				RegionOwnerSnapshot.register_person(refs, identity, person)
+				if person.body is Dictionary: RegionOwnerSnapshot.register_tree(refs, "person:" + str(identity) + ":body", person.body)
 	for flight: Dictionary in fire_projectiles:
 		refs["fire_flight:" + str(int(flight.projectile_id))] = flight
 	RegionOwnerSnapshot.register_tree(refs, "site", terrain.site)
@@ -10161,7 +10189,8 @@ func prepare_region_owner_bind(candidate: TerrainData, mode: String, slot: Regio
 	return result
 
 func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: RegionSaveSlot) -> Dictionary:
-	if candidate == null or slot == null or mode not in ["live", "cold_exact", "materializing", "dematerializing"] or candidate.site.has("crowd"):
+	# A crowd candidate is admitted (2026-11-08): the projection below stages its native section.
+	if candidate == null or slot == null or mode not in ["live", "cold_exact", "materializing", "dematerializing"]:
 		return SiteRuntime.fail("INVALID_REGION_BIND")
 	var source: TerrainData = candidate.get_meta(&"region_bind_source", candidate)
 	if candidate.has_meta(&"region_bind_source"): candidate.remove_meta(&"region_bind_source")
@@ -10199,7 +10228,8 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	var durable_source: Dictionary = source_copy.site.duplicate(true)
 	var source_recipes := SiteStore._region_prepare_deliveries(durable_source)
 	if not source_recipes.ok: child.free(); return source_recipes
-	var transformed := RegionCheckpoint.state_hash(durable_source) != RegionCheckpoint.state_hash(target.site)
+	# A crowd candidate always projects: the projection stages its native section in the child (the bootstrap does not).
+	var transformed := RegionCheckpoint.state_hash(durable_source) != RegionCheckpoint.state_hash(target.site) or target.site.has("crowd")
 	if transformed:
 		var projection := _region_project_original_bind_child(child, target, context)
 		if not projection.ok: child.free(); return projection
@@ -10365,12 +10395,23 @@ func _region_project_original_bind_child(child: TerrainLab, target: TerrainData,
 	var old: Dictionary = old_graph.roots
 	# Reuse the original core binding/clear/restore APIs in this private child.
 	# It has no complete owner receipt until the surviving graph is rehydrated.
+	# A crowd target (NPC dispatch from, or arrival into, a crowd Site; 2026-11-08) stages its own native section, as a
+	# reopen stages it, so the child's crowd capture below is the target's native World, not the bootstrapped source's.
+	# Staged before the ticket records the body hash the bind admission checks.
+	var staged_crowd: Dictionary = {"ok": true, "crowd_site": null}
+	if target.site.has("crowd"):
+		staged_crowd = child.prepare_crowd_load(target)
+		if not staged_crowd.ok: return staged_crowd
 	var token := "region_projection_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	child._region_owner_bind_tickets[token] = {"kind": "projection", "data": target, "body_hash": RegionCheckpoint.state_hash(target.site),
 		"context": context, "owners": {}}
-	child.bind_terrain(target, {"ok": true, "crowd_site": null, "region_bind_token": token})
+	staged_crowd["region_bind_token"] = token
+	var projection_admission := child._region_bind_ticket_admission(target, staged_crowd)
+	child.bind_terrain(target, staged_crowd)
 	child._region_owner_bind_tickets.erase(token)
-	if child.terrain != target: return SiteRuntime.fail("REGION_CHILD_PROJECTION_FAILED")
+	if child.terrain != target:
+		return SiteRuntime.fail("REGION_CHILD_PROJECTION_FAILED", str(projection_admission.get("code", "")) if not projection_admission.get("ok", false) else "bind refused after admission")
+	if target.site.has("crowd") and (child.crowd_site == null or not child.crowd_site.active): return SiteRuntime.fail("REGION_CHILD_PROJECTION_FAILED", "群眾原生內容未在投影中啟用")
 	# The core skeleton carries no old deferred queue until the full merge.
 	var baseline_context := context.duplicate(true)
 	baseline_context["purpose"] = "region_materialize"
@@ -10763,9 +10804,12 @@ func _region_verify_canonical_bind_source(data: TerrainData, slot: RegionSaveSlo
 	context["mode_revision"] = int(registry.modes.get(str(data.site.id), {}).get("revision", 0))
 	# capture_region_owner_state itself verifies every current original clock.
 	# Only generation/revision advance across publishing the same frozen frame.
-	var actual: Dictionary = producer.capture_region_owner_state(context)
+	# A live crowd producer's Site section is the native capture its last checkpoint admitted (2026-11-08: NPC dispatch
+	# from a crowd Site re-verifies this source); the same admission applies to this comparison capture.
+	var crowd_admitted: bool = producer.crowd_site != null and producer.crowd_site.active and data.site.has("crowd")
+	var actual: Dictionary = producer.capture_region_owner_state(context, crowd_admitted)
 	if not actual.ok: return actual
-	var captured := SiteStore.capture_region_snapshot(data, context, actual.owner_states)
+	var captured := SiteStore.capture_region_snapshot(data, context, actual.owner_states, false, crowd_admitted)
 	if not captured.ok: return captured
 	if RegionCheckpoint.state_hash(captured.state) != RegionCheckpoint.state_hash(readback.site): return SiteRuntime.fail("STALE_REGION_SOURCE_BODY")
 	var reference_shape := func(key: String, kind: int) -> bool:

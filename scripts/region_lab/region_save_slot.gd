@@ -3944,6 +3944,14 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	var original: Dictionary = lab.terrain.site.duplicate(true)
 	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
 	if not fire_capture.ok: return fire_capture
+	# A crowd Site sends the whole team (R11, 2026-11-08): the converted team and its offline-released native people are
+	# swapped into this copy only; the live Site is unchanged until the commit binds the published origin.
+	var crowd_spec := {}
+	if original.has("crowd"):
+		if not lab.site_controller.has_method("crowd_npc_dispatch_origin"): return fail("UNSUPPORTED", "群眾派遣缺少原群眾 owner 轉換")
+		var adapted: Dictionary = lab.site_controller.crowd_npc_dispatch_origin(original, team_id)
+		if not adapted.ok: return adapted
+		crowd_spec = {"crowd_departure": true, "crowd_control_successor": {}}
 	var departure_mode := _region_npc_dispatch_mode(original, team_id)
 	if not departure_mode.ok: return departure_mode
 	if str(departure_mode.spec.mode) == "sea": start_component = 0
@@ -3954,6 +3962,7 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 			"actor_key": "", "controller": "npc", "game_seconds": float(control.logical_game_seconds),
 			"namespace": identity_namespace, "family_transfer_guard": region_family_transfer_guard}
 		spec.merge(departure_mode.spec, true)
+		spec.merge(crowd_spec, true)
 		var result := RegionTravel.extract(original, spec, str(request.transfer_token))
 		extracted.merge(result, true)
 		return result
@@ -4183,6 +4192,8 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var candidate := Env.navigation_for_state(lab.terrain, inserted.state)
 	candidate.set_meta(&"region_bind_source", lab.terrain)
 	var binding: Dictionary = region_bind_candidate.call(lab, candidate, requested_mode)
+	# A refused bind preflight names its own refusal (as dispatch returns it).
+	if not binding.get("ok", false) and binding.has("code"): return binding
 	if not binding.get("ok", false) or not binding.get("can_publish") is Callable or not binding.get("publish") is Callable:
 		return fail("MISSING_REGION_ADAPTER", "原到站完整 bind 未准入")
 	# The bind ticket authenticated its own prepared body (as dispatch and player

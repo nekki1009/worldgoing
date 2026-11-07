@@ -128,10 +128,12 @@ static func prepare_dispatch(context: Dictionary) -> Dictionary:
 	var team: Variant = context.get("team")
 	var preflight: Callable = context.get("preflight", Callable())
 	if equipment == null or team == null or not preflight.is_valid(): return _fail("MISSING_DISPATCH_OWNER")
-	if not equipment.lab is TerrainLab or not team is TerrainArmy: return _fail("MISSING_DISPATCH_OWNER")
+	# A crowd Site's team is its CrowdPersonOwner (NPC dispatch from a crowd Site, 2026-11-08).
+	var crowd_team: bool = team is CrowdPersonOwner
+	if not equipment.lab is TerrainLab or not (team is TerrainArmy or crowd_team): return _fail("MISSING_DISPATCH_OWNER")
 	var actual_player := int(equipment.lab.controlled_person_id())
 	if int(context.get("player_id", -1)) != actual_player: return _fail("STALE_CONTROL")
-	if bool(context.get("player_barrier", false)) or bool(context.get("player_party", false)) or team.index_for_identity(actual_player) >= 0:
+	if bool(context.get("player_barrier", false)) or bool(context.get("player_party", false)) or _team_has_person(equipment.lab, team, actual_player):
 		return _fail("PLAYER_BARRIER")
 	var nation_id := str(context.get("nation_id", ""))
 	var nation: Dictionary = equipment.lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
@@ -144,8 +146,9 @@ static func prepare_dispatch(context: Dictionary) -> Dictionary:
 	var decider := int(resolved.decider)
 	if decider == int(context.get("player_id", -1)): return _fail("PLAYER_HOLDER")
 	if decider != int(context.get("person_id", decider)): return _fail("NO_AUTHORITY")
-	if not is_same(team.data, equipment.lab.terrain) or not equipment.lab.combat_armies.has(team): return _fail("WRONG_DISPATCH_SITE")
-	team.settle_combat_command()
+	var on_site: bool = equipment.lab.crowd_site != null and equipment.lab.crowd_site.active and equipment.lab.crowd_site.person_owners().has(team) if crowd_team else equipment.lab.combat_armies.has(team)
+	if not is_same(team.data, equipment.lab.terrain) or not on_site: return _fail("WRONG_DISPATCH_SITE")
+	if not crowd_team: team.settle_combat_command() # The native World settles a crowd team's commander every step.
 	if not team.command_eligible(team.current_commander) or team.is_sustain_routed(): return _fail("NO_COMMANDER")
 	if not SiteEquipmentOrders._member(nation, team.combat_identity(team.current_commander)): return _fail("WRONG_NATION")
 	var token := str(context.get("transfer_token", ""))

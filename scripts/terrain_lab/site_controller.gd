@@ -10007,6 +10007,65 @@ func _crowd_ship_transfer_origin(origin: Dictionary, boat_ids: Array) -> Diction
 	origin.armies.append(departing)
 	return Runtime.ok("", {"successor": successor})
 
+## NPC dispatch from a crowd Site (2026-11-08; party-travel survey R11, command center: whole team only, led by its
+## roster captain, as the player's whole-team departure). Read-only on the live Site. In an origin copy it replaces the
+## team's army stub with the complete converted snapshot (boat fields from the crowd records), as
+## _crowd_ship_transfer_origin does, and releases the team's people in the copy's native blob on a detached native
+## World, so the origin a later bind loads holds them released (as departure_release leaves the live World).
+## A team that holds the controlled person is refused; the player leaves only by its own departure.
+## Returns {ok, captain, people}.
+func crowd_npc_dispatch_origin(origin: Dictionary, team_id: int) -> Dictionary:
+	if not _crowd_active(): return Runtime.fail("UNSUPPORTED", "群眾未啟用")
+	var crowd: Variant = lab.crowd_site
+	var roster: Dictionary = {}
+	for candidate: Dictionary in crowd.rosters:
+		if int(candidate.get("team_id", -1)) == team_id: roster = candidate
+	if roster.is_empty(): return Runtime.fail("NO_TARGET", "群眾中沒有此隊伍")
+	var commander := int(roster.get("formal_commander", -1))
+	if commander < 0 or commander >= roster.units.size(): return Runtime.fail("NOT_READY", "隊伍沒有隊長")
+	var captain := int(roster.units[commander].person_id)
+	var plan: Dictionary = crowd.departure_plan(captain)
+	if not plan.ok: return plan
+	if plan.people.has(lab.controlled_person_id()): return Runtime.fail("RELATION_OPEN", "受控人物所在的隊伍不能由 NPC 派遣")
+	var converted: Dictionary = crowd.departure_army_snapshot(plan)
+	if not converted.ok: return converted
+	var section: Variant = origin.get("crowd")
+	if not section is Dictionary: return Runtime.fail("INVALID_CROWD", "原群眾內容缺失")
+	# Offline native release on the origin copy's blob (the RegionTravel._crowd_arrival_teams pattern).
+	if not ClassDB.class_exists("ArmyCrowd"): return Runtime.fail("INVALID_CROWD", "群眾原生模組未載入")
+	var blob := Marshalls.base64_to_raw(str(section.get("blob", "")))
+	if blob.is_empty(): return Runtime.fail("INVALID_CROWD", "群眾內容為空")
+	var native: Object = ClassDB.instantiate("ArmyCrowd")
+	if native == null: return Runtime.fail("INVALID_CROWD", "群眾原生模組無法建立")
+	native.call("setup", 1, int(lab.terrain.seed_value))
+	if not bool(native.call("load_state", blob)): return Runtime.fail("INVALID_CROWD", "群眾候選原生內容非法")
+	var team_sea: bool = vehicles.team_has_embarked(team_id)
+	for member: int in plan.people:
+		var index := int(native.call("soldier_index", member))
+		if index < 0: return Runtime.fail("INVALID_CROWD", "群眾候選原生人物缺失")
+		var owner: Variant = crowd.person_owner(member)
+		var vessel := -1
+		if team_sea and owner != null:
+			var aboard: Array = owner.native_aboard(int(owner.index_for_identity(member)))
+			if aboard.size() == 2 and bool(aboard[0]): vessel = int(aboard[1])
+		var receipt: PackedFloat64Array = native.call("site_person_release_aboard", index, vessel) if vessel >= 0 else native.call("site_person_release", index)
+		if receipt.size() != 8: return Runtime.fail("RELEASE_REFUSED", "原生釋放被拒；保留原隊伍")
+	var released: PackedByteArray = native.call("save_state")
+	if released.is_empty(): return Runtime.fail("INVALID_CROWD", "群眾候選原生內容無法保存")
+	section["blob"] = Marshalls.raw_to_base64(released)
+	section["blob_sha256"] = _crowd_blob_sha256(released)
+	origin["armies"] = origin.get("armies", []).filter(func(army: Variant) -> bool: return not (army is Dictionary and int(army.get("team_id", -1)) == team_id))
+	var departing: Dictionary = converted.snapshot.duplicate(true)
+	departing["crowd"] = true
+	origin.armies.append(departing)
+	return Runtime.ok("", {"captain": captain, "people": plan.people.duplicate()})
+
+static func _crowd_blob_sha256(bytes: PackedByteArray) -> String:
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(bytes)
+	return context.finish().hex_encode()
+
 ## SHIPCROWD: at arrival, the crowd fleet's passengers are released from the native crowd with their vessel (the aboard
 ## release of departure_release), then the Site is captured again with the travelling team as its converted grid army, as
 ## RegionTravelSite._depart_crowd does before begin_region_travel. A grid fleet, or a team already released, is unchanged.
@@ -14323,6 +14382,7 @@ func finish_shared_native_delivery_prefix(prepared: Dictionary) -> void:
 		crowd_delivery_steps += 1
 		crowd_delivery_last = "owner=%d point actual=%.4f effective=%.4f paused=%s left=%.4f->%.4f pending=%s" % [int(held.owner.team_id), float(item.actual), float(item.effective), paused, left_before, float(held.job.left), str(held.job.get("pending", false))]
 		if not _delivery_valid(held.owner, held.entry):
+			crowd_delivery_last += " cancelled=" + food_delivery.valid_breakdown(held.owner, held.entry) # Diagnostic only.
 			held.entry.delivery = {}
 			message.text = "交糧條件已變更，當批取消；來源未扣物"
 	_shared_native_delivery_prefixes.clear()

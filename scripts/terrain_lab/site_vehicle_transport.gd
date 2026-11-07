@@ -1650,6 +1650,11 @@ func _ship_landing_blocked(cell: Vector2i) -> bool:
 
 # G1 S2: each tick the native deck point of every living crowd passenger follows the GD deck point (in cell units).
 # Called once per tick right after update_ships. The native position is presentation and ranged origin only.
+## The aboard crowd person's native body moves to its current deck point at once (the per-tick sync's single-person form).
+func _crowd_place_on_deck(person: Dictionary) -> void:
+	var point: Vector2 = ship_person_ground(int(person.id)) / TerrainRenderer.CELL_PIXELS
+	if point.x >= 0.0 and point.y >= 0.0: person.owner.ship_set_deck(int(person.unit), point)
+
 func sync_ship_decks() -> void:
 	if not _native_siege(): return
 	for vehicle: Dictionary in records().values():
@@ -2624,6 +2629,8 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 		person.row.embarked_vehicle_id = str(vehicle.id)
 		person.row.berth_id = int(job.berth_id)
 		team.ship_boarded(index)
+		# A crowd boarder stands on its deck from the commit on (2026-11-08), not at the contact until the next deck sync.
+		if team is CrowdPersonOwner: _crowd_place_on_deck(person)
 	elif str(job.kind) == "ship_disembark":
 		# G1 S2: the native landing is taken first; a refusal leaves the GD rows aboard.
 		if team is CrowdPersonOwner and not team.ship_land_native(index, job.shore): return Runtime.fail("NO_SPACE", "原生群眾未接受落岸；原人物留在船上")
@@ -2653,6 +2660,7 @@ func commit_ship_helm(job: Dictionary) -> Dictionary:
 	if person.owner is CrowdPersonOwner and not person.owner.ship_ensure_aboard(int(person.unit), int(vehicle.id)): return Runtime.fail("STALE", "原生群眾未能保持船上狀態")
 	person.row.berth_id = 0
 	person.row.erase("ship_deck_position")
+	if person.owner is CrowdPersonOwner: _crowd_place_on_deck(person) # The helm berth from the commit on, as boarding.
 	var authorized := _authorized(person.owner, int(job.requester_id), int(person.id), bool(job.test_dispatch))
 	if bool(job.get("retreat", false)):
 		authorized = person.owner.is_sustain_routed() and (bool(job.test_dispatch) or int(job.requester_id) == lab.controlled_person_id())
