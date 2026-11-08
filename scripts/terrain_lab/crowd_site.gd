@@ -507,7 +507,10 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		var formation: int = crowd.add_formation(native_faction, centres[slot].x, centres[slot].y, face, maxi(1, int(ceil(sqrt(count)))), 1.0, troop, float(side.get("training", 0)))
 		var ids: Array[int] = lab._allocate_army_person_ids(count)
 		var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": next_team + slot,
-			"faction_id": faction, "crowd_formation": formation, "units": [], "officer_service": [], "formal_commander": 0}
+			"faction_id": faction, "crowd_formation": formation, "units": [], "officer_service": [], "formal_commander": 0,
+			# Born with the field SiteStore._normalize_state adds to every crowd roster; without it a normalizing read wrote
+			# it into the live Site during a pending cold replay (found 2026-11-08, site_ship_journey_edge).
+			"garrison_feature_id": ""}
 		# Match the original Army's deployment radius for terrain-shaped formations.
 		roster["command_radius"] = 8.0
 		for cell: Vector2i in formations[slot]:
@@ -1977,6 +1980,15 @@ func team_preset(team_id: int) -> String:
 func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1, source: String = "ui", facing: Vector2i = Vector2i.ZERO) -> Dictionary:
 	var team := _team_by_id(team_id)
 	if team.is_empty(): return SiteRuntime.fail("BAD_FORMATION")
+	# As TerrainArmy.issue_combat_order: no team order while a cross-Site or ship-transfer operation is pending, and none for
+	# a team on a coarse ship journey (found 2026-11-08 porting site_ship_journey_edge: the crowd accepted a shore MOVE
+	# during a pending cold replay).
+	var controller: Variant = lab.site_controller
+	if controller != null:
+		if controller.has_method("region_operation_pending") and controller.region_operation_pending(): return SiteRuntime.fail("BUSY", "原跨區或船隊交接尚未完成")
+		if controller.has_method("ship_person_in_journey"):
+			for identity: Variant in team.get("person_ids", []):
+				if controller.ship_person_in_journey(int(identity)): return SiteRuntime.fail("BUSY", "船隊旅程中不能改現場冷軍令")
 	var formation := int(team.formation)
 	var native_kind: int = {TerrainArmy.CombatOrder.HOLD: 0, TerrainArmy.CombatOrder.MOVE: 1,
 		TerrainArmy.CombatOrder.ATTACK: 2, TerrainArmy.CombatOrder.RETREAT: 3, TerrainArmy.CombatOrder.PURSUE: 4,

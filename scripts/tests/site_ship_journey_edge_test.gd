@@ -48,18 +48,29 @@ func _edge_fixture() -> bool:
 	var opened: Dictionary = controller.open_fixed_world(OUT.path_join("manifest.json"), world_id, "slot", FROM, true)
 	if not _must(opened.ok and controller.get_script() == SiteController, "Original fixed-world initialization rejected: " + str(opened)): return false
 	_freeze_processes()
-	team = lab.army
-	team.role = "logistics"
-	team.team_id = lab._next_army_identity()
-	team.roster_size = 4
+	# Crowd port (2026-11-08), as site_ship_journey: the start crowd returns to GD, the four people deploy on the same cells
+	# through the trial path, and control moves to their pilot.
+	if not _release_start_crowd(): return false
+	var setup: Dictionary = lab._trial_side_settings({"friendly_count": 4, "friendly_role": "logistics", "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
+	if not _must(setup.ok, "Original four-person edge side rejected: %s" % str(setup)): return false
+	var sides: Array[Dictionary] = [setup.side]
 	var cells: Array[Vector2i] = [Vector2i(11, 21), Vector2i(12, 21), Vector2i(13, 21), Vector2i(14, 21)]
-	if not _must(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false, 0), "Original four-person edge roster rejected"): return false
+	var deployed_team: Dictionary = lab._deploy_trial_teams(sides, [cells.duplicate()], 0)
+	if not _must(deployed_team.ok, "Original four-person edge roster rejected: %s" % str(deployed_team)): return false
+	team = null
+	for candidate: Variant in lab.crowd_site.person_owners():
+		if candidate is CrowdPersonOwner and candidate.has_army() and candidate.command_members().size() == 4: team = candidate
+	if not _must(team != null, "Crowd formation did not hold the four original people"): return false
+	team_id = team.team_id
 	lab.terrain.site.army_next_team = team.team_id + 1
 	lab.terrain.site.army_trial_active = true
-	team_id = team.team_id
 	for index in range(4):
-		team.combat_units[index].logistics = true
-		people.append(team.combat_identity(index))
+		var row: Dictionary = team.person(index, true)
+		if not _must(not row.is_empty(), "Crowd edge person %d has no item holder" % index): return false
+		people.append(int(row.person_id))
+	var switched: Dictionary = lab.crowd_site.on_control_changed(lab.controlled_person_id(), people[0])
+	if not _must(switched.ok, "Control could not move to the original crowd pilot: " + str(switched)): return false
+	lab.terrain.site["controlled_person_id"] = people[0]
 	var pool: Dictionary = controller._enable_team_supply(team)
 	if not _must(not pool.is_empty(), "Original common supply unavailable"): return false
 	pool.inventory.grain = 8 # Explicit initial fixture stock; physically load it below.
@@ -69,6 +80,7 @@ func _edge_fixture() -> bool:
 	var berths: Array[int] = [0, 1, 5, 6] # Exactly MIN2 actual crew, two actual passengers.
 	for index in range(4):
 		if not _walk(index, Vector2i(10, 20)): return false
+		if not (_stop_team() if index == 0 else _hold_team()): return false
 		var boarding: Dictionary = controller.person_actions.begin_ship_board(people[index], boat_id, people[index], berths[index], true)
 		if not _must(boarding.ok, "Original edge boarding rejected: " + str(boarding)) or not _finish_job(people[index]): return false
 	var food: Dictionary = controller.transfer_ship_supply(team, "shore:%d" % lab.terrain.index(Vector2i(10, 20)), "vehicle:" + boat_id, {"grain": 8}, 0.0, people[0], true)
@@ -82,7 +94,7 @@ func _edge_fixture() -> bool:
 func _duty_rejections() -> bool:
 	if not _original_deck_walk(1, Vector2(0.25, 1.25)): return false
 	var boat: Dictionary = controller.vehicles.records()[boat_id]
-	if not _must(int(team.combat_units[1].berth_id) == 1 and not controller.vehicles.ship_local_position(people[1]).is_equal_approx(Ship.local_position("river", 1))
+	if not _must(_berth_of(people[1], boat) == 1 and not controller.vehicles.ship_local_position(people[1]).is_equal_approx(Ship.local_position("river", 1))
 		and controller.vehicles.ship_crew_count(boat) == 1, "Real crew walk did not leave its unchanged original berth duty"): return false
 	if not _reject_edge(TO, Vector2i(99, 19), Vector2i.LEFT, "NO_CREW", "Live nonpilot off duty"): return false
 	var before: Dictionary = _edge_snapshot()
@@ -139,6 +151,24 @@ func _full_hull_unknown_route() -> bool:
 	var blocked: Dictionary = controller.region_slot._adjacent_ship_route(lab.terrain, destination, FROM, TO, boats)
 	return _must(not blocked.ok and blocked.code == "NO_ROUTE", "Route tested only its center and crossed an UNKNOWN outer hull cell") and _unchanged_edge(before, "Original private whole hull geometry")
 
+## Diagnostic only: which part of the pending-replay invariant changed.
+func _pending_diff(state_before: PackedByteArray, clock_before: float, remainder_before: float, visited_path: String, visited_bytes: PackedByteArray) -> Dictionary:
+	var before: Dictionary = bytes_to_var(state_before)
+	var changed: Array = []
+	for key: Variant in before.keys() + lab.terrain.site.keys():
+		if not before.has(key) or not lab.terrain.site.has(key) or var_to_bytes(before[key]) != var_to_bytes(lab.terrain.site[key]):
+			if not changed.has(str(key)): changed.append(str(key))
+	var army_fields: Array = []
+	if changed.has("armies") and before.armies.size() == lab.terrain.site.armies.size():
+		for at: int in range(before.armies.size()):
+			var a: Dictionary = before.armies[at]
+			var b: Dictionary = lab.terrain.site.armies[at]
+			for key: Variant in a.keys() + b.keys():
+				if not a.has(key) or not b.has(key) or var_to_bytes(a[key]) != var_to_bytes(b[key]):
+					army_fields.append("%d.%s: %s -> %s" % [at, str(key), str(a.get(key)).substr(0, 160), str(b.get(key)).substr(0, 160)])
+	return {"army_fields": army_fields.slice(0, 12), "clock": float(controller.region_slot.control.logical_game_seconds) == clock_before, "remainder": lab._action_time_remainder == remainder_before,
+		"visited_file": FileAccess.get_file_as_bytes(visited_path) == visited_bytes, "changed_site_keys": changed}
+
 func _complete_original_pending(prepared: Dictionary, require_pending: bool = false) -> bool:
 	if prepared.ok:
 		return _must(not require_pending and controller.ship_journey_status().pending, "Original visited destination completed without the required bounded PENDING")
@@ -151,7 +181,8 @@ func _complete_original_pending(prepared: Dictionary, require_pending: bool = fa
 	if not _must(not prepared.ok and prepared.code == "PENDING" and controller.region_operation_pending(), "Original visited destination did not expose bounded PENDING: " + str(prepared)): return false
 	var target := float(controller._region_pending.pending.target)
 	if not _must(target == clock_before, "Original cold replay selected another GAME target"): return false
-	var order: Dictionary = team.issue_combat_order(people[0], TerrainArmy.CombatOrder.MOVE, Vector2i(15, 21))
+	var order: Dictionary = team.issue_combat_order(people[0], TerrainArmy.CombatOrder.MOVE, Vector2i(15, 21)) if team is TerrainArmy \
+		else lab.crowd_site.issue_order(team_id, TerrainArmy.CombatOrder.MOVE, Vector2i(15, 21), -1, "player")
 	var walked: Dictionary = controller.person_actions.begin_ship_walk(people[2], Vector2(1, 2.25), people[2], true)
 	var sail: Dictionary = controller.vehicles.ship_order(boat_id, "forward", TerrainArmy.INVALID_CELL, people[0], true)
 	var departed: Dictionary = controller.begin_ship_journey(boats, TO, Vector2i(99, 19), Vector2i.LEFT, people[0])
@@ -181,7 +212,7 @@ func _complete_original_pending(prepared: Dictionary, require_pending: bool = fa
 		retries += 1
 		if not _must(float(controller.region_slot.control.logical_game_seconds) == clock_before
 			and lab._action_time_remainder == remainder_before and var_to_bytes(lab.terrain.site) == state_before
-			and FileAccess.get_file_as_bytes(visited_path) == visited_bytes, "Pending replay consumed source body/food/GAME/remainder or published destination prematurely"): return false
+			and FileAccess.get_file_as_bytes(visited_path) == visited_bytes, "Pending replay consumed source body/food/GAME/remainder or published destination prematurely: " + str(_pending_diff(state_before, clock_before, remainder_before, visited_path, visited_bytes))): return false
 	var journey_status: Dictionary = controller.ship_journey_status()
 	var continued := not controller.region_operation_pending() and bool(journey_status.get("pending", false)) \
 		and float(journey_status.get("elapsed_action_seconds", -1.0)) == 0.0 and retries > 0
