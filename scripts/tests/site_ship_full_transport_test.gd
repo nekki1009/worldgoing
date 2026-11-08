@@ -12,10 +12,13 @@ const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const HULL_COUNTS := {"ferry": 10, "river": 5, "coastal": 4, "troop": 2, "patrol": 4, "tower": 1}
 const OUT := "res://output/site_ship_close_20261004/full_transport"
 const BASELINE := OUT + "/hundred_shore.json"
+# Crowd port (2026-11-08): the shared action clock and one native step per tick, as site_ship_crowd_test.
+const DT := 1.0 / 30.0
+const MAX_WALK_TICKS := 1200
 
 var deadline := 0
 var lab: TerrainLab
-var team: TerrainArmy
+var team: Variant # The native crowd formation owner (CrowdPersonOwner); the grid TerrainArmy is retired.
 var people: Array[int] = []
 var parking: Array[Vector2i] = []
 var item_ids: Array[Array] = []
@@ -248,19 +251,52 @@ func _fixture() -> bool:
 			return true
 	return _must(false, "Could not reserve a sparse hundred-person initial grid connected to every original shore contact")
 
+## Fixture move, as the grid fixture did (no gameplay time is synthesized while setting up this explicit fixture): the
+## route must exist on the real terrain, then the native soldier is placed on the destination cell (the crowd test
+## placement, crowd_b_dr_roundtrip) and must stand there, stopped. Walking 600 boarders on the real 30 Hz clock took
+## about 11 s of wall time per person (PORT_P1_FT_v2).
 func _walk(index: int, destination: Vector2i) -> bool:
-	if team.cells[index] == destination: return true
-	var blocked := func(cell: Vector2i) -> bool:
-		return team._cell_owners.has(cell) and int(team._cell_owners[cell]) != index or lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell)
-	var path: Array[Vector2i] = lab.terrain.path_between(team.cells[index], destination, blocked)
+	var walker: Dictionary = team.person(index, false)
+	if not _must(not walker.is_empty(), "Crowd shore walker #%d vanished" % people[index]): return false
+	if walker.cell == destination and not bool(walker.moving): return true
+	var path: Array[Vector2i] = lab.terrain.path_between(walker.cell, destination, func(cell: Vector2i) -> bool: return lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell))
 	if not _must(not path.is_empty(), "Original shore route missing for #%d to %s" % [people[index], str(destination)]): return false
-	for next: Vector2i in path:
-		if next == team.cells[index]: continue
-		if not _must(team._reserve_combat_step(index, next), "Original shore step rejected for #%d" % people[index]): return false
-		# No gameplay time is synthesized while setting up this explicit fixture.
-		team.prepare_combat(float(team.move_duration[index]) + 0.01, 0.0)
-		if not _must(team.cells[index] == next and team.moving_to[index] == TerrainArmy.INVALID_CELL, "Original shore step did not commit exactly once"): return false
-	return true
+	var native := int(lab.crowd_site.crowd.soldier_index(people[index]))
+	if not _must(native >= 0 and lab.crowd_site.set_soldier_fields(native, {"px": destination.x + 0.5, "py": destination.y + 0.5}), "Crowd fixture placement refused for #%d" % people[index]): return false
+	walker = team.person(index, false)
+	return _must(not walker.is_empty() and walker.cell == destination and not bool(walker.moving), "Original shore step did not commit exactly once")
+
+## Native boarding state: [aboard, vehicle_id] from the crowd, optionally on one vehicle.
+func _crowd_aboard(index: int, vehicle_id: int = -1) -> bool:
+	var state: Array = team.native_aboard(index)
+	return state.size() == 2 and bool(state[0]) and (vehicle_id < 0 or int(state[1]) == vehicle_id)
+
+## The berth a passenger holds on this hull, read from the vehicle's own passenger rows (-1 if absent).
+func _berth_of(identity: int, boat: Dictionary) -> int:
+	for passenger: Dictionary in lab.site_controller.vehicles.ship_people(boat):
+		if int(passenger.id) == identity: return int(passenger.row.berth_id)
+	return -1
+
+## Crowd stop: an explicit HOLD order on the native formation, the crowd counterpart of the grid settle before boarding.
+## It then settles on the shared action clock (formation drift after a walk) until the same stop predicate as the boarding guard holds.
+func _stop_team() -> bool:
+	var held: Dictionary = lab.crowd_site.issue_order(team_id, TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "test")
+	if not _must(held.ok or team.combat_order == TerrainArmy.CombatOrder.HOLD, "Crowd formation refused its HOLD stop: " + str(held)): return false
+	for tick in range(MAX_WALK_TICKS):
+		if lab.site_controller._team_stopped(team, false, {}): return true
+		lab._advance_action_time(DT)
+	return _must(false, "Crowd formation did not settle to a stop before boarding")
+
+## Crowd HOLD without waiting for the whole formation to settle (boarding after the first one checks only the order).
+func _hold_team() -> bool:
+	var held: Dictionary = lab.crowd_site.issue_order(team_id, TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "test")
+	return _must(held.ok or team.combat_order == TerrainArmy.CombatOrder.HOLD, "Crowd formation refused its HOLD order: " + str(held))
+
+## The one native formation this test owns (the lab's grid TerrainArmy stays a retired roster container).
+func _crowd_owner() -> Variant:
+	for candidate: Variant in lab.crowd_site.person_owners():
+		if candidate is CrowdPersonOwner and candidate.has_army() and candidate.team_id == team_id: return candidate
+	return null
 
 func _finish_job(identity: int) -> bool:
 	var observed_job_start: int = Time.get_ticks_msec()
@@ -278,20 +314,20 @@ func _same_json(left: Variant, right: Variant) -> bool:
 	return JSON.parse_string(JSON.stringify(left, "", true, true)) == JSON.parse_string(JSON.stringify(right, "", true, true))
 
 func _people_intact(aboard: bool, expected_next_person: int) -> bool:
-	if not _must(team.team_id == team_id and team.roster_size == 100 and team.combat_units.size() == 100 and team.living_member_count() == 100,
+	if not _must(team.team_id == team_id and team.command_members().size() == 100,
 		"Full transport changed the original hundred-person team"): return false
 	if not _must(int(lab.terrain.site.next_person_id) == expected_next_person, "Boats or jobs allocated extra persons"): return false
 	var seen := {}
 	for index in range(100):
-		var row: Dictionary = team.combat_units[index]
-		if not _must(team.combat_identity(index) == people[index] and not seen.has(people[index]) and team.is_member(index), "Full transport replaced, duplicated or retired an original person"): return false
+		var row: Dictionary = team.person(index, true)
+		if not _must(not row.is_empty() and int(row.person_id) == people[index] and not seen.has(people[index]) and team.is_member(index), "Full transport replaced, duplicated or retired an original person"): return false
 		seen[people[index]] = true
-		if not _must(_same_json(row.cargo, cargo[index]) and _same_json(row.item_state.item_ids, item_ids[index]) and _same_json(row.item_state.equipped, equipment[index]), "Full transport changed original cargo/equipment for #%d" % people[index]): return false
-		if not _must(float(team.combat_hot_get(index, &"hp", 0.0)) == 100.0 and team.moving_to[index] == TerrainArmy.INVALID_CELL, "Full transport changed life or retained a committed land step"): return false
+		if not _must(_same_json(row.cargo, cargo[index]) and _same_json(row.holder.item_ids, item_ids[index]) and _same_json(row.holder.equipped, equipment[index]), "Full transport changed original cargo/equipment for #%d" % people[index]): return false
+		if not _must(float(row.hp) == 100.0 and not bool(row.moving), "Full transport changed life or retained a committed land step"): return false
 		if aboard:
-			if not _must(lab.site_controller.vehicles.is_embarked(people[index]) and not team._cell_owners.values().has(index) and team.combat_slots[index] == TerrainArmy.INVALID_CELL, "Passenger has a historical shore claim or lacks a real berth"): return false
+			if not _must(_crowd_aboard(index) and lab.site_controller.vehicles.is_embarked(people[index]), "Passenger has no real native berth"): return false
 		else:
-			if not _must(not row.has("embarked_vehicle_id") and not row.has("berth_id") and team.cells[index] == parking[index] and int(team._cell_owners.get(parking[index], -1)) == index, "Original disembarked person did not regain their own shore position"): return false
+			if not _must(not _crowd_aboard(index) and not lab.site_controller.vehicles.is_embarked(people[index]) and row.cell == parking[index], "Original disembarked person did not regain their own shore position"): return false
 	return _must(seen.size() == 100 and lab.terrain.fingerprint() == fingerprint, "Full transport changed terrain or roster identity")
 
 func _load(path: String) -> bool:
@@ -299,13 +335,14 @@ func _load(path: String) -> bool:
 	controller.save_path = path # Isolated tests never create a formal/extra archive.
 	var loaded: Dictionary = controller.load_from(path)
 	if not _must(loaded.ok, "True full-transport Controller load rejected: %s" % str(loaded)): return false
-	team = lab.army
+	team = _crowd_owner()
+	if not _must(team != null, "Crowd original team missing after the Controller load"): return false
 	_freeze_processes()
 	return true
 
+## Crowd: the native formation commits every step on the shared clock, so there is no grid command queue to settle.
 func _settle_commands() -> void:
-	team.prepare_combat(0.0, 0.0) # Original effective-position invalidation, no time.
-	team.settle_combat_command()
+	pass
 
 func _fleet(kind: String) -> bool:
 	var started := Time.get_ticks_msec()
@@ -328,19 +365,24 @@ func _fleet(kind: String) -> bool:
 		var id := boat_ids[hull]
 		var shore := _shore(kind, hull)
 		if not _walk(index, shore): return false
-		var row: Dictionary = team.combat_units[index]
-		var holder: Dictionary = row.item_state
+		# Crowd: boarding needs the formation at HOLD (the walk just set MOVE). Only the first boarding of a fleet converts the
+		# abstract team stock to a shore location, and only that one needs the whole team stopped (prepare_ship_supply).
+		if not (_stop_team() if index == 0 else _hold_team()): return false
 		var boarded: Dictionary = actions.begin_ship_board(people[index], id, people[index], index % seats, true)
 		if not _must(boarded.ok, "%s person %d original boarding rejected: %s" % [kind, index, str(boarded)]): return false
-		if not _must(not row.has("embarked_vehicle_id") and int(team._cell_owners.get(shore, -1)) == index, "Pending real boarding committed before its timed job"): return false
+		if not _must(not _crowd_aboard(index) and team.person(index, false).cell == shore, "Pending real boarding committed before its timed job"): return false
 		if not _finish_job(people[index]): return false
-		if not _must(is_same(row, team.combat_units[index]) and is_same(holder, row.item_state) and str(row.embarked_vehicle_id) == id and int(row.berth_id) == index % seats, "Real boarding replaced a person/holder or chose a different berth"): return false
+		if not _must(_crowd_aboard(index, int(id)) and _berth_of(people[index], vehicles.records()[id]) == index % seats, "Real boarding replaced a person or chose a different berth"): return false
 		if index % seats == 0:
 			var helm: Dictionary = actions.begin_ship_helm(people[index], id, people[index], true)
 			if not _must(helm.ok, "%s original helm job rejected: %s" % [kind, str(helm)]) or not _finish_job(people[index]): return false
 		if (index + 1) % 10 == 0: print("SITE_SHIP_FULL_PROGRESS:kind=%s:phase=board_and_helm:completed=%d:wall_ms=%d" % [kind, index + 1, Time.get_ticks_msec() - started])
 	if not _people_intact(true, initial_next_person): return false
-	if not _must(vehicles.team_vehicle_count(team) == 0 and vehicles.records().size() == hulls, "Real hulls deducted roster slots or created extra boats"): return false
+	# Crowd: team_vehicle_count is typed to the retired TerrainArmy, so count this formation's hull claims directly.
+	var deducted := 0
+	for vehicle: Dictionary in vehicles.records().values():
+		deducted += int(int(vehicle.team_id) == team_id and not vehicles.is_siege(vehicle) and not vehicles.is_ship(vehicle))
+	if not _must(deducted == 0 and vehicles.records().size() == hulls, "Real hulls deducted roster slots or created extra boats"): return false
 	var q_by_boat := {}
 	var total_q := 0.0
 	for hull in range(hulls):
@@ -408,14 +450,15 @@ func _fleet(kind: String) -> bool:
 		var shore := _shore(kind, hull, 3)
 		var left: Dictionary = actions.begin_ship_disembark(people[index], boat_ids[hull], people[index], shore, true)
 		if not _must(left.ok, "%s person %d real disembark rejected: %s" % [kind, index, str(left)]) or not _finish_job(people[index]): return false
-		if not _must(team.cells[index] == shore and int(team._cell_owners.get(shore, -1)) == index, "Real disembark did not reacquire the original shore claim"): return false
+		if not _must(team.person(index, false).cell == shore, "Real disembark did not reacquire the original shore claim"): return false
 		if not _walk(index, parking[index]): return false
 		if (index + 1) % 10 == 0: print("SITE_SHIP_FULL_PROGRESS:kind=%s:phase=disembark_and_return:completed=%d:wall_ms=%d" % [kind, index + 1, Time.get_ticks_msec() - started])
 	if not _people_intact(false, initial_next_person): return false
 	for id: String in boat_ids:
 		var boat: Dictionary = vehicles.records()[id]
 		if not _must(vehicles.ship_people(boat).is_empty() and int(boat.operator_id) == 0 and is_equal_approx(vehicles.ship_load(id), 0.0), "Empty real boat retained a passenger, operator or vanished cargo"): return false
-	if not _must(actions._jobs.is_empty() and team.combat_order == TerrainArmy.CombatOrder.HOLD and not team.tactical_ai_enabled and not team._formation_change_pending, "Last real passenger restored an obsolete command/AI/formation"): return false
+	# _formation_change_pending is grid-only state and is not checked in crowd mode (no grid formation queue exists).
+	if not _must(actions._jobs.is_empty() and team.combat_order == TerrainArmy.CombatOrder.HOLD and not team.tactical_ai_enabled, "Last real passenger restored an obsolete command/AI/formation"): return false
 	_settle_commands()
 	var final_path := OUT + "/%s_hundred_disembarked.json" % kind
 	var final_saved: Dictionary = controller.save_to(final_path)
@@ -427,28 +470,35 @@ func _fleet(kind: String) -> bool:
 
 func _run() -> void:
 	if not _must(DisplayServer.get_name() == "headless", "Full hundred-person transport uses the bounded headless verifier"): return
+	var args := OS.get_cmdline_user_args()
+	if not _must(args.has("--crowd") and args.has("--crowd-test"), "isolated crowd startup required"): return
 	lab = TerrainLab.new()
 	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	_freeze_processes()
 	if not _fixture(): return
-	team = lab.army
-	team.role = "logistics"
-	team.team_id = lab._next_army_identity()
-	team.roster_size = 100
-	if not _must(team.deploy_at(lab.terrain, lab.character, lab.npc, parking) and team.enable_combat(false, 0), "Original hundred-person full-transport deployment failed"): return
+	# Crowd deployment: the same logistics side, admitted through the lab's trial path onto the staged sparse parking cells.
+	var setup: Dictionary = lab._trial_side_settings({"friendly_count": 100, "friendly_role": "logistics", "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
+	if not _must(setup.ok, "Hundred-person side rejected: %s" % str(setup)): return
+	var sides: Array[Dictionary] = [setup.side]
+	var deployed: Dictionary = lab._deploy_trial_teams(sides, [parking.duplicate()], 0)
+	if not _must(deployed.ok, "Original hundred-person full-transport deployment failed: %s" % str(deployed)): return
+	team = null
+	for candidate: Variant in lab.crowd_site.person_owners():
+		if candidate is CrowdPersonOwner and candidate.has_army() and candidate.command_members().size() == 100: team = candidate
+	if not _must(team != null, "Crowd formation did not hold the hundred original people"): return
+	team_id = team.team_id
 	lab.terrain.site.army_next_team = team.team_id + 1
 	lab.terrain.site.army_trial_active = true
-	team_id = team.team_id
 	for index in range(100):
-		var row: Dictionary = team.combat_units[index]
-		row.logistics = true
-		people.append(team.combat_identity(index))
-		item_ids.append(row.item_state.item_ids.duplicate())
-		equipment.append(row.item_state.equipped.duplicate(true))
+		var row: Dictionary = team.person(index, true)
+		if not _must(not row.is_empty(), "Crowd person %d has no item holder" % index): return
+		people.append(int(row.person_id))
+		item_ids.append(row.holder.item_ids.duplicate())
+		equipment.append(row.holder.equipped.duplicate(true))
 		cargo.append(row.cargo.duplicate(true))
-		initial_q += Runtime.carried_load(lab.terrain.site, row.cargo, row.item_state) + float(row.item_state.equipped.size())
+		initial_q += Runtime.carried_load(lab.terrain.site, row.cargo, row.holder) + float(row.holder.equipped.size())
 	initial_next_person = int(lab.terrain.site.next_person_id)
 	fingerprint = lab.terrain.fingerprint()
 	_settle_commands()
