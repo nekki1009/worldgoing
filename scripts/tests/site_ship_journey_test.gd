@@ -20,6 +20,14 @@ func _capture_journey() -> bool:
 	_settle_commands()
 	return _must(controller._capture_for_save().ok, "Formal journey original capture failed")
 
+## Crowd: a new fixed world binds the player's start team as a live native crowd, and a second native deploy is refused
+## while it is active (crowd deploy BUSY). As region_crowd_journey_test does, that start team returns to GD first; the
+## four original people then deploy on the same Site through the trial path.
+func _release_start_crowd() -> bool:
+	if not lab.crowd_site.active: return true
+	var cleared: Dictionary = lab.crowd_site.clear()
+	return _must(cleared.get("ok", false) and not lab.crowd_site.active, "Start crowd could not return to GD before the roster deploy: " + str(cleared))
+
 func _step(seconds: float) -> bool:
 	var before := RegionSaveSlot._site_seconds(lab.terrain)
 	var global_before := float(controller.region_slot.control.logical_game_seconds)
@@ -30,6 +38,8 @@ func _step(seconds: float) -> bool:
 
 func _board_original(index: int) -> bool:
 	if not _walk(index, Vector2i(9, 20)): return false
+	# Crowd: boarding needs the formation at HOLD; only the first boarding converts the team stock (as the base _fleet).
+	if not (_stop_team() if index == 0 else _hold_team()): return false
 	var result: Dictionary = controller.person_actions.begin_ship_board(people[index], boat_id, people[index], index, true)
 	return _must(result.ok, "Formal original boarding rejected: " + str(result)) and _finish_job(people[index])
 
@@ -59,16 +69,27 @@ func _scene_absent() -> bool:
 		if not _must(controller.ship_person_in_journey(identity) and lab._combat_target(identity).is_empty()
 			and not lab._original_person_target(identity).is_empty(), "Coarse traveler lost its biological owner or retained a Site combat body"): return false
 		if not _must(controller.vehicles.ship_person_cell(identity) == TerrainArmy.INVALID_CELL
-			and controller.person_actions._person(identity).moving, "Coarse traveler retained a historical Site cell or lost moving state"): return false
-	return _must(team.has_ship_journey() and team.occupied_count() == 0, "Original traveling team retained land claims")
+			and controller.person_actions._person(identity).moving, "Coarse traveler retained a historical Site cell or lost moving state: " + str({"id": identity, "ship_cell": controller.vehicles.ship_person_cell(identity), "moving": controller.person_actions._person(identity).get("moving"), "in_journey": controller.ship_person_in_journey(identity), "aboard": _crowd_aboard(people.find(identity), int(boat_id)), "embarked_row": controller.vehicles.ship_for_person(identity).get("id", "")})): return false
+	return _must(controller.ship_journey_active() and _no_land_steps(), "Original traveling team retained land claims")
+
+## Crowd counterpart of the grid occupied-cell count: no traveller keeps a committed land step on the native formation.
+func _no_land_steps() -> bool:
+	for index: int in team.combat_units:
+		var row: Dictionary = team.person(index, false)
+		if not row.is_empty() and bool(row.moving): return false
+	return true
+
+## Crowd counterpart of the grid formation fatigue count: the native formation's own pool size.
+func _shared_count() -> int:
+	return int(lab.crowd_site.formation_state(int(team.formation_index)).get("fatigue_count", 0))
 
 func _preserved_rows() -> bool:
 	if not _must(team.combat_units.size() == 4 and team.team_id == team_id, "Formal journey replaced original roster identity"): return false
 	for index in range(4):
-		if not _must(team.combat_identity(index) == people[index] and float(team.combat_hot_get(index, &"hp", 0.0)) > 0.0
-			and str(team.combat_units[index].embarked_vehicle_id) == boat_id, "Formal journey replaced, duplicated or detached its original person"): return false
-		var row: Dictionary = team.combat_units[index]
-		if not _must(_same_json(row.item_state.item_ids, item_ids[index]) and _same_json(row.item_state.equipped, equipment[index])
+		var row: Dictionary = team.person(index, true)
+		if not _must(not row.is_empty() and int(row.person_id) == people[index] and float(row.hp) > 0.0
+			and _crowd_aboard(index, int(boat_id)), "Formal journey replaced, duplicated or detached its original person"): return false
+		if not _must(_same_json(row.holder.item_ids, item_ids[index]) and _same_json(row.holder.equipped, equipment[index])
 			and _same_json(row.cargo, cargo[index]), "Formal journey changed original carried equipment/cargo"): return false
 	return _must(lab.terrain.site.item_records.keys().all(func(key: Variant) -> bool: return original_items.has(key)), "Formal journey allocated foreign equipment")
 
@@ -76,11 +97,12 @@ func _resume_ui() -> bool:
 	var frozen: Dictionary = controller.ship_journey_status()
 	var before_clock := float(controller.region_slot.control.logical_game_seconds)
 	var before_food: Dictionary = lab.terrain.site.team_supply.duplicate(true)
-	var before_fatigue: float = PersonFatigue.read(team.combat_units[0])
-	var before_rest: float = PersonFatigue.read(team.combat_units[0], "fatigue_rest")
+	var before_fatigue: float = float(team.combat_hot_get(0, &"fatigue", 0.0))
+	var before_rest: float = float(team.combat_hot_get(0, &"fatigue_rest", 0.0))
 	var reopened: Dictionary = controller.open_fixed_world(OUT.path_join("manifest.json"), world_id, "slot", FROM, false)
 	if not _must(reopened.ok, "Formal cold resume rejected its original generation: " + str(reopened)): return false
-	team = lab.army
+	team = _crowd_owner()
+	if not _must(team != null, "Crowd original team missing after the cold resume"): return false
 	_freeze_processes()
 	var restored: Dictionary = controller.ship_journey_status()
 	# Diagnose every existing acceptance term without changing its comparison.
@@ -117,19 +139,21 @@ func _resume_ui() -> bool:
 	}
 	var closure_checks: Dictionary = {
 		"food_same_json": _same_json(lab.terrain.site.team_supply, before_food),
-		"fatigue_exact": PersonFatigue.read(team.combat_units[0]) == before_fatigue,
-		"rest_exact": PersonFatigue.read(team.combat_units[0], "fatigue_rest") == before_rest,
+		"fatigue_exact": float(team.combat_hot_get(0, &"fatigue", 0.0)) == before_fatigue,
+		"rest_exact": float(team.combat_hot_get(0, &"fatigue_rest", 0.0)) == before_rest,
 		"original_roster": team.combat_units.size() == 4 and team.team_id == team_id,
-		"original_shared_count": not team.team_fatigue.is_empty() and int(team.team_fatigue.count) == 4,
+		"original_shared_count": _shared_count() == 4,
 		"no_extra_items": lab.terrain.site.item_records.keys().all(func(key: Variant) -> bool: return original_items.has(key)),
-		"journey_no_land_claims": team.has_ship_journey() and team.occupied_count() == 0,
+		"journey_no_land_claims": controller.ship_journey_active() and _no_land_steps(),
 	}
 	for index in range(mini(4, team.combat_units.size())):
-		var row: Dictionary = team.combat_units[index]
+		var row: Dictionary = team.person(index, true)
 		var identity: int = people[index]
-		closure_checks["person_%d" % index] = team.combat_identity(index) == identity and float(team.combat_hot_get(index, &"hp", 0.0)) > 0.0 and str(row.embarked_vehicle_id) == boat_id \
-			and _same_json(row.item_state.item_ids, item_ids[index]) and _same_json(row.item_state.equipped, equipment[index]) and _same_json(row.cargo, cargo[index]) \
-			and is_same(PersonFatigue.pool(row), team.team_fatigue) and controller.ship_person_in_journey(identity) and lab._combat_target(identity).is_empty() \
+		# Crowd: one native fatigue pool, so "same pool" is every person reading the formation's own value.
+		closure_checks["person_%d" % index] = not row.is_empty() and team.combat_identity(index) == identity and float(team.combat_hot_get(index, &"hp", 0.0)) > 0.0 \
+			and _crowd_aboard(index, int(boat_id)) \
+			and _same_json(row.holder.item_ids, item_ids[index]) and _same_json(row.holder.equipped, equipment[index]) and _same_json(row.cargo, cargo[index]) \
+			and float(team.combat_hot_get(index, &"fatigue", 0.0)) == float(team.combat_hot_get(0, &"fatigue", 0.0)) and controller.ship_person_in_journey(identity) and lab._combat_target(identity).is_empty() \
 			and not lab._original_person_target(identity).is_empty() and controller.vehicles.ship_person_cell(identity) == TerrainArmy.INVALID_CELL and controller.person_actions._person(identity).moving
 	print("JOURNEY_RESUME_CHECKS: " + str(resume_checks) + " clock=" + str(clock_diagnostic))
 	print("JOURNEY_RESUME_ORIGINAL_CLOSURE: " + str(closure_checks))
@@ -144,21 +168,23 @@ func _resume_ui() -> bool:
 		# rounding, timer reset or body/supply/fatigue comparison is introduced.
 		and _same_json(float(controller.region_slot.control.logical_game_seconds), before_clock), "Formal cold resume replayed original progress or GAME: " + str({"before": frozen, "restored": restored, "clock_before": before_clock, "clock_after": float(controller.region_slot.control.logical_game_seconds), "checks": resume_checks, "binary_clock": clock_diagnostic}))
 		and _must(_same_json(lab.terrain.site.team_supply, before_food)
-			and PersonFatigue.read(team.combat_units[0]) == before_fatigue
-			and PersonFatigue.read(team.combat_units[0], "fatigue_rest") == before_rest, "Cold resume changed original meal or shared fatigue history")
+			and float(team.combat_hot_get(0, &"fatigue", 0.0)) == before_fatigue
+			and float(team.combat_hot_get(0, &"fatigue_rest", 0.0)) == before_rest, "Cold resume changed original meal or shared fatigue history")
 		and _shared_pool_original() and _preserved_rows() and _scene_absent())
 
 func _shared_pool_original() -> bool:
-	if not _must(not team.team_fatigue.is_empty() and int(team.team_fatigue.count) == 4, "Original four-person shared fatigue pool missing"): return false
-	for row: Dictionary in team.combat_units:
-		if not _must(is_same(PersonFatigue.pool(row), team.team_fatigue), "Journey cloned a personal fatigue authority"): return false
+	if not _must(_shared_count() == 4, "Original four-person shared fatigue pool missing"): return false
+	# Crowd: one native formation pool; a cloned personal pool would read a different value.
+	var shared := float(team.combat_hot_get(0, &"fatigue", 0.0))
+	for index: int in team.combat_units:
+		if not _must(float(team.combat_hot_get(index, &"fatigue", 0.0)) == shared, "Journey cloned a personal fatigue authority"): return false
 	return true
 
 func _wait_original_ko(waiting_progress: float) -> bool:
 	if not _shared_pool_original(): return false
 	var initial_ko: float = float(team.combat_hot_get(0, &"ko", 0.0))
 	var before_game: float = RegionSaveSlot._site_seconds(lab.terrain)
-	var before_fatigue: float = PersonFatigue.read(team.combat_units[0])
+	var before_fatigue: float = float(team.combat_hot_get(0, &"fatigue", 0.0))
 	var entry: Dictionary = lab.terrain.site.team_supply[str(team_id)]
 	var stock: Dictionary = controller._supply_stock(entry)
 	var before_food: float = SiteSustain.rations(entry.sustain, stock)
@@ -199,12 +225,19 @@ func _wait_original_ko(waiting_progress: float) -> bool:
 	# Meals are prepaid for six-hour periods. Four hours within a covered meal
 	# need not consume again; passing its boundary must use the original stock.
 	if not _must(after_food >= 0.0 and after_food <= before_food and (float(entry.sustain.at) <= meal_until or after_food < before_food), "WAIT created food or skipped a due original meal"): return false
-	if not _must(PersonFatigue.read(team.combat_units[0]) >= before_fatigue and _shared_pool_original(), "WAIT granted free rest or replaced original fatigue pool"): return false
+	# Nekki 2026-11-08 15:21Z (B): people aboard a ship that waits during a journey rest as on a moored ship in a live Site
+	# (the grid kept the traveller pool unchanged). Six idle hours must rest the shared pool, never add effort to it.
+	var after_fatigue := float(team.combat_hot_get(0, &"fatigue", 0.0))
+	if not _must(after_fatigue <= before_fatigue and (before_fatigue <= 0.0 or after_fatigue < before_fatigue) and _shared_pool_original(), "WAIT did not rest the shared pool by the ordinary rule or replaced original fatigue pool: " + str({"before": before_fatigue, "after": float(team.combat_hot_get(0, &"fatigue", 0.0)), "rest": float(team.combat_hot_get(0, &"fatigue_rest", 0.0)), "shared_count": _shared_count(), "game": elapsed_game})): return false
 	print("JOURNEY_REAL_KO_WAIT: requested_ACTION=%.3f GAME=%.3f food_before=%.6f food_after=%.6f" % [requested_action, elapsed_game, before_food, after_food])
 	return true
 
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 240000
+	var crowd_args := OS.get_cmdline_user_args()
+	# Crowd is the default mode; --crowd-test would confine saves to its own directory, and this journey saves through the
+	# real Region Slot paths (save_to(region_slot.site_path(TO)) is INVALID_TEST_PATH there), so it runs without it.
+	if not _must(not crowd_args.has("--grid") and not crowd_args.has("--crowd-test"), "default crowd startup required (no --grid, no --crowd-test)"): return
 	if not _must(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(JOURNEY_OUT)) == OK, "Formal journey evidence directory unavailable"): return
 	var coast: TerrainData = _fixed_coast()
 	if coast == null: return
@@ -235,22 +268,32 @@ func _run() -> void:
 	var original_archive: Dictionary = Store._read(archive)
 	if not _must(original_archive.ok and int(original_archive.payload.state.actors.player.person_id) == old_person, "Formal new world archive omitted its original person"): return
 	for actor: Dictionary in lab.terrain.site.actors.values(): original_actor_ids.append(int(actor.person_id))
-	team = lab.army
-	team.role = "logistics"
-	team.team_id = lab._next_army_identity()
-	team.roster_size = 4
+	if not _release_start_crowd(): return
+	# Crowd deployment: the same logistics side through the lab's trial path onto the four original cells.
+	var setup: Dictionary = lab._trial_side_settings({"friendly_count": 4, "friendly_role": "logistics", "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
+	if not _must(setup.ok, "Formal journey roster side rejected: %s" % str(setup)): return
+	var sides: Array[Dictionary] = [setup.side]
 	var cells: Array[Vector2i] = [Vector2i(10, 21), Vector2i(11, 21), Vector2i(12, 21), Vector2i(13, 21)]
-	if not _must(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false, 0), "Formal journey original roster fixture rejected"): return
+	var deployed_team: Dictionary = lab._deploy_trial_teams(sides, [cells.duplicate()], 0)
+	if not _must(deployed_team.ok, "Formal journey original roster fixture rejected: %s" % str(deployed_team)): return
+	team = null
+	for candidate: Variant in lab.crowd_site.person_owners():
+		if candidate is CrowdPersonOwner and candidate.has_army() and candidate.command_members().size() == 4: team = candidate
+	if not _must(team != null, "Crowd formation did not hold the four original people"): return
+	team_id = team.team_id
 	lab.terrain.site.army_next_team = team.team_id + 1
 	lab.terrain.site.army_trial_active = true
-	team_id = team.team_id
 	for index in range(4):
-		team.combat_units[index].logistics = true
-		people.append(team.combat_identity(index))
-		var row: Dictionary = team.combat_units[index]
-		item_ids.append(row.item_state.item_ids.duplicate())
-		equipment.append(row.item_state.equipped.duplicate(true))
+		var row: Dictionary = team.person(index, true)
+		if not _must(not row.is_empty(), "Crowd journey person %d has no item holder" % index): return
+		people.append(int(row.person_id))
+		item_ids.append(row.holder.item_ids.duplicate())
+		equipment.append(row.holder.equipped.duplicate(true))
 		cargo.append(row.cargo.duplicate(true))
+	# Crowd: control moves from the released start person to the roster's pilot, the crowd member the journey steers (as region_crowd_ship_journey_ui_test).
+	var switched: Dictionary = lab.crowd_site.on_control_changed(lab.controlled_person_id(), people[0])
+	if not _must(switched.ok, "Control could not move to the original crowd pilot: " + str(switched)): return
+	lab.terrain.site["controlled_person_id"] = people[0]
 	var pool: Dictionary = controller._enable_team_supply(team)
 	if not _must(not pool.is_empty(), "Formal journey original supply owner unavailable"): return
 	pool.inventory.grain = 8
@@ -265,8 +308,9 @@ func _run() -> void:
 	if not _must(helm.ok, "Formal journey original helm fixture rejected") or not _finish_job(people[0]): return
 	lab.terrain.site.controlled_person_id = people[0]
 	var boat: Dictionary = controller.vehicles.records()[boat_id]
+	var vehicle_diag: Dictionary = controller.vehicles.records()[boat_id]
 	var sailing: Dictionary = controller.vehicles.ship_order(boat_id, "sail", Vector2i(3, 19), people[0], true)
-	if not _must(sailing.ok, "Formal edge navigation rejected: " + str(sailing)): return
+	if not _must(sailing.ok, "Formal edge navigation rejected: " + str(sailing) + " DIAG " + str({"paused": bool(lab.terrain.site.get("paused", false)), "move_empty": vehicle_diag.move.is_empty(), "job_empty": controller.vehicles.ship_job(boat_id).is_empty(), "ready": controller.vehicles.ship_driver_ready(vehicle_diag), "afloat": controller.vehicles.ship_afloat(vehicle_diag), "operator": vehicle_diag.operator_id, "person": controller.vehicles.ship_person(int(vehicle_diag.operator_id)).get("id", -1), "embarked": controller.vehicles.ship_person(int(vehicle_diag.operator_id)).get("row", {}).get("embarked_vehicle_id", ""), "berth": controller.vehicles.ship_person(int(vehicle_diag.operator_id)).get("row", {}).get("berth_id", -1), "helm_job": str(controller.person_actions._jobs.get(str(people[0]), {}).get("kind", "")), "helm_aboard": _crowd_aboard(0, int(boat_id)), "helm_moving": controller.person_actions._person(people[0], false).get("moving"),"crew": controller.vehicles.ship_crew_count(vehicle_diag)})): return
 	for step in range(40):
 		if boat.move.is_empty() and boat.command.is_empty(): break
 		controller.vehicles.update_ships(5.0)
@@ -281,12 +325,12 @@ func _run() -> void:
 	if not _must(controller.vehicles.ship_order(boat_id, "stop", Vector2i.ZERO, people[0], true).code == "BUSY"
 		and controller.vehicles.deploy_ship(team, "ferry", Vector2i(30, 10), Vector2i.LEFT, true).code == "BUSY"
 		and controller.person_actions.begin_ship_disembark(people[1], boat_id, people[1], Vector2i(9, 20), true).code == "BUSY", "Original source water/deployment/passenger geometry did not freeze"): return
-	var before_fatigue := PersonFatigue.read(team.combat_units[0])
+	var before_fatigue := float(team.combat_hot_get(0, &"fatigue", 0.0))
 	var food_before := SiteSustain.rations(pool.sustain, controller._supply_stock(pool))
 	if not _step(required * 0.5): return
 	status = controller.ship_journey_status()
 	if not _must(float(status.elapsed_action_seconds) > 0.0 and float(status.elapsed_action_seconds) < required
-		and PersonFatigue.read(team.combat_units[0]) > before_fatigue, "Formal original ACTION progress or crew fatigue did not advance"): return
+		and float(team.combat_hot_get(0, &"fatigue", 0.0)) > before_fatigue, "Formal original ACTION progress or crew fatigue did not advance"): return
 	# Original meals are prepaid. A short seam crossing must not charge a
 	# second meal; the actual next due meal is tested below in natural crew WAIT.
 	if not _must(SiteSustain.rations(pool.sustain, controller._supply_stock(pool)) <= food_before
@@ -329,7 +373,8 @@ func _run() -> void:
 		if not _step(0.05): return
 	if not _must(not controller.ship_journey_active() and controller._current_region_site() == FROM
 		and controller.region_slot.commit_ship_transfer(token, lab.terrain).code == "CANCELLED", "Real return failed to restore original source or kept a replayable token"): return
-	team = lab.army
+	team = _crowd_owner()
+	if not _must(team != null, "Crowd original team missing after the Controller load"): return
 	if not _preserved_rows(): return
 	for identity: int in people:
 		if not _must(not lab._combat_target(identity).is_empty() and controller.vehicles.ship_person_cell(identity) != TerrainArmy.INVALID_CELL, "Completed real return did not restore original Site bodies"): return
@@ -340,17 +385,27 @@ func _run() -> void:
 		lab._advance_action_time(0.05)
 	if not _must(not controller.ship_journey_active() and controller._current_region_site() == TO
 		and str(controller.region_slot.control.active_site_id) == str(lab.terrain.site.id), "Formal original journey never atomically bound the destination"): return
-	team = lab.army
+	team = _crowd_owner()
+	if not _must(team != null, "Crowd original team missing after the Controller load"): return
 	_freeze_processes()
 	if not _preserved_rows(): return
 	if not _must(lab.terrain.site.get("actor_presence_version", 0) == 1 and lab.terrain.site.actors.is_empty()
 		and not lab.actor_present(lab.character) and not lab.actor_present(lab.npc), "Fresh destination manufactured original starter Actors"): return
 	var source: Dictionary = controller.region_slot.open_site(FROM)
-	if not _must(source.ok and source.data.site.armies.is_empty() and not source.data.site.vehicles.has(boat_id), "Committed source retained original traveler or hull copies"): return
+	# Crowd port: since 11/03 the player's start team (its own six people) is born at the source and stays there when the
+	# four travellers leave, so the source may keep that team; it must hold none of the travellers and not the hull.
+	var source_travellers := 0
+	if source.ok:
+		for army: Dictionary in source.data.site.armies:
+			for row: Dictionary in army.get("units", []):
+				if people.has(int(row.get("person_id", -1))): source_travellers += 1
+			if int(army.get("team_id", -1)) == team_id: source_travellers += 1
+	if not _must(source.ok and source_travellers == 0 and not source.data.site.vehicles.has(boat_id), "Committed source retained original traveler or hull copies: " + str({"armies": source.data.site.armies.map(func(army: Dictionary) -> Dictionary: return {"team": army.get("team_id"), "crowd": army.get("crowd"), "departed": army.get("departed"), "people": army.get("units", []).map(func(row: Dictionary) -> Variant: return row.get("person_id"))}) if source.ok else [], "crowd_teams": source.data.site.get("crowd", {}).get("teams", []).size() if source.ok else -1, "boat": source.data.site.vehicles.has(boat_id) if source.ok else null})): return
 	for identity: int in original_actor_ids:
 		if not _must(RegionSaveSlot._saved_people(source.data.site).has(identity), "Source resident original Actor was transferred or deleted"): return
 	if not _must(controller.region_slot.commit_ship_transfer(arrival_token, lab.terrain).code == "ALREADY_COMMITTED", "Committed arrival token remained replayable"): return
-	if not _must(controller.save_to(controller.region_slot.site_path(TO)).ok, "Formal arrived original state could not save"): return
+	var arrived_saved: Dictionary = controller.save_to(controller.region_slot.site_path(TO))
+	if not _must(arrived_saved.ok, "Formal arrived original state could not save: " + str(arrived_saved)): return
 	var fire_source := controller.region_slot._load_checked(controller.region_slot.site_path(FROM), FROM)
 	if not _must(fire_source.ok, "Committed Fire source snapshot could not reopen: " + str(fire_source)): return
 	var source_fire := Store._validate_fire_transport_snapshot(fire_source.data, fire_source.data.site.get("fire", {}), fire_source.data.site.get("fire_transport", {}))
@@ -370,7 +425,8 @@ func _run() -> void:
 	var resumed: Dictionary = controller.open_fixed_world(OUT.path_join("manifest.json"), world_id, "slot", FROM, false)
 	if not _must(resumed.ok and controller._current_region_site() == TO and not controller.ship_journey_active()
 		and float(controller.region_slot.control.logical_game_seconds) == before_world, "Formal arrived reopen changed active ownership or replayed GAME"): return
-	team = lab.army
+	team = _crowd_owner()
+	if not _must(team != null, "Crowd original team missing after the Controller load"): return
 	if not _preserved_rows(): return
 	print("SITE_SHIP_JOURNEY_PASS:original_ui:new_world_archive:partial_claims:one_shared_clock:pause:cold_resume:ko_wait_due_meal_real_helm:equal_return:atomic_arrival:no_actor_clone:no_replay")
 	quit(0)
