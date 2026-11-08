@@ -4530,7 +4530,16 @@ static func _validate_travel_identity(state: Dictionary) -> Dictionary:
 	return Runtime.ok()
 
 static func _region_prepare_deliveries(state: Dictionary) -> Dictionary:
-	for supply: Dictionary in state.get("team_supply", {}).values():
+	# The recipe replaces the job in this state's OWN supply entries. A crowd Site's hot save works on a shallow copy of the
+	# live Site (the blob is not deep-copied), whose team_supply entries are the live ones; writing the recipe into them
+	# turned the live delivery job into its recipe mid-delivery (2026-11-08). The entries are copied before the write.
+	var supplies: Variant = state.get("team_supply", {})
+	if not supplies is Dictionary: return Runtime.ok()
+	var owned: Dictionary = supplies
+	var copied := false
+	for key: Variant in supplies.keys():
+		var supply: Variant = supplies[key]
+		if not supply is Dictionary: continue
 		var job: Variant = supply.get("delivery", {})
 		if not job is Dictionary: return Runtime.fail("CORRUPT_REGION_DELIVERY")
 		if job.is_empty(): continue
@@ -4542,7 +4551,13 @@ static func _region_prepare_deliveries(state: Dictionary) -> Dictionary:
 			if cell is Vector2i or cell is Vector2: recipe[field] = [cell.x, cell.y]
 		recipe["region_transient"] = 1
 		if not Runtime._fire_snapshot_json(recipe): return Runtime.fail("CORRUPT_REGION_DELIVERY")
-		supply["delivery"] = recipe
+		if not copied:
+			owned = supplies.duplicate()
+			state["team_supply"] = owned
+			copied = true
+		var entry: Dictionary = supply.duplicate()
+		entry["delivery"] = recipe
+		owned[key] = entry
 	return Runtime.ok()
 
 static func _valid_region_delivery(job: Dictionary, members: Dictionary) -> bool:

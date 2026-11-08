@@ -11627,7 +11627,6 @@ func _observe_original_food_result(original: TerrainLab, kind: String, identity:
 	# Ephemeral readout; never part of control, Site, Party or saved food state.
 	if not _original_food_result_readout: return
 	if source == null or pin.is_empty() or not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self: return
-	if original.crowd_site != null and original.crowd_site.active: return
 	var consumed: Variant = result.get("consumed_rations", 0.0)
 	if not result.get("ok", false) or not (consumed is float or consumed is int) or not is_finite(float(consumed)) or float(consumed) <= 0.0: return
 	var point: Dictionary = interval if not interval.is_empty() else original._region_point_pending

@@ -909,6 +909,13 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 			_region_bind_receipt_value = activation_failed
 			site_controller.show_result(activation_failed)
 			return
+	# Crowd deliveries restored as recipes become live jobs once the crowd owners exist (2026-11-08).
+	if crowd_site != null and crowd_site.active:
+		var rehydrated: Dictionary = site_controller.rehydrate_crowd_deliveries()
+		if not rehydrated.ok:
+			_region_bind_receipt_value = rehydrated
+			site_controller.show_result(rehydrated)
+			return
 	_wire_region_point_owners()
 	_region_bound_data = terrain
 	if _region_owner_restore_receipt.is_empty():
@@ -2188,12 +2195,12 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			siege_begin_contact_batch()
 			_advance_siege(elapsed)
 			if crowd_site.fire_host_active(): _advance_ranged(elapsed)
-			# Ships stay GD-owned under the crowd (G1 S2): the hulls, the ship jobs and the native deck points of crowd passengers
-			# advance on this same tick, after the native step (the site_ship_crowd_test tick order). Without this a live crowd
-			# Site never moved a ship or finished a boarding/helm job (found 2026-11-08 by the ship base crowd port).
+			# Ships stay GD-owned under the crowd (G1 S2): the hulls advance on this same tick, after the native step (the
+			# site_ship_crowd_test tick order). Without this a live crowd Site never moved a ship (found 2026-11-08). The ship
+			# jobs advance after this tick's native sustain point (below): a boarding job's supply check reads the team's
+			# sustain clock, which the native point publishes at the tick's end.
 			if site_controller != null:
 				site_controller.vehicles.update_ships(elapsed)
-				site_controller.person_actions.advance_ship_jobs(elapsed)
 				site_controller.vehicles.sync_ship_decks()
 		else:
 			if site_controller != null: site_controller.vehicles.update_siege(elapsed)
@@ -2268,6 +2275,9 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			and not _settle_fire_exposure(fire_action_begin, completed_fire_end): return
 		if crowd_site != null and crowd_site.active:
 			if not _finish_native_checked_body_prefixes(fire_action_begin, completed_fire_end, game_seconds): return
+			if site_controller != null:
+				site_controller.person_actions.advance_ship_jobs(elapsed)
+				site_controller.vehicles.sync_ship_decks()
 		if site_controller != null and not _region_deferring_endpoint():
 			for result: Dictionary in site_controller.person_actions.settle_after_contacts():
 				site_controller.collect_ground_boundary_result(result)
@@ -8695,7 +8705,7 @@ func _region_capture_original_owner_state(context: Dictionary, crowd_admitted: b
 		"army_hot": {}, "actor_hot": {}, "plans": {}, "coordinator": {}, "registry": {}, "fire_meta": {}, "fatigue_work": [], "deliveries": {}, "duty": {"round": DutyAI.review_round, "seat_waits": DutyAI._seat_waits.duplicate(true), "inmate_since": DutyAI._inmate_since.duplicate(true), "settlement_traces": DutyAI.settlement_traces.duplicate(true), "nation_traces": DutyAI.nation_traces.duplicate(true), "last_nation_trace": DutyAI.last_nation_trace.duplicate(true)}}
 	for team_id: String in terrain.site.get("team_supply", {}):
 		var job: Dictionary = terrain.site.team_supply[team_id].get("delivery", {})
-		if not job.is_empty(): roots.deliveries[team_id] = job.duplicate()
+		if not job.is_empty(): roots.deliveries[team_id] = _region_delivery_root(job)
 	for actor: Variant in _fatigue_work_seconds:
 		if not actor is TerrainTestCharacter: return SiteRuntime.fail("INVALID_REGION_WORK_OWNER")
 		roots.fatigue_work.append([actor.person_id, float(_fatigue_work_seconds[actor])])
@@ -8978,6 +8988,8 @@ func prepare_restore_region_owner_state(owners: Dictionary, context: Dictionary,
 		var restored: Dictionary = roots.deliveries[team_id]
 		for field: String in ["player_id", "representative_id", "requester_id", "source_spec", "player_hit", "target_hit", "source_version", "quantity", "left", "pending", "items", "open_amount", "target_location"]:
 			if original.get(field) != restored.get(field): return SiteRuntime.fail("STALE_REGION_DELIVERY", field)
+		# A crowd delivery's root is its recipe (no live aliases); the bind rehydrates it once the crowd is active.
+		if restored.get("region_transient") == 1: continue
 		for field: String in ["source_owner", "receiver_owner", "source_body", "receiver_body", "source_cargo", "source_holder", "source_open"]:
 			if not restored.has(field): return SiteRuntime.fail("INVALID_REGION_DELIVERY", field)
 	if roots.deliveries.size() != delivery_count: return SiteRuntime.fail("INVALID_REGION_DELIVERY")
@@ -9454,7 +9466,16 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
 	for original: TerrainLab in originals:
 		# A native crowd original prepares its own work inside its native begin window (as the live crowd does), never here.
-		if original.crowd_site != null and original.crowd_site.active: continue
+		# The live crowd Site's begin window still clips the joint interval (2026-11-08): it is previewed here and only
+		# its action limit kept (e.g. a ration delivery completing inside it), so the step's own begin window keeps the
+		# accepted joint interval. Cold crowd owners clip in their own replay pieces.
+		if original.crowd_site != null and original.crowd_site.active:
+			if original == self:
+				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, float(interval.tactical_seconds))
+				_clear_shared_work_step()
+				if not window.get("ok", false): return _region_preflight_failure(originals, window)
+				limited = minf(limited, float(window.action_seconds))
+			continue
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)
 		limited = minf(limited, float(work.action_seconds))
@@ -10119,7 +10140,9 @@ func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData) -> Dicti
 	var receipt: Dictionary = child._region_bind_receipt_value
 	child._region_owner_bind_tickets.erase(token)
 	if child.terrain != data or child._region_bound_data != data or receipt.get("owners_restored") != true:
-		return SiteRuntime.fail("REGION_CHILD_BIND_FAILED")
+		var refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED")
+		refused["cause"] = child.get_meta(&"last_refused_result", {}) # The child's own refusal, when its bind showed one.
+		return refused
 	child.set_process(false)
 	child.set_process_input(false)
 	child.set_process_unhandled_input(false)
@@ -14511,7 +14534,11 @@ func _publish_native_begin_shared_window(prepared: Dictionary) -> Dictionary:
 	prepared.captured.runtime.clock.combat_left = float(terrain.site.combat_left)
 	site_controller.publish_native_sustain_inputs(prepared.sustain)
 	_exchange_phase += action
-	if _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP: _exchange_phase = fposmod(_exchange_phase, EXCHANGE_QUERY_STEP)
+	if _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP:
+		_exchange_phase = fposmod(_exchange_phase, EXCHANGE_QUERY_STEP)
+		# A phase within the epsilon below the step is the step itself: fposmod keeps it (2e-14 short), which left the
+		# next begin window a zero-length query gap (ZERO_NATIVE_BEGIN_WINDOW; found 2026-11-08). It starts the next round.
+		if _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP: _exchange_phase = 0.0
 	prepared["published"] = true
 	return SiteRuntime.ok("", {"captured": prepared.captured, "plan": _shared_work_plan})
 
@@ -14738,6 +14765,10 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 			if bool(snapshot.owner.combat_hot_get(unit, &"work_resting", false)) and float(snapshot.pool.fatigue) > 50.0: target = 50.0; break
 		var idle: float = float(crowd_site.crowd.work_fatigue_rest_limit(int(snapshot.formation), target, limit, maxf(0.0, combat - action)))
 		if not is_finite(idle) or idle <= 0.0: return SiteRuntime.fail("INVALID_NATIVE_REST_LIMIT")
+		# A rest boundary closer than the person-work tolerance is already reached: a pool whose rest counter stopped a
+		# rounding residue short of its band (29.9999999999999 of 30) otherwise clips the next window to ~1e-13 game seconds,
+		# which is zero ACTION time (ZERO window; found 2026-11-08).
+		if idle <= PersonFatigue.WORK_PLAN_EPS: continue
 		limit = minf(limit, idle)
 	if not is_finite(limit) or limit <= 0.0: return SiteRuntime.fail("ZERO_NATIVE_BEGIN_WINDOW")
 	var accepted_action: float = RegionSaveSlot.GameplayClock.action_for_game(limit, simulation_speed, minf(action, combat))
@@ -15981,3 +16012,18 @@ func _allocate_initial_person_id(candidate: TerrainData) -> int:
 	if issued.size() != 1: return -1
 	candidate.site["next_person_id"] = int(slot.person_allocator_view().next_person_id)
 	return issued[0]
+
+
+## The owner graph's delivery root: the live job with its aliases, or for a crowd delivery its recipe (the Store's own
+## recipe form). A crowd job's bodies and owners are crowd records and CrowdPersonOwners, which exist only once the crowd
+## is active, after the owner graph restore; the bind rehydrates the recipe then (2026-11-08).
+func _region_delivery_root(job: Dictionary) -> Dictionary:
+	if not (job.get("receiver_owner") is CrowdPersonOwner or job.get("source_owner") is CrowdPersonOwner): return job.duplicate()
+	# Shallow, as the live root is: the recipe's own containers (items, source_spec, source_food) stay the Site's paths.
+	var recipe: Dictionary = job.duplicate()
+	for field: String in RegionOwnerSnapshot.DELIVERY_ALIAS_FIELDS: recipe.erase(field)
+	for field: String in ["source_cell", "target_cell", "source_origin"]:
+		var cell: Variant = recipe.get(field)
+		if cell is Vector2i or cell is Vector2: recipe[field] = [cell.x, cell.y]
+	recipe["region_transient"] = 1
+	return recipe

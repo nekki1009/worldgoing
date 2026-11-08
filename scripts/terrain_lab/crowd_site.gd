@@ -3482,7 +3482,12 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 	if not siege_guard.ok: return siege_guard
 	# All original saved Site validators run before rebuilding the native
 	# candidate navigation. The supplied native remains byte-checked.
-	var checked := SiteStore._validate_state(data, data.site, clampi(OS.get_processor_count(), 1, 8), native_candidate)
+	# A Region snapshot Site validates as its Store load does, with the snapshot's own context (2026-11-08: a ration
+	# delivery saved there is its region recipe, which an ordinary save refuses as BUSY).
+	var region_context: Dictionary = {}
+	var snapshot: Variant = data.site.get("region_snapshot")
+	if snapshot is Dictionary and snapshot.get("context") is Dictionary: region_context = snapshot.context
+	var checked := SiteStore._validate_state(data, data.site, clampi(OS.get_processor_count(), 1, 8), native_candidate, region_context)
 	if not checked.ok: return checked
 	if not TerrainArmy.load_combat_bake() or not TerrainArmy.prewarm_soldier_atlas():
 		return SiteRuntime.fail("MISSING_ASSET", "士兵圖集不可用")

@@ -1,11 +1,23 @@
 extends "res://scripts/tests/region_siege_cold_action_epoch_test.gd"
 ## NEW Source-only physical fixture. Each runtime assertion is NOT_RUN until Root.
 ## Explicit test-only boat genesis is separate from false-dispatch public work.
+## Crowd port (2026-11-08, Option C batch 1): since the 11/03 neutral team-row player a new world binds straight
+## into a live native crowd, so the fixture is built from crowd teams (region_crowd_ship_sea_departure_test pattern):
+## - the player's start person (ship_actor_id) stays ashore at (30,21) as the source person, in its own team;
+## - a two-person ship team stands on the two boat contacts; control moves to its captain (ship_commander_id) for the
+##   public ship, cargo and food work, as the old Actor Captain held it;
+## - a one-person resident team stands at (31,24), as the old recipient team did;
+## - the closure returns control to the shore person; the ship team, whole and aboard, leaves as an NPC crowd party.
+## The grid PLAYER_MEMBER join/leave and serving-cadre succession checks have no crowd form (a crowd person changes
+## teams only through a cadre split); crowd cadre rules are covered by region_crowd_cadre_split_test.
 const ShipCoastGenesis = preload("res://scripts/tests/region_ship_coast_legal_named_genesis.gd")
 const ShipGarrison = preload("res://scripts/terrain_lab/site_garrison.gd")
 const PhysicalSustain = preload("res://scripts/terrain_lab/site_sustain.gd")
+const SHIP_FACTION := 0
 var ship_team_id := 0
-var ship_actor_id := 0
+var ship_actor_id := 0 # The shore (start) person; controlled again after the closure.
+var ship_commander_id := 0 # The controlled ship-team captain during the public ship work.
+var ship_resident_team_id := 0
 var ship_people: Array[int] = []
 var ship_ids: Array[String] = []
 var ship_barriers: Array[String] = []
@@ -34,10 +46,140 @@ func _process(_delta: float) -> bool:
 func _write_manifest() -> bool:
 	return ShipCoastGenesis.write(self)
 
-func _ship_team() -> TerrainArmy:
-	for team: TerrainArmy in action_owner.combat_armies:
-		if team.team_id == ship_team_id: return team
+## The ship team's crowd person owner (CrowdPersonOwner), or null.
+func _ship_team() -> Variant:
+	if action_owner.crowd_site == null or not action_owner.crowd_site.active: return null
+	for owner: Variant in action_owner.crowd_site.person_owners():
+		if owner is CrowdPersonOwner and int(owner.team_id) == ship_team_id: return owner
 	return null
+
+## Failure evidence only: up to `cap` differing paths between two fact trees.
+func _ship_differences(first: Variant, second: Variant, path: String, cap: int, found: Array = []) -> Array:
+	if found.size() >= cap: return found
+	if typeof(first) != typeof(second):
+		found.append("%s type %d != %d" % [path, typeof(first), typeof(second)])
+		return found
+	if first is Dictionary:
+		for key: Variant in first:
+			if not second.has(key): found.append("%s/%s missing after" % [path, str(key)])
+			else: _ship_differences(first[key], second[key], path + "/" + str(key), cap, found)
+		for key: Variant in second:
+			if not first.has(key): found.append("%s/%s added after" % [path, str(key)])
+		return found
+	if first is Array:
+		if first.size() != second.size(): found.append("%s size %d != %d" % [path, first.size(), second.size()]); return found
+		for index: int in first.size(): _ship_differences(first[index], second[index], "%s[%d]" % [path, index], cap, found)
+		return found
+	if first != second: found.append("%s %s != %s" % [path, str(first).left(120), str(second).left(120)])
+	return found
+
+var ship_position_trace: Array = []
+
+## Failure evidence only: the person dict cell, the record's cell and the native position.
+func _ship_position_fact(identity: int, label: String) -> Dictionary:
+	var owner: Variant = _ship_team()
+	if owner == null: return {"label": label}
+	var person: Dictionary = owner.person(int(owner.index_for_identity(identity)), false)
+	var index := int(action_owner.crowd_site.crowd.soldier_index(identity))
+	var state: Dictionary = action_owner.crowd_site.soldier_state(index) if index >= 0 else {}
+	return {"label": label, "cell": person.get("cell"), "record_cell": person.get("body", {}).get("cell"), "px": state.get("px"), "py": state.get("py"),
+		"embarked": person.get("body", {}).get("embarked_vehicle_id", ""), "aboard": owner.native_aboard(int(owner.index_for_identity(identity)))}
+
+## Failure evidence only: which delivery job fields are registered Region owner references (by key), or inline.
+func _ship_delivery_ref_facts() -> Dictionary:
+	var job: Dictionary = _ship_supply().get("delivery", {})
+	if job.is_empty(): return {}
+	var refs: Dictionary = action_owner._region_owner_references()
+	var result := {}
+	for field: Variant in job:
+		var value: Variant = job[field]
+		if not (value is Dictionary or value is Array or value is Object): continue
+		var found := "inline"
+		for key: String in refs:
+			if is_same(refs[key], value): found = key; break
+		result[str(field)] = found
+	return result
+
+## Failure evidence only: which ship-supply admission check refuses (prepare_ship_supply's version-3 branch).
+func _ship_sustain_diag() -> Dictionary:
+	var controller_ref: SiteController = action_owner.site_controller
+	var entry: Dictionary = controller_ref._supply_entry(_ship_team())
+	if entry.is_empty(): return {"entry": "none"}
+	var checked: Dictionary = entry.sustain.duplicate(true)
+	var aligned: bool = controller_ref._align_supply_clock(checked, SiteRuntime.now(action_owner.terrain) * 60.0)
+	var location_keys: Array = entry.get("locations", {}).keys()
+	var per_location := {}
+	for key: Variant in location_keys: per_location[str(key)] = controller_ref._supply_location_valid(_ship_team(), str(key))
+	return {"version": entry.get("version"), "delivery_empty": entry.delivery.is_empty(), "aligned": aligned, "sustain_at": entry.sustain.get("at"),
+		"site_now": SiteRuntime.now(action_owner.terrain) * 60.0, "locations_valid": controller_ref._supply_locations_valid(_ship_team(), entry.get("locations", {})),
+		"per_location": per_location, "sustain_valid": PhysicalSustain.validate(checked, controller_ref.captivity_supply._all_members())}
+
+## Failure evidence only: who may order this person now.
+func _ship_authority_facts(identity: int) -> Dictionary:
+	var team: Variant = _ship_team()
+	if team == null: return {"team": null}
+	var state: Dictionary = action_owner.crowd_site.formation_state(int(team.formation_index))
+	return {"controlled": action_owner.controlled_person_id(), "commander_id": ship_commander_id, "person": identity,
+		"current_person": int(state.get("current_person", -1)), "eligible": action_owner.crowd_site._command_eligible(state),
+		"formation": state, "people": ship_people}
+
+## A ship person's saved row: the crowd record (its body) for a crowd soldier.
+func _ship_row_fact(person: Dictionary) -> Dictionary:
+	if person.owner is TerrainArmy: return person.owner.materialized_combat_rows()[int(person.unit)].duplicate(true)
+	# A crowd record's cell and crowd_position are the projection its last capture wrote; the live body is the native
+	# soldier. Both sides of every comparison read the live native position, as the GD row is always current.
+	var row: Dictionary = person.row.duplicate(true)
+	var index := int(action_owner.crowd_site.crowd.soldier_index(int(person.id)))
+	if index >= 0:
+		var state: Dictionary = action_owner.crowd_site.soldier_state(index)
+		row["cell"] = [int(person.cell.x), int(person.cell.y)]
+		row["crowd_position"] = [float(state.px), float(state.py)]
+		# Fatigue lives in the formation's native pool; the record holds the last capture's copy.
+		for field: StringName in [&"fatigue", &"fatigue_rest"]:
+			if row.has(String(field)): row[String(field)] = float(person.owner.combat_hot_get(int(person.unit), field, row[String(field)]))
+	return row
+
+## A crowd team side as region_crowd_journey_test builds it.
+func _ship_side(count: int) -> Dictionary:
+	var parsed: Dictionary = lab._trial_side_settings({"friendly_count": count, "friendly_training": 0,
+		"friendly_female_percent": 0, "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
+	if not _check(parsed.ok, "original crowd side settings accepted", parsed): return {}
+	var side: Dictionary = parsed.side
+	side["faction"] = SHIP_FACTION
+	return side
+
+## The origin Site after an extraction still holds this person in one of its team rosters.
+func _ship_origin_holds(origin: Dictionary, person_id: int) -> bool:
+	for army: Variant in origin.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and int(unit.get("person_id", -1)) == person_id: return true
+	return false
+
+## Moves control between two crowd persons, as region_crowd_ship_sea_departure_test does.
+func _ship_control(from_id: int, to_id: int) -> bool:
+	var switched: Dictionary = action_owner.crowd_site.on_control_changed(from_id, to_id)
+	if not _check(switched.ok, "crowd control moves to the named person", {"from": from_id, "to": to_id, "result": switched}): return false
+	action_owner.terrain.site["controlled_person_id"] = to_id
+	return _check(action_owner.controlled_person_id() == to_id, "the Site controls the named person", to_id)
+
+## A crowd Site restores natively; the inherited selected restore admits only the GD backend. A Site saved with
+## no crowd section (no people) still binds through GD.
+func _restore_selected(data: TerrainData, reopened: RegionSaveSlot, cold_mode: bool) -> TerrainLab:
+	var crowd_saved := data.site.has("crowd")
+	var scene := _shell()
+	if not _check(scene != null, "fresh actual original restore scene exists"): return null
+	var prepared := scene.prepare_selected_region_owner_restore(data, reopened)
+	if not _check(prepared.ok, "original selected private preflight validates whole actual owner graph", prepared): return null
+	scene.restore_only = cold_mode
+	scene.site_controller.region_slot = reopened
+	scene.bind_terrain(prepared.data, prepared)
+	_freeze(scene)
+	var actual := scene.region_bind_receipt(prepared.data)
+	var native_ok: bool = str(actual.get("backend", "")) == "native" and scene.crowd_site != null and scene.crowd_site.active
+	if not _check(actual.ok and actual.complete and actual.owners_restored and actual.effects_complete
+		and (native_ok if crowd_saved else str(actual.get("backend", "")) == "gd"), "positive selected bind restores every actual owner (a saved crowd natively)", actual): return null
+	return scene
 
 func _ship_vehicle(index: int) -> Dictionary:
 	return action_owner.terrain.site.vehicles.get(ship_ids[index], {})
@@ -53,7 +195,7 @@ func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 	# A 1-wide north-south wall faces its work entrance east (quarter 3), on the
 	# ship side the builder stands on. The default south quarter offers only the cell
 	# below a segment's end, which for the last segment (ending at y 99) is off the map.
-	var options := {"owner_faction": action_owner.character.faction_id, "quarter": 3}
+	var options := {"owner_faction": SHIP_FACTION, "quarter": 3}
 	var layout: Dictionary = SiteRuntime.building_cells(data, "stone_wall", anchor, Vector2i(1, length), options)
 	if not _check(layout.ok, "original legal land barrier layout respects per-request limits", layout): return false
 	var cells: Array[int] = []; cells.assign(layout.cells)
@@ -65,7 +207,7 @@ func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 	for resource: String in feature.cost:
 		if not _check(int(data.site.inventory.get(resource, 0)) == int(before.get(resource, 0)) - int(feature.cost[resource]), "GENESIS wall material debit is exact", resource): return false
 	var task := {"version": 2, "zone": -1, "target": "feature:" + key, "action": "construct", "work_cell": int(feature.entrance), "cell": int(feature.entrance), "mode": "work", "progress": 0.0, "status": "", "work_slot": -1}
-	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, 20, action_owner.character.faction_id)
+	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, 20, SHIP_FACTION)
 	if not _check(str(feature.stage) == "complete", "GENESIS original structural work finishes without terrain or HP rewriting", key): return false
 	ship_barriers.append(key)
 	return true
@@ -73,6 +215,9 @@ func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 func _setup_action_world() -> bool:
 	lab = _shell()
 	if not _check(lab != null, "original restore shell exists"): return false
+	# The shell enters the tree as a restore owner (no crowd startup). The live main Lab of the game starts as an
+	# ordinary scene, whose _ready requests the crowd unless --grid; this live owner does the same before its bind.
+	lab.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	controller = lab.site_controller
 	var archive := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345, {"size": Vector2i(32, 32)})
 	Env.initialize(archive, "c06-ship-original:archive")
@@ -98,55 +243,83 @@ func _setup_action_world() -> bool:
 	data.site.inventory.grain = int(ship_food_initial)
 	data.site.depot_cell = data.index(Vector2i(30, 20))
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns the finite authored genesis grain and building stock"): return false
-	if not _check(lab.character.place(Vector2i(30, 21), true), "original founder is authored at an actual dry shore before paid work"): return false
-	var actor: TerrainTestCharacter = lab.controlled_target().owner
-	ship_actor_id = actor.person_id
-	if not _check(actor == lab.character and lab.player_army() == null and float(data.site.get("combat_left", 0.0)) <= 0.0, "GENESIS uses original unaffiliated controlled Actor with no control identity rewrite"): return false
-	var promoted: Dictionary = ShipGarrison.set_military_role(lab, ship_actor_id, "officer")
-	if not _check(promoted.ok, "original Garrison role transaction qualifies the same Actor", promoted): return false
-	var side := {"prefix": "friendly", "count": 3, "slot_count": 3, "female_count": 0, "faction": actor.faction_id, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
-	var other: Dictionary = side.duplicate(true)
-	other.prefix = "enemy"; other.count = 1; other.slot_count = 1
-	var sides: Array[Dictionary] = [side, other]
-	var source_cells: Array[Vector2i] = [Vector2i(30, 24), Vector2i(30, 20), Vector2i(35, 20)]
-	var other_cells: Array[Vector2i] = [Vector2i(31, 24)]
-	var born: Dictionary = lab._deploy_trial_teams(sides, [source_cells, other_cells], 0)
-	if not _check(born.ok, "original typed finite genesis allocates four real rows and original holders", born): return false
-	var source: TerrainArmy = lab.combat_armies[0]
-	var recipient: TerrainArmy = lab.combat_armies[1]
-	var joined: Dictionary = source.join_player(actor)
-	if not _check(joined.ok and source.player_member == actor, "original join keeps the actual Actor as role-only PLAYER_MEMBER", joined): return false
-	var qualified: Dictionary = source.set_military_role(ship_actor_id, "officer")
-	if not _check(qualified.ok, "original Army role transaction qualifies the joined Actor", qualified): return false
-	var old_captain := source.combat_identity(source.formal_commander)
-	var moved: Dictionary = source.transfer_members_to(recipient, [old_captain], source.current_commander, recipient.current_commander)
-	if not _check(moved.ok and source.formal_commander == TerrainArmy.PLAYER_MEMBER and source.current_commander == TerrainArmy.PLAYER_MEMBER and source.command_eligible(source.current_commander), "original transfer and settle select the same controlled Actor Captain", moved): return false
-	ship_team_id = source.team_id
-	for row: Dictionary in source.combat_units: ship_people.append(int(row.person_id))
-	if not _check(ship_people.size() == 2 and source.cells[0] == Vector2i(30, 20) and source.cells[1] == Vector2i(35, 20), "original transfer retains the two true shoreline bodies and positions"): return false
-	var offices: Dictionary = source.team_offices()
-	var seat_id := str(offices.duties.get("team.training", ""))
-	var seat: Dictionary = SiteOffices.position(offices, seat_id)
-	if not _check(not seat.is_empty() and not bool(seat.head) and str(seat.office_class) == "military" and int(seat.holder) <= 0, "original existing training duty has a vacant military seat"): return false
-	var staffed: Dictionary = source.apply_office_plan(ship_actor_id, int(offices.revision), [{"op": "set_role", "person_id": ship_people[0], "role": "officer"}, {"op": "appoint", "position_id": seat_id, "person_id": ship_people[0]}])
-	if not _check(staffed.ok and source.command_eligible(0) and source.is_serving_military(0), "original two-phase appointment seats the true future NPC Captain", staffed): return false
+	# Neutral part 2: the bind opens the Site as the player's live native one-person team.
+	var bound: Dictionary = lab.region_bind_receipt(data)
+	if not _check(bound.get("complete") == true and str(bound.get("backend", "")) == "native" and lab.crowd_site != null and lab.crowd_site.active and float(data.site.get("combat_left", 0.0)) <= 0.0,
+		"a new world binds straight into the player's live native crowd team", bound): return false
+	ship_actor_id = lab.controlled_person_id()
+	# region_crowd_offscreen_step_test: clear the player's crowd team back to its holder before the test sides deploy,
+	# and give it the test faction (neutral is hostile to everyone). The shore person stands at the dry shore (30,21).
+	var cleared: Dictionary = lab.crowd_site.clear()
+	if not _check(cleared.get("ok", false) == true and not lab.crowd_site.active, "the player's crowd team returns to its holder before the test sides deploy", cleared): return false
+	var start_team: TerrainArmy = null
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team.combat_identity(0) == ship_actor_id: start_team = team
+	if not _check(start_team != null and start_team.combat_units.size() == 1 + TerrainLab.INITIAL_CADRES, "the player's start team holds the shore person and its cadres", start_team.combat_units.size() if start_team != null else -1): return false
+	start_team.faction_id = SHIP_FACTION
+	# The shore person and its start cadres stand on dry land east of both boat contacts and their walks.
+	var shore_cells: Array[Vector2i] = [Vector2i(38, 23), Vector2i(39, 23), Vector2i(40, 23), Vector2i(41, 23), Vector2i(42, 23), Vector2i(43, 23)]
+	for index: int in start_team.combat_units.size():
+		if not _check(data.is_walkable(shore_cells[index]), "a dry shore cell holds each start-team person", shore_cells[index]): return false
+		start_team.cells[index] = shore_cells[index]
+		start_team.moving_to[index] = TerrainArmy.INVALID_CELL
+	var ship_side := _ship_side(2)
+	var resident_side := _ship_side(1)
+	if ship_side.is_empty() or resident_side.is_empty(): return false
+	# region_crowd_ship_sea_departure_test: the ship team deploys inland (a crowd team on the contacts would block the
+	# hull deploy) and walks to the two genuine shore contacts after the boats exist.
+	var ship_cells: Array[Vector2i] = [Vector2i(30, 20), Vector2i(35, 20)]
+	var inland_cells: Array[Vector2i] = [Vector2i(30, 23), Vector2i(35, 23)]
+	var resident_cells: Array[Vector2i] = [Vector2i(31, 25)]
+	var entered: Dictionary = lab.crowd_site.deploy([ship_side, resident_side], [inland_cells, resident_cells])
+	if not _check(entered.get("ok", false) == true and lab.crowd_site.active, "the ship and resident crowd teams deploy with the shore person", entered): return false
+	var source: Variant = null
+	for roster: Dictionary in lab.crowd_site.rosters:
+		var ids: Array[int] = []
+		for unit: Dictionary in roster.units: ids.append(int(unit.person_id))
+		if ids.has(ship_actor_id): continue
+		if ids.size() == 2: ship_team_id = int(roster.team_id)
+		elif ids.size() == 1: ship_resident_team_id = int(roster.team_id)
+	source = _ship_team()
+	if not _check(source != null and ship_resident_team_id > 0, "the two-person ship team and the resident team have crowd owners"): return false
+	for cell: Vector2i in inland_cells:
+		for index: int in source.records:
+			if source.person(index, false).cell == cell: ship_people.append(source.combat_identity(index))
+	ship_commander_id = source.combat_identity(int(source.current_commander))
+	if not _check(ship_people.size() == 2 and ship_people.has(ship_commander_id) and source.command_eligible(int(source.current_commander)), "the two ship bodies stand inland and their captain is eligible", ship_people): return false
+	if not _ship_control(ship_actor_id, ship_commander_id): return false
+	if not _check(lab.crowd_site.person_owner(ship_actor_id) != null and not ship_people.has(ship_actor_id), "the shore person stays ashore in its own team"): return false
 	for anchor: Vector2i in [Vector2i(30, 19), Vector2i(35, 19)]:
 		var boat: Dictionary = controller.vehicles.deploy_ship(source, "ferry", anchor, Vector2i.LEFT, true)
 		if not _check(boat.ok, "explicit original TEST_ONLY boat genesis admits complete hull and unique owner; production is outside scope", boat): return false
 		ship_ids.append(str(boat.vehicle_id))
-	if not _check(ship_ids.size() == 2 and ship_ids[0] != ship_ids[1] and controller.vehicles.ship_contacts(_ship_vehicle(0)).has(source.cells[0]) and controller.vehicles.ship_contacts(_ship_vehicle(1)).has(source.cells[1]), "two original full hulls have their genuine distinct shore contacts"): return false
+	if not _check(ship_ids.size() == 2 and ship_ids[0] != ship_ids[1] and controller.vehicles.ship_contacts(_ship_vehicle(0)).has(ship_cells[0]) and controller.vehicles.ship_contacts(_ship_vehicle(1)).has(ship_cells[1]), "two original full hulls have their genuine distinct shore contacts"): return false
 	var person: Dictionary = controller.vehicles.ship_person(ship_people[0])
 	var stocked: Dictionary = SiteRuntime.transfer_items(data, data.site.depot_items, data.site.inventory, person.holder, person.cargo, {"wood": 2}, [], int(data.site.depot_items.version), int(person.holder.version), SiteRuntime.CARRY_CAPACITY)
 	if not _check(stocked.ok and int(person.cargo.get("wood", 0)) == 2, "GENESIS existing finite Depot stock transfers to the true row holder once", stocked): return false
 	for segment: Vector2i in [Vector2i(20, 36), Vector2i(56, 36), Vector2i(92, 8)]:
 		if not _ship_build_barrier(Vector2i(25, segment.x), segment.y): return false
 	if not _check(data.path_between(Vector2i(30, 21), Vector2i(20, 21)).is_empty(), "original completed barrier closes the entire ground approach while source ocean stays open"): return false
-	action_context = {"key": ship_ids[0], "crew": ship_people.duplicate(), "commander": ship_actor_id}
+	action_context = {"key": ship_ids[0], "crew": ship_people.duplicate(), "commander": ship_commander_id}
 	if not _check(action_paid == 0.0 and action_game_paid == 0.0, "all named geography, body/boat birth and initial material work precede paid simulation"): return false
 	var saved: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok, "original joint publisher stores authored owner graph and initial holders", saved): return false
 	var due: Dictionary = slot.consume_due_region_events()
-	return _check(due.ok and due.get("complete", false), "original same-point owners settle before actual positive intervals", due)
+	if not _check(due.ok and due.get("complete", false), "original same-point owners settle before actual positive intervals", due): return false
+	# Each ship body walks to its own boat's contact through paid shared steps (crowd siege approach step).
+	for index: int in ship_people.size():
+		if not await _ship_walk_to_contact(ship_people[index], ship_cells[index]): return false
+	return true
+
+func _ship_walk_to_contact(identity: int, contact: Vector2i) -> bool:
+	var owner: Variant = _ship_team()
+	var arrived := func() -> bool:
+		var person: Dictionary = owner.person(int(owner.index_for_identity(identity)), false)
+		if person.is_empty(): return false
+		if person.cell == contact and not bool(person.moving): return true
+		if not bool(person.moving): action_owner.crowd_site.siege_approach_step(identity, contact)
+		return false
+	return await _ship_until(arrived, "the ship body walks to its genuine shore contact")
 
 func _paid_ship_step(request: float = TerrainLab.EXCHANGE_ACTION_STEP) -> bool:
 	if not _observe_ship_food_results(): return false
@@ -166,10 +339,11 @@ func _action_step() -> bool:
 func _ship_until(predicate: Callable, label: String) -> bool:
 	for count: int in range(18000):
 		if predicate.call(): return _check(true, label)
-		if Time.get_ticks_msec() > deadline: return _check(false, label + " exceeded deadline")
+		if Time.get_ticks_msec() > deadline: return _check(false, label + " exceeded deadline", {"jobs": _ship_job_facts(), "observation": ship_observation, "paid": action_paid,
+			"positions": [_ship_position_fact(ship_people[0], "p0"), _ship_position_fact(ship_people[1], "p1")]})
 		if not _paid_ship_step(): return false
 		if count % 60 == 0: await process_frame
-	return _check(false, label + " exceeded bounded original caller attempts")
+	return _check(false, label + " exceeded bounded original caller attempts", {"jobs": _ship_job_facts(), "observation": ship_observation, "paid": action_paid, "world": slot.control.logical_game_seconds})
 
 func _ship_job_facts() -> Dictionary:
 	var result := {}
@@ -186,7 +360,7 @@ func _action_facts() -> Dictionary:
 	for identity: int in ship_people:
 		var person: Dictionary = action_owner.site_controller.vehicles.ship_person(identity)
 		if person.is_empty(): bodies[str(identity)] = {"missing": true}; continue
-		bodies[str(identity)] = {"row": person.owner.materialized_combat_rows()[int(person.unit)].duplicate(true), "cell": person.cell, "moving": person.moving, "holder": person.holder.duplicate(true), "cargo": person.cargo.duplicate(true)}
+		bodies[str(identity)] = {"row": _ship_row_fact(person), "cell": person.cell, "moving": person.moving, "holder": person.holder.duplicate(true), "cargo": person.cargo.duplicate(true)}
 	var supply := _ship_supply()
 	var delivery := {}
 	for field: String in ["requester_id", "player_id", "representative_id", "quantity", "left", "pending", "target_location", "source_version", "source_cell", "target_cell"]:
@@ -210,8 +384,14 @@ func _reopen_actual_partial() -> bool:
 	if not _observe_ship_food_results(): return false
 	var facts := _action_facts()
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
+	var refs_before := _ship_delivery_ref_facts()
 	var saved: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
-	if not _check(saved.ok and facts == _action_facts() and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "joint fullgraph checkpoint consumes no additional job, food, transfer or time", saved): return false
+	if not saved.ok: print("SHIP_DIAG delivery refs before=", refs_before, " after=", _ship_delivery_ref_facts())
+	var after_facts := _action_facts()
+	# Crowd records read back from a saved JSON carry whole numbers as floats until a capture rewrites them; the facts are
+	# compared in the Store's own saved JSON domain, as every reopen comparison here does.
+	if not _check(saved.ok and _saved_json_domain(facts) == _saved_json_domain(after_facts) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "joint fullgraph checkpoint consumes no additional job, food, transfer or time",
+		{"saved": saved.get("code", "OK"), "differences": _ship_differences(facts, after_facts, "facts", 12), "clock": [clock, [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]]}): return false
 	var graph := _action_graph()
 	if graph.is_empty(): return false
 	var proof := slot.region_bind_proof(action_owner.terrain)
@@ -252,22 +432,26 @@ func _ship_public_cargo() -> bool:
 	var person: Dictionary = owner.vehicles.ship_person(ship_people[0])
 	var boat := _ship_vehicle(0)
 	var before := [int(person.holder.version), int(boat.holder.version)]
-	var loaded: Dictionary = owner.vehicles.transfer("person:" + str(ship_people[0]), ship_ids[0], {"wood": 2}, [], before[0], before[1], ship_actor_id, false)
+	var loaded: Dictionary = owner.vehicles.transfer("person:" + str(ship_people[0]), ship_ids[0], {"wood": 2}, [], before[0], before[1], ship_commander_id, false)
 	if not _check(loaded.ok and int(person.cargo.get("wood", 0)) == 0 and int(boat.cargo.get("wood", 0)) == 2 and int(person.holder.version) == before[0] + 1 and int(boat.holder.version) == before[1] + 1, "false-dispatch public LOAD moves the finite actual person stack and both versions exactly once", loaded): return false
 	var source := var_to_bytes([person.cargo, person.holder, boat.cargo, boat.holder, slot.control])
-	var empty: Dictionary = owner.vehicles.transfer("person:" + str(ship_people[0]), ship_ids[0], {"wood": 2}, [], int(person.holder.version), int(boat.holder.version), ship_actor_id, false)
+	var empty: Dictionary = owner.vehicles.transfer("person:" + str(ship_people[0]), ship_ids[0], {"wood": 2}, [], int(person.holder.version), int(boat.holder.version), ship_commander_id, false)
 	if not _check(not empty.ok and source == var_to_bytes([person.cargo, person.holder, boat.cargo, boat.holder, slot.control]), "actual empty source refuses a second finite LOAD without extra stock/version/time", empty): return false
-	var unloaded: Dictionary = owner.vehicles.transfer(ship_ids[0], "person:" + str(ship_people[0]), {"wood": 2}, [], int(boat.holder.version), int(person.holder.version), ship_actor_id, false)
+	var unloaded: Dictionary = owner.vehicles.transfer(ship_ids[0], "person:" + str(ship_people[0]), {"wood": 2}, [], int(boat.holder.version), int(person.holder.version), ship_commander_id, false)
 	return _check(unloaded.ok and int(person.cargo.get("wood", 0)) == 2 and int(boat.cargo.get("wood", 0)) == 0 and int(person.holder.version) == before[0] + 2 and int(boat.holder.version) == before[1] + 2, "false-dispatch public UNLOAD returns the same finite stack through real shore contact", unloaded)
 
 func _ship_board(index: int, cold_partial: bool) -> bool:
 	ship_observation = "board"
-	var begun: Dictionary = action_owner.site_controller.person_actions.begin_ship_board(ship_people[index], ship_ids[index], 1, ship_actor_id, false)
-	if not _check(begun.ok and not action_owner.site_controller.vehicles.is_embarked(ship_people[index]), "false-dispatch public boarding creates a pending true job without premature attachment", begun): return false
+	var begun: Dictionary = action_owner.site_controller.person_actions.begin_ship_board(ship_people[index], ship_ids[index], ship_commander_id, 1, false)
+	if not _check(begun.ok and not action_owner.site_controller.vehicles.is_embarked(ship_people[index]), "false-dispatch public boarding creates a pending true job without premature attachment", {"result": begun, "authority": _ship_authority_facts(ship_people[index])}): return false
 	if cold_partial:
 		if not await _ship_until(func() -> bool: return _partial_ready(), "actual paid boarding obtains a true partial interval"): return false
 		if not await _reopen_actual_partial(): return false
-	if not await _ship_until(func() -> bool: return action_owner.site_controller.vehicles.is_embarked(ship_people[index]) and not action_owner.site_controller.person_actions.is_busy(ship_people[index]), "original paid boarding commits its actual berth exactly once"): return false
+	# The job ends either committed (embarked) or refused; a refusal is reported at once, not at the deadline.
+	if not await _ship_until(func() -> bool: return not action_owner.site_controller.person_actions.is_busy(ship_people[index]), "original paid boarding job ends"): return false
+	if not _check(action_owner.site_controller.vehicles.is_embarked(ship_people[index]), "original paid boarding commits its actual berth exactly once",
+		{"refusal": action_owner.get_meta(&"last_refused_result", {}), "position": _ship_position_fact(ship_people[index], "after_board"), "sustain": _ship_sustain_diag()}): return false
+	ship_position_trace.append(_ship_position_fact(ship_people[index], "boarded_%d" % index))
 	var person: Dictionary = action_owner.site_controller.vehicles.ship_person(ship_people[index])
 	return _check(str(person.row.embarked_vehicle_id) == ship_ids[index] and int(person.row.berth_id) == 1, "true body attachment uses the requested original boat and berth", person.row)
 
@@ -278,12 +462,17 @@ func _ship_public_food() -> bool:
 	ship_food_source_site = str(action_owner.terrain.site.id)
 	if not _observe_ship_food_results(): return false
 	var before_food := ship_consumed_rations
+	ship_position_trace.append(_ship_position_fact(ship_people[0], "food_begin"))
 	var begun: Dictionary = action_owner.site_controller.begin_team_food(_ship_team(), 4.0, ship_people[0], {"kind": "depot"})
 	if not _check(begun.ok and not _ship_supply().delivery.is_empty() and int(action_owner.terrain.site.inventory.grain) == before_depot, "public finite Depot fill starts an actual productive-time job with no immediate debit", begun): return false
 	for attempt: int in range(12):
 		if _partial_ready(): break
 		if not _paid_ship_step(0.001): return false
-	if not _check(_partial_ready(), "food partial contains actual paid GAME work with positive retained left"): return false
+	if not _check(_partial_ready(), "food partial contains actual paid GAME work with positive retained left",
+		{"delivery": _ship_supply().get("delivery", {}), "crowd_delivery_steps": action_owner.site_controller.crowd_delivery_steps,
+		"crowd_delivery_last": action_owner.site_controller.crowd_delivery_last, "settle": action_owner.site_controller.supply_settle_last,
+		"valid": action_owner.site_controller.food_delivery.valid_breakdown(_ship_team(), _ship_supply()) if not _ship_supply().get("delivery", {}).is_empty() else "no delivery",
+		"paid": action_paid, "positions": ship_position_trace + [_ship_position_fact(ship_people[0], "after")]}): return false
 	if not await _reopen_actual_partial(): return false
 	if not await _ship_until(func() -> bool: return _ship_supply().delivery.is_empty(), "same real cold delivery continues and commits finite food once"): return false
 	var supply := _ship_supply()
@@ -302,7 +491,7 @@ func _ship_public_food() -> bool:
 	var boat_before: Dictionary = _ship_supply().locations[boat_key].duplicate(true)
 	var boat_rations_before := PhysicalSustain.rations(boat_before, boat_before.inventory)
 	var eaten_before := ship_consumed_rations
-	var unloaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), boat_key, shore_key, {"grain": 1}, 0.0, ship_actor_id, false)
+	var unloaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), boat_key, shore_key, {"grain": 1}, 0.0, ship_commander_id, false)
 	var unload_meal := float(unloaded.get("consumed_rations", -1.0))
 	var after_unload: Dictionary = _ship_supply()
 	var shore_after: Dictionary = after_unload.locations.get(shore_key, {"inventory": {}, "open_rations": 0.0})
@@ -317,7 +506,7 @@ func _ship_public_food() -> bool:
 	# LOAD returns exactly what actually remains on the shore stack.
 	var shore_items: Dictionary = shore_after.inventory.duplicate(true)
 	var shore_open := float(shore_after.open_rations)
-	var loaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, shore_items, shore_open, ship_actor_id, false)
+	var loaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, shore_items, shore_open, ship_commander_id, false)
 	var load_meal := float(loaded.get("consumed_rations", -1.0))
 	var after_load: Dictionary = _ship_supply()
 	var shore_final: Dictionary = after_load.locations.get(shore_key, {"inventory": {}, "open_rations": 0.0})
@@ -331,13 +520,13 @@ func _ship_public_food() -> bool:
 	if not _observe_ship_food_results(): return false
 	if not _check(absf(ship_consumed_rations - eaten_before - load_meal) <= EPS, "the LOAD meal, if any, is the one accepted original food result", {"observed": ship_consumed_rations - eaten_before, "meal": load_meal}): return false
 	var facts := var_to_bytes([_ship_supply().locations, _ship_supply().sustain, _ship_supply().revision, slot.control])
-	var empty: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, {"grain": 1}, 0.0, ship_actor_id, false)
+	var empty: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, {"grain": 1}, 0.0, ship_commander_id, false)
 	if not _check(slot.take_original_food_results().is_empty(), "rejected original transfer publishes no accepted food result"): return false
 	return _check(not empty.ok and facts == var_to_bytes([_ship_supply().locations, _ship_supply().sustain, _ship_supply().revision, slot.control]), "the actual empty shore pool refuses another LOAD without food, hunger, version or clock drift", empty)
 
 func _ship_helm(index: int, cold_partial: bool) -> bool:
 	ship_observation = "helm"
-	var begun: Dictionary = action_owner.site_controller.person_actions.begin_ship_helm(ship_people[index], ship_ids[index], ship_actor_id, false)
+	var begun: Dictionary = action_owner.site_controller.person_actions.begin_ship_helm(ship_people[index], ship_ids[index], ship_commander_id, false)
 	if not _check(begun.ok and int(_ship_vehicle(index).operator_id) == 0, "false-dispatch public helm job keeps the true uncommitted operator empty", begun): return false
 	if cold_partial:
 		if not await _ship_until(_partial_ready, "original paid helm job obtains real retained partial progress"): return false
@@ -350,7 +539,7 @@ func _ship_open_sea_positive() -> bool:
 	var data := action_owner.terrain
 	if not _check(data.path_between(Vector2i(30, 21), Vector2i(20, 21)).is_empty(), "closed original land approach remains closed after genuine loading and boarding"): return false
 	var source_cell := int(_ship_vehicle(0).cell)
-	var begun: Dictionary = action_owner.site_controller.vehicles.ship_order(ship_ids[0], "sail", Vector2i(23, 19), ship_actor_id, false)
+	var begun: Dictionary = action_owner.site_controller.vehicles.ship_order(ship_ids[0], "sail", Vector2i(23, 19), ship_commander_id, false)
 	if not _check(begun.ok, "false-dispatch original sail command takes the actual open sea route beside the closed land barrier", begun): return false
 	if not await _ship_until(_partial_ready, "original whole-hull reservation obtains actual paid sea displacement"): return false
 	if not await _reopen_actual_partial(): return false
@@ -360,32 +549,38 @@ func _ship_open_sea_positive() -> bool:
 
 func _ship_original_two_boat_closure() -> bool:
 	ship_observation = "settled"
-	var team := _ship_team()
-	if not _check(team.current_commander == TerrainArmy.PLAYER_MEMBER and team.command_eligible(team.current_commander) and team.command_eligible(team.index_for_identity(ship_people[0])), "original Actor Captain and appointed actual NPC successor remain eligible before public leave"): return false
-	var left: Dictionary = action_owner.leave_player_army()
+	var team: Variant = _ship_team()
+	if not _check(team != null and team.combat_identity(int(team.current_commander)) == ship_commander_id and team.command_eligible(int(team.current_commander)) and action_owner.controlled_person_id() == ship_commander_id, "the controlled ship captain commands both boats before control returns ashore"): return false
+	# Control returns to the shore person; the ship team keeps its own captain, now an NPC.
+	if not _ship_control(ship_commander_id, ship_actor_id): return false
 	team = _ship_team()
-	if not _check(left.ok and team.player_member == null and team.combat_identity(team.formal_commander) == ship_people[0] and team.combat_identity(team.current_commander) == ship_people[0] and team.command_eligible(team.current_commander), "public original leave and serving-cadre succession select the same true NPC Captain without control rewrite", left): return false
+	if not _check(team != null and team.combat_identity(int(team.current_commander)) == ship_commander_id and team.command_eligible(int(team.current_commander)) and not ship_people.has(action_owner.controlled_person_id()), "the ship team keeps the same eligible captain, now an NPC, after control returns ashore"): return false
 	if not await _reopen_actual_partial(): return false
 	var captured: Dictionary = action_owner.site_controller._capture_for_save()
 	if not _check(captured.ok, "original capture derives departure bytes from the actual restored physical owners", captured): return false
 	var state: Dictionary = action_owner.terrain.site
 	var source := var_to_bytes(state)
-	var closure: Dictionary = Travel.extract(state, {"mode": "sea", "controller": "npc", "team_id": ship_team_id, "person_id": ship_people[0], "game_seconds": float(slot.control.logical_game_seconds)}, "c06_physical_source_closure_%d" % OS.get_process_id())
-	if not _check(closure.ok and source == var_to_bytes(state), "original NPC sea extraction accepts genuine full two-boat closure and preserves its physical source", closure.get("code")): return false
+	var closure: Dictionary = Travel.extract(state, {"mode": "sea", "controller": "npc", "team_id": ship_team_id, "person_id": ship_commander_id, "crowd_departure": true, "game_seconds": float(slot.control.logical_game_seconds)}, "c06_physical_source_closure_%d" % OS.get_process_id())
+	if not _check(closure.ok and source == var_to_bytes(state), "original NPC sea extraction accepts genuine full two-boat crowd closure and preserves its physical source", closure.get("code")): return false
 	var party: Dictionary = closure.party
-	if not _check(party.person_ids == ship_people and party.vehicle_ids == ship_ids and party.content.actors.is_empty() and not party.person_ids.has(ship_actor_id) and closure.origin.actors.has("player"), "true original closure carries exactly two actual bodies/boats and leaves the same shore Actor at source", party.person_ids): return false
+	var party_people: Array = party.person_ids.duplicate(); party_people.sort()
+	var expected_people: Array = ship_people.duplicate(); expected_people.sort()
+	var party_boats: Array = party.vehicle_ids.duplicate(); party_boats.sort()
+	var expected_boats: Array = ship_ids.duplicate(); expected_boats.sort()
+	if not _check(party_people == expected_people and party_boats == expected_boats and party.content.actors.is_empty() and not party.person_ids.has(ship_actor_id) and _ship_origin_holds(closure.origin, ship_actor_id) and int(closure.origin.get("controlled_person_id", -1)) == ship_actor_id,
+		"true crowd closure carries exactly two actual bodies/boats and leaves the same controlled shore person at source", {"people": party.person_ids, "boats": party.vehicle_ids}): return false
 	var owners: Array[Dictionary] = Travel._feeding(party.content, Travel._body_records(party.content))
 	var food_key := "vehicle:" + ship_ids[0]
 	if not _check(owners.size() == 1 and owners[0].stock.has(food_key) and not owners[0].stock.has("vehicle:" + ship_ids[1]) and str(owners[0].context.food_locations[ship_people[0]]) == food_key and str(owners[0].context.food_locations[ship_people[1]]) == "", "actual boarded/filled/unloaded original closure uses own boat pool and empty access on the missing second pool"): return false
 	var transport: Dictionary = Travel.prepare_transport(party.duplicate(true))
 	if not _check(transport.ok and transport.can_move and Travel.party_speed(party.content) > 0.0, "original true two-helm closure remains sea-capable with a missing food pool", transport.get("code")): return false
-	report["physical_source_closure"] = {"people": party.person_ids, "boats": party.vehicle_ids, "captain": ship_people[0], "source_actor": ship_actor_id, "food_locations": owners[0].context.food_locations, "party": party, "formal_world_departure": "OPEN_NOT_RUN", "npc_dispatch_and_region_route": "OPEN_NOT_RUN"}
+	report["physical_source_closure"] = {"people": party.person_ids, "boats": party.vehicle_ids, "captain": ship_commander_id, "source_actor": ship_actor_id, "food_locations": owners[0].context.food_locations, "party": party, "formal_world_departure": "OPEN_NOT_RUN", "npc_dispatch_and_region_route": "OPEN_NOT_RUN"}
 	return true
 
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest() or not await _setup_action_world(): _finish(); return
 	if not _ship_public_cargo(): _finish(); return
 	if not await _ship_board(0, true): _finish(); return
 	if not await _ship_public_food(): _finish(); return

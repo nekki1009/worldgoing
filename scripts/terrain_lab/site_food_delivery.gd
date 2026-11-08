@@ -268,6 +268,29 @@ func prepare(team: Variant, quantity: float, receiver_id: int, specification: Di
 		"source_food": food, "source_open_amount": opened, "items": items, "open_amount": take_open,
 		"target_location": str(endpoint.key), "quantity": quantity, "left": 2.0 + 0.2 * quantity, "pending": false}})
 
+## A Region recipe of a crowd delivery (its aliases removed, cells as arrays) becomes its live job again: the same
+## sender, receiver and source resolve now as they did at the start (prepare's job fields, same values). 2026-11-08.
+func rehydrate(team: Variant, recipe: Dictionary) -> Dictionary:
+	var receiver := _person(int(recipe.get("representative_id", -1)))
+	if receiver.is_empty() or not _member(team, int(recipe.representative_id)): return Runtime.fail("STALE_REGION_DELIVERY", "原代表不在隊伍")
+	var resolved := source(recipe.get("source_spec", {}), receiver)
+	if resolved.is_empty(): return Runtime.fail("STALE_REGION_DELIVERY", "原口糧來源不再可達")
+	var sender: Dictionary = resolved.sender
+	if int(sender.person_id) != int(recipe.get("player_id", -1)): return Runtime.fail("STALE_REGION_DELIVERY", "原搬運者不同")
+	var job: Dictionary = recipe.duplicate(true)
+	job.erase("region_transient")
+	for field: String in ["source_cell", "target_cell", "source_origin"]:
+		var cell: Variant = job.get(field)
+		if cell is Array and cell.size() == 2: job[field] = Vector2i(int(cell[0]), int(cell[1]))
+	job["source_cargo"] = resolved.stock
+	job["source_holder"] = resolved.version_owner
+	job["source_body"] = sender.body
+	job["source_owner"] = resolved.owner
+	job["receiver_body"] = receiver.body
+	job["receiver_owner"] = receiver.owner
+	job["source_open"] = resolved.opened
+	return Runtime.ok("", {"job": job})
+
 func valid(team: Variant, entry: Dictionary) -> bool:
 	var job: Dictionary = entry.delivery
 	if job.is_empty() or int(job.requester_id) != controller.lab.controlled_person_id() or not _member(team, int(job.representative_id)) or not controller._team_stopped(team):

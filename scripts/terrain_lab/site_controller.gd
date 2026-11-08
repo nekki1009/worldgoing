@@ -2255,6 +2255,8 @@ func focus_camp() -> void:
 	lab.camera.force_update_scroll()
 
 func show_result(result: Dictionary) -> void:
+	# The last refusal is kept for a restore owner (no UI), so a failed private bind can name it (diagnostic only).
+	if not bool(result.get("ok", true)): lab.set_meta(&"last_refused_result", result.duplicate(true))
 	if lab.restore_only: return
 	message.text = str(result.get("message", ""))
 	if _equipment_result.is_valid() and is_instance_valid(_equipment_dialog):
@@ -5927,6 +5929,22 @@ func begin_team_food(team: Variant, quantity: float, representative_id: int, sou
 	entry.delivery = prepared.job
 	return Runtime.ok("原口糧交付中；%.1f有效遊戲秒，完成並重查才轉移" % float(entry.delivery.left))
 
+## Crowd deliveries restored from a Region owner graph as recipes (no live aliases) become live jobs again, now that the
+## crowd owners exist. A recipe that no longer resolves to the same sender, receiver and source refuses the bind.
+func rehydrate_crowd_deliveries() -> Dictionary:
+	for team_id: Variant in lab.terrain.site.get("team_supply", {}):
+		var entry: Dictionary = lab.terrain.site.team_supply[team_id]
+		var recipe: Variant = entry.get("delivery", {})
+		if not recipe is Dictionary or recipe.is_empty() or recipe.get("region_transient") != 1: continue
+		var team: Variant = null
+		for owner: Variant in lab.crowd_site.person_owners():
+			if int(owner.team_id) == int(team_id): team = owner
+		if team == null: return Runtime.fail("STALE_REGION_DELIVERY", "原口糧交付隊伍不在群眾中")
+		var restored: Dictionary = food_delivery.rehydrate(team, recipe)
+		if not restored.ok: return restored
+		entry["delivery"] = restored.job
+	return Runtime.ok()
+
 func cancel_team_food() -> Dictionary:
 	for entry: Dictionary in lab.terrain.site.get("team_supply", {}).values():
 		if not entry.delivery.is_empty():
@@ -6390,6 +6408,7 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 				show_result(outcome)
 				break
 			fully_fed = fully_fed and bool(outcome.fully_fed)
+			_observe_original_food_result("team", str(team_owner.team_id), float(entry.sustain.at), outcome)
 			morale_delta += float(entry.sustain.morale) - 50.0
 			if float(outcome.consumed_rations) > 0.0: entry.revision = int(entry.revision) + 1
 			for identity: Variant in outcome.damage:
@@ -14670,8 +14689,9 @@ func _resume_region_party_map() -> void:
 	RegionTravelSite.open_travel_map(self, str(region_slot.pin.world_instance_id), str(region_slot.pin.slot_id), _region_manifest_path)
 
 func _observe_original_food_result(kind: String, identity: String, at_game_seconds: float, result: Dictionary) -> void:
-	# Read-only per-call exposure after the original owner published this result.
-	if region_slot == null or _crowd_active(): return
+	# Read-only per-call exposure after the original owner published this result. A live crowd's meals are exposed too
+	# (2026-11-08): its pending point now carries the joint interval identity the readout accepts.
+	if region_slot == null: return
 	region_slot._observe_original_food_result(lab, kind, identity, at_game_seconds, result)
 
 func _audio_build_controls(column: VBoxContainer) -> void:
