@@ -21,6 +21,7 @@ const TacticalAI = preload("res://scripts/terrain_lab/site_army_ai.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const CrowdSiteScript = preload("res://scripts/terrain_lab/crowd_site.gd") # crowd10k test copy: --crowd
 var crowd_site: Node = null # Native hot state; Site retains original person/item records.
+var _staged_crowd_candidates: Array = [] # prepare_crowd_load candidates not yet adopted (freed if no bind takes them).
 var _native_begin_ranged_prepared: Dictionary = {}
 var _native_begin_ranged_validation: Dictionary = {}
 var crowd_startup_requested := false
@@ -374,8 +375,11 @@ func _continue_army_visual_warmup() -> void:
 func _notification(what: int) -> void:
 	# A selected restore stages its crowd outside the tree until the bind ticket passes; a Lab freed before that (a
 	# disposable bootstrap) frees the staged CrowdSite too, or its atlas host and textures leak.
-	if what == NOTIFICATION_PREDELETE and is_instance_valid(crowd_site) and crowd_site.get_parent() == null:
-		crowd_site.free()
+	if what == NOTIFICATION_PREDELETE:
+		if is_instance_valid(crowd_site) and crowd_site.get_parent() == null: crowd_site.free()
+		for candidate: Variant in _staged_crowd_candidates:
+			if is_instance_valid(candidate) and candidate.get_parent() == null: candidate.free()
+		_staged_crowd_candidates.clear()
 		return
 	if not pause_when_unfocused:
 		return
@@ -613,7 +617,21 @@ func prepare_crowd_load(value: TerrainData, native_candidate: Variant = null) ->
 	if not prepared.ok:
 		candidate.free()
 		return prepared
+	_staged_crowd_candidates.append(candidate)
 	return SiteRuntime.ok("", {"crowd_site": candidate})
+
+## Every staged candidate that no bind adopted (a caller refused after staging, or replaced its preflight with a second
+## one) is freed here; found 2026-11-08 as two stray CrowdSites with their atlas hosts at exit of food_reinforcement.
+## `keep` is a candidate a caller is still about to bind.
+func _free_stray_crowd_candidates(keep: Variant = null) -> void:
+	var still: Array = []
+	for candidate: Variant in _staged_crowd_candidates:
+		if not is_instance_valid(candidate) or candidate.get_parent() != null: continue
+		if candidate == crowd_site or candidate == keep:
+			still.append(candidate)
+			continue
+		candidate.free()
+	_staged_crowd_candidates = still
 
 ## Nekki 2026-11-04 (C): a whole team joins another faction (the start choice and the in-game join both end here). A
 ## live crowd team relabels natively (CrowdSite.relabel_team_faction); a GD roster (a grid Site or the road-map party)
@@ -692,6 +710,7 @@ func bind_terrain(value: TerrainData, prepared: Dictionary = {}) -> void:
 	# textures do not leak. An adopted or deferred candidate is this Lab's crowd_site and is kept.
 	var staged: Variant = prepared.get("crowd_site")
 	if is_instance_valid(staged) and staged != crowd_site and staged.get_parent() == null: staged.free()
+	_free_stray_crowd_candidates()
 
 func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}) -> void:
 	var region_admission := _region_bind_ticket_admission(value, prepared)
