@@ -510,6 +510,9 @@ bool World::update_terrain(Terrain ground) {
 		abort_single[i]=ground.height[from]!=terrain.height[from] || !ground.walkable(to%terrain.w,to/terrain.w) || ((dx||dy) && !ground.edge(x,y,dx>0?E:dx<0?W:dy>0?S:N));
 	}
 	for (int i = 0; i < soldier_count(); ++i) {
+		// An aboard soldier stands on its deck point over water, not on the ground (as occupancy_mask): a ground change never
+		// strands it. Without this, any terrain sync while someone was aboard was refused (found 2026-11-08).
+		if (is_aboard(i)) continue;
 		int source=terrain.idx(int(px[i]),int(py[i]));
 		const int group=siege_group(i);
 		if (group>=0 && abort[group]) for (const auto &m:siege_compounds[group].members) if (m.soldier==i) source=m.from;

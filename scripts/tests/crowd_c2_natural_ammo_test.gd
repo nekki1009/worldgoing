@@ -80,6 +80,49 @@ func _on_events(batch: PackedInt64Array) -> void:
 		events.append({"kind": kind, "person": person, "other": other, "formation": formation,
 			"native_tick": int(site.crowd.stats()[36]), "game_seconds": Runtime.now(lab.terrain) * 60.0})
 
+## Failure evidence only: each condition of CrowdPersonOwner.exchange_ready for the archer.
+func _archer_ready_parts() -> Dictionary:
+	var owner: Variant = site.person_owner(archer)
+	var index := archer_index_in_owner()
+	var source: Variant = owner._command_owner(index)
+	var controller: SiteController = lab.site_controller
+	return {"fire_host": site.fire_host_active(), "can_act": owner.combat_can_act(index), "moving": owner.person(index, false).get("moving", null),
+		"stagger": owner.combat_hot_get(index, &"exchange_stagger", 0.0), "cooldown": owner.combat_hot_get(index, &"exchange_cooldown", 0.0),
+		"ranged_cooldown": owner.combat_hot_get(index, &"ranged_cooldown", 0.0), "source": str(source), "source_exchange": source.exchange_enabled if source != null else null,
+		"order": owner.combat_order, "routed": owner.is_sustain_routed(), "work_task": owner._cold_get(index, "work_task", {}),
+		"busy": controller.person_actions.is_busy(archer), "guarding": controller.person_actions.is_guarding(archer), "assigned": controller.work_team.is_assigned(archer),
+		"delivering": controller._is_delivering_person(archer), "operator": controller.vehicles.is_operator(archer),
+		"fire_people": _archer_fire_facts()}
+
+## Failure evidence only: the archer as the physical fire scheduler sees it (read-only original queries).
+func _archer_fire_facts() -> Dictionary:
+	var people: Array[Dictionary] = lab._siege_people()
+	var found: Dictionary = {}
+	var target: Dictionary = {}
+	for person: Dictionary in people:
+		if int(person.id) == archer: found = person
+		if int(person.id) == guard: target = person
+	if found.is_empty(): return {"in_people": false, "people": people.size()}
+	var owner: Variant = found.owner
+	var profile: Dictionary = owner.ranged_profile(int(found.unit), str(owner.ranged_ammo_mode))
+	var cargo: Dictionary = owner.combat_hot_get(int(found.unit), &"cargo", {})
+	var facts := {"in_people": true, "ready": lab._fire_person_ready(found), "profile": profile, "cargo": cargo,
+		"defers": lab.site_controller._region_departure_defers_person(archer), "held_work": lab.site_controller.native_held_actual_work_person(archer),
+		"query_phase": lab._exchange_phase, "cursor": lab.fire_action_cursor}
+	if not target.is_empty():
+		var from: Vector2i = lab._fire_attack_cell(found)
+		var to: Vector2i = lab._fire_attack_cell(target)
+		facts["cells"] = [from, to]
+		facts["initiates"] = lab._exchange_initiates(found, guard)
+		facts["line"] = lab._person_ranged_line_clear(archer, from, to)
+		facts["melee_clear"] = lab._combat_melee_clear(archer, guard, from, to)
+		facts["target_can_act"] = target.owner.combat_can_act(int(target.unit))
+	return facts
+
+## Failure evidence only: the archer's index inside its own person owner.
+func archer_index_in_owner() -> int:
+	return int(site.person_owner(archer).index_for_identity(archer))
+
 func _count(kind: int, identity: int = -1) -> int:
 	var total := 0
 	for event: Dictionary in events:
@@ -322,7 +365,9 @@ func _run() -> void:
 		if not _advance("shooting"): return
 		if _count(10, archer) == 3: break
 		if tick % 30 == 0: await process_frame
-	if not _check(_count(10, archer) == 3 and int(site.soldier_state(archer_index).ammo) == 9 and int(original_cargo.arrow) == 9 and _count(1, archer) == 0, "native releases exactly three real shots and synchronizes original cargo 12 to 9", {"shots": _count(10, archer), "cargo_arrow": original_cargo.arrow, "state": site.soldier_state(archer_index), "order": site.formation_state(int(archer_team.formation))}): return
+	if not _check(_count(10, archer) == 3 and int(site.soldier_state(archer_index).ammo) == 9 and int(original_cargo.arrow) == 9 and _count(1, archer) == 0, "native releases exactly three real shots and synchronizes original cargo 12 to 9", {"shots": _count(10, archer), "cargo_arrow": original_cargo.arrow, "state": site.soldier_state(archer_index), "order": site.formation_state(int(archer_team.formation)),
+		"scheduler": lab.fire_scheduler_result, "reservations": lab.fire_reservations.size(), "last_refusal": lab.get_meta(&"last_refused_result", {}), "step_fault": lab.site_controller._original_step_fault, "crowd_error": site.last_event_error, "action_seconds": action_seconds, "physical": lab.physical_ranged_enabled, "combat_left": lab.terrain.site.get("combat_left", 0.0),
+		"ranged_enabled": site.person_owner(archer).ranged_enabled, "ranged_target": site.person_owner(archer).ranged_target, "exchange_ready": site.person_owner(archer).exchange_ready(archer_index_in_owner()), "ready_parts": _archer_ready_parts()}): return
 	if not _check(float(lab.terrain.site.combat_left) > 0.0 or site.has_projectiles(),
 		"three actual shots leave combat or projectiles busy before the clear-button check",
 		{"combat_left": lab.terrain.site.combat_left, "projectiles": site.has_projectiles()}): return
@@ -346,7 +391,7 @@ func _run() -> void:
 	if not _check(_count(1, archer) == 1 and _count(10, archer) == 3 and float(site.soldier_state(archer_index).hp) > 0.0 and float(site.soldier_state(archer_index).ko) > 0.0, "actual native melee contact produces KO after the three shots", site.soldier_state(archer_index)): return
 	var guard_hold: Dictionary = site.issue_order(int(guard_team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "test")
 	if not _check(guard_hold.ok and site.set_team_ai(int(guard_team.team_id), true).ok, "actual stronger enemy enters AI HOLD for native auto-capture"): return
-	if capture_death: lab.terrain.site.team_supply[str(guard_team.team_id)].delivery = {"fixture": "hold native CAPTURED commit"}
+	if capture_death: lab.terrain.site.team_supply[str(guard_team.team_id)].delivery = {"fixture": "hold native CAPTURED commit", "requester_id": -1, "player_id": -1, "representative_id": -1}
 	for tick in range(900):
 		if not _advance("native_capture"): return
 		if _count(4, archer) > 0: break
@@ -374,10 +419,23 @@ func _run() -> void:
 	print("GATE OK: natural ammo conservation, original D4 routes and ", "CAPTURED before DEATH" if capture_death else "ESCAPED BUSY", " checks=", checks.size(), " steps=", conservation_steps)
 	quit(0)
 
+## Owner decision 2026-10-27 (custody atlas): a capture first prepares the captive's undressed atlas on the GPU (visual
+## run); that preparation is presentation work, not simulation time. The relation then commits within three steps.
+func _captive_atlas_preparing() -> bool:
+	for job: Dictionary in site._captivity_atlas_jobs.values():
+		if str(job.get("state", "")) == "preparing": return true
+	return false
+
 func _captured_escape() -> bool:
-	for tick in range(3):
-		if site.pending_captivity.is_empty(): break
+	var steps := 0
+	var preparation_deadline := Time.get_ticks_msec() + 150000
+	while not site.pending_captivity.is_empty() and steps < 3:
+		if _captive_atlas_preparing():
+			if Time.get_ticks_msec() > preparation_deadline: break
+			await process_frame
+			continue
 		if not _advance("capture_commit"): return false
+		if not _captive_atlas_preparing(): steps += 1
 	var relation: Dictionary = lab.terrain.site.captivity.get(str(archer), {})
 	if not _check(site.pending_captivity.is_empty() and not relation.is_empty() and int(relation.captor_id) == guard and int(relation.guard_id) == guard, "actual CAPTURED commits original relation in at most three steps", site.last_event_error): return false
 	sealed_id = str(relation.sealed_container)
@@ -386,7 +444,7 @@ func _captured_escape() -> bool:
 	if not _check(archer in _supply_members(guard_team) and not archer in _supply_members(archer_team), "native capture transfers original meal cohort to actual captor"): return false
 	if not _native_equipment_clear() or not _captured_d4() or not _conservation("captured", true): return false
 	var guard_entry: Dictionary = lab.terrain.site.team_supply[str(guard_team.team_id)]
-	guard_entry.delivery = {"fixture": "block only original ESCAPED supply commit"}
+	guard_entry.delivery = {"fixture": "block only original ESCAPED supply commit", "requester_id": -1, "player_id": -1, "representative_id": -1}
 	# This is an explicit bounded wake-time fixture; KO and CAPTURED already occurred naturally.
 	if not _check(site.set_soldier_fields(archer_index, {"ko": 0.25}) and site.apply_environment_damage(guard, 10000.0) == 0.0 and _count(0, guard) == 1, "shorten actual captive KO and disable its only guard through real environment death"): return false
 	var escape_boundary := {}

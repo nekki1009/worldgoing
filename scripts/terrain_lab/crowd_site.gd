@@ -564,9 +564,10 @@ func _finish_admission(sides: Array, prepared: Dictionary, before: Dictionary, t
 		return _deployment_failed(before, existing)
 	var controlled := int(lab.controlled_person_id())
 	var actor: TerrainTestCharacter = _actor(controlled)
-	if not prepared.person_ids.has(controlled) and actor == null:
+	var no_player: bool = bool(prepared.get("no_player", false))
+	if not no_player and not prepared.person_ids.has(controlled) and actor == null:
 		return _deployment_failed(before, SiteRuntime.fail("INVALID", "受控人物不是本 Site 的 actor"))
-	var appended := SiteRuntime.ok() if prepared.person_ids.has(controlled) else _append_actor(actor, false)
+	var appended := SiteRuntime.ok() if no_player or prepared.person_ids.has(controlled) else _append_actor(actor, false)
 	if not appended.ok:
 		return _deployment_failed(before, appended)
 	# Rejoin actors returned by B even when control has moved to a roster member.
@@ -613,11 +614,17 @@ func _finish_admission(sides: Array, prepared: Dictionary, before: Dictionary, t
 	# G5 S4: surrender-pending rows become the native surrendered flag after every hot import.
 	var surrender_imported := d5_surrender_existing(self, prepared.plans)
 	if not surrender_imported.ok: return _deployment_failed(before, surrender_imported)
+	# G1: an embarked grid row becomes the native aboard soldier on its own vessel (an NPC sea arrival, found 2026-11-08).
+	var aboard_imported := d5_aboard_existing(self, prepared.plans)
+	if not aboard_imported.ok: return _deployment_failed(before, aboard_imported)
 	# CAV-2: every living rider (GD appearance.mounted) takes the native mounted flag after every hot import.
 	var riders_imported := import_mounted_riders()
 	if not riders_imported.ok: return _deployment_failed(before, riders_imported)
-	player_index = int(_index_by_id[controlled])
-	crowd.set_host_control(player_index, true)
+	if bool(prepared.get("no_player", false)):
+		player_index = -1
+	else:
+		player_index = int(_index_by_id[controlled])
+		crowd.set_host_control(player_index, true)
 	# Admit every kit before mutating the original people or item owners.
 	if not _refresh_kits():
 		return _deployment_failed(before, SiteRuntime.fail("MISSING_ASSET", "士兵外觀不被圖集接受"))
@@ -2918,6 +2925,23 @@ static func d5_absent_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 
 
 # G5 S4: a surrender-pending roster row is imported as the native surrendered flag (refused when native cannot hold it).
+## G1 aboard import: every converted row whose GD record is embarked on a ship takes the native aboard state on that vessel,
+## at its GD deck point, as a crowd load restores it. The GD ship rows stay the embarkation authority.
+static func d5_aboard_existing(crowd_site: Variant, plans: Array) -> Dictionary:
+	var vehicles: Dictionary = crowd_site.lab.terrain.site.get("vehicles", {})
+	for plan: Dictionary in plans:
+		for entry: Dictionary in plan.units:
+			var vehicle_id := str(entry.saved.get("embarked_vehicle_id", ""))
+			if vehicle_id.is_empty(): continue
+			var vehicle: Dictionary = vehicles.get(vehicle_id, {})
+			var index := int(crowd_site._index_by_id.get(int(entry.person_id), -1))
+			if not SiteVehicleTransport.is_ship(vehicle) or not vehicle_id.is_valid_int() or index < 0 or not crowd_site.crowd.has_method("site_person_board") \
+				or not bool(crowd_site.crowd.site_person_board(index, int(vehicle_id))):
+				return D5Runtime.fail("NATIVE_REFUSED", "原生群眾拒絕船上人物；原隊伍未交接")
+			var deck: Vector2 = crowd_site.lab.site_controller.vehicles.ship_person_ground(int(entry.person_id)) / float(TerrainRenderer.CELL_PIXELS)
+			if crowd_site.crowd.has_method("site_person_set_deck"): crowd_site.crowd.site_person_set_deck(index, deck.x, deck.y)
+	return D5Runtime.ok()
+
 static func d5_surrender_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 	for plan: Dictionary in plans:
 		for entry: Dictionary in plan.units:
@@ -4044,11 +4068,15 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			"was_visible": source.visible, "was_processing": source.is_processing(),
 			"formation": -1})
 	var person: Dictionary = scene_lab.site_controller.person_actions._person(controlled)
-	if person.is_empty():
+	# A cold owner of a Site its controlled person is not on (an NPC arrival destination) converts with no player
+	# soldier, as every off-screen crowd Site runs (found 2026-11-08: an NPC sea arrival stayed grid and its cold step
+	# reached the retired grid simulation). A live Site keeps the strict controlled-person rule.
+	var no_player: bool = person.is_empty() and bool(scene_lab.restore_only)
+	if person.is_empty() and not no_player:
 		return D5Runtime.fail("INVALID", "受控原人物／實物不存在")
-	if int(person.unit) >= 0 and not seen.has(controlled):
+	if not no_player and int(person.unit) >= 0 and not seen.has(controlled):
 		return D5Runtime.fail("INVALID", "受控名冊人物沒有可交接的原隊伍")
-	return D5Runtime.ok("", {"plans": plans, "person_ids": seen, "controlled": person})
+	return D5Runtime.ok("", {"plans": plans, "person_ids": seen, "controlled": person, "no_player": no_player})
 
 static func d5_append_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 	var siege_guard: Dictionary = crowd_site.siege_admission_guard()

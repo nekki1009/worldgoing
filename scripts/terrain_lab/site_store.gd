@@ -4110,7 +4110,9 @@ static func _ship_saved_retired_person(state: Dictionary, identity: int) -> bool
 static func _ship_saved_stopped(body: Dictionary, crowd: bool = false) -> bool:
 	# A crowd body has no grid destination; its aboard soldier is held still by the native aboard state (G1 S2),
 	# which SiteVehicleTransport.ship_record_check compares with the record.
-	if crowd: return not body.has("destination")
+	# A row converted from the grid (D5) keeps the grid's explicit no-step sentinel [-1, -1]; that is stopped too
+	# (found 2026-11-08: an NPC sea arrival converted aboard was refused as moving).
+	if crowd and not body.has("destination"): return true
 	# JSON numbers may be floats. Require the exact integral sentinel, without
 	# relying on Array Variant-type equality or truncating malformed coordinates.
 	var destination: Variant = body.get("destination")

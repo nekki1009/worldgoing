@@ -2879,10 +2879,10 @@ func _exchange_initiates(person: Dictionary, other_id: int, melee: bool = false)
 		var owner_ref: Variant = person.owner
 		if owner_ref is CrowdPersonOwner:
 			var source: Variant = owner_ref._command_owner(int(person.unit))
-			var source_index: int = owner_ref._command_index(int(person.unit))
-			if source is TerrainArmy: return source.exchange_initiates(source_index, other_id, melee)
 			if source is TerrainTestCharacter: return source.attack_target_id == other_id or (npc_retaliates and source == npc)
-			return false
+			# A crowd roster person's live team order is its native formation's; the dormant TerrainArmy source keeps
+			# no live order (found 2026-11-08: under the default physical fire a crowd archer never initiated a shot).
+			return owner_ref.native_exchange_initiates(int(person.unit), other_id, melee)
 		if owner_ref is TerrainArmy: return owner_ref.exchange_initiates(int(person.unit), other_id, melee)
 		return false
 	var actor: TerrainTestCharacter = person.owner
@@ -8512,6 +8512,30 @@ func _shared_movement_requests(seconds: float, requests: Array) -> Array:
 			if rate > 0.0: result.append(_shared_raw_effort(identity, team.combat_units[index], rate, seconds))
 	return result
 
+## A crowd soldier at a crew berth of a moving or journeying hull works at WORK_RATE, as a grid crew row does in
+## _shared_movement_requests. Its effort reaches the formation's native pool through the native work packet.
+func _native_ship_crew_requests(game_seconds: float, held: Array) -> Array:
+	var result: Array = []
+	if site_controller == null or not _site_has_ship_records(): return result
+	var assigned := {}
+	for request: Dictionary in held:
+		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = true
+	var vehicles: SiteVehicleTransport = site_controller.vehicles
+	var keys: Array = vehicles.records().keys()
+	keys.sort()
+	for key: Variant in keys:
+		var vehicle: Dictionary = vehicles.records()[key]
+		if not SiteVehicleTransport.is_ship(vehicle): continue
+		for person: Dictionary in vehicles.ship_people(vehicle):
+			var identity := int(person.id)
+			if assigned.has(identity) or not person.owner is CrowdPersonOwner or not _ship_crew_work(identity): continue
+			var participant: Dictionary = crowd_site.work_fatigue_participant(identity, false, PersonFatigue.WORK_RATE)
+			if participant.is_empty(): continue
+			assigned[identity] = true
+			result.append({"provider": "movement", "key": str(identity), "participants": [participant], "remaining": game_seconds,
+				"productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": game_seconds})
+	return result
+
 func _shared_raw_effort(identity: int, body: Variant, rate: float, seconds: float) -> Dictionary:
 	return {"provider": "movement", "key": str(identity), "participants": [{"person_id": identity, "body": body,
 		"effort_rate": PersonFatigue.effort_rate(body, rate), "rest_limited": false}], "remaining": seconds,
@@ -11672,6 +11696,9 @@ func _region_advance_original_travel_interval(request: Dictionary) -> Dictionary
 		accepted = float(interval.action_end) - float(interval.action_begin)
 		var game := SiteRuntime.game_seconds(accepted, float(interval.tactical_seconds)) * simulation_speed
 		for original: TerrainLab in originals:
+			# A native crowd original prepared no GD work step here; it clips in its own begin window, as in
+			# _prepare_region_main_interval (found 2026-11-08: SHARED_WORK_RETIME on a cold crowd owner during travel).
+			if original.crowd_site != null and original.crowd_site.active: continue
 			var retimed := original._retime_shared_work_step(accepted, game)
 			if not retimed.ok: return _region_preflight_failure(originals, retimed)
 		prepared = slot.prepare_region_gameplay_interval(interval)
@@ -14704,6 +14731,7 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 		var runners: Dictionary = crowd_site.work_fatigue_run_requests(game_seconds, _shared_work_requests)
 		if not runners.ok: return runners
 		_shared_work_requests.append_array(runners.requests)
+		_shared_work_requests.append_array(_native_ship_crew_requests(game_seconds, _shared_work_requests))
 		var recovery: Dictionary = crowd_site.prepare_work_fatigue_recovery_inputs()
 		if not recovery.ok: return recovery
 	_shared_work_action_seconds = action_seconds

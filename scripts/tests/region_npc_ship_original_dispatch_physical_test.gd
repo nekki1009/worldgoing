@@ -24,19 +24,23 @@ func _process(_delta: float) -> bool:
 	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "420-second original NPC ship dispatch deadline")
 	return false
 
-func _setup_action_world() -> bool:
-	if not super._setup_action_world(): return false
+## Crowd port: the base walks the ship bodies to their contacts through the first paid interval, so this Nation and
+## destination genesis runs in its pre-paid genesis hook.
+func _ship_more_genesis() -> bool:
+	if not super._ship_more_genesis(): return false
 	# This finite initial Nation is the existing original-test GENESIS boundary.
 	# All member IDs and the resident dispatch head come from the original bodies.
+	# Crowd port (2026-11-08): the ship team and the resident team are crowd owners; the player's start team (the shore
+	# person and its cadres) is not a Nation member, as the old shore Actor was not.
 	var members: Array[int] = []
-	var headquarters: TerrainArmy
-	for team: TerrainArmy in lab.combat_armies:
-		for index: int in team.combat_units.size(): members.append(team.combat_identity(index))
-		# The resident HQ is the non-ship team that holds bodies. An empty team
-		# container (no member, no commander) is not a resident head's team.
-		if team.team_id != ship_team_id and not team.combat_units.is_empty(): headquarters = team
-	if not _check(headquarters != null and headquarters.command_eligible(headquarters.current_commander), "initial true resident HQ captain supplies the original Nation head"): return false
-	sea_nation_head = headquarters.combat_identity(headquarters.current_commander)
+	var headquarters: Variant = null
+	for owner: Variant in lab.crowd_site.person_owners():
+		if not owner is CrowdPersonOwner: continue
+		if int(owner.team_id) != ship_team_id and int(owner.team_id) != ship_resident_team_id: continue
+		for index: int in owner.records: members.append(owner.combat_identity(index))
+		if int(owner.team_id) == ship_resident_team_id: headquarters = owner
+	if not _check(headquarters != null and headquarters.command_eligible(int(headquarters.current_commander)), "initial true resident HQ captain supplies the original Nation head"): return false
+	sea_nation_head = headquarters.combat_identity(int(headquarters.current_commander))
 	sea_nation_id = "c06_ship_source_nation_%d" % OS.get_process_id()
 	# A Site with no Nation yet has no equipment_nations container; the original
 	# trial Nation register creates it the same way before its first Nation.
@@ -278,7 +282,10 @@ func _sea_dispatch() -> bool:
 	if not _check(prepared.ok and prepared.party.mode == "sea" and prepared.plan.version == 2 and prepared.plan.action_steps.size() > 0 and prepared.request.known_receipt == str(sea_observation.id) and prepared.request.decider == sea_nation_head, "original Nation authority and original Route compile actual two-hull adjacent sea ACTION steps", prepared.get("code")): return false
 	sea_departure_refs = prepared.party.content.travel_identity.refs.duplicate(true)
 	var people: Array = prepared.party.person_ids.duplicate()
-	if not _check(people == ship_people and prepared.party.content.actors.is_empty() and not prepared.party.content.equipment_nations.has(sea_nation_id), "original partial Nation membership travels with genuine two-row closure while its sole head remains resident"): return false
+	people.sort()
+	var expected_people: Array = ship_people.duplicate()
+	expected_people.sort()
+	if not _check(people == expected_people and prepared.party.content.actors.is_empty() and not prepared.party.content.equipment_nations.has(sea_nation_id), "original partial Nation membership travels with genuine two-row closure while its sole head remains resident"): return false
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds]
 	var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
 	if not _check(committed.ok and slot.region_registry().parties[sea_token].phase == "travelling" and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds] and lab.controlled_person_id() == ship_actor_id, "original one-marker source removal and real NPC party publication retain human control and pay no extra interval", committed): return false
@@ -315,7 +322,7 @@ func _sea_arrived() -> bool:
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest() or not await _setup_action_world(): _finish(); return
 	if not _ship_public_cargo(): _finish(); return
 	if not await _ship_board(0, true) or not await _ship_public_food() or not await _ship_board(1, false): _finish(); return
 	if not _check(not _ship_supply().locations.has("vehicle:" + ship_ids[1]), "second true boat still has no invented own food pool"): _finish(); return

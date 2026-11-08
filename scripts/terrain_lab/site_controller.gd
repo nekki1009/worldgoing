@@ -2677,10 +2677,11 @@ func _actor_step_blocked(origin: Vector2i, from_cell: Vector2i, to_cell: Vector2
 func _worker_blocked(cell: Vector2i) -> bool:
 	return _actor_blocked(cell, lab.npc)
 
-func reserves_cell(cell: Vector2i) -> bool:
+## ignored_ids: people whose own bodies do not count (a gate's operator beside its leaves).
+func reserves_cell(cell: Vector2i, ignored_ids: Array = []) -> bool:
 	if vehicles.blocks_cell(cell):
 		return true
-	if is_instance_valid(lab.crowd_site) and lab.crowd_site.reserves_cell(cell):
+	if is_instance_valid(lab.crowd_site) and lab.crowd_site.reserves_cell(cell, ignored_ids):
 		return true
 	var native_active: bool = is_instance_valid(lab.crowd_site) and lab.crowd_site.active
 	for team: TerrainArmy in lab.combat_armies:
@@ -2688,7 +2689,7 @@ func reserves_cell(cell: Vector2i) -> bool:
 		if team.reserves_terrain_cell(cell):
 			return true
 	for actor: TerrainTestCharacter in lab.combat_actors:
-		if native_active and lab.crowd_site.contains_person(actor.person_id): continue
+		if native_active and lab.crowd_site.contains_person(actor.person_id) or ignored_ids.has(actor.person_id): continue
 		if actor.occupies_cell(cell):
 			return true
 	return false
@@ -4879,7 +4880,7 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 func _live_family_handover_guard(person_id: int) -> Dictionary:
 	var prepared: Dictionary = family_continuity.prepare_live_handover(lab.controlled_person_id(), str(lab.terrain.site["id"]), person_id)
 	if not prepared["ok"]: return prepared
-	if lab.restore_only or _crowd_active() or lab.terrain.has_meta(&"region_party_owner"):
+	if lab.restore_only or lab.terrain.has_meta(&"region_party_owner"):
 		return Runtime.fail("UNSUPPORTED", "請在原活動 Site 到站後交接")
 	if ship_journey_active() or not _ground_crossing.is_empty() or _family_wait or lab._region_point_consuming or not lab._region_point_pending.is_empty():
 		return Runtime.fail("BUSY", "先收束原旅行或共同步進")
@@ -4897,6 +4898,13 @@ func _live_family_handover_guard(person_id: int) -> Dictionary:
 			if not lab.actor_present(actor) or actor.data != lab.terrain: return Runtime.fail("NO_TARGET")
 			if actor.is_moving() or actor.action_time > 0.0 or actor.guarding or actor.guard_transition_left > 0.0:
 				return Runtime.fail("BUSY", "先完成原人物動作")
+		elif target["owner"] is CrowdPersonOwner:
+			# A live crowd person (every Site since 11/03): stopped, not fighting (2026-11-08: the crowd was refused here).
+			var crowd_owner: CrowdPersonOwner = target["owner"]
+			var crowd_index: int = int(target["unit"])
+			if crowd_owner.member_gone(crowd_index): return Runtime.fail("NO_TARGET")
+			if bool(crowd_owner.person(crowd_index, false).get("moving", false)) or lab.crowd_site.person_fighting(identity):
+				return Runtime.fail("BUSY", "先完成原隊員動作")
 		else:
 			var team: TerrainArmy = target["owner"]
 			var index: int = int(target["unit"])
@@ -5609,7 +5617,7 @@ func transfer_ship_supply(team: Variant, source_location: String, target_locatio
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標冷交換尚未完成，先等待再裝卸供養")
 	var entry := _supply_entry(team)
 	if entry.is_empty() or int(entry.version) != 3 or not entry.delivery.is_empty() or not _team_stopped(team): return Runtime.fail("BUSY")
-	var arrived_unload: bool = not test_dispatch and not (team is CrowdOwner) and source_location.begins_with("vehicle:") and target_location.begins_with("shore:") and region_slot != null and region_slot._region_entered_npc_ship_unload_authorized(lab, team, requester_id, vehicles.records().get(source_location.trim_prefix("vehicle:"), {}))
+	var arrived_unload: bool = not test_dispatch and source_location.begins_with("vehicle:") and target_location.begins_with("shore:") and region_slot != null and region_slot._region_entered_npc_ship_unload_authorized(lab, team, requester_id, vehicles.records().get(source_location.trim_prefix("vehicle:"), {}))
 	if not vehicles._authorized(team, requester_id, 0, test_dispatch) and not arrived_unload: return Runtime.fail("NO_AUTHORITY")
 	if source_location == target_location or not _supply_locations_valid(team, entry.locations) or not entry.locations.has(source_location) or not _supply_location_valid(team, target_location): return Runtime.fail("INVALID_SUSTAIN")
 	if not Runtime._resource_stack(resources) or not Sustain._number(open_amount, 0, 1000000.0) or resources.is_empty() and open_amount == 0.0: return Runtime.fail("INVALID")

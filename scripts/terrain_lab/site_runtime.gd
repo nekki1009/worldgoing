@@ -3592,13 +3592,18 @@ static func _gate_operator(data: TerrainData, feature: Dictionary, identity: int
 		return fail("UNREACHABLE", "請本人到門內操作位置")
 	return ok()
 
-static func _gate_occupied(data: TerrainData, feature: Dictionary, occupied: Callable) -> bool:
+static func _gate_occupied(data: TerrainData, feature: Dictionary, occupied: Callable, operator_id: int = -1) -> bool:
 	if not occupied.is_valid():
 		return false
 	var geometry := feature_geometry(data, feature)
+	# The operator stands on the operation square beside the leaves. A body test with a margin (the crowd occupancy) must
+	# not count the operator's own body as standing in the gate (found 2026-11-08: a crowd operator blocked its own gate).
+	var ignore_operator: bool = operator_id > 0 and occupied.get_argument_count() >= 2
 	for index: int in feature.cells:
 		var frame: bool = geometry.parts["frame:left"].cells.has(index) or geometry.parts["frame:right"].cells.has(index)
-		if not frame and bool(occupied.call(data.cell_from_index(index))):
+		if frame: continue
+		var cell := data.cell_from_index(index)
+		if bool(occupied.call(cell, [operator_id])) if ignore_operator else bool(occupied.call(cell)):
 			return true
 	return false
 
@@ -3616,7 +3621,7 @@ static func request_gate(data: TerrainData, key: String, want_open: bool, operat
 		return fail("INVALID", "門已在此位置")
 	if not want_open and (float(feature.parts["leaf:left"].hp) <= 0.0 or float(feature.parts["leaf:right"].hp) <= 0.0 or float(feature.parts["frame:left"].hp) <= 0.0 or float(feature.parts["frame:right"].hp) <= 0.0):
 		return fail("INVALID", "門扇已破壞，須先修復")
-	if _gate_occupied(data, feature, occupied):
+	if _gate_occupied(data, feature, occupied, operator_id):
 		return fail("WAIT_OCCUPANCY")
 	var candidate := feature.duplicate(true)
 	candidate.gate.open = want_open
@@ -3644,7 +3649,7 @@ static func advance_gate_operations(data: TerrainData, seconds: float, person_qu
 		if str(feature.get("gate", {}).get("pending", "")).is_empty():
 			continue
 		var check := _gate_operator(data, feature, int(feature.gate.operator_id), person_query)
-		if not check.ok or _gate_occupied(data, feature, occupied):
+		if not check.ok or _gate_occupied(data, feature, occupied, int(feature.gate.operator_id)):
 			_clear_gate_operation(feature)
 			feature["status"] = str(check.message) if not check.ok else "通道重新占用，已取消門操作"
 			Env.rebuild_indexes(data)

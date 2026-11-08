@@ -930,13 +930,17 @@ var ranged_order_issuer_id: int:
 	set(value):
 		var owner: Variant = _order_owner()
 		if owner != null: owner.ranged_order_issuer_id = value
+## A team with no original owner keeps one fire-policy record here, so its readers see the same dictionary each call
+## (the native begin validation compares the policy by identity; a fresh {} per read refused STALE_NATIVE_BEGIN).
+var _own_ranged_fire_policy: Dictionary = {}
 var ranged_fire_policy: Dictionary:
 	get:
 		var owner: Variant = _order_owner()
-		return owner.ranged_fire_policy if owner != null else {}
+		return owner.ranged_fire_policy if owner != null else _own_ranged_fire_policy
 	set(value):
 		var owner: Variant = _order_owner()
 		if owner != null: owner.ranged_fire_policy = value
+		else: _own_ranged_fire_policy = value
 var ranged_target_validate: Callable:
 	get:
 		var owner: Variant = _order_owner()
@@ -967,13 +971,29 @@ func ranged_profile(index: int, ammo_mode: String = "NORMAL") -> Dictionary:
 func exchange_stats(index: int) -> Dictionary:
 	var owner: Variant = _command_owner(index)
 	var original_index := _command_index(index)
-	var result: Dictionary = owner.exchange_stats(original_index) if owner is TerrainArmy else owner.exchange_stats() if owner is TerrainTestCharacter else {}
+	var result: Dictionary = owner.exchange_stats(original_index) if owner is TerrainArmy else owner.exchange_stats() if owner is TerrainTestCharacter else _native_exchange_stats(index)
 	if result.is_empty(): return result
 	var formation: Dictionary = crowd_site.formation_state(formation_index)
 	result["training"] = float(formation.get("training", result.get("training", 0.0)))
 	result["fatigue"] = float(formation.get("fatigue", result.get("fatigue", 0.0)))
 	result["morale"] = float(formation.get("morale", result.get("morale", 100.0)))
 	return result
+
+## TerrainArmy.exchange_stats for a person of a team with no original owner (deployed straight into the crowd): the same
+## troop ability and equipment terms; training, fatigue and morale come from the native formation in exchange_stats.
+func _native_exchange_stats(index: int) -> Dictionary:
+	if not combat_units.has(index): return {}
+	var parts: Dictionary = equipment_appearance(index).get("parts", {})
+	var weapon_asset := str(parts.get("weapon", "none"))
+	var armor_asset := str(parts.get("armor", "none"))
+	var armor := SiteCombatRules.armor_profile(armor_asset)
+	return {"ability": TerrainArmy.TROOP_COMBAT_ABILITY, "training": 0.0, "fatigue": 0.0, "morale": 100.0,
+		"armorbonus": float(armor.slash) * 0.25 + (4.0 if str(parts.get("shield", "none")) != "none" else 0.0),
+		"weapon": weapon_asset, "armor": armor_asset, "skill": str(_cold_get(index, "exchange_skill", ""))}
+
+## A crowd team stationed in a garrison (native formation flag); no original owner keeps a garrison id for it.
+func garrisoned_native() -> bool:
+	return crowd_site != null and bool(crowd_site.formation_state(formation_index).get("garrisoned", false))
 
 func ranged_defense(index: int) -> Dictionary:
 	var appearance := equipment_appearance(index)
@@ -982,6 +1002,22 @@ func ranged_defense(index: int) -> Dictionary:
 	return {"moving": bool(person(index, false).get("moving", false)), "shield": str(parts.get("shield", "none")) != "none",
 		"armor": str(parts.get("armor", "none")), "armor_stab": float(SiteCombatRules.armor_profile(str(parts.get("armor", "none"))).stab),
 		"skill": str(stats.get("skill", ""))}
+
+## The native-order form of TerrainArmy.exchange_initiates for a crowd roster person: the live formation order decides,
+## with the same siege-crew, garrison, ship, controlled-person and HOLD self-defence rules.
+func native_exchange_initiates(index: int, other_id: int, melee: bool = false) -> bool:
+	if crowd_site == null or not crowd_site.active or not combat_units.has(index): return false
+	var identity := combat_identity(index)
+	var state: Dictionary = crowd_site.formation_state(formation_index)
+	if bool(state.get("garrisoned", false)): return false
+	var vehicles: Variant = crowd_site.lab.site_controller.vehicles if crowd_site.lab.site_controller != null else null
+	# Read-only queries only: siege_crew_assigned/released here are native setters, not reads.
+	if vehicles != null and (vehicles.is_siege_crew(identity) or vehicles.is_embarked(identity) and not vehicles.ship_can_attack(identity)): return false
+	if identity == int(crowd_site.lab.controlled_person_id()) or not is_member(index): return int(state.get("target_person", -1)) == other_id
+	if melee and combat_order == TerrainArmy.CombatOrder.HOLD and not is_sustain_routed() and _cold_get(index, "work_task", {}).is_empty() \
+		and bool(state.get("needs_attack_order", false)): return true
+	return bool(state.get("attacking", false)) and combat_order in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.PURSUE] \
+		and current_commander >= 0 and not bool(state.get("needs_attack_order", false)) and not is_sustain_routed()
 
 func exchange_ready(index: int) -> bool:
 	if not crowd_site.fire_host_active() or not combat_can_act(index) or bool(person(index, false).get("moving", true)):
@@ -993,8 +1029,13 @@ func exchange_ready(index: int) -> bool:
 	var owner: Variant = _command_owner(index)
 	var original_index := _command_index(index)
 	var identity := combat_identity(index)
-	if owner == null or not owner.exchange_enabled: return false
-	if owner is TerrainArmy:
+	# A team deployed straight into the crowd has no original owner (P1d); its Site's exchange mode, native order and
+	# rout state decide (found 2026-11-08: such an archer was never exchange-ready, so the host fire never shot).
+	if owner == null:
+		if not crowd_site.lab.exchange_enabled or garrisoned_native() or combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN] \
+			or is_sustain_routed(): return false
+	elif not owner.exchange_enabled: return false
+	elif owner is TerrainArmy:
 		if not owner.garrison_feature_id.is_empty() or owner._region_operation_pending() or owner._team_ship_activity() \
 			or owner._ship_in_journey(original_index) or owner._unit_rescues.has(original_index): return false
 		if combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN] or is_sustain_routed(): return false
@@ -1118,7 +1159,7 @@ func fire_body_visual_code(index: int) -> int:
 	return SiteCombatRules.fire_body_visual_code(_fire_body_view(index)) if float(combat_hot_get(index, &"hp")) > 0.0 else 0
 
 func ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode: String = "NORMAL", auto_power: bool = false) -> Dictionary:
-	if not crowd_site.fire_host_active() or not ranged_order_authorized() or not exchange_ready(index) \
+	if not crowd_site.fire_host_active() or ranged_enabled and not ranged_order_authorized() or not exchange_ready(index) \
 		or shot_id <= 0 or ammo_mode != ranged_ammo_mode or not data.contains(target_cell): return {}
 	var mode := 1 if ammo_mode == "FIRE_ARROW" else 0
 	var profile := ranged_profile(index, ammo_mode)
@@ -1206,7 +1247,9 @@ func work_fatigue_rest(identity: int) -> Dictionary:
 func prepare_host_ranged_ammo_inputs() -> Dictionary:
 	if crowd_site == null or crowd_site.crowd == null or not crowd_site.fire_host_active(): return Runtime.fail("CLOCK_NOT_READY")
 	var rows: Array[Dictionary] = []
-	if not ranged_enabled or not ranged_order_authorized(): return Runtime.ok("", {"rows": rows})
+	# An explicit ranged order publishes only while authorized. Without one, an ATTACK-order archer shoots too (the
+	# scheduler admits it through _exchange_initiates), so its native ammo mirrors its cargo as well (found 2026-11-08).
+	if ranged_enabled and not ranged_order_authorized(): return Runtime.ok("", {"rows": rows})
 	for index: int in combat_units:
 		var profile: Dictionary = ranged_profile(index, ranged_ammo_mode)
 		if profile.is_empty(): continue
@@ -1230,7 +1273,7 @@ func publish_host_ranged_ammo_inputs(rows: Array) -> void:
 
 func prepare_host_ranged_release(index: int, target_cell: Vector2i, shot_id: int,
         ammo_mode: String = "NORMAL", auto_power: bool = false) -> Dictionary:
-	if not crowd_site.fire_host_active() or not ranged_order_authorized() or not exchange_ready(index) \
+	if not crowd_site.fire_host_active() or ranged_enabled and not ranged_order_authorized() or not exchange_ready(index) \
 		or shot_id <= 0 or ammo_mode != ranged_ammo_mode or not data.contains(target_cell): return Runtime.fail("STALE_RANGED_SOURCE")
 	var profile: Dictionary = ranged_profile(index, ammo_mode)
 	if profile.is_empty() or not SiteCombatRules.ranged_in_range(_combat_attack_cell(index), target_cell, float(profile.range)): return Runtime.fail("OUT_OF_RANGE")

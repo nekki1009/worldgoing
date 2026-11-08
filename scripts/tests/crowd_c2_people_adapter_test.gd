@@ -160,10 +160,18 @@ func _initialize() -> void:
 		fixture.actions.lootable(1, "person", "2"),
 		fixture.actions.begin_loot(1, "person", "2", {}, []),
 		fixture.actions.begin_capture(1, 2, 1), fixture.actions.begin_unbind(1, 2),
-		fixture.actions.begin_equipment(1, {}), fixture.actions.begin_escape(1),
+		fixture.actions.begin_escape(1),
 		fixture.actions.begin_ransom(1, 2, 1), fixture.actions.begin_ranged_craft(1, "irrelevant")]
 	for result: Dictionary in blocked:
 		assert(not result.ok and result.code == "CROWD_ACTIVE")
+	# Owner decision 2026-10-31 (NEKKI_DECISION_20261031_crowd_equipment_orders): under crowd an equipment order runs in
+	# peace, so this empty order reaches its ordinary validation and is refused there. In combat it is CROWD_ACTIVE.
+	var peace_equipment: Dictionary = fixture.actions.begin_equipment(1, {})
+	assert(not peace_equipment.ok and peace_equipment.code != "CROWD_ACTIVE")
+	fixture.terrain.site["combat_left"] = 1.0
+	var combat_equipment: Dictionary = fixture.actions.begin_equipment(1, {})
+	assert(not combat_equipment.ok and combat_equipment.code == "CROWD_ACTIVE")
+	fixture.terrain.site.erase("combat_left")
 	assert(fixture.actions._jobs.is_empty())
 
 	# Native target is already captive AND dead; ordinary action preflight rejects,
@@ -229,10 +237,12 @@ func _check_packed_views(fixture: Fixture) -> void:
 	native.soldier_reads = 0
 	native.formation_reads = 0
 	native.dictionary_reads = 0
+	# A fatigue read first reads the soldier's packed hp: a dead person's fatigue is its own saved value, a living
+	# person's is the formation pool. One packed soldier view and one packed formation view, no dictionary.
 	assert(fixture.first.combat_hot_get(0, &"fatigue") == 14.0)
-	assert(native.soldier_reads == 0 and native.formation_reads == 1)
+	assert(native.soldier_reads == 1 and native.formation_reads == 1)
 	assert(fixture.first.combat_hot_get(0, &"hp") == 75.0)
-	assert(native.soldier_reads == 1 and native.dictionary_reads == 0)
+	assert(native.soldier_reads == 2 and native.dictionary_reads == 0)
 	assert(fixture.first.combat_hot_get(999, &"hp", -7.0) == -7.0)
 	assert(not fixture.first.combat_hot_get(999, &"captive", true))
 	assert(fixture.first.combat_hot_get(999, &"pose") == "down")
@@ -243,7 +253,8 @@ func _check_packed_views(fixture: Fixture) -> void:
 	fixture.character.combat_status = "original status"
 	var members := merged.original_members()
 	assert(native.soldier_reads == 2 and native.formation_reads == 1 and native.dictionary_reads == 0)
-	assert(members[1].hp == 75.0 and members[2].hp == 0.0 and members[1].fatigue == 14.0 and members[2].fatigue == 14.0)
+	# The dead member keeps its own saved fatigue (none saved in this row), not the living formation pool.
+	assert(members[1].hp == 75.0 and members[2].hp == 0.0 and members[1].fatigue == 14.0 and members[2].fatigue == 0.0)
 	assert(members[1].status == fixture.character.combat_status)
 	assert(is_same(members[1].item_state, fixture.character.item_state) and is_same(members[1].cargo, fixture.terrain.site.manual.cargo))
 	assert(is_same(members[2].item_state, fixture.row.item_state) and is_same(members[2].cargo, fixture.row.cargo))

@@ -12,7 +12,7 @@ const LinkB5F = preload("res://scripts/terrain_lab/site_boarding_link_contract.g
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest() or not await _setup_action_world(): _finish(); return
 	if not _b5f_region_link(): _finish(); return
 	_finish()
 

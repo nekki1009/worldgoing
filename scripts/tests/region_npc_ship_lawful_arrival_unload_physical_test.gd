@@ -3,12 +3,16 @@ extends "res://scripts/tests/region_npc_ship_original_dispatch_physical_test.gd"
 ## and actual captain-authorized finite unload. All execution remains NOT_RUN.
 var arrival_unload_evidence: Array[Dictionary] = []
 
+## Crowd port: the ship team's captain is its deployed formal captain (ship_commander_id), on its own boat.
+func _captain_index() -> int:
+	return ship_people.find(ship_commander_id)
+
 func _ship_original_two_boat_closure() -> bool:
 	if not await super._ship_original_two_boat_closure(): return false
-	var team: TerrainArmy = _ship_team()
+	var team: Variant = _ship_team()
 	var before := var_to_bytes([slot.control, _action_facts()])
-	if not _check(not slot._region_entered_npc_ship_unload_authorized(action_owner, team, ship_people[0], _ship_vehicle(0)), "actual source NPC captain gains no ship-unload authority before committed arrival"): return false
-	var refused: Dictionary = action_owner.site_controller.person_actions.begin_ship_disembark(ship_people[0], ship_ids[0], ship_people[0], TerrainArmy.INVALID_CELL, false)
+	if not _check(not slot._region_entered_npc_ship_unload_authorized(action_owner, team, ship_commander_id, _ship_vehicle(_captain_index())), "actual source NPC captain gains no ship-unload authority before committed arrival"): return false
+	var refused: Dictionary = action_owner.site_controller.person_actions.begin_ship_disembark(ship_commander_id, ship_ids[_captain_index()], ship_commander_id, TerrainArmy.INVALID_CELL, false)
 	return _check(not refused.ok and refused.code == "NO_AUTHORITY" and before == var_to_bytes([slot.control, _action_facts()]), "genuine pre-arrival captain disembark refusal preserves body, stock, jobs and clocks", refused)
 
 func _arrival_rows() -> Dictionary:
@@ -16,9 +20,9 @@ func _arrival_rows() -> Dictionary:
 	if not goal.ok: return goal
 	var original: TerrainLab = goal.lab
 	var maps: Dictionary = slot.region_registry().parties[sea_token].arrival_mapping.maps
-	var captain := int(maps.person[str(ship_people[0])])
-	var other := int(maps.person[str(ship_people[1])])
-	var boat := str(maps.vehicle[ship_ids[0]])
+	var captain := int(maps.person[str(ship_commander_id)])
+	var other := int(maps.person[str(ship_people[1 - _captain_index()])])
+	var boat := str(maps.vehicle[ship_ids[_captain_index()]])
 	var row: Dictionary = original.site_controller.vehicles.ship_person(captain)
 	return {"ok": not row.is_empty(), "lab": original, "team": row.get("owner"), "captain": captain, "other": other, "boat": boat}
 
@@ -36,12 +40,12 @@ func _arrival_public_unload() -> bool:
 	var rows: Dictionary = _arrival_rows()
 	if not _check(rows.ok, "lawful unload resolves the current fully bound actual arrival rows"): return false
 	var original: TerrainLab = rows.lab
-	var team: TerrainArmy = rows.team
+	var team: Variant = rows.team
 	var vehicle: Dictionary = original.site_controller.vehicles.records()[str(rows.boat)]
 	var captain := int(rows.captain)
 	var before := _arrival_facts()
 	if not _check(not original.site_controller.vehicles._authorized(team, captain, captain, false) and slot._region_entered_npc_ship_unload_authorized(original, team, captain, vehicle), "true entered Nation captain is admitted at the narrow ship boundary while original controlled-person authorization remains unchanged"): return false
-	var noncaptain: Dictionary = original.site_controller.person_actions.begin_ship_disembark(int(rows.other), str(slot.region_registry().parties[sea_token].arrival_mapping.maps.vehicle[ship_ids[1]]), int(rows.other), TerrainArmy.INVALID_CELL, false)
+	var noncaptain: Dictionary = original.site_controller.person_actions.begin_ship_disembark(int(rows.other), str(slot.region_registry().parties[sea_token].arrival_mapping.maps.vehicle[ship_ids[1 - _captain_index()]]), int(rows.other), TerrainArmy.INVALID_CELL, false)
 	var detached: Dictionary = vehicle.duplicate(true)
 	if not _check(not noncaptain.ok and noncaptain.code == "NO_AUTHORITY" and not slot._region_entered_npc_ship_unload_authorized(original, team, captain, detached) and not slot._region_entered_npc_ship_unload_authorized(lab, team, captain, vehicle) and before == _arrival_facts(), "actual noncaptain, detached ship alias and foreign original owner refuse without state or clock effects", noncaptain): return false
 	var shore := TerrainArmy.INVALID_CELL
@@ -108,7 +112,7 @@ func _observe_ship_food_results() -> bool:
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest() or not await _setup_action_world(): _finish(); return
 	if not _ship_public_cargo(): _finish(); return
 	if not await _ship_board(0, true) or not await _ship_public_food() or not await _ship_board(1, false): _finish(); return
 	if not _check(not _ship_supply().locations.has("vehicle:" + ship_ids[1]), "second true boat still has no invented own food pool"): _finish(); return

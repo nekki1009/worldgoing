@@ -13,7 +13,7 @@ extends "res://scripts/tests/region_siege_cold_action_epoch_test.gd"
 const ShipCoastGenesis = preload("res://scripts/tests/region_ship_coast_legal_named_genesis.gd")
 const ShipGarrison = preload("res://scripts/terrain_lab/site_garrison.gd")
 const PhysicalSustain = preload("res://scripts/terrain_lab/site_sustain.gd")
-const SHIP_FACTION := 0
+var ship_faction := 0 # The shore side's authored faction; a subclass may set another in _initialize.
 var ship_team_id := 0
 var ship_actor_id := 0 # The shore (start) person; controlled again after the closure.
 var ship_commander_id := 0 # The controlled ship-team captain during the public ship work.
@@ -51,6 +51,25 @@ func _ship_team() -> Variant:
 	if action_owner.crowd_site == null or not action_owner.crowd_site.active: return null
 	for owner: Variant in action_owner.crowd_site.person_owners():
 		if owner is CrowdPersonOwner and int(owner.team_id) == ship_team_id: return owner
+	return null
+
+## A subclass's further authored owners (Nations, destination Sites), born before the first paid interval.
+func _ship_more_genesis() -> bool:
+	return true
+
+## Further crowd teams ({"side", "cells"}) a subclass deploys together with the ship and resident teams: a live crowd
+## deploys only whole, so every authored team is born in the same deploy.
+func _ship_extra_teams() -> Array:
+	return []
+
+## The crowd person owner whose living member stands at cell on the action owner, or null.
+func _crowd_owner_at(cell: Vector2i) -> Variant:
+	if action_owner.crowd_site == null or not action_owner.crowd_site.active: return null
+	for owner: Variant in action_owner.crowd_site.person_owners():
+		if not owner is CrowdPersonOwner: continue
+		for index: int in owner.records:
+			var person: Dictionary = owner.person(index, false)
+			if not person.is_empty() and person.cell == cell: return owner
 	return null
 
 ## Failure evidence only: up to `cap` differing paths between two fact trees.
@@ -145,7 +164,7 @@ func _ship_side(count: int) -> Dictionary:
 		"friendly_female_percent": 0, "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
 	if not _check(parsed.ok, "original crowd side settings accepted", parsed): return {}
 	var side: Dictionary = parsed.side
-	side["faction"] = SHIP_FACTION
+	side["faction"] = ship_faction
 	return side
 
 ## The origin Site after an extraction still holds this person in one of its team rosters.
@@ -169,6 +188,9 @@ func _restore_selected(data: TerrainData, reopened: RegionSaveSlot, cold_mode: b
 	var crowd_saved := data.site.has("crowd")
 	var scene := _shell()
 	if not _check(scene != null, "fresh actual original restore scene exists"): return null
+	# The restored main owner stands for the game's main Lab, whose _ready requests the crowd unless --grid (as the
+	# first shell in _setup_action_world); a cold owner stays a restore owner.
+	if not cold_mode: scene.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	var prepared := scene.prepare_selected_region_owner_restore(data, reopened)
 	if not _check(prepared.ok, "original selected private preflight validates whole actual owner graph", prepared): return null
 	scene.restore_only = cold_mode
@@ -195,7 +217,7 @@ func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 	# A 1-wide north-south wall faces its work entrance east (quarter 3), on the
 	# ship side the builder stands on. The default south quarter offers only the cell
 	# below a segment's end, which for the last segment (ending at y 99) is off the map.
-	var options := {"owner_faction": SHIP_FACTION, "quarter": 3}
+	var options := {"owner_faction": ship_faction, "quarter": 3}
 	var layout: Dictionary = SiteRuntime.building_cells(data, "stone_wall", anchor, Vector2i(1, length), options)
 	if not _check(layout.ok, "original legal land barrier layout respects per-request limits", layout): return false
 	var cells: Array[int] = []; cells.assign(layout.cells)
@@ -207,7 +229,7 @@ func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 	for resource: String in feature.cost:
 		if not _check(int(data.site.inventory.get(resource, 0)) == int(before.get(resource, 0)) - int(feature.cost[resource]), "GENESIS wall material debit is exact", resource): return false
 	var task := {"version": 2, "zone": -1, "target": "feature:" + key, "action": "construct", "work_cell": int(feature.entrance), "cell": int(feature.entrance), "mode": "work", "progress": 0.0, "status": "", "work_slot": -1}
-	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, 20, SHIP_FACTION)
+	SiteRuntime._feature_work(data, key, float(feature.work), Callable(), Callable(), task, {}, 20, ship_faction)
 	if not _check(str(feature.stage) == "complete", "GENESIS original structural work finishes without terrain or HP rewriting", key): return false
 	ship_barriers.append(key)
 	return true
@@ -256,7 +278,7 @@ func _setup_action_world() -> bool:
 	for team: TerrainArmy in lab.combat_armies:
 		if team.has_army() and team.combat_identity(0) == ship_actor_id: start_team = team
 	if not _check(start_team != null and start_team.combat_units.size() == 1 + TerrainLab.INITIAL_CADRES, "the player's start team holds the shore person and its cadres", start_team.combat_units.size() if start_team != null else -1): return false
-	start_team.faction_id = SHIP_FACTION
+	start_team.faction_id = ship_faction
 	# The shore person and its start cadres stand on dry land east of both boat contacts and their walks.
 	var shore_cells: Array[Vector2i] = [Vector2i(38, 23), Vector2i(39, 23), Vector2i(40, 23), Vector2i(41, 23), Vector2i(42, 23), Vector2i(43, 23)]
 	for index: int in start_team.combat_units.size():
@@ -271,16 +293,18 @@ func _setup_action_world() -> bool:
 	var ship_cells: Array[Vector2i] = [Vector2i(30, 20), Vector2i(35, 20)]
 	var inland_cells: Array[Vector2i] = [Vector2i(30, 23), Vector2i(35, 23)]
 	var resident_cells: Array[Vector2i] = [Vector2i(31, 25)]
-	var entered: Dictionary = lab.crowd_site.deploy([ship_side, resident_side], [inland_cells, resident_cells])
+	var sides: Array = [ship_side, resident_side]
+	var formations: Array = [inland_cells, resident_cells]
+	for extra: Dictionary in _ship_extra_teams():
+		sides.append(extra.side)
+		formations.append(extra.cells)
+	var entered: Dictionary = lab.crowd_site.deploy(sides, formations)
 	if not _check(entered.get("ok", false) == true and lab.crowd_site.active, "the ship and resident crowd teams deploy with the shore person", entered): return false
-	var source: Variant = null
-	for roster: Dictionary in lab.crowd_site.rosters:
-		var ids: Array[int] = []
-		for unit: Dictionary in roster.units: ids.append(int(unit.person_id))
-		if ids.has(ship_actor_id): continue
-		if ids.size() == 2: ship_team_id = int(roster.team_id)
-		elif ids.size() == 1: ship_resident_team_id = int(roster.team_id)
-	source = _ship_team()
+	var ship_owner: Variant = _crowd_owner_at(inland_cells[0])
+	var resident_owner: Variant = _crowd_owner_at(resident_cells[0])
+	if ship_owner != null: ship_team_id = int(ship_owner.team_id)
+	if resident_owner != null: ship_resident_team_id = int(resident_owner.team_id)
+	var source: Variant = _ship_team()
 	if not _check(source != null and ship_resident_team_id > 0, "the two-person ship team and the resident team have crowd owners"): return false
 	for cell: Vector2i in inland_cells:
 		for index: int in source.records:
@@ -306,7 +330,9 @@ func _setup_action_world() -> bool:
 	if not _check(saved.ok, "original joint publisher stores authored owner graph and initial holders", saved): return false
 	var due: Dictionary = slot.consume_due_region_events()
 	if not _check(due.ok and due.get("complete", false), "original same-point owners settle before actual positive intervals", due): return false
-	# Each ship body walks to its own boat's contact through paid shared steps (crowd siege approach step).
+	if not _ship_more_genesis(): return false
+	# Each ship body walks to its own boat's contact through paid shared steps (crowd siege approach step). This is the
+	# first paid interval: every authored owner, Nation and Site above is born before it.
 	for index: int in ship_people.size():
 		if not await _ship_walk_to_contact(ship_people[index], ship_cells[index]): return false
 	return true
@@ -321,10 +347,30 @@ func _ship_walk_to_contact(identity: int, contact: Vector2i) -> bool:
 		return false
 	return await _ship_until(arrived, "the ship body walks to its genuine shore contact")
 
+## Failure evidence only: the world clock, the due events and every bound owner's fire watermark and cursor.
+func _ship_clock_diag() -> Dictionary:
+	var clock: Dictionary = slot.control.fire_clock
+	var journal: Array = clock.get("journal", [])
+	var owners := {}
+	for site_id: Variant in slot._region_original_labs:
+		var owner: Variant = slot._region_original_labs[site_id]
+		if not is_instance_valid(owner) or not owner is TerrainLab or owner.terrain == null: continue
+		owners[str(site_id)] = {"fire": owner.terrain.site.get("fire_settlement", {}).duplicate(true), "cursor": owner.fire_action_cursor,
+			"pending": owner._region_point_pending.duplicate(true), "restore_only": owner.restore_only, "native": owner.crowd_site != null and owner.crowd_site.active}
+	var due: Array = []
+	for event: Dictionary in slot.region_registry().events:
+		if str(event.get("status", "")) != "complete": due.append({"id": event.id, "kind": event.kind, "at": event.at, "status": event.status})
+	return {"world": slot.control.logical_game_seconds, "clock": {"epoch": clock.get("epoch"), "sequence": clock.get("sequence"), "action": clock.get("action_seconds"),
+		"base_sequence": clock.get("base_sequence"), "journal_tail": journal.slice(maxi(0, journal.size() - 2))},
+		"main": {"site": str(lab.terrain.site.id), "fire": lab.terrain.site.get("fire_settlement", {}).duplicate(true), "cursor": lab.fire_action_cursor, "pending": lab._region_point_pending.duplicate(true)},
+		"owners": owners, "open_events": due}
+
 func _paid_ship_step(request: float = TerrainLab.EXCHANGE_ACTION_STEP) -> bool:
 	if not _observe_ship_food_results(): return false
+	var before_clock := _ship_clock_diag()
 	var result: Dictionary = lab._advance_original_shared_step(request)
-	if not _check(result.get("ok", false), "original common producer accepts actual ship/body/food work or due zero endpoint", result): return false
+	if not _check(result.get("ok", false), "original common producer accepts actual ship/body/food work or due zero endpoint",
+		result if result.get("ok", false) else {"result": result, "before": before_clock, "after": _ship_clock_diag()}): return false
 	if result.get("completed", false):
 		if not _check(float(result.action_seconds) > 0.0 and float(result.game_seconds) > 0.0 and float(result.action_seconds) <= request + EPS, "one accepted original bounded positive interval owns both clocks", result): return false
 		action_paid += float(result.action_seconds); action_game_paid += float(result.game_seconds)

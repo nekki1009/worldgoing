@@ -3770,6 +3770,18 @@ func commit_live_family_handover(original: TerrainLab, requester_id: int, person
 	var prepared: Dictionary = original.site_controller.family_continuity.prepare_live_handover(requester_id, str(original.terrain.site["id"]), person_id)
 	if not prepared["ok"]: return prepared
 	if str(control["active_site_id"]) != str(original.terrain.site["id"]): return fail("REGION_SOURCE")
+	# A live crowd records its controlled soldier natively, so control moves first and the crowd checkpoint publishes the
+	# new control once; a refused publication moves it back (2026-11-08: living handover was refused on crowd Sites).
+	if original.crowd_site != null and original.crowd_site.active:
+		var switched: Dictionary = original.crowd_site.on_control_changed(requester_id, person_id)
+		if not switched.get("ok", false): return switched
+		original.terrain.site["controlled_person_id"] = person_id
+		var published: Dictionary = original.site_controller.checkpoint_region_internal("region_family")
+		if not published.get("ok", false):
+			original.crowd_site.on_control_changed(person_id, requester_id)
+			original.terrain.site["controlled_person_id"] = requester_id
+			return published
+		return {"ok": true, "state": original.terrain.site, "generation": int(_marker.get("generation", 0))}
 	var token: String = "region_live_family_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var request: Dictionary = region_checkpoint_context(original.terrain, "region_family", token)
 	if not request["ok"]: return request
@@ -4626,6 +4638,23 @@ func advance_prepared_region_formula_progress(prepared: Dictionary) -> Dictionar
 # That publisher advances registry revision exactly once. This method adds no
 # clock and validates the accepted historical permit against unchanged modes.
 
+## A cold owner steps the previewed joint interval, while a live crowd Site pays its own native begin window, which can
+## end below that preview by less than ACTION_TIME_EPSILON (an action/game round trip at a game endpoint). Both are the
+## same accepted interval, so the cold owner's watermark and fire cursor take the published journal end. A larger gap
+## stays a refusal (found 2026-11-08: one ULP past the clock refused CORRUPT_FIRE_SETTLEMENT at game 120).
+func _region_snap_cold_fire_endpoint(original: TerrainLab) -> void:
+	var watermark: Variant = original.terrain.site.get("fire_settlement")
+	if not watermark is Dictionary or str(watermark.get("epoch", "")) != str(control.fire_clock.epoch) or int(watermark.get("sequence", -1)) != int(control.fire_clock.sequence): return
+	var clock_action := float(control.fire_clock.action_seconds)
+	var clock_game := float(control.logical_game_seconds)
+	var over := float(watermark.get("action_seconds", 0.0)) - clock_action
+	if over <= 0.0 or over > TerrainLab.ACTION_TIME_EPSILON: return
+	if absf(float(watermark.get("game_seconds", 0.0)) - clock_game) > 0.00000001: return
+	if absf(original.fire_action_cursor - float(watermark.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON: return
+	watermark.action_seconds = clock_action
+	watermark.game_seconds = clock_game
+	original.fire_action_cursor = clock_action
+
 func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 	var registry := region_registry()
 	if not prepared.get("ok", false) or int(prepared.generation) != int(_marker.get("generation", 0)) or int(registry.revision) != int(prepared.revision) + 1:
@@ -4647,6 +4676,7 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 		if owner == str(control.active_site_id) or not _region_original_labs.has(owner): continue
 		var original: TerrainLab = _region_original_labs[owner]
 		if not is_instance_valid(original): return fail("COMMITTED_UNBOUND")
+		_region_snap_cold_fire_endpoint(original)
 		var fire_check := validate_fire_settlement(original.terrain.site, control.fire_clock)
 		if not fire_check.ok: return fire_check
 		var watermark: Dictionary = original.terrain.site.fire_settlement
@@ -11744,15 +11774,19 @@ func _region_npc_live_ship_action(original: TerrainLab, vehicle: Dictionary) -> 
 	return {"ok": true, "eligible": false}
 
 
-func _region_entered_npc_ship_unload_authorized(original: TerrainLab, team: TerrainArmy, requester_id: int, vehicle: Dictionary, existing_job: Dictionary = {}) -> bool:
+func _region_entered_npc_ship_unload_authorized(original: TerrainLab, team: Variant, requester_id: int, vehicle: Dictionary, existing_job: Dictionary = {}) -> bool:
 	# Read current original arrival/command owners; this query issues no permit.
 	if not is_instance_valid(original) or original.terrain == null or original.site_controller == null \
-			or original.site_controller.region_slot != self or _region_bound_original_lab(original.terrain) != original \
-			or original.crowd_site != null and original.crowd_site.active: return false
+			or original.site_controller.region_slot != self or _region_bound_original_lab(original.terrain) != original: return false
+	# A live or cold crowd Site binds natively; its arrived team is a crowd person owner (2026-11-08: a crowd team was
+	# refused here, and a crowd person's owner passed to the old TerrainArmy parameter stopped the caller).
+	var crowd: bool = original.crowd_site != null and original.crowd_site.active
 	var bound: Dictionary = original._region_bind_receipt_value
-	if bound.get("complete") != true or bound.get("owners_restored") != true or str(bound.get("backend", "")) != "gd" \
-			or team == null or not original.combat_armies.has(team) or team.current_commander < 0 \
-			or not team.command_eligible(team.current_commander) or team.combat_identity(team.current_commander) != requester_id \
+	if bound.get("complete") != true or bound.get("owners_restored") != true or str(bound.get("backend", "")) != ("native" if crowd else "gd") or team == null: return false
+	if crowd:
+		if not team is CrowdPersonOwner or not original.crowd_site.person_owners().has(team): return false
+	elif not team is TerrainArmy or not original.combat_armies.has(team): return false
+	if int(team.current_commander) < 0 or not team.command_eligible(int(team.current_commander)) or team.combat_identity(int(team.current_commander)) != requester_id \
 			or requester_id == original.controlled_person_id() or team.is_sustain_routed(): return false
 	var vehicles: SiteVehicleTransport = original.site_controller.vehicles
 	var person: Dictionary = vehicles.ship_person(requester_id)
