@@ -1844,7 +1844,21 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 	var owner: Variant = person.owner
 	var unit := int(person.unit)
 	if owner is CrowdOwner:
-		return owner.person(unit, require_items)
+		var crowd_person: Dictionary = owner.person(unit, require_items)
+		# An aboard person moves with its hull here, as a grid row below (journeying or moving ship, or a deck job). Only this
+		# person-action view changes; the vehicle layer's ship_person keeps the body's own moving flag, which its
+		# _ship_capable reads (found 2026-11-08: a crowd traveller in a formal ship journey read moving=false).
+		# The record's own embarked_vehicle_id is read first (a cheap row read on every person query; found 2026-11-08 that a
+		# ship_for_person lookup here slowed the NPC ship tests past their budget). A Fixture lab may have no controller.
+		var vehicle_id: String = str(owner.records[unit].get("embarked_vehicle_id", "")) if not crowd_person.is_empty() and owner.records.has(unit) else ""
+		var site_controller: Variant = lab.get("site_controller") if not vehicle_id.is_empty() else null
+		if site_controller != null:
+			var vehicles: Variant = site_controller.vehicles
+			var ship: Dictionary = vehicles.records().get(vehicle_id, {})
+			if SiteVehicleTransport.is_ship(ship):
+				var job: Dictionary = _jobs.get(str(identity), {})
+				crowd_person["moving"] = vehicles._ship_in_journey(str(ship.id)) or not ship.move.is_empty() or str(job.get("kind", "")) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]
+		return crowd_person
 	var body: Variant = owner.combat_units[unit] if unit >= 0 else owner
 	if unit >= 0:
 		person.hp = float(owner.combat_hot_get(unit, &"hp"))

@@ -2367,6 +2367,9 @@ func ship_people(vehicle: Dictionary, alive_only: bool = true) -> Array[Dictiona
 			var row: Dictionary = team.combat_units[index]
 			if str(row.get("embarked_vehicle_id", "")) != str(vehicle.id) or _crowd_owner_of(team.combat_identity(index)) != null: continue # crowd passengers: _crowd_ship_people
 			var person := ship_person(team.combat_identity(index))
+			# A dormant roster (combat disabled, e.g. a crowd Site's source army during a bind) has no ship person to read
+			# (found 2026-11-08: open_fixed_world -> update_ui -> _journey_stranded read hp on an empty person).
+			if person.is_empty(): continue
 			if not alive_only or float(person.hp) > 0.0: result.append(person)
 	result.append_array(_crowd_ship_people(vehicle, alive_only))
 	return result
