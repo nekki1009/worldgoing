@@ -977,7 +977,11 @@ func region_sync_crowd_mode() -> Dictionary:
 	if slot == null or _region_bound_data != terrain or _region_bind_receipt_value.get("complete") != true: return SiteRuntime.ok()
 	if slot._region_bound_original_lab(terrain) != self: return SiteRuntime.ok()
 	var owner := str(terrain.site.get("id", ""))
-	var prior: Dictionary = slot.region_registry().modes.get(owner, {})
+	# Read-only: a slot without an admitted region_gameplay schema has no live mode to follow and must not acquire an
+	# empty registry here (its active step permit would then demand a mode for this Site).
+	var registry: Dictionary = slot.region_registry_view()
+	if registry.is_empty(): return SiteRuntime.ok()
+	var prior: Dictionary = registry.modes.get(owner, {})
 	if str(prior.get("mode", "")) != "live" or str(prior.get("consumer", "")) != "original_site": return SiteRuntime.ok()
 	var expected := region_backend_expected()
 	if str(prior.get("backend", "")) == expected: return SiteRuntime.ok()
@@ -5834,7 +5838,7 @@ func restore_original_site(data: TerrainData) -> Dictionary:
 		return SiteRuntime.fail("INVALID_MODE", "先以還原模式建立原 TerrainLab")
 	if data.site.has("region_snapshot"):
 		var detached := _region_detached_bind_data(data)
-		var region_restore := _region_bootstrap_bind_child(self, detached)
+		var region_restore := _region_bootstrap_bind_child(self, detached, true)
 		if not region_restore.ok: return region_restore
 		var region_ecology := SiteStore.prepare_ecology_candidate(terrain, region_restore.context)
 		if not region_ecology.ok: return region_ecology
@@ -5996,6 +6000,13 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			_cold_replay_signature = ""
 		return advanced
 	var completed_data: TerrainData = advanced.data
+	# A crowd replay ran its native World; the completed candidate carries that World's capture, as a crowd checkpoint
+	# writes it (capture_region_checkpoint), not the section it was loaded from (2026-11-08).
+	if _cold_replay_lab.crowd_site != null and _cold_replay_lab.crowd_site.active and completed_data == _cold_replay_lab.terrain:
+		var crowd_captured: Dictionary = _cold_replay_lab.crowd_site.capture_save()
+		if not crowd_captured.ok: return crowd_captured
+		_cold_replay_lab.site_controller._capture_positions()
+		_cold_replay_lab.site_controller._apply_region_crowd_capture(crowd_captured)
 	if completed_data.site.has("region_snapshot") and site_controller.region_slot != null:
 		var admitted := _region_register_replayed_bind_source(data, completed_data, site_controller.region_slot, _cold_replay_lab)
 		if not admitted.ok: return admitted
@@ -10120,9 +10131,11 @@ func _region_register_replayed_bind_source(input_source: TerrainData, accepted: 
 		return SiteRuntime.fail("REGION_REPLAY_PENDING")
 	var graph := producer.validate_region_owner_bind_payload(accepted, metadata.owners, metadata.context)
 	if not graph.ok: return graph
-	var actual := producer.capture_region_owner_state(metadata.context)
+	# A crowd replay producer's section is the native capture written at its completion (_region_advance_original_cold_site).
+	var crowd_admitted: bool = producer.crowd_site != null and producer.crowd_site.active and accepted.site.has("crowd")
+	var actual := producer.capture_region_owner_state(metadata.context, crowd_admitted)
 	if not actual.ok: return actual
-	var payload := SiteStore.capture_region_snapshot(producer.terrain, metadata.context, actual.owner_states)
+	var payload := SiteStore.capture_region_snapshot(producer.terrain, metadata.context, actual.owner_states, false, crowd_admitted)
 	if not payload.ok or RegionCheckpoint.state_hash(payload.state) != RegionCheckpoint.state_hash(accepted.site) or RegionCheckpoint.state_hash({"owners": payload.owners}) != RegionCheckpoint.state_hash({"owners": metadata.owners}): return SiteRuntime.fail("STALE_REGION_REPLAY_SOURCE")
 	_region_owner_source_receipts[accepted.get_instance_id()] = {"data": accepted, "proof": selected.proof,
 		"body_hash": RegionCheckpoint.state_hash(accepted.site), "graph_hash": graph.graph_hash}
@@ -10144,7 +10157,10 @@ func _region_new_bind_child(data: TerrainData) -> Dictionary:
 	add_child(child)
 	return SiteRuntime.ok("", {"child": child})
 
-func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData) -> Dictionary:
+## stage_crowd: a cold replay owner of a crowd Site binds its saved native section, as a reopen does (2026-11-08: a
+## catch-up of a left crowd Site replayed its dormant rosters through the retired grid simulation). Disposable
+## validation children keep the plain GD bind.
+func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData, stage_crowd: bool = false) -> Dictionary:
 	var context := {}
 	var owners := {}
 	if data.site.has("region_snapshot"):
@@ -10157,12 +10173,19 @@ func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData) -> Dicti
 	else:
 		var checked := SiteStore._validate_state(data, data.site.duplicate(true))
 		if not checked.ok: return checked
+	var staged: Dictionary = {"ok": true, "crowd_site": null}
+	var crowd_saved: bool = stage_crowd and data.site.has("crowd")
+	if crowd_saved:
+		staged = child.prepare_crowd_load(data)
+		if not staged.ok: return staged
 	var token := "region_restore_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	child._region_owner_bind_tickets[token] = {"kind": "bootstrap", "data": data,
 		"body_hash": RegionCheckpoint.state_hash(data.site), "context": context, "owners": owners}
-	child.bind_terrain(data, {"ok": true, "crowd_site": null, "region_bind_token": token})
+	staged["region_bind_token"] = token
+	child.bind_terrain(data, staged)
 	var receipt: Dictionary = child._region_bind_receipt_value
 	child._region_owner_bind_tickets.erase(token)
+	if crowd_saved and (child.crowd_site == null or not child.crowd_site.active): return SiteRuntime.fail("REGION_CHILD_BIND_FAILED", "群眾原生內容未在冷補算中啟用")
 	if child.terrain != data or child._region_bound_data != data or receipt.get("owners_restored") != true:
 		var refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED")
 		refused["cause"] = child.get_meta(&"last_refused_result", {}) # The child's own refusal, when its bind showed one.
@@ -10582,14 +10605,14 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 			"runtime_revision": int(registry.revision), "token": "region_replay_" + Crypto.new().generate_random_bytes(16).hex_encode(),
 			"game_seconds": target_game_seconds, "action_seconds": fire_action_cursor, "fire_epoch": str(fire.get("epoch", slot.control.fire_clock.epoch)),
 			"fire_sequence": int(fire.get("sequence", 0)), "interval_complete": true, "effects_complete": true,
-			"mode_revision": int(registry.modes.get(str(terrain.site.id), {}).get("revision", 0)), "backend": "gd", "events": [], "endpoint_payload": {}}
+			"mode_revision": int(registry.modes.get(str(terrain.site.id), {}).get("revision", 0)), "backend": region_backend_expected(), "events": [], "endpoint_payload": {}}
 	else:
 		# SAME original Store snapshot was validated before the original full graph
 		# bind. Work has since changed its body hash; the existing restore receipt
 		# retains that verified context without creating another source authority.
 		var bound := region_bind_receipt(terrain)
 		var snapshot: Variant = terrain.site.get("region_snapshot")
-		if not bound.ok or bound.get("mode") != "cold_exact" or bound.get("backend") != "gd" \
+		if not bound.ok or bound.get("mode") != "cold_exact" or bound.get("backend") != region_backend_expected() \
 			or not snapshot is Dictionary or snapshot.size() != 4 or not RegionCheckpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 \
 			or not snapshot.get("state_hash") is String or not RegionCheckpoint.valid_wire(snapshot.get("owners")) or _region_owner_restore_receipt.get("owners_restored") != true \
 			or _region_owner_restore_receipt.get("effects_complete") != true: return SiteRuntime.fail("NO_REGION_SLOT")
@@ -10604,10 +10627,18 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 			"game_seconds": target_game_seconds, "action_seconds": fire_action_cursor, "fire_epoch": str(fire.get("epoch", checked.context.fire_epoch)),
 			"fire_sequence": int(fire.get("sequence", checked.context.fire_sequence)), "interval_complete": true, "effects_complete": true,
 			"events": [], "endpoint_payload": {}}, true)
+	# A crowd replay finishes with its native World's capture, admitted as a crowd checkpoint admits it
+	# (capture_region_checkpoint; 2026-11-08: the replay of a left crowd Site was refused REGION_BACKEND_UNADMITTED).
+	var crowd_admitted: bool = crowd_site != null and crowd_site.active
+	var crowd_captured := {}
+	if crowd_admitted:
+		crowd_captured = crowd_site.capture_save()
+		if not crowd_captured.ok: return crowd_captured
 	site_controller._capture_positions()
-	var actual := capture_region_owner_state(context)
+	if crowd_admitted: site_controller._apply_region_crowd_capture(crowd_captured)
+	var actual := capture_region_owner_state(context, crowd_admitted)
 	if not actual.ok: return actual
-	var payload := SiteStore.capture_region_snapshot(terrain, context, actual.owner_states)
+	var payload := SiteStore.capture_region_snapshot(terrain, context, actual.owner_states, false, crowd_admitted)
 	if not payload.ok: return payload
 	var candidate := _region_detached_bind_data(terrain)
 	candidate.site = payload.state
@@ -14799,7 +14830,10 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 		if idle <= PersonFatigue.WORK_PLAN_EPS: continue
 		limit = minf(limit, idle)
 	if not is_finite(limit) or limit <= 0.0: return SiteRuntime.fail("ZERO_NATIVE_BEGIN_WINDOW")
-	var accepted_action: float = RegionSaveSlot.GameplayClock.action_for_game(limit, simulation_speed, minf(action, combat))
+	# An uncut window owns its exact ACTION input (GameplayClock.clip_interval); only a cut one is inverted from game time,
+	# and never past that input. With the round trip, a residual quantum (0.00611 s after a cut step, crowd_c2_natural_ammo
+	# capture-death) was refused INVALID_NATIVE_BEGIN_WINDOW on every later step and the Site clock stopped.
+	var accepted_action: float = action if limit >= seconds else minf(action, RegionSaveSlot.GameplayClock.action_for_game(limit, simulation_speed, minf(action, combat)))
 	return SiteRuntime.ok("", {"action_seconds": accepted_action, "game_seconds": limit,
 		"combat_begin": combat, "lower": lower, "upper": upper, "projection": projection, "requests": interval_requests})
 

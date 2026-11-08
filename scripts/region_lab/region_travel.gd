@@ -2328,7 +2328,11 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			# Every roster army is a fire owner and needs one command row (validator: one row per owner). An arriving team
 			# that has never fired gets the disabled row, merged below with the other fire rows.
 			if not content.has("fire_orders"): content.fire_orders = []
-			for team: Dictionary in crowd_arrival.teams: content.fire_orders.append(_crowd_fire_placeholder(destination, int(team.team_id)))
+			# A team that left a Site with fire transport already carries its own row (departure, _detach_row): keep that one.
+			for team: Dictionary in crowd_arrival.teams:
+				var has_order := false
+				for row: Dictionary in content.fire_orders: has_order = has_order or int(row.get("group", 0)) == int(team.team_id)
+				if not has_order: content.fire_orders.append(_crowd_fire_placeholder(destination, int(team.team_id)))
 			content.armies = crowd_arrival.armies
 			leader_cell = crowd_arrival.leader_cell
 			grid_armies = []

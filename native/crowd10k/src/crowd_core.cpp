@@ -512,7 +512,9 @@ bool World::update_terrain(Terrain ground) {
 	for (int i = 0; i < soldier_count(); ++i) {
 		// An aboard soldier stands on its deck point over water, not on the ground (as occupancy_mask): a ground change never
 		// strands it. Without this, any terrain sync while someone was aboard was refused (found 2026-11-08).
-		if (is_aboard(i)) continue;
+		// A released soldier has left the Site (site_person_release keeps only its slot in the arrays); a sea departure
+		// releases it at its deck point over water, which refused every later terrain sync (food_reinforcement, 2026-11-08).
+		if (is_aboard(i) || released[i]) continue;
 		int source=terrain.idx(int(px[i]),int(py[i]));
 		const int group=siege_group(i);
 		if (group>=0 && abort[group]) for (const auto &m:siege_compounds[group].members) if (m.soldier==i) source=m.from;
@@ -566,7 +568,7 @@ std::vector<uint8_t> World::occupancy_mask(const std::vector<int64_t> &ignored) 
 	std::vector<uint8_t> result(size_t(terrain.w) * terrain.h, 0);
 	const float radius = cfg.radius + cfg.wall_margin;
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (is_aboard(i) || std::find(ignored.begin(), ignored.end(), person_id[i]) != ignored.end()) continue; // aboard: on a deck, not on the ground
+		if (is_aboard(i) || released[i] || std::find(ignored.begin(), ignored.end(), person_id[i]) != ignored.end()) continue; // aboard: on a deck, not on the ground; released: left the Site
 		const float end_x = px[i] + vx[i] / 30.f, end_y = py[i] + vy[i] / 30.f;
 		for (int y = std::max(0, int(std::floor(std::min(py[i], end_y) - radius))); y <= std::min(terrain.h - 1, int(std::floor(std::max(py[i], end_y) + radius))); ++y)
 			for (int x = std::max(0, int(std::floor(std::min(px[i], end_x) - radius))); x <= std::min(terrain.w - 1, int(std::floor(std::max(px[i], end_x) + radius))); ++x) result[terrain.idx(x, y)] = 1;

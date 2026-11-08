@@ -62,6 +62,15 @@ func _sea_plan() -> Dictionary:
 	return slot._region_npc_plan(sea_token)
 
 func _sea_owner() -> Dictionary:
+	# The game creates an NPC party's original owner Lab at its zero-time endpoint, which also records the Lab's own
+	# capture as the party (RegionSaveSlot._finish_original_cold_region_points -> region_original_party_zero). A crowd
+	# departure carries entry rows (cadre seating, integer fields, aboard slots) that are canonical only after that first
+	# capture, so the first owner of this party comes from the same endpoint, not from a bare bind of the entry rows.
+	# (A reopened slot before its original Lab wires the Region adapters has no endpoint to run; its party record is
+	# already a checkpoint capture.)
+	if not is_instance_valid(slot.get_meta(&"region_party_owner_labs", {}).get(sea_token)) and slot.region_original_party_zero.is_valid():
+		var settled: Variant = slot.region_original_party_zero.call()
+		if not settled is Dictionary or not settled.get("ok", false): return settled if settled is Dictionary else {"ok": false, "code": "INCOMPLETE_PARTY_ENDPOINT"}
 	var selected := _sea_selected()
 	if not selected.ok: return selected
 	return lab.prepare_region_party_original_owner(sea_token, selected.party, slot)
