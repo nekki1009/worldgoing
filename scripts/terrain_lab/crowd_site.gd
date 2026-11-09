@@ -3096,7 +3096,10 @@ func departure_plan(identity: int) -> Dictionary:
 		var owner: Variant = person_owner(member)
 		# The controlled captain holds host control; _split_exit_ready hands it back for the query only.
 		# SHIPSEA: an embarked team leaves by sea, so an aboard member asks the aboard gate for its own vessel.
-		if owner == null or not _split_exit_ready(owner, int(_index_by_id[member]), _departure_vessel(owner, int(_index_by_id[member]), team_sea)):
+		# A land team's driver crews its own cart or wagon convoy, which the native exit gate never admits; a driver whose
+		# convoy stands complete is ready by the person's own state (2026-11-09: a crowd team with a wagon could not leave).
+		var driving: bool = not team_sea and owner != null and _convoy_driver_ready(owner, member, int(roster.team_id))
+		if owner == null or not driving and not _split_exit_ready(owner, int(_index_by_id[member]), _departure_vessel(owner, int(_index_by_id[member]), team_sea)):
 			return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
 		var state := soldier_state(int(_index_by_id[member]))
 		var cell := Vector2i(floori(float(state.px)), floori(float(state.py)))
@@ -3106,6 +3109,21 @@ func departure_plan(identity: int) -> Dictionary:
 	return SiteRuntime.ok("", {"roster": roster, "team_id": int(roster.team_id), "faction": int(roster.faction_id),
 		"people": people, "cells": cells, "controlled_cell": controlled_cell})
 
+
+## True when `member` drives a cart or wagon of `team_id` whose native convoy stands complete (not moving, not stalled) and
+## the person is conscious, free, not surrendering and not fighting.
+func _convoy_driver_ready(owner: Variant, member: int, team_id: int) -> bool:
+	var vehicles: Variant = lab.site_controller.vehicles
+	var driven: Dictionary = {}
+	for vehicle: Dictionary in vehicles.records().values():
+		if str(vehicle.get("kind", "")) in ["cart", "wagon"] and int(vehicle.get("team_id", 0)) == team_id and int(vehicle.get("operator_id", 0)) == member:
+			driven = vehicle
+	if driven.is_empty() or int(driven.get("convoy_id", 0)) <= 0: return false
+	var state: Dictionary = vehicles.convoy_state(driven)
+	if state.is_empty() or not bool(state.complete) or bool(state.moving) or bool(state.stalled): return false
+	var person: Dictionary = owner.person(int(_index_by_id[member]), false)
+	return not person.is_empty() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) \
+		and not bool(person.surrender_pending) and not person_fighting(member)
 
 ## SHIPSEA: the boat fields a passenger keeps on its CrowdPersonOwner record. A crowd passenger's boat is not in the
 ## roster rows, so the travelling snapshot copies these fields across (the grid sea party reads the same row keys).
@@ -3148,6 +3166,12 @@ func departure_release(plan: Dictionary) -> Dictionary:
 		if not order.has(identity): order.append(identity)
 	# SHIPSEA: an embarked team leaves by sea; its aboard members are released with their vessel (the aboard release).
 	var team_sea: bool = lab.site_controller.vehicles.team_has_embarked(int(plan.team_id))
+	# A land team's carts and wagons leave with it: their native convoys are removed first, so each driver is an ordinary
+	# soldier to release and the origin blob keeps no convoy of a departed driver. The GD records (operator kept) travel.
+	if not team_sea:
+		for vehicle: Dictionary in lab.site_controller.vehicles.records().values():
+			if str(vehicle.get("kind", "")) in ["cart", "wagon"] and int(vehicle.get("team_id", 0)) == int(plan.team_id) and int(vehicle.get("convoy_id", 0)) > 0:
+				lab.site_controller.vehicles._convoy_release(vehicle)
 	for identity: int in order:
 		var index := int(_index_by_id[identity])
 		var owner: Variant = person_owner(identity)

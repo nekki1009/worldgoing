@@ -2055,8 +2055,14 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 		if int(destination.get("controlled_person_id", -1)) > 0 or int(destination_player.get("person_id", -1)) > 0 or int(destination_player.get("soldier_index", -1)) >= 0:
 			return fail("ID_CONFLICT", "目的地已有受控人物")
 	for vehicle: Variant in arriving.get("vehicles", {}).values():
-		if not npc_sea or not vehicle is Dictionary or str(vehicle.get("kind", "")) != "ship":
-			return fail("UNSUPPORTED", "群眾目的地暫不接收船以外的載具")
+		if not vehicle is Dictionary: return fail("UNSUPPORTED", "群眾目的地載具格式")
+		var kind := str(vehicle.get("kind", ""))
+		# A land party's carts and wagons park at the entry as on a grid Site (2026-11-09: N08 civil wagons and
+		# region_travel parties were refused). They arrive with no native convoy record; the live Site adopts them
+		# (SiteVehicleTransport.sync_convoy_records), as it adopts any convoy-less wagon.
+		var land_vehicle: bool = mode == "land" and kind in ["cart", "wagon"] and not options.has("contact_frame")
+		if not (npc_sea and kind == "ship") and not land_vehicle:
+			return fail("UNSUPPORTED", "群眾目的地暫不接收這種載具")
 	if not arriving.get("captivity", {}).is_empty() or not arriving.get("escort_orders", {}).is_empty():
 		return fail("UNSUPPORTED", "群眾目的地暫不接收俘虜或押送")
 	for army: Variant in arriving.get("armies", []):
@@ -2385,6 +2391,11 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			if not crowd_arrival.ok: return crowd_arrival
 			leader_cell = crowd_arrival.leader_cell
 			grid_armies = []
+			# The crowd soldiers took the first entry cells in roster order; carts and wagons park around them.
+			for army: Dictionary in content.armies:
+				for row: Dictionary in army.get("units", []):
+					used[cells[cursor]] = true
+					cursor += 1
 		for key: String in content.actors:
 			var actor: Dictionary = content.actors[key]
 			_place_actor(actor, cells[cursor])
@@ -2446,6 +2457,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			vehicle.move = {}
 			vehicle.operator_id = 0
 			vehicle.stop_pending = false
+			vehicle.erase("convoy_id") # A native convoy record belongs to its origin blob; the destination adopts the wagon anew.
 			# Attached ground containers remain the original holder at the new anchor.
 			for loot: Dictionary in content.get("ground_loot", {}).values():
 				if str(loot.get("attached_vehicle_id", loot.get("vehicle_id", ""))) == identity: loot.cell = int(vehicle.cell)
@@ -2459,6 +2471,10 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		return fail("UNSETTLED_PARTY", "旅隊原供養／生命尚未結算至到站端點")
 	# Merge every record into the destination.
 	destination.armies.append_array(content.armies)
+	# The destination's team counter covers every arriving team id (SiteStore requires army_next_team > every team id;
+	# found 2026-11-09: a whole crowd team arriving with an id above the destination counter saved CORRUPT_SAVE).
+	for army: Dictionary in content.armies:
+		destination["army_next_team"] = maxi(int(destination.get("army_next_team", 1)), int(army.get("team_id", 0)) + 1)
 	for field: String in CONTENT_DICTS:
 		for key: String in content.get(field, {}):
 			destination[field][key] = content[field][key]
