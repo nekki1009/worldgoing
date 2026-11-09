@@ -2315,6 +2315,9 @@ func _commit_captivity(event: Dictionary, event_context: Dictionary = {}) -> Dic
 		relations[str(identity)] = {"version": 3, "captor_id": captor, "guard_id": captor,
 			"captor_faction": int(captor_person.faction), "sealed_container": container, "prison_id": ""}
 		relations[str(identity)].merge(controller.person_actions.capture_fields(identity, person)) # Plan 4.2 / 6.1.
+		# The Site's capture episode counter advances once per committed capture, as the GD custody commit does
+		# (site_person_actions: capture_episode_next = sequence + 1; found 2026-11-09: a crowd capture left it unchanged).
+		lab.terrain.site["capture_episode_next"] = int(lab.terrain.site.get("capture_episode_next", 1)) + 1
 	else:
 		relations.erase(str(identity))
 	person.holder.version = int(person.holder.version) + 1

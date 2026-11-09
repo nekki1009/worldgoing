@@ -1088,8 +1088,10 @@ static func _validate_military(data: TerrainData, state: Dictionary) -> Dictiona
 				return Runtime.fail("CORRUPT_SAVE", "原名冊軍官／士兵／平民資格")
 			if row.has("personality") and not TerrainTestCharacter.PersonPersonality.valid(row.personality):
 				return Runtime.fail("CORRUPT_SAVE", "原名冊人物性格資料")
+			# An unadmitted social packet is SAVE_VERSION, the contract of _validate_unadmitted_social_state; a crowd roster
+			# reached this check first and reported CORRUPT_SAVE (found 2026-11-09, region_captivity_payload_admission).
 			if row.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(row.social_state):
-				return Runtime.fail("CORRUPT_SAVE", "原名冊人物社會狀態")
+				return Runtime.fail("SAVE_VERSION", "Army person social_state 尚未准入；完整原檔與原現場保留")
 		if str(garrison_id).is_empty():
 			continue
 		var feature: Dictionary = state.get("features", {}).get(garrison_id, {})
@@ -1875,7 +1877,11 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 			var escort: PackedInt64Array = native.call("escort_state", native_index)
 			if soldier_refs.size() != 3 or int(soldier_refs[2]) != int(captivity.get("prison_id", "0")):
 				return Runtime.fail("INVALID_CROWD", "群眾監禁鏡像與原拘押關係不符")
-			if escort.size() != 2 or int(escort[0]) == 1 and not escort_people.has(int(identity)): return Runtime.fail("INVALID_CROWD", "群眾押送保持狀態缺少原押送命令")
+			# A hold with nobody in tow (escort state [1, -1]: the executor of a prison release holds its contact cell by an escort
+			# step on itself) is a work hold, not an escort; it needs no escort order (found 2026-11-09: a checkpoint during a
+			# crowd prison release was refused).
+			var self_hold: bool = escort.size() == 2 and int(escort[0]) == 1 and int(escort[1]) < 0
+			if escort.size() != 2 or int(escort[0]) == 1 and not escort_people.has(int(identity)) and not self_hold: return Runtime.fail("INVALID_CROWD", "群眾押送保持狀態缺少原押送命令")
 			if not str(captivity.get("prison_id", "")).is_empty():
 				if escort.size() != 2 or int(escort[0]) != 0 or int(escort[1]) != -1 or hot.size() <= 12 or not is_zero_approx(hot[12]): return Runtime.fail("INVALID_CROWD", "在監人物仍有押送步進或野外逃脫計時")
 			if hot.size() < 16 or not _crowd_float_equal(record.get("hp", -1.0), hot[0]) or not _crowd_float_equal(record.get("knockout_left" if actor_ids.has(int(identity)) else "ko", -1.0), hot[3]) or bool(record.get("captive", false)) != bool(hot[6]):

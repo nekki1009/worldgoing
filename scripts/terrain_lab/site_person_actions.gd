@@ -263,7 +263,14 @@ func prison_query(requester_id: int, prison_id: String) -> Dictionary:
 				if _prison_officer(_person(int(identity), false)).is_empty(): reserved_regular += 1
 				else: reserved_officers += 1
 	var free_slots: Array[Dictionary] = []
-	var contacts := prison_contacts(prison_id, [requester_id])
+	# The requester's own captives travel with the escort: a stopped, centred captive of this guard does not keep its
+	# conservative crowd margin over the prison approach (found 2026-11-09: an awake crowd captive one cell from the
+	# contact cell left the prison with no free custody slot for its own escort).
+	var participants: Array = [requester_id]
+	for key: String in lab.terrain.site.captivity:
+		var held_relation: Dictionary = lab.terrain.site.captivity[key]
+		if int(held_relation.get("guard_id", -1)) == requester_id and str(held_relation.get("prison_id", "")).is_empty(): participants.append(int(key))
+	var contacts := prison_contacts(prison_id, participants)
 	if bool(layout.complete):
 		for slot: Dictionary in layout.slots:
 			if not occupied.has(slot.cell) and not prison_blocked(slot.cell, [], contacts) and not prison_blocked(slot.contact_cell, [requester_id], contacts) and lab.terrain.can_step(slot.cell, slot.contact_cell):

@@ -60,6 +60,8 @@ func _payload_case(mode: String) -> bool:
 	Env.initialize(archive, "captivity-payload:archive")
 	lab.bind_terrain(archive)
 	lab.restore_only = false
+	# Crowd port: the live shell requests the crowd as the main shells do (_open_center_world); a cold owner never does.
+	lab.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	controller.save_root = out.path_join("archive_" + mode)
 	world_id = "r0_captivity_payload_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var opened := controller.open_fixed_world(manifest_path, world_id, "main", Vector2i.ZERO, true)
@@ -83,20 +85,28 @@ func _payload_case(mode: String) -> bool:
 	if not _check(due.ok and due.get("complete", false), "original same-point queue consumes before custody work", due): return false
 	if not _payload_fail_preflight(): return false
 	var person: Dictionary = payload_owner.site_controller.person_actions._person(payload_captive, false)
-	if not _check(person.owner is TerrainArmy and int(person.unit) >= 0, "original captive is an actual Army person row"): return false
+	if not _check((person.owner is TerrainArmy or person.owner is CrowdPersonOwner) and int(person.unit) >= 0, "original captive is an actual Army person row"): return false
 	# Initial bodily injury is an original contact, not an injected KO timer.
-	person.owner.apply_unit_contact(int(person.unit), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
+	# Crowd port: a crowd refuses an environmental packet; the same melee contact is delivered (as the base test does).
+	var crowd_row: bool = person.owner is CrowdPersonOwner
+	var captive_unit: int = int(person.owner.index_for_identity(payload_captive)) if crowd_row else int(person.unit)
+	person.owner.apply_unit_contact(captive_unit, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": not crowd_row})
 	person = payload_owner.site_controller.person_actions._person(payload_captive, false)
 	if not _check(float(person.hp) > 0.0 and float(person.ko) > 0.0, "original contact produces a living knocked-out target", {"hp": person.hp, "ko": person.ko}): return false
 	var actions: SitePersonActions = payload_owner.site_controller.person_actions
 	var next_episode := int(payload_owner.terrain.site.get("capture_episode_next", 1))
-	var started := actions.begin_capture(payload_guard, payload_captive, payload_guard)
-	if not _check(started.ok, "original public person action accepts actual custody", started): return false
-	if not await _payload_until(func() -> bool: return _payload_job_partial("capture"), "common owner pays a real partial capture"): return false
-	if not _check(int(payload_owner.terrain.site.get("capture_episode_next", 1)) == next_episode and payload_owner.terrain.site.captivity.is_empty(), "accepted partial work has not fabricated a committed capture episode"): return false
-	if not await _payload_reopen("capture_partial", mode): return false
-	actions = payload_owner.site_controller.person_actions
-	if not await _payload_until(func() -> bool: return not actions.is_busy(payload_guard), "same restored original job commits the sole capture"): return false
+	if _crowd_on(payload_owner):
+		# Crowd port: a crowd Site has no explicit custody action (begin_capture refuses CROWD_ACTIVE by design). The captive
+		# comes from the battlefield CAPTURED event; the partial job, its reopen and the same-job commit have no crowd form.
+		if not _payload_battlefield_capture(next_episode, mode): return false
+	else:
+		var started := actions.begin_capture(payload_guard, payload_captive, payload_guard)
+		if not _check(started.ok, "original public person action accepts actual custody", started): return false
+		if not await _payload_until(func() -> bool: return _payload_job_partial("capture"), "common owner pays a real partial capture"): return false
+		if not _check(int(payload_owner.terrain.site.get("capture_episode_next", 1)) == next_episode and payload_owner.terrain.site.captivity.is_empty(), "accepted partial work has not fabricated a committed capture episode"): return false
+		if not await _payload_reopen("capture_partial", mode): return false
+		actions = payload_owner.site_controller.person_actions
+		if not await _payload_until(func() -> bool: return not actions.is_busy(payload_guard), "same restored original job commits the sole capture"): return false
 	var captured: Dictionary = payload_owner.terrain.site.captivity.get(str(payload_captive), {}).duplicate(true)
 	# v3 episode is the dictionary {site_id, person_id, seq} (ef39140), not a "site:N" string.
 	# seq is this person's own first capture sequence (social_state v1), as in site_prison_actions_test.
@@ -110,7 +120,7 @@ func _payload_case(mode: String) -> bool:
 	# No fixture assignment changes KO, pose, get-up time, GAME or ACTION.
 	if not await _payload_until(func() -> bool: return _payload_awake_stopped(), "original body life wakes the guarded captive"): return false
 	var escorted: Dictionary = payload_owner.site_controller.captive_escort.begin_prison(payload_guard, payload_guard, payload_prison)
-	if not _check(escorted.ok, "original public escort accepts actual prison entry", escorted): return false
+	if not _check(escorted.ok, "original public escort accepts actual prison entry", {"result": escorted, "query": payload_owner.site_controller.person_actions.prison_query(payload_guard, payload_prison), "wait": _payload_wait_state(), "slots": SiteRuntime.prison_layout(payload_owner.terrain, payload_prison).get("slots", []).map(func(s: Dictionary) -> Dictionary: return {"cell": str(s.cell), "contact": str(s.contact_cell), "blocked": payload_owner.site_controller.person_actions.prison_blocked(s.cell, [], payload_owner.site_controller.person_actions.prison_contacts(payload_prison, [payload_guard])), "contact_blocked": payload_owner.site_controller.person_actions.prison_blocked(s.contact_cell, [payload_guard], payload_owner.site_controller.person_actions.prison_contacts(payload_prison, [payload_guard])), "step": payload_owner.terrain.can_step(s.cell, s.contact_cell)})}): return false
 	if not await _payload_until(func() -> bool: return str(payload_owner.terrain.site.captivity.get(str(payload_captive), {}).get("prison_id", "")) == payload_prison, "original escort moves both actual bodies and commits true admission"): return false
 	var admitted: Dictionary = payload_owner.terrain.site.captivity[str(payload_captive)].duplicate(true)
 	if not _check(admitted.episode == captured.episode and admitted.captured_at_game_seconds == captured.captured_at_game_seconds
@@ -123,8 +133,15 @@ func _payload_case(mode: String) -> bool:
 	var released := actions.begin_prison_release(payload_guard, payload_captive, payload_guard)
 	if not _check(released.ok, "original public prison release accepts a real adjacent executor", released): return false
 	if not await _payload_until(func() -> bool: return _payload_job_partial("prison_release"), "common owner pays actual partial release work"): return false
+	if _crowd_on(payload_owner) and payload_owner.crowd_site.active:
+		# Crowd: the guard's body row is the hot materialization; the formation's work fatigue reaches it at a capture.
+		# Publish once (no time passes) so "before" is the settled row the reopen compares against.
+		var settled := controller.checkpoint_region_internal("region_checkpoint", true)
+		if not _check(settled.ok, "the crowd publishes the partial release body state", settled): return false
 	var before_release: Dictionary = _payload_facts()
 	if not await _payload_reopen("release_partial", mode): return false
+	_payload_diff("release_facts", _persisted_form(before_release), _persisted_form(_payload_facts()))
+	_payload_diff("release_custody", _persisted_form(admitted), _persisted_form(payload_owner.terrain.site.captivity[str(payload_captive)]))
 	if not _check(_persisted_form(_payload_facts()) == _persisted_form(before_release) and _persisted_form(payload_owner.terrain.site.captivity[str(payload_captive)]) == _persisted_form(admitted), "partial release load retains custody until the original commit"): return false
 	actions = payload_owner.site_controller.person_actions
 	var version := int(actions._person(payload_captive, false).holder.version)
@@ -174,31 +191,107 @@ func _payload_fixture() -> bool:
 	# The guard must be a real person present in THIS Site. The character is present only where P6 S1
 	# placed it (the live owner); a cold Site has no player (explicit absence). Live: the character guards,
 	# as before. Cold: a second Army team of the managing faction births the guard through the normal path.
-	var guard_is_character: bool = payload_owner.actor_present(payload_owner.character)
+	# Crowd port: the live guard is the controlled crowd person, placed while the crowd is still live (as region_siege_center_original
+	# places its founder). The crowd then returns to GD for the scenario teams and joins again after they are born (_crowd_admit).
+	# Crowd port: a never-visited cold Site has no CrowdSite (a cold owner never requests one at startup). Its people are born as
+	# GD rosters and converted to a crowd below, as a cold owner's bind converts an arrival.
+	var cold_convert: bool = not OS.get_cmdline_user_args().has("--grid") and payload_owner.crowd_site == null and payload_owner.restore_only
+	var crowd := _crowd_on(payload_owner) or cold_convert
+	# Crowd: a host-controlled crowd body moves only by player input, so the native escort never walks it; the guard is an
+	# ordinary managing-faction NPC row in both modes (found 2026-11-09: the controlled guard stood still beside the order).
+	var guard_is_character: bool = false if crowd else payload_owner.actor_present(payload_owner.character)
 	if guard_is_character:
-		if not _check(payload_owner.character.place(Vector2i(35, 38), true), "original guard occupies a legal actual cell"): return false
 		# The prison is declared owner_faction 1 above. Begin/admit require the guard to be of the
 		# managing faction (site_captive_escort.begin_prison, site_person_actions.admit_prison; ef39140).
 		# Set the real guard's faction before capture, so captor_faction is that same faction.
 		payload_owner.character.faction_id = 1
+	if crowd and payload_owner.crowd_site != null and payload_owner.crowd_site.active:
+		# The player's own start team stands clear of the prison and its custody cells (it is no part of this scenario).
+		var player: Dictionary = payload_owner.site_controller.person_actions._person(payload_owner.controlled_person_id(), false)
+		if not player.is_empty() and not _check(_place_controlled(payload_owner, Vector2i(10, 10), int(player.faction), true), "the player's start team stands clear of the prison"): return false
+	if not _crowd_release(payload_owner): return false
+	if guard_is_character and not crowd:
+		if not _check(payload_owner.character.place(Vector2i(35, 38), true), "original guard occupies a legal actual cell"): return false
 		payload_guard = payload_owner.character.person_id
 	payload_owner._ensure_army_slots(1 if guard_is_character else 2)
 	var team: TerrainArmy = payload_owner.army
+	if crowd:
+		# Crowd port: slot 0 already holds the player's own start team (back in GD after the release), so the target team takes a free slot,
+		# as region_siege_center_original's attackers do (_deploy_center_attackers).
+		team = null
+		for slot_index: int in range(payload_owner.combat_armies.size() + 1):
+			payload_owner._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = payload_owner.combat_armies[slot_index]
+			if not candidate.combat_enabled and candidate.combat_units.is_empty():
+				team = candidate
+				break
+		if not _check(team != null, "a free original Army slot holds the target team"): return false
+		team.team_id = payload_owner._next_army_identity()
 	team.faction_id = 2
 	team.roster_size = 1
-	var positions: Array[Vector2i] = [Vector2i(34, 38)]
+	# Crowd: an awake crowd captive is held at its guard's side, so both stand a few cells off the prison approach; held at
+	# (35, 37) it kept its conservative margin over the contact cell (35, 36) and the escort found no free custody slot.
+	var positions: Array[Vector2i] = [Vector2i(34, 41) if crowd else Vector2i(34, 38)]
 	if not _check(team.deploy_at(data, null, null, positions) and team.enable_combat(false), "original Army births one actual target with original allocator"): return false
 	payload_owner.site_controller.initialize_team_items(team)
 	if not guard_is_character:
 		var guard_team: TerrainArmy = payload_owner.combat_armies[1]
+		if crowd:
+			guard_team = null
+			for slot_index: int in range(payload_owner.combat_armies.size() + 1):
+				payload_owner._ensure_army_slots(slot_index + 1)
+				var candidate: TerrainArmy = payload_owner.combat_armies[slot_index]
+				if not candidate.combat_enabled and candidate.combat_units.is_empty():
+					guard_team = candidate
+					break
+			if not _check(guard_team != null, "a free original Army slot holds the guard team"): return false
+			guard_team.team_id = payload_owner._next_army_identity()
 		guard_team.faction_id = 1
 		guard_team.roster_size = 1
-		var guard_positions: Array[Vector2i] = [Vector2i(35, 38)]
+		var guard_positions: Array[Vector2i] = [Vector2i(35, 41) if crowd else Vector2i(35, 38)]
 		if not _check(guard_team.deploy_at(data, null, null, guard_positions) and guard_team.enable_combat(false), "original managing-faction Army births one present guard"): return false
 		payload_owner.site_controller.initialize_team_items(guard_team)
 		payload_guard = guard_team.combat_identity(0)
 	data.site.army_next_team = payload_owner._next_army_identity()
 	payload_captive = team.combat_identity(0)
+	if cold_convert:
+		# The same three steps a cold owner's bind takes for an arrival mark (TerrainLab bind: attach a CrowdSite, convert the
+		# GD rosters, write the converted crowd section). A bound owner's receipt keeps the backend it was bound with, so the
+		# owner is then made again from its published file (as after an eviction) and binds natively.
+		var attached: Node = load("res://scripts/terrain_lab/crowd_site.gd").new()
+		attached.name = "CrowdSite"
+		payload_owner.add_child(attached)
+		attached.setup(payload_owner)
+		payload_owner.crowd_site = attached
+		var converted: Dictionary = attached.convert_existing()
+		if converted.get("ok", false): converted = payload_owner._region_write_converted_crowd_section()
+		if not _check(converted.get("ok", false) and attached.active, "the cold Site's arrived rosters convert to its native crowd", converted): return false
+		var parked := controller.checkpoint_region_internal("region_checkpoint", true)
+		if not _check(parked.ok, "the cold Site's converted crowd publishes", parked): return false
+		var site_id := str(data.site.id)
+		var parked_owner: TerrainLab = payload_owner
+		slot._region_original_labs.erase(site_id)
+		parked_owner.get_parent().remove_child(parked_owner)
+		parked_owner.queue_free()
+		var remade := lab._region_gameplay_owner_lab(site_id, "cold_exact")
+		if not _check(remade.get("ok", false) and remade.get("lab") is TerrainLab and remade.lab.crowd_site != null and remade.lab.crowd_site.active
+			and str(remade.activation.get("backend", "")) == "native",
+			"the cold owner made again from its file binds its native crowd", {"code": remade.get("code"), "message": remade.get("message"), "cause": remade.get("cause"), "activation": remade.get("activation")}): return false
+		payload_owner = remade.lab
+		_freeze(payload_owner)
+	# Crowd port: the born teams join the native crowd (identities are stable across the conversion).
+	if not cold_convert and not _crowd_admit(payload_owner): return false
+	if crowd:
+		# The scenario's two NPC rows stand where they are born (the grid fixture's rows had no autonomous movement): their teams
+		# hold with AI off, so only the custody and escort actions move them (found 2026-11-09: an AI guard wandered onto the
+		# prison approach and the escort found no free custody slot).
+		for identity: int in [payload_guard, payload_captive]:
+			var holder: Dictionary = payload_owner.site_controller.person_actions._person(identity, false)
+			if holder.is_empty() or not holder.owner is CrowdPersonOwner: continue
+			var team_id := int(holder.owner.team_id)
+			var held: Dictionary = payload_owner.crowd_site.issue_order(team_id, TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "test")
+			var ai_off: Dictionary = payload_owner.crowd_site.set_team_ai(team_id, false)
+			if not _check(held.get("ok", false) and ai_off.get("ok", false), "a scenario NPC row holds with its AI off", {"hold": held, "ai": ai_off}): return false
 	return _check(payload_captive != payload_guard and payload_captive > 0 and not payload_owner.site_controller.person_actions._person(payload_captive, false).is_empty() and not payload_owner.site_controller.person_actions._person(payload_guard, false).is_empty(), "distinct original guard and captive identities resolve")
 
 func _payload_step() -> bool:
@@ -219,10 +312,27 @@ func _payload_step() -> bool:
 func _payload_until(predicate: Callable, label: String) -> bool:
 	for count: int in range(100000):
 		if predicate.call(): return _check(true, label)
-		if Time.get_ticks_msec() > deadline: return _check(false, label + " exceeded deadline")
+		if Time.get_ticks_msec() > deadline: return _check(false, label + " exceeded deadline", _payload_wait_state())
 		if not _payload_step(): return false
 		if count % 60 == 0: await process_frame
 	return _check(false, label + " exceeded the finite original interval bound")
+
+## Failure detail only: where the two bodies stand and what the escort holds.
+func _payload_wait_state() -> Dictionary:
+	var actions: SitePersonActions = payload_owner.site_controller.person_actions
+	var guard: Dictionary = actions._person(payload_guard, false)
+	var captive: Dictionary = actions._person(payload_captive, false)
+	var native := {}
+	if payload_owner.crowd_site != null and payload_owner.crowd_site.active and not captive.is_empty() and payload_owner.crowd_site.crowd.has_method("escort_state"):
+		var site: Variant = payload_owner.crowd_site
+		var pick := func(s: Dictionary) -> Dictionary: return {"px": s.get("px"), "py": s.get("py"), "vx": s.get("vx"), "vy": s.get("vy"), "state": s.get("state"), "captive": s.get("captive"), "captor": s.get("captor_person"), "ko": s.get("ko"), "act_t": s.get("act_t")}
+		native = {"captive_escort": str(site.crowd.escort_state(int(captive.unit))), "guard_escort": str(site.crowd.escort_state(int(guard.unit))) if not guard.is_empty() else "",
+			"captive_native": pick.call(site.soldier_state(int(site.crowd.soldier_index(payload_captive)))), "guard_native": pick.call(site.soldier_state(int(site.crowd.soldier_index(payload_guard)))),
+			"guard_formation": site.formation_state(int(guard.owner.formation_index)) if not guard.is_empty() and guard.owner is CrowdPersonOwner else {}}
+	return {"guard_cell": str(guard.get("cell")), "guard_moving": guard.get("moving"), "captive_cell": str(captive.get("cell")), "captive_ko": captive.get("ko"),
+		"escort_orders": payload_owner.terrain.site.get("escort_orders", {}), "relation": payload_owner.terrain.site.captivity.get(str(payload_captive), {}).get("prison_id", "?"),
+		"prison_entrance": str(payload_owner.terrain.cell_from_index(int(payload_owner.terrain.site.features.get(payload_prison, {}).get("entrance", 0)))),
+		"native": native, "last_event_error": payload_owner.crowd_site.last_event_error if payload_owner.crowd_site != null else {}}
 
 func _payload_job_partial(kind: String) -> bool:
 	var job: Dictionary = payload_owner.site_controller.person_actions.job_for(payload_guard)
@@ -314,6 +424,12 @@ func _persisted_form(value: Variant) -> Variant:
 	return JSON.parse_string(encoded)
 
 func _payload_reopen(label: String, mode: String) -> bool:
+	if _crowd_on(payload_owner) and payload_owner.crowd_site.active:
+		# Crowd: hot body state lives natively and reaches the Site rows at a capture; publish it once, so the checkpoint
+		# below compares settled rows and still proves it adds no custody work, episode or interval.
+		var published := controller.checkpoint_region_internal("region_checkpoint", true)
+		if not _check(published.ok, "the crowd's native body state publishes before the reopen: " + label, {"result": published, "wait": _payload_wait_state(),
+			"guard_index": int(payload_owner.crowd_site.crowd.soldier_index(payload_guard)), "captive_index": int(payload_owner.crowd_site.crowd.soldier_index(payload_captive))}): return false
 	var facts := _payload_facts()
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var checkpoint := controller.checkpoint_region_internal("region_checkpoint", true)
@@ -376,8 +492,31 @@ func _payload_fail_preflight() -> bool:
 	var control := slot.control.duplicate(true)
 	var marker := slot._marker.duplicate(true)
 	var refused: Dictionary = payload_owner.site_controller.person_actions.begin_capture(payload_guard, payload_captive, payload_guard)
-	return _check(not refused.ok and facts == _payload_facts() and control == slot.control and marker == slot._marker,
+	# Crowd port: on a crowd Site the refusal is the crowd's own CROWD_ACTIVE (explicit custody is not a crowd action), which comes
+	# before the awake/captive preflight, so the crowd form asserts that code together with the unchanged state.
+	var crowd_refusal := not _crowd_on(payload_owner) or str(refused.get("code", "")) == "CROWD_ACTIVE"
+	return _check(not refused.ok and crowd_refusal and facts == _payload_facts() and control == slot.control and marker == slot._marker,
 		"original awake/already-captive preflight refusal creates no episode, work, clock or publication", refused)
+
+## Crowd port (Nekki 2026-11-08 B): a crowd Site has no explicit custody action, so the captive is committed by the battlefield
+## CAPTURED event (the fixture of region_siege_center_original). It replaces the partial begin_capture job, its partial reopen and
+## the same-job commit. Kept: one relation, the episode counter advanced exactly once, and a reopen right after the capture keeps it.
+func _payload_battlefield_capture(next_episode: int, mode: String) -> bool:
+	var site: Variant = payload_owner.crowd_site
+	var defender_index := int(site.crowd.soldier_index(payload_captive))
+	var captured_fields: bool = defender_index >= 0 and site.set_soldier_fields(defender_index, {"captive": 1.0, "captor_person": payload_guard, "ko": 14400.0})
+	if not _check(captured_fields, "the knocked captive takes the native captured state under the guard", payload_captive): return false
+	site.pending_captivity.append({"kind": 4, "person": payload_captive, "other": payload_guard, "ammo_synced": false})
+	site.settle_events()
+	var state: Dictionary = payload_owner.terrain.site
+	var relations: Dictionary = state.get("captivity", {})
+	if not _check(site.pending_captivity.is_empty() and relations.size() == 1 and relations.has(str(payload_captive))
+		and int(state.get("capture_episode_next", 1)) == next_episode + 1, "the battlefield CAPTURED event commits one relation and advances the episode counter exactly once", {"pending": site.pending_captivity.size(), "episode_next": int(state.get("capture_episode_next", 1)), "expected": next_episode + 1, "keys": relations.keys(), "events": site.get("last_event_error")}): return false
+	# The crowd keeps hot body state natively and publishes it into the Site rows at its next capture (a checkpoint), so
+	# the captured state is published once before the reopen compares facts across a checkpoint.
+	var published := controller.checkpoint_region_internal("region_checkpoint", true)
+	if not _check(published.ok, "the battlefield capture's native body state publishes at one checkpoint", published): return false
+	return _payload_reopen("capture_battlefield", mode)
 
 func _payload_reject_social() -> bool:
 	var captured := _payload_capture()

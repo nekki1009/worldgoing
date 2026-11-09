@@ -9908,7 +9908,10 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 				and absf(original.fire_action_cursor - float(slot.control.fire_clock.action_seconds)) <= 0.00000001:
 			mode["game_seconds"] = float(slot.control.logical_game_seconds)
 			mode["action_seconds"] = float(slot.control.fire_clock.action_seconds)
-	if str(mode.get("mode", "")) != requested_mode or int(mode.get("generation", -1)) != receipt.generation or not mode.get("activation", {}).get("complete", false):
+	# A cold owner made again with another backend (its GD rosters became a crowd) re-activates its mode too: a mode that still
+	# names the old backend is refused by every later check (found 2026-11-09: REGION_BACKEND_UNADMITTED after the remake).
+	if str(mode.get("mode", "")) != requested_mode or int(mode.get("generation", -1)) != receipt.generation or not mode.get("activation", {}).get("complete", false) \
+			or str(mode.get("backend", "")) != str(receipt.backend):
 		var activated := slot.activate_region_mode(site_id, requested_mode, str(receipt.consumer), receipt, str(receipt.backend))
 		if not activated.ok: return activated
 	return {"ok": true, "lab": original, "activation": receipt}

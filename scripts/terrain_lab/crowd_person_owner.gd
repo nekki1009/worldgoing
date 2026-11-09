@@ -227,7 +227,9 @@ func person(index: int, require_items: bool = true) -> Dictionary:
 	var cell := Vector2i(floori(ground.x), floori(ground.y))
 	var movement := native_siege_state(index)
 	var committed := movement.size() == 8 and (int(movement[2]) >= 0 or int(movement[3]) > 0)
-	var moving := committed or values[0] > 0.0 and values[3] <= 0.0 and values[4] <= 0.0 and Vector2(values[22], values[23]).length_squared() > 0.000001
+	# A standing body's separation creep (a guard beside its held captive drifts at ~0.004 cells/s) is not movement: the
+	# threshold is 0.01 cells/s, far below any walk (found 2026-11-09: such a guard never read stopped and could not escort).
+	var moving := committed or values[0] > 0.0 and values[3] <= 0.0 and values[4] <= 0.0 and Vector2(values[22], values[23]).length_squared() > 0.0001
 	if committed and int(movement[4]) >= 0: cell = crowd_site.lab.terrain.cell_from_index(int(movement[4]))
 	if crowd_site.crowd.has_method("controlled_step_state"):
 		var commitment: PackedInt64Array = crowd_site.crowd.controlled_step_state(index)
