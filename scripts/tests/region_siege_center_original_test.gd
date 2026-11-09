@@ -858,7 +858,9 @@ func _restore_selected(data: TerrainData, reopened: RegionSaveSlot, cold_mode: b
 	_freeze(scene)
 	var actual := scene.region_bind_receipt(prepared.data)
 	if not _check(actual.ok and actual.complete and actual.owners_restored and actual.effects_complete
-		and str(actual.backend) == ("gd" if OS.get_cmdline_user_args().has("--grid") else "native"), "positive selected bind completes all actual original owners", actual): return null
+		and str(actual.backend) == ("gd" if OS.get_cmdline_user_args().has("--grid") else "native"), "positive selected bind completes all actual original owners",
+		{"receipt": actual, "refused": scene.get_meta(&"last_refused_result", {}), "crowd_error": scene.crowd_site.last_event_error if scene.crowd_site != null else null,
+		"staged_candidates": scene._staged_crowd_candidates.size()}): return null
 	return scene
 
 func _finish(ok: bool = true, message: String = "") -> void:

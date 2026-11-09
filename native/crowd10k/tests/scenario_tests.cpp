@@ -2269,7 +2269,7 @@ static void test_order_serial() {
 		check_valid(s.w);
 		// KW19 save / load
 		const std::vector<uint8_t> blob = s.w.save();
-		CHECK(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '2' && blob[3] == '0', "the save magic is KW20");
+		CHECK(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '2' && blob[3] == '1', "the save magic is KW21");
 		World back(1);
 		CHECK(back.load(blob) && back.state_hash() == s.w.state_hash(), "a KW19 blob loads with the same hash");
 		CHECK(back.formations[a].order_serial == 17 && back.formations[a].ranged_order_serial == 5 && back.formations[b].order_serial == 2, "the counters survive save / load");
@@ -2281,7 +2281,7 @@ static void test_order_serial() {
 		// KW18 / KW17 layouts: no counters; they load with 1 / 0
 		const std::vector<uint8_t> old18 = s.w.save_kw18(), old17 = s.w.save_kw17();
 		CHECK(old18.size() > 4 && old18[3] == '8' && old17.size() > 4 && old17[3] == '7', "the test hooks write the KW18 and KW17 layouts");
-		CHECK(old18.size() + 24 * s.w.formations.size() == blob.size(), "KW19 adds two 8-byte counters and KW20 an empty 8-byte shape count per formation");
+		CHECK(old18.size() + 24 * s.w.formations.size() + 32 + 5 * (size_t)s.w.soldier_count() == blob.size(), "KW19 adds two 8-byte counters and KW20 an empty 8-byte shape count per formation; KW21 adds the siege section (crew flags, step sources, serial, empty compound count)");
 		World b18(1), b17(1);
 		CHECK(b18.load(old18) && b17.load(old17), "KW18 and KW17 blobs load");
 		check_valid(b18); check_valid(b17);
@@ -2289,7 +2289,7 @@ static void test_order_serial() {
 		CHECK(b17.formations[a].order_serial == 1 && b17.formations[a].ranged_order_serial == 0, "a KW17 blob loads the counters at their defaults (1, 0)");
 		World ref(1);
 		CHECK(ref.load(blob) && ref.set_order_serials(a, 1, 0) && ref.set_order_serials(b, 1, 0) && ref.state_hash() == b18.state_hash(), "a KW18 blob is the same state as the KW19 one with default counters");
-		CHECK(b18.save().size() == blob.size() && b18.save()[2] == '2' && b18.save()[3] == '0', "a loaded KW18 world saves as KW20");
+		CHECK(b18.save().size() == blob.size() && b18.save()[2] == '2' && b18.save()[3] == '1', "a loaded KW18 world saves as KW21");
 		CHECK(b18.host_order(a, 0, 0.f, 0.f, 0) == OK && b18.formations[a].order_serial == 2, "a loaded KW18 formation counts from 1");
 	}
 	{   // AI orders count

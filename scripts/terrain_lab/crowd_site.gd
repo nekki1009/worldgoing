@@ -344,7 +344,10 @@ func has_pending_capture(identity: int) -> bool:
 	return false
 
 
-func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
+## admit_active_siege (KW21, Nekki 2026-11-09 A): a region checkpoint or a reopen admits siege work in progress. The native
+## blob carries the compounds and crew steps and the region owner graph carries the projectiles, as the grid Site's region
+## checkpoints did, so the live Site's siege guard (BUSY on any action, translation or walking crew) is skipped there.
+func siege_admission_guard(candidate: TerrainData = null, admit_active_siege: bool = false) -> Dictionary:
 	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_soldier_surrendered"):
 		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少投降狀態介面")
 	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_soldier_mounted"):
@@ -367,8 +370,9 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 				if not ClassDB.class_has_method(&"ArmyCrowd", method): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少住宅返家／出席介面；原住房與人物須保留一般模式")
 		# Released Siege events retain their specific original authority before
 		# Fire's generic non-Fire projectile refusal; neither path admits them.
-		var events: Dictionary = SiteStore.siege_event_guard(data)
-		if not events.ok: return events
+		if not admit_active_siege:
+			var events: Dictionary = SiteStore.siege_event_guard(data)
+			if not events.ok: return events
 		# A prepared Native replacement becomes lab.terrain before its original owners reactivate.
 		if not (data == live and _host_fire_active):
 			var fire := SiteStore.fire_event_guard(data)
@@ -407,10 +411,10 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 					return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少中式軍營恢復介面；原駐營者須保留一般模式")
 	return SiteRuntime.ok()
 
-func save_guard() -> Dictionary:
-	var siege_guard := siege_admission_guard()
+func save_guard(region_checkpoint: bool = false) -> Dictionary:
+	var siege_guard := siege_admission_guard(null, region_checkpoint)
 	if not siege_guard.ok: return siege_guard
-	if active and siege_native_supported() and bool(crowd.siege_busy()): return SiteRuntime.fail("BUSY", "攻城原人物承諾步／車體提交尚未收束")
+	# KW21: siege compounds and crew steps in progress are part of the native save (siege_busy no longer refuses a save).
 	if not pending_captivity.is_empty():
 		return SiteRuntime.fail("BUSY", "俘虜交接尚未完成")
 	if has_projectiles():
@@ -3536,8 +3540,10 @@ static func _apply_release_receipt(roster: Dictionary, identity: int, receipt: D
 		return
 
 
-func capture_save() -> Dictionary:
-	var guard := save_guard()
+## region_checkpoint: a region checkpoint / bind / replay capture (admits siege work in progress, KW21); an ordinary save keeps
+## the Store's own siege guard, as the grid Site's ordinary save does.
+func capture_save(region_checkpoint: bool = false) -> Dictionary:
+	var guard := save_guard(region_checkpoint)
 	if not guard.ok: return guard
 	if not sync_terrain(): return SiteRuntime.fail("INVALID_TERRAIN", "群眾地形未同步")
 	var siege_inputs := sync_siege_inputs()
@@ -3545,6 +3551,8 @@ func capture_save() -> Dictionary:
 	var synced := sync_to_site()
 	if not synced.ok: return synced
 	var bytes: PackedByteArray = crowd.save_state()
+	# KW21: the native World refuses a save only during an unfinished work point or a pending housing step (G10); it retries.
+	if bytes.is_empty(): return SiteRuntime.fail("BUSY", "原生身體步進尚未收束（住宅返家步或工作點）；下一步重試")
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(bytes)
@@ -3638,7 +3646,8 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 
 
 func activate_loaded() -> void:
-	var siege_guard := siege_admission_guard(_staged_data)
+	# KW21: the staged blob was validated with its compounds (SiteStore._validate_crowd_siege_crew); a reopen mid siege action is admitted.
+	var siege_guard := siege_admission_guard(_staged_data, true)
 	if not siege_guard.ok:
 		last_event_error = siege_guard
 		return

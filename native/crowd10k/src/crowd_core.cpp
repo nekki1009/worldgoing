@@ -372,7 +372,9 @@ bool World::cancel_siege_compound(int64_t token) {
 bool World::settle_siege_compound(int64_t token) {
 	for (size_t at=0;at<siege_compounds.size();++at) if (siege_compounds[at].token==token) {
 		if (!siege_compounds[at].complete) return false;
-		for (const auto &m:siege_compounds[at].members) { siege_member_group[m.soldier]=-1; escort_goal[m.soldier]=-1; escort_mode[m.soldier]=0; }
+		// The compound's movement ends here: a settled member stands at its target with no residual velocity (the last
+		// interpolation step left (nx-px)/dt in vx/vy, which read as "moving" until the next step; found 2026-11-09 KW21).
+		for (const auto &m:siege_compounds[at].members) { siege_member_group[m.soldier]=-1; escort_goal[m.soldier]=-1; escort_mode[m.soldier]=0; vx[m.soldier]=vy[m.soldier]=0; }
 		siege_compounds.erase(siege_compounds.begin()+at);
 		for (auto &index:siege_member_group) if (index>(int)at) --index;
 		return true;
@@ -3970,6 +3972,7 @@ uint64_t World::state_hash(std::vector<int64_t> *marks) const {
 	mark();
 	for(const auto &cells:siege_wreck_exit)mv(cells); mark(); // Derived person-purpose inputs are rebuilt by Site after load.
 	for (const auto &g:siege_compounds) {
+		// source_body is saved (KW21) but not hashed: it is a set, and its iteration order is no contract (true_tail_four_directions).
 		m(g.token); m(g.elapsed); m(g.duration); m(g.cancelled); m(g.complete); m(g.aborted); mv(g.claims); mv(g.heights);
 		for (const auto &member:g.members) { m(member.soldier); m(member.person); m(member.from); m(member.to); }
 	}

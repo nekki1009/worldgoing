@@ -2056,7 +2056,7 @@ static func _validate_crowd_siege_crew(state: Dictionary, native: Object, restor
 	# is the only persistent assignment authority; native flags are derived.
 	for method: String in ["person_ids", "siege_person_state", "siege_busy", "set_siege_crew_members", "validate", "save_state"]:
 		if not native.has_method(method): return Runtime.fail("CROWD_BUILD_MISMATCH", "群眾原生模組缺少原攻城操作班保存介面")
-	if bool(native.call("siege_busy")): return Runtime.fail("INVALID_CROWD", "原攻城人物承諾步／複合提交尚未收束")
+	# KW21 (Nekki 2026-11-09 A): siege work in progress is saved; siege_busy no longer refuses a blob.
 	var ids: PackedInt64Array = native.call("person_ids")
 	var indices := {}
 	for index in range(ids.size()): indices[int(ids[index])] = index
@@ -2076,16 +2076,45 @@ static func _validate_crowd_siege_crew(state: Dictionary, native: Object, restor
 			return Runtime.fail("INVALID_CROWD", "原攻城操作班無法由已驗證 Site 引用還原")
 		if not bool(native.call("validate")) or native.call("save_state") != original_bytes:
 			return Runtime.fail("INVALID_CROWD", "原攻城操作班還原改變原生保存內容或不變量")
-	var steady_crew := PackedInt64Array([1, 0, -1, 0, -1, -1, 0, 0])
+	# KW21: every native compound token is the token of exactly one siege vehicle's translation (move) or rotation (action),
+	# and that compound's members are exactly that vehicle's transaction participants. A crew member is otherwise steady at
+	# its station, held there (G10), or on one single step from its own source cell.
+	var expected_tokens := {}
+	for vehicle: Dictionary in state.get("vehicles", {}).values():
+		if not Runtime.SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))): continue
+		var rotating: bool = str(vehicle.get("action", {}).get("stage", "")) == "rotate"
+		var job: Dictionary = vehicle.get("action", {}) if rotating else vehicle.get("move", {})
+		if not job.has("native_token"): continue
+		var token := int(job.native_token)
+		if token <= 0 or expected_tokens.has(token): return Runtime.fail("INVALID_CROWD", "原攻城複合步令牌非法或重複")
+		var participants := {}
+		for entry: Variant in job.get("participants", []): # move: {person_id, from, to} rows; rotation: person ids
+			var person_id: int = int(entry.get("person_id", 0)) if entry is Dictionary else int(entry)
+			participants[person_id] = true
+		expected_tokens[token] = {"participants": participants, "members": 0}
 	for index in range(ids.size()):
 		var marks: PackedInt64Array = native.call("siege_person_state", index)
-		var assigned: bool = expected.has(int(ids[index]))
+		var identity := int(ids[index])
+		var assigned: bool = expected.has(identity)
 		if marks.size() != 8 or int(marks[0]) != int(assigned):
 			return Runtime.fail("INVALID_CROWD", "原生操作班旗標與原 Site 操作人集合不符")
+		var token := int(marks[3])
+		if token > 0:
+			if not assigned or not expected_tokens.has(token) or not expected_tokens[token].participants.has(identity):
+				return Runtime.fail("INVALID_CROWD", "原生攻城複合步成員不在原車輛交易的參與者中")
+			expected_tokens[token].members = int(expected_tokens[token].members) + 1
+			continue
 		# Do not impose mode 0 on unrelated custody/housing/work participants.
 		# Their original World serialization/load and Site owners retain the gate.
-		if assigned and marks != steady_crew:
-			return Runtime.fail("INVALID_CROWD", "原生攻城操作人仍在途／複合提交或兼任其他原作業")
+		if not assigned: continue
+		var mode := int(marks[1])
+		var goal := int(marks[2])
+		if mode == 0 and goal == -1: continue # steady at its station
+		if mode in [5, 6] and (goal == -1 or int(marks[4]) >= 0): continue # held at its station (G10) or one siege step from its own source cell
+		return Runtime.fail("INVALID_CROWD", "原生攻城操作人兼任其他原作業")
+	for token: int in expected_tokens:
+		if int(expected_tokens[token].members) != expected_tokens[token].participants.size():
+			return Runtime.fail("INVALID_CROWD", "原攻城複合步的原生成員與交易參與者不符")
 	return Runtime.ok()
 
 static func _restore_crowd_navigation(data: TerrainData, native: Object) -> Dictionary:
@@ -4419,10 +4448,15 @@ static func _region_siege_command(data: TerrainData, state: Dictionary, command:
 static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicle: Dictionary, people: Dictionary, context: Dictionary = {}) -> bool:
 	if str(vehicle.phase) not in ["building", "idle", "ready", "disabled", "wrecked", "deployed", "turning", "moving", "preparing", "collision", "recovering", "deploying", "loading", "aiming"]: return false
 	var action: Dictionary = vehicle.action
+	# KW21 (Nekki 2026-11-09 A): on a crowd Site the native World drives a translation and a rotation; their records carry
+	# the compound's token, which _validate_crowd_siege_crew matches against the saved World. Without a crowd no token exists.
+	var crowd_state: bool = state.has("crowd")
 	if str(vehicle.kind) in ["ballista", "traction_trebuchet", "counterweight_trebuchet"] and str(vehicle.phase) == "recovering" and action.get("stage") != "recovering": return false
 	if str(vehicle.phase) in ["loading", "aiming"] and str(action.get("stage", "")) != str(vehicle.phase): return false
 	if not action.is_empty():
-		if str(action.get("stage", "")) not in ["approach", "rotate", "return", "preparing", "collision", "recovering", "tower_deploy", "tower_retract", "loading", "aiming"] or not _number(action.get("elapsed"), 0.0, 1000000.0) or action.has("native_token"): return false
+		if str(action.get("stage", "")) not in ["approach", "rotate", "return", "preparing", "collision", "recovering", "tower_deploy", "tower_retract", "loading", "aiming"] or not _number(action.get("elapsed"), 0.0, 1000000.0): return false
+		if action.has("native_token") and (not crowd_state or str(action.stage) != "rotate" or not _integer(action.native_token, 1, 9007199254740991)): return false
+		if crowd_state and str(action.stage) == "rotate" and not action.has("native_token"): return false
 		var ranged: bool = str(vehicle.kind) in ["ballista", "traction_trebuchet", "counterweight_trebuchet"]
 		if str(action.stage) in ["loading", "aiming"] or ranged and str(action.stage) == "recovering":
 			if not _region_ranged_siege_action(data, state, vehicle, people, context): return false
@@ -4443,7 +4477,8 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 		if str(action.stage) in ["tower_deploy", "tower_retract"] and (str(vehicle.kind) != "siege_tower" or action.get("settled_phase") not in ["idle", "ready", "deployed", "disabled"]): return false
 	var move: Dictionary = vehicle.move
 	if move.is_empty(): return true
-	if move.get("mode") != "translate" or move.get("vehicle_id") != vehicle.id or move.get("command") != vehicle.command or move.has("native_token") or not _valid_cell(data, move.get("from")) or int(move.from) != int(vehicle.cell) or not _valid_cell(data, move.get("cell")) or not _vehicle_facing(move.get("facing")) or not _number(move.get("duration"), 0.000001, 1000000.0) or not move.get("compound_id") is String or str(move.compound_id).is_empty() or not move.get("participants") is Array or move.participants.size() != vehicle.crew_slots.size() or not move.get("sweep") is Array or not move.get("source_heights") is Dictionary: return false
+	if move.has("native_token") != crowd_state or crowd_state and not _integer(move.native_token, 1, 9007199254740991): return false
+	if move.get("mode") != "translate" or move.get("vehicle_id") != vehicle.id or move.get("command") != vehicle.command or not _valid_cell(data, move.get("from")) or int(move.from) != int(vehicle.cell) or not _valid_cell(data, move.get("cell")) or not _vehicle_facing(move.get("facing")) or not _number(move.get("duration"), 0.000001, 1000000.0) or not move.get("compound_id") is String or str(move.compound_id).is_empty() or not move.get("participants") is Array or move.participants.size() != vehicle.crew_slots.size() or not move.get("sweep") is Array or not move.get("source_heights") is Dictionary: return false
 	var seen := {}
 	var shift := data.cell_from_index(int(move.cell)) - data.cell_from_index(int(move.from))
 	if absi(shift.x) + absi(shift.y) != 1: return false
@@ -4454,7 +4489,12 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 		if person.is_empty(): return false
 		var body: Dictionary = person.body
 		var destination := data.cell_from_index(int(member.to))
-		if destination - data.cell_from_index(int(member.from)) != shift or Vector2i(int(body.cell[0]), int(body.cell[1])) != data.cell_from_index(int(member.from)) or not _cell_pair_is(body.get("destination"), destination): return false
+		if destination - data.cell_from_index(int(member.from)) != shift: return false
+		if crowd_state:
+			# A native compound member moves from `from` to `to` on the native clock; its record cell is the one it is in now.
+			var at := Vector2i(int(body.cell[0]), int(body.cell[1]))
+			if at != data.cell_from_index(int(member.from)) and at != destination: return false
+		elif Vector2i(int(body.cell[0]), int(body.cell[1])) != data.cell_from_index(int(member.from)) or not _cell_pair_is(body.get("destination"), destination): return false
 	for cell: Variant in move.sweep:
 		if not _valid_cell(data, cell): return false
 	for key: Variant in move.source_heights:

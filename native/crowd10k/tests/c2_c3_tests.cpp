@@ -323,7 +323,7 @@ static void safe_load() {
   if(siege)job.cancel_siege_step(0);else job.cancel_housing_step(0);
   REQUIRE(siege?job.order_siege_step(0,next):job.order_housing_step(0,next));job.apply_contact(0,0,rules::STUN_LIMIT);
   REQUIRE(job.ko[0]>0 && job.escort_goal[0]==next && job.escort_mode[0]==(siege?6:4));
-  REQUIRE(job.validate(&why));REQUIRE(!job.validate(&why,false));REQUIRE(job.save().empty());
+  REQUIRE(job.validate(&why));REQUIRE(!job.validate(&why,false));REQUIRE(siege?!job.save().empty():job.save().empty()); // KW21: a siege step in progress saves; a housing step does not (G10)
  }
 
  auto corrupt_bool=[&](const std::function<void(World&)>&toggle) { World z(1);REQUIRE(z.load(bytes));toggle(z);auto other=z.save();size_t changed=bytes.size();for(size_t k=0;k<bytes.size();++k)if(bytes[k]!=other[k]){changed=k;break;}REQUIRE(changed<bytes.size());other=bytes;other[changed]=2;bad(other); };

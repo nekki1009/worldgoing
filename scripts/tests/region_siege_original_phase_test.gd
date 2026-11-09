@@ -76,20 +76,23 @@ func _run() -> void:
 		and (not action_owner.terrain.site.vehicles.has(str(action_context.key)) if phase_case == "flight_removed" else int(_action_vehicle().next_attack_seq) == action_initial_sequence + 1), "one retained original impact destroys only the prepaid vulnerable original wall part", _action_facts()): _finish(); return
 	if phase_topology == "thick":
 		if not _phase_no_path() or not _phase_observe_actual("siege"): _finish(); return
-		var rejected_move: Dictionary = _phase_infantry().issue_combat_order(_phase_infantry().current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(22, 26))
+		var rejected_move: Dictionary = _phase_order(TerrainArmy.CombatOrder.MOVE, Vector2i(22, 26))
 		if not _check(not rejected_move.ok, "destroying the outer part does not invent a route through the intact second wall", rejected_move): _finish(); return
 		if not _action_step(): _finish(); return
 		report["thick_wall"] = {"actual_outer_hp": _actual_target_hp(action_context.target), "inner_remains": true, "original_move_rejected": rejected_move, "positive_original_future": true}
 		_finish(); return
-	var infantry := _phase_infantry()
+	var infantry: Variant = _phase_infantry()
 	if not _check(infantry != null, "same actual incoming infantry resolves after selected bind"): _finish(); return
-	var assault: Dictionary = infantry.issue_combat_order(infantry.current_commander, TerrainArmy.CombatOrder.ATTACK)
-	if not _check(assault.ok, "true original infantry captain issues the original assault order", assault): _finish(); return
+	var assault: Dictionary = _phase_order(TerrainArmy.CombatOrder.ATTACK)
+	if not _check(assault.ok, "true original infantry captain issues the original assault order", {"order": assault,
+		"formation": action_owner.crowd_site.formation_state(int(infantry.formation_index)) if _crowd_on(action_owner) and action_owner.crowd_site.active else null,
+		"defender": action_owner.site_controller.person_actions._person(center_founder, false).get("cell"),
+		"infantry_cells": [action_owner.site_controller.person_actions._person(phase_arrival_people[0], false).get("cell"), action_owner.site_controller.person_actions._person(phase_arrival_people[1], false).get("cell")]}): _finish(); return
 	if not _phase_observe_actual("assault"): _finish(); return
 	phase_expected = "assault"
 	if not await _phase_reopen(): _finish(); return
 	infantry = _phase_infantry()
-	var advance: Dictionary = infantry.issue_combat_order(infantry.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(22, 26))
+	var advance: Dictionary = _phase_order(TerrainArmy.CombatOrder.MOVE, Vector2i(22, 26))
 	if not _check(advance.ok, "actual original formation admits movement through its real breached entry", advance): _finish(); return
 	if not await _action_until(func() -> bool: return int(SiteSettlement.capture_sample(action_owner).get("attacker", -1)) == 1, "original actual bodies enter the genuine center capture zone"): _finish(); return
 	if not _phase_observe_actual("capture"): _finish(); return
@@ -129,7 +132,8 @@ func _phase_found_defender() -> bool:
 	for resource: String in Env.ITEM_NAMES: data.site.inventory[resource] = 1000
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns explicit initial fixture stock"): return false
 	action_owner.character.faction_id = 2
-	if not _check(action_owner.character.place(Vector2i(20, 15), true), "actual original defender founder starts in founding jurisdiction"): return false
+	# Crowd port: the founder is the controlled crowd soldier (no actor body since 11/03); _place_controlled moves that row.
+	if not _check(_place_controlled(action_owner, Vector2i(20, 15), 2), "actual original defender founder starts in founding jurisdiction"): return false
 	var center_layout: Dictionary = SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i.ONE)
 	if not _check(center_layout.ok, "genuine center layout is legal", center_layout): return false
 	var center_cells: Array[int] = []; center_cells.assign(center_layout.cells)
@@ -140,7 +144,10 @@ func _phase_found_defender() -> bool:
 
 func _action_target() -> Dictionary:
 	var data := action_owner.terrain
-	if not _check(action_owner.character.place(Vector2i(80, 80), true), "original defender body is initially outside the assault and capture zone"): return {}
+	# Crowd port: on the cold defender Site the founder stays as a crowd row (not the controlled actor).
+	var crowd_founder: bool = _crowd_on(action_owner) and action_owner.crowd_site.active
+	var founder_out: bool = _place_controlled_person(action_owner, center_founder, Vector2i(80, 80)) if crowd_founder else action_owner.character.place(Vector2i(80, 80), true)
+	if not _check(founder_out, "original defender body is initially outside the assault and capture zone"): return {}
 	var target := {}
 	for y: int in range(16, 29):
 		for x: int in range(16, 29):
@@ -178,8 +185,23 @@ func _phase_initial_wall(cell: Vector2i) -> Dictionary:
 
 func _phase_dispatch_original_infantry() -> bool:
 	for key: String in lab.terrain.resource_base: Env.change(lab.terrain, key, {"cleared": true, "remaining": 0})
+	# Crowd port: the arrived main crowd returns to GD for the source team (no time has passed there since its world-open), and
+	# the team joins the native crowd again after it is born, as region_siege_center_original births its attackers.
+	var crowd_main: bool = _crowd_on(lab) and lab.crowd_site.active
+	if not _crowd_release(lab): return false
 	lab._ensure_army_slots(2)
 	var source: TerrainArmy = lab.combat_armies[1]
+	if crowd_main:
+		# The arrived successor's own team is back in GD, so the source team takes a free slot with a fresh identity.
+		source = null
+		for slot_index: int in range(lab.combat_armies.size() + 1):
+			lab._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = lab.combat_armies[slot_index]
+			if not candidate.combat_enabled and candidate.combat_units.is_empty():
+				source = candidate
+				break
+		if not _check(source != null, "a free original Army slot holds the source team"): return false
+		source.team_id = lab._next_army_identity()
 	source.faction_id = 1
 	source.roster_size = 2
 	var positions: Array[Vector2i] = [Vector2i(70, 70), Vector2i(71, 70)]
@@ -189,6 +211,7 @@ func _phase_dispatch_original_infantry() -> bool:
 	phase_source_team = source.team_id
 	for index: int in source.combat_units.size(): phase_source_people.append(source.combat_identity(index))
 	var captain := source.combat_identity(source.current_commander)
+	if not _crowd_admit(lab): return false
 	var nation_id := "phase_nation_%d" % OS.get_process_id()
 	# Same on-demand container as the original trial-nation and arrival owners.
 	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
@@ -218,30 +241,50 @@ func _phase_dispatch_original_infantry() -> bool:
 		var local := int(mapping.person[str(identity)])
 		phase_arrival_people.append(local)
 		if not _check(not action_owner.site_controller.person_actions._person(local, false).is_empty(), "actual arrived person occupies one true original Site body", {"source": phase_source_refs[str(identity)], "local": local}): return false
-	var infantry := _phase_infantry()
-	if not _check(infantry != null, "same original full bind preserves incoming NPC army"): return false
-	var moved: Dictionary = infantry.issue_combat_order(infantry.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(30, 31))
+	if not _check(_phase_infantry() != null, "same original full bind preserves incoming NPC army"): return false
+	var moved: Dictionary = _phase_order(TerrainArmy.CombatOrder.MOVE, Vector2i(30, 31))
 	if not _check(moved.ok, "true original captain approaches the outside of the still-closed fortification", moved): return false
-	if not await _action_until(func() -> bool: return _phase_infantry()._combat_move_plan == null and _phase_infantry().moving_member_count() == 0, "incoming actual formation completes its legal outside approach"): return false
-	var held: Dictionary = _phase_infantry().issue_combat_order(_phase_infantry().current_commander, TerrainArmy.CombatOrder.HOLD)
+	if not await _action_until(_phase_settled, "incoming actual formation completes its legal outside approach"): return false
+	var held: Dictionary = _phase_order(TerrainArmy.CombatOrder.HOLD)
 	return _check(held.ok, "actual incoming infantry holds outside the original center zone", held)
 
-func _phase_infantry() -> TerrainArmy:
+## The arrived infantry's live holder: its crowd owner on a crowd Site, else its GD army.
+func _phase_infantry() -> Variant:
+	if _crowd_on(action_owner) and action_owner.crowd_site.active: return _team_owner(action_owner, phase_infantry_team)
 	for team: TerrainArmy in action_owner.combat_armies:
 		if team.team_id == phase_infantry_team: return team
 	return null
+
+## The infantry captain's team order: the GD captain's own order, or the same order to the native formation (a crowd team
+## takes orders from its present commander; "test" is a manual source, as the GD captain's order is).
+func _phase_order(kind: int, goal: Vector2i = TerrainArmy.INVALID_CELL) -> Dictionary:
+	var infantry: Variant = _phase_infantry()
+	if infantry == null: return SiteRuntime.fail("NO_TARGET")
+	if infantry is TerrainArmy: return infantry.issue_combat_order(infantry.current_commander, kind, goal)
+	# A crowd ATTACK names its target person (as every crowd test does): the cold defender, the Site's only enemy of the infantry.
+	var target_id: int = center_founder if kind == TerrainArmy.CombatOrder.ATTACK else -1
+	return action_owner.crowd_site.issue_order(int(infantry.team_id), kind, goal, target_id, "test")
+
+func _phase_settled() -> bool:
+	var infantry: Variant = _phase_infantry()
+	if infantry == null: return false
+	if infantry is TerrainArmy: return infantry._combat_move_plan == null and infantry.moving_member_count() == 0
+	return infantry.moving_member_count() == 0
 
 func _phase_ready_engine() -> bool:
 	if not await _action_until(func() -> bool: return action_owner.site_controller.vehicles.crew_ready(_action_vehicle()), "true original crew reaches the prepaid engine stations"): return false
 	var vehicle: Dictionary = _action_vehicle()
 	var captain: Dictionary = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
-	if not _check(not captain.is_empty() and captain.owner is TerrainArmy and int(captain.unit) >= 0, "original rotation has its same actual Army captain"): return false
-	var team: TerrainArmy = captain.owner
-	if not _check(team.combat_identity(team.current_commander) == int(action_context.commander), "rotation clearance uses the same original legal captain"): return false
+	# Crowd port: the native turn compound makes an own-team commander standing in the sweep step out by itself (SIEGE-YIELD,
+	# site_siege_native_integration), so the GD clearing move below is GD only.
+	var crowd_engine: bool = _crowd_on(action_owner) and action_owner.crowd_site.active
+	if not _check(not captain.is_empty() and (captain.owner is CrowdPersonOwner if crowd_engine else captain.owner is TerrainArmy and int(captain.unit) >= 0), "original rotation has its same actual Army captain"): return false
+	var team: Variant = captain.owner
+	if not _check(int(team.combat_identity(team.current_commander)) == int(action_context.commander), "rotation clearance uses the same original legal captain"): return false
 	var sweep: Array[int] = SiteRuntime.siege_turn_sweep(action_owner.terrain, vehicle, Vector2i.UP)
 	var crew_before: PackedByteArray = var_to_bytes(vehicle.crew_slots)
 	# The authored captain stands in the real sweep; only paid original movement clears it.
-	if sweep.has(action_owner.terrain.index(captain.cell)):
+	if sweep.has(action_owner.terrain.index(captain.cell)) and not crowd_engine:
 		var facing: Vector2i = Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
 		var radius: int = int(SiteRuntime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_radius)
 		var goal: Vector2i = action_owner.terrain.cell_from_index(int(vehicle.cell)) - facing * (radius + 1) + Vector2i(-facing.y, facing.x) * radius
@@ -260,7 +303,7 @@ func _phase_ready_engine() -> bool:
 		var held: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
 		if not _check(held.ok and float(slot.control.fire_clock.action_seconds) > action_before, "captain holds outside the sweep after a genuinely paid original edge", held): return false
 	captain = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
-	if not _check(not captain.is_empty() and crew_before == var_to_bytes(_action_vehicle().crew_slots) and not sweep.has(action_owner.terrain.index(captain.cell)), "clearing preserves every original crew assignment and leaves the captain outside the sweep"): return false
+	if not _check(not captain.is_empty() and crew_before == var_to_bytes(_action_vehicle().crew_slots) and (crowd_engine or not sweep.has(action_owner.terrain.index(captain.cell))), "clearing preserves every original crew assignment and leaves the captain outside the sweep"): return false
 	var turned: Dictionary = action_owner.site_controller.vehicles.order_siege(str(action_context.key), "turn", {"facing": [0, -1]}, int(action_context.commander), true)
 	if not _check(turned.ok, "original captain turns the actual engine toward its real wall target", turned): return false
 	return await _action_until(func() -> bool: return _action_vehicle().action.is_empty() and _action_vehicle().facing == [0, -1] and action_owner.site_controller.vehicles.crew_ready(_action_vehicle()), "original paid rotation and actual crew return finish")
@@ -311,8 +354,12 @@ func _phase_fault_original_source() -> bool:
 	if phase_case == "flight_crew_invalid":
 		for identity: int in action_context.crew:
 			var person: Dictionary = action_owner.site_controller.person_actions._person(identity, false)
-			person.owner.apply_unit_contact(int(person.unit), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
-			if not _check(float(person.owner.combat_hot_get(int(person.unit), &"ko", 0.0)) > 0.0, "original contact incapacitates the actual released-shot crew without erasing its paid flight", identity): return false
+			# Crowd port: a crowd refuses an environmental packet; the same melee contact is delivered (as the base tests do).
+			var crowd_row: bool = person.owner is CrowdPersonOwner
+			var unit: int = int(person.owner.index_for_identity(identity)) if crowd_row else int(person.unit)
+			person.owner.apply_unit_contact(unit, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": not crowd_row})
+			var knocked: Dictionary = action_owner.site_controller.person_actions._person(identity, false)
+			if not _check(not knocked.is_empty() and float(knocked.ko) > 0.0, "original contact incapacitates the actual released-shot crew without erasing its paid flight", identity): return false
 	elif phase_case in ["flight_wreck", "flight_removed"]:
 		var wrecked: Dictionary = SiteRuntime.damage_siege_vehicle(action_owner.terrain, str(action_context.key), float(_action_vehicle().hp))
 		if not _check(wrecked.ok and float(_action_vehicle().hp) == 0.0 and not action_owner.siege_projectiles.is_empty(), "original structural damage wrecks the real source while the paid flight remains", wrecked): return false
@@ -346,11 +393,10 @@ func _phase_player_intervene() -> bool:
 		if not _check(stopped.ok, "true original stop retains the already paid shot and recovery", stopped): return false
 		if not await _action_until(func() -> bool: return action_owner.siege_projectiles.is_empty() and _action_vehicle().action.is_empty(), "actual original paid breach and recovery finish"): return false
 		if not _check(_actual_target_hp(action_context.target) == 0.0 and action_owner.siege_shots == 1, "real impact opens the original entry with one finite shot"): return false
-		var infantry := _phase_infantry()
-		var approached: Dictionary = infantry.issue_combat_order(infantry.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(22, 27))
+		var approached: Dictionary = _phase_order(TerrainArmy.CombatOrder.MOVE, Vector2i(22, 27))
 		if not _check(approached.ok, "true incoming formation approaches just outside the original capture zone", approached): return false
-		if not await _action_until(func() -> bool: return _phase_infantry()._combat_move_plan == null and _phase_infantry().moving_member_count() == 0, "actual formation completes its real near-zone approach"): return false
-		var held: Dictionary = _phase_infantry().issue_combat_order(_phase_infantry().current_commander, TerrainArmy.CombatOrder.HOLD)
+		if not await _action_until(_phase_settled, "actual formation completes its real near-zone approach"): return false
+		var held: Dictionary = _phase_order(TerrainArmy.CombatOrder.HOLD)
 		if not _check(held.ok and int(SiteSettlement.capture_sample(action_owner).attacker) < 0, "original noncontesting HOLD has not paid any future capture", held): return false
 	var actual_player := lab.controlled_person_id()
 	var source_player: Dictionary = lab._original_person_target(actual_player)
@@ -410,8 +456,7 @@ func _phase_player_intervene() -> bool:
 				var original_order: Dictionary
 				if phase_observe == "breach": original_order = action_owner.site_controller.vehicles.order_siege(str(action_context.key), "attack", action_context.target, int(action_context.commander), true)
 				else:
-					var infantry := _phase_infantry()
-					original_order = infantry.issue_combat_order(infantry.current_commander, TerrainArmy.CombatOrder.MOVE if phase_observe == "capture" else TerrainArmy.CombatOrder.ATTACK, Vector2i(22, 26) if phase_observe == "capture" else TerrainArmy.INVALID_CELL)
+					original_order = _phase_order(TerrainArmy.CombatOrder.MOVE if phase_observe == "capture" else TerrainArmy.CombatOrder.ATTACK, Vector2i(22, 26) if phase_observe == "capture" else TerrainArmy.INVALID_CELL)
 				if not _check(original_order.ok, "true existing original captain accepts the scenario's current command before the real incoming endpoint", original_order): return false
 				activated = true
 		var advanced: Dictionary = slot.advance_region_travel(1)

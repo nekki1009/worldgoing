@@ -151,14 +151,15 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3032574Bu; // "KW20": formation preset slot offsets (G7b shape); KW19: formation order serials (ORDSERIAL: order_serial, ranged_order_serial); KW18: formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3132574Bu; // "KW21": siege compounds and crew steps in progress (Nekki 2026-11-09 A: a crowd Site saves mid siege action, as the grid Site did); KW20: formation preset slot offsets (G7b shape); KW19: formation order serials (ORDSERIAL: order_serial, ranged_order_serial); KW18: formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic20 = 0x3032574Bu; // KW20 layout: no siege section (its save refused every compound and pending crew step, so none is missing)
 	const uint32_t magic19 = 0x3931574Bu; // KW19 layout: loads with no preset shapes
 	const uint32_t magic18 = 0x3831574Bu; // KW18 layout: loads with the KW19 order serials at their defaults (1, 0); written only by save_kw18 (tests)
 	const uint32_t magic17 = 0x3731574Bu; // KW17 layout: loads with the KW18 charge fields and KW19 serials at their defaults; written only by save_kw17 (tests)
 	uint32_t m = Ar::loading ? 0u : (kw17_write_ ? magic17 : kw18_write_ ? magic18 : magic);
 	ar.pod(m);
-	if (Ar::loading && m != magic && m != magic19 && m != magic18 && m != magic17) { ar.ok = false; return; }
-	const int layout = m == magic17 ? 17 : m == magic18 ? 18 : m == magic19 ? 19 : 20;
+	if (Ar::loading && m != magic && m != magic20 && m != magic19 && m != magic18 && m != magic17) { ar.ok = false; return; }
+	const int layout = m == magic17 ? 17 : m == magic18 ? 18 : m == magic19 ? 19 : m == magic20 ? 20 : 21;
 	const bool legacy_kw17 = layout == 17;
 	io_config(ar, cfg);
 	// terrain (static during a battle, stored so a save is self-contained)
@@ -228,14 +229,34 @@ template <class Ar> void World::serialize(Ar &ar) {
 	if (!count(ar, nconvoy, 48, 256)) return;
 	if (Ar::loading) convoys.resize((size_t)nconvoy);
 	for (auto &cv : convoys) io_convoy(ar, cv);
+	// KW21 (Nekki 2026-11-09 A): siege work in progress is state. The crew flags are derived from the Site's crew
+	// references, but a compound member must carry its flag when the blob is validated, so they are written as well; the
+	// member index (siege_member_group) is rebuilt from the compounds on load. Members are written field by field (the
+	// struct has padding, which a byte copy would leave undefined and break save parity).
+	if (layout >= 21) {
+		ar.vec(siege_crew); ar.vec(siege_step_source); ar.pod(siege_serial);
+		uint64_t ng = siege_compounds.size();
+		ar.pod(ng);
+		if (!count(ar, ng, 56, 65536)) return;
+		if (Ar::loading) siege_compounds.resize((size_t)ng);
+		for (auto &g : siege_compounds) {
+			ar.pod(g.token); ar.pod(g.elapsed); ar.pod(g.duration); ar.pod(g.cancelled); ar.pod(g.complete); ar.pod(g.aborted);
+			ar.vec(g.claims); ar.vec(g.heights); ar.vec(g.source_body);
+			uint64_t nm = g.members.size();
+			ar.pod(nm);
+			if (!count(ar, nm, 20, 16)) return;
+			if (Ar::loading) g.members.resize((size_t)nm);
+			for (auto &m : g.members) { ar.pod(m.soldier); ar.pod(m.person); ar.pod(m.from); ar.pod(m.to); }
+		}
+	}
 }
 
 std::vector<uint8_t> World::save() const {
 	if (work_point_active_) return {}; // Same original unfinished point is unsaveable.
-	if (!siege_compounds.empty()) return {};
-	// Transient Site jobs are unsaveable while a step is still moving (a goal is set). An arrived, held housing or
-	// siege step (G10, Nekki 2026-10-30 A: workers save at their station) is saved and restored as held.
-	for (int i = 0; i < soldier_count(); ++i) if (escort_mode[i] >= 3 && !held_site_step(i)) return {};
+	// KW21 (Nekki 2026-11-09 A): siege compounds and crew steps in progress are saved and resume after load, as the grid
+	// Site did. A housing step still saves only once held (G10, Nekki 2026-10-30 A: workers save at their station); its
+	// pending step (a goal set) stays unsaveable and the autosave retries on the next tick.
+	for (int i = 0; i < soldier_count(); ++i) if ((escort_mode[i] == 3 || escort_mode[i] == 4) && escort_goal[i] >= 0) return {};
 	Writer w;
 	const_cast<World *>(this)->serialize(w);
 	return std::move(w.out);
@@ -649,8 +670,24 @@ bool World::load_impl(const std::vector<uint8_t> &blob, const std::vector<int> *
 	if (work_point_active_ || blob.empty() || blob.size() > 16 * 1024 * 1024) return false;
 	try {
 		World candidate(1); Reader r(blob); candidate.serialize(r);
+		if (!r.ok || r.at != blob.size()) return false;
+		// KW21: the Site-job arrays that validate() reads must exist before it runs. Derived Site inputs (housing attendance,
+		// and for older blobs the crew flags and step sources) are rebuilt by Site after load; the member index comes from the
+		// loaded compounds. A pending housing step (a goal set) is never saved (G10), so a blob holding one is not ours.
+		const bool kw21 = blob.size() >= 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '2' && blob[3] == '1';
+		const size_t n = (size_t)candidate.soldier_count();
+		if (candidate.escort_mode.size() != n || candidate.escort_goal.size() != n) return false;
+		candidate.housing_attendance_cell.assign(n, -1);
+		if (!kw21) { candidate.siege_crew.assign(n, 0); candidate.siege_step_source.assign(n, -1); }
+		candidate.siege_member_group.assign(n, -1);
+		for (size_t at = 0; at < candidate.siege_compounds.size(); ++at)
+			for (const auto &m : candidate.siege_compounds[at].members) {
+				if (m.soldier < 0 || (size_t)m.soldier >= n || candidate.siege_member_group[m.soldier] != -1) return false;
+				candidate.siege_member_group[m.soldier] = (int)at;
+			}
+		for (size_t i = 0; i < n; ++i) if ((candidate.escort_mode[i] == 3 || candidate.escort_mode[i] == 4) && candidate.escort_goal[i] >= 0) return false;
 		// convoy body cells are derived from the saved offsets, anchors and facings before validation checks them
-		if (!r.ok || r.at != blob.size() || !candidate.rebuild_convoy_bodies() || !candidate.validate(nullptr, false)) return false;
+		if (!candidate.rebuild_convoy_bodies() || !candidate.validate(nullptr, true)) return false;
 		// a KW17 blob has no mounted layout flag: it is derived from the riders it holds (CAV-4a Formation::cav_layout)
 		if (blob.size() >= 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '1' && blob[3] == '7')
 			for (auto &f : candidate.formations) candidate.refresh_cav_layout(f);

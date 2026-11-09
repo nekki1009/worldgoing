@@ -28,6 +28,12 @@ const REQUIRED_BUILDINGS := {
 	3: [{"label": "住宅", "kinds": ["house"], "count": 10}, {"label": "倉庫", "kinds": ["warehouse"], "count": 1}, {"label": "任一加工作坊", "kinds": WORKSHOP_KINDS, "count": 2}],
 }
 const CAPTURE_SECONDS := 60.0
+## A capture remainder below this (game seconds) is float residue of the shared steps, not unpaid time: a crowd step is
+## 1.9999999999998863 game seconds (its native window is a cursor difference), so the accrued contest lands a few 1e-12 short
+## of CAPTURE_SECONDS. The clip (capture_interval_limit) and the settlement (settle_capture) treat it as the completed endpoint
+## together; before, the clip was compared in action seconds (1e-12 action = 6e-11 game) while the settlement asked for 1e-12
+## game, and the producer stopped at REGION_ZERO_ENDPOINT_REQUIRED between the two (found 2026-11-09, region_siege_original_phase crowd).
+const CAPTURE_RESIDUE_SECONDS := 0.000000001
 const CAPTURE_MARGIN := 2
 const MAX_FACTION := 100000000
 const MAX_PERSON := 2147483647
@@ -642,7 +648,9 @@ static func capture_interval_limit(data: TerrainData, sample: Dictionary, maximu
 	if settlement.is_empty() or sample.is_empty() or int(sample.attacker) < 0: return maximum
 	var fall: Dictionary = settlement.fall_record
 	var accrued := float(fall.contest_seconds) if int(fall.contest_faction) == int(sample.attacker) else 0.0
-	return minf(maximum, maxf(0.0, CAPTURE_SECONDS - accrued))
+	var remaining := CAPTURE_SECONDS - accrued
+	if remaining <= CAPTURE_RESIDUE_SECONDS: return 0.0 # the completed endpoint (see CAPTURE_RESIDUE_SECONDS)
+	return minf(maximum, remaining)
 
 ## Integrate [begin,end) only. The exact completed endpoint is retained in the
 ## same original fall_record until contacts/player events have been consumed.
@@ -668,9 +676,9 @@ static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_s
 static func settle_capture(lab: Variant) -> Dictionary:
 	var data: TerrainData = lab.terrain
 	var settlement := record(data)
-	# The shared-step producers stop paying once the remaining capture time is within the
-	# action epsilon (1e-12); a total that lands that close below 60 is the completed endpoint.
-	if settlement.is_empty() or float(settlement.fall_record.contest_seconds) < CAPTURE_SECONDS - 0.000000000001: return {}
+	# The shared-step producers stop paying once the remaining capture time is within CAPTURE_RESIDUE_SECONDS; a total that
+	# lands that close below CAPTURE_SECONDS is the completed endpoint (the same rule capture_interval_limit clips with).
+	if settlement.is_empty() or float(settlement.fall_record.contest_seconds) < CAPTURE_SECONDS - CAPTURE_RESIDUE_SECONDS: return {}
 	var sample := capture_sample(lab)
 	if sample.is_empty(): return Runtime.fail("STALE_CAPTURE_SAMPLE")
 	if int(sample.attacker) != int(settlement.fall_record.contest_faction):

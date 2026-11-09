@@ -25,6 +25,7 @@ var action_fault_facts: Dictionary = {}
 var action_target_hp := 0.0
 
 func _initialize() -> void:
+	TerrainLab.region_body_diag = true # Failure detail only: a stale selected body prints which keys changed.
 	deadline = Time.get_ticks_msec() + 240000
 	out = "res://.godot-temp/region_siege_cold_action_epoch/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	fixture_land_condition_rule = "terrain_mapped_potential_v1" # The original target wall needs mapped land.
@@ -75,6 +76,10 @@ func _setup_action_world() -> bool:
 	Env.initialize(archive, "siege-action-original:archive")
 	lab.bind_terrain(archive)
 	lab.restore_only = false
+	# Crowd port: the shell was born restore_only, so its _ready did not request the crowd; the live main owner opens as crowd
+	# as the game's main Lab does (found 2026-11-09: a GD main Site was converted at its reopen, which the selected restore
+	# refused as a STALE_SELECTED_REGION_BODY).
+	lab.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	controller.save_root = out.path_join("archive")
 	world_id = "r0_siege_action_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var opened: Dictionary = controller.open_fixed_world(manifest_path, world_id, "main", Vector2i.ZERO, true)
@@ -93,7 +98,13 @@ func _setup_action_world() -> bool:
 ## Builds the siege engine, walls and attacker crew in the cold owner. A subclass that founds
 ## the defender first calls this only after the founder has handed over and left.
 func _fixture_action_owner() -> bool:
-	if not _check(action_owner.crowd_site == null or not action_owner.crowd_site.active, "this actual partial continuation uses admitted GD bodies"): return false
+	# Crowd port: a live crowd cold owner (a founded defender Site) returns to GD for the authored crew, which joins the native
+	# crowd again after it is born, as region_siege_center_original births its attackers. A never-visited cold Site has no
+	# CrowdSite: its crew converts as a cold owner's bind converts an arrival, and the owner is made again from its file.
+	var grid: bool = OS.get_cmdline_user_args().has("--grid")
+	var crowd_live: bool = _crowd_on(action_owner) and action_owner.crowd_site.active
+	var cold_convert: bool = not grid and action_owner.crowd_site == null and action_owner.restore_only
+	if grid and not _check(action_owner.crowd_site == null or not action_owner.crowd_site.active, "this actual partial continuation uses admitted GD bodies"): return false
 	var data := action_owner.terrain
 	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})
 	data.site.capacity = 100000
@@ -101,10 +112,12 @@ func _fixture_action_owner() -> bool:
 	var fixture_ammo := str(SiteRuntime.SIEGE_DEFINITIONS[action_kind].ammo)
 	if not fixture_ammo.is_empty(): data.site.inventory[fixture_ammo] = 1
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns explicit initial fixture stock"): return false
-	if not _check(action_owner.character.place(Vector2i(80, 80), true), "actual cold founder starts outside the siege bodies and stations"): return false
+	# A live crowd owner's founder is a crowd row, moved by the scenario's own _action_target.
+	if not crowd_live and not _check(action_owner.character.place(Vector2i(80, 80), true), "actual cold founder starts outside the siege bodies and stations"): return false
 	var target := _action_target()
 	if target.is_empty(): return false
 	action_target_hp = _actual_target_hp(target)
+	if not _crowd_release(action_owner): return false
 	var preserved: Dictionary = {}
 	for original: TerrainArmy in action_owner.combat_armies:
 		if original.combat_enabled or not original.combat_units.is_empty(): preserved[str(original.team_id)] = var_to_bytes(original.capture_combat_state(true))
@@ -148,12 +161,8 @@ func _fixture_action_owner() -> bool:
 	data.site.army_next_team = action_owner._next_army_identity()
 	if not _check(team.team_id == int(vehicle.team_id) and team.command_eligible(team.current_commander), "vehicle and real captain share original team authority"): return false
 	var commander := team.combat_identity(team.current_commander)
-	var crew: Array[int] = []
-	for index: int in count:
-		var identity := team.combat_identity(index + 1)
-		var assigned: Dictionary = action_owner.site_controller.vehicles.assign_crew(key, identity, str(index), commander, true)
-		if not _check(assigned.ok, "existing NPC dispatch entry assigns a real same-team row; no control identity is forged", assigned): return false
-		crew.append(identity)
+	var crew_rows: Array[int] = []
+	for index: int in count: crew_rows.append(team.combat_identity(index + 1))
 	if action_kind == "siege_tower":
 		for offset: int in range(3):
 			var support := Vector2i(25, 41 + offset)
@@ -164,6 +173,19 @@ func _fixture_action_owner() -> bool:
 	for original: TerrainArmy in action_owner.combat_armies:
 		if preserved.has(str(original.team_id)):
 			if not _check(preserved[str(original.team_id)] == var_to_bytes(original.capture_combat_state(true)), "siege setup preserves every existing original roster and identity"): return false
+	# Crowd: the born crew joins the native crowd (identities are stable across the conversion); the crew is then assigned to
+	# the native engine, as site_siege_native_integration assigns it after activation.
+	if crowd_live and not _crowd_admit(action_owner): return false
+	if cold_convert:
+		if not _cold_convert_owner(): return false
+		data = action_owner.terrain
+		vehicle = data.site.vehicles[key]
+	var crew: Array[int] = []
+	for index: int in count:
+		var identity := crew_rows[index]
+		var assigned: Dictionary = action_owner.site_controller.vehicles.assign_crew(key, identity, str(index), commander, true)
+		if not _check(assigned.ok, "existing NPC dispatch entry assigns a real same-team row; no control identity is forged", assigned): return false
+		crew.append(identity)
 	action_context = {"key": key, "target": target, "goal": pose.goal, "facing": pose.facing, "commander": commander, "crew": crew, "count": count}
 	action_initial_sequence = int(vehicle.next_attack_seq)
 	action_initial_holder = int(vehicle.holder.version)
@@ -172,6 +194,33 @@ func _fixture_action_owner() -> bool:
 	if not _check(saved.ok, "actual common publisher stores original authored bodies, materials and holders together", saved): return false
 	var due: Dictionary = slot.consume_due_region_events()
 	return _check(due.ok and due.get("complete", false), "actual same-point due owners consume before positive action", due)
+
+## Crowd: the never-visited cold Site's GD rosters convert as a cold owner's bind converts an arrival (attach a CrowdSite,
+## convert, write the converted section); a bound owner keeps the backend it was bound with, so the owner is made again
+## from its published file and binds natively (as region_captivity_payload_admission does).
+func _cold_convert_owner() -> bool:
+	var attached: Node = load("res://scripts/terrain_lab/crowd_site.gd").new()
+	attached.name = "CrowdSite"
+	action_owner.add_child(attached)
+	attached.setup(action_owner)
+	action_owner.crowd_site = attached
+	var converted: Dictionary = attached.convert_existing()
+	if converted.get("ok", false): converted = action_owner._region_write_converted_crowd_section()
+	if not _check(converted.get("ok", false) and attached.active, "the cold Site's authored rosters convert to its native crowd", converted): return false
+	var parked: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
+	if not _check(parked.ok, "the cold Site's converted crowd publishes", parked): return false
+	var site_id := str(action_owner.terrain.site.id)
+	var parked_owner: TerrainLab = action_owner
+	slot._region_original_labs.erase(site_id)
+	parked_owner.get_parent().remove_child(parked_owner)
+	parked_owner.queue_free()
+	var remade: Dictionary = lab._region_gameplay_owner_lab(site_id, "cold_exact")
+	if not _check(remade.get("ok", false) and remade.get("lab") is TerrainLab and remade.lab.crowd_site != null and remade.lab.crowd_site.active
+		and str(remade.activation.get("backend", "")) == "native", "the cold owner made again from its file binds its native crowd",
+		{"code": remade.get("code"), "message": remade.get("message"), "cause": remade.get("cause"), "activation": remade.get("activation")}): return false
+	action_owner = remade.lab
+	_freeze(action_owner)
+	return true
 
 func _action_vehicle() -> Dictionary:
 	return action_owner.terrain.site.get("vehicles", {}).get(str(action_context.get("key", "")), {})
@@ -259,7 +308,12 @@ func _action_until(predicate: Callable, label: String) -> bool:
 func _actual_crew_moving() -> bool:
 	for identity: int in action_context.crew:
 		var person: Dictionary = action_owner.site_controller.person_actions._person(identity, false)
-		if not person.is_empty() and person.moving and float(person.owner.move_progress[int(person.unit)]) > 0.0 and float(person.owner.move_progress[int(person.unit)]) < 1.0: return true
+		if person.is_empty(): continue
+		# Crowd: a native body has no GD edge progress; its moving flag is the native velocity/commitment.
+		if not person.owner is TerrainArmy:
+			if bool(person.moving): return true
+			continue
+		if person.moving and float(person.owner.move_progress[int(person.unit)]) > 0.0 and float(person.owner.move_progress[int(person.unit)]) < 1.0: return true
 	return false
 
 func _partial_ready() -> bool:
@@ -311,6 +365,13 @@ func _action_facts() -> Dictionary:
 	for identity: int in action_context.crew:
 		var person: Dictionary = action_owner.site_controller.person_actions._person(identity, false)
 		if person.is_empty(): people[str(identity)] = {"missing": true}; continue
+		if not person.owner is TerrainArmy:
+			# Crowd: the native body (its row is published at a capture, as _reopen_actual_partial publishes first). Its native
+			# position stands in for the grid row's edge progress: it moves every step of a translation and is saved exactly.
+			var native: Dictionary = action_owner.crowd_site.soldier_state(int(person.unit))
+			people[str(identity)] = {"cell": person.cell, "moving": person.moving, "hp": person.hp, "ko": person.ko, "holder": person.holder.duplicate(true),
+				"cargo": person.cargo.duplicate(true), "fatigue": PersonFatigue.read(person.body), "position": [float(native.get("px", 0.0)), float(native.get("py", 0.0))]}
+			continue
 		var owner: TerrainArmy = person.owner
 		var index := int(person.unit)
 		people[str(identity)] = {"cell": person.cell, "moving": person.moving, "moving_to": owner.moving_to[index], "progress": owner.move_progress[index], "duration": owner.move_duration[index], "pose": owner.combat_hot_get(index, &"pose", ""), "hp": person.hp, "ko": person.ko, "holder": person.holder.duplicate(true), "cargo": person.cargo.duplicate(true), "fatigue": PersonFatigue.read(owner.combat_units[index])}
@@ -323,6 +384,55 @@ func _action_graph() -> Dictionary:
 	if not _check(graph.ok and graph.owner_states.get("scene") is Dictionary, "actual original owner captures its full live aliases", graph.get("code")): return {}
 	var scene: Dictionary = graph.owner_states.scene
 	return {"root": scene.root.duplicate(true), "nodes": scene.nodes.duplicate(true)}
+
+## Failure detail only: prints the first differences (at most 25) between two facts values with the same rules as
+## _action_saved_facts_equal (container types, key identity, integral int/float carriers only).
+func _facts_diff(path: String, a: Variant, b: Variant, budget: Array) -> void:
+	if int(budget[0]) >= 25: return
+	if a is Dictionary and b is Dictionary:
+		for k: Variant in a.keys():
+			var matched := false
+			for other: Variant in b.keys():
+				if typeof(k) == typeof(other) and k == other:
+					matched = true
+					_facts_diff(path + "/" + str(k), a[k], b[other], budget)
+					break
+			if not matched:
+				print("EPOCH_DIFF key %s/%s (%s) only in source" % [path, str(k), type_string(typeof(k))])
+				budget[0] = int(budget[0]) + 1
+		for k: Variant in b.keys():
+			var found := false
+			for other: Variant in a.keys():
+				if typeof(k) == typeof(other) and k == other: found = true
+			if not found:
+				print("EPOCH_DIFF key %s/%s (%s) only in restored" % [path, str(k), type_string(typeof(k))])
+				budget[0] = int(budget[0]) + 1
+		return
+	var arrays := [TYPE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_VECTOR2_ARRAY]
+	if typeof(a) in arrays and typeof(b) in arrays:
+		if typeof(a) != typeof(b):
+			print("EPOCH_DIFF container %s source=%s restored=%s" % [path, type_string(typeof(a)), type_string(typeof(b))])
+			budget[0] = int(budget[0]) + 1
+			return
+		if a.size() != b.size():
+			print("EPOCH_DIFF size %s source=%d restored=%d" % [path, a.size(), b.size()])
+			budget[0] = int(budget[0]) + 1
+			return
+		for i: int in range(a.size()): _facts_diff(path + "[%d]" % i, a[i], b[i], budget)
+		return
+	if not _action_saved_facts_equal(a, b):
+		print("EPOCH_DIFF leaf %s source=%s (%s) restored=%s (%s)" % [path, var_to_str(a), type_string(typeof(a)), var_to_str(b), type_string(typeof(b))])
+		budget[0] = int(budget[0]) + 1
+
+## The Store's persisted form of a value: JSON (sort_keys, full_precision) written and read until stable (at most 8 rounds).
+func _persisted_facts(value: Variant) -> Variant:
+	var encoded: String = JSON.stringify(value, "", true, true)
+	for _round in range(8):
+		var decoded: Variant = JSON.parse_string(encoded)
+		var next: String = JSON.stringify(decoded, "", true, true)
+		if next == encoded: return decoded
+		encoded = next
+	return JSON.parse_string(encoded)
 
 ## The store's own save path: stringify(sort_keys, full_precision) -> parse ->
 ## stringify. No custom rounding.
@@ -396,6 +506,11 @@ func _action_saved_facts_controls() -> bool:
 
 func _reopen_actual_partial() -> bool:
 	if not _action_saved_facts_controls(): return false
+	if _crowd_on(action_owner) and action_owner.crowd_site.active:
+		# Crowd: hot body state lives natively and reaches the Site rows at a capture; publish it once, so the checkpoint below
+		# compares settled rows and still proves it adds no work, material, flight or time.
+		var published: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
+		if not _check(published.ok, "the crowd's native body state publishes before the reopen", published): return false
 	var source_facts := _action_facts()
 	var source_clock := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "sequence": int(slot.control.fire_clock.sequence)}
 	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
@@ -429,9 +544,25 @@ func _reopen_actual_partial() -> bool:
 	# The graph comparison replaces an exact equality that cannot hold across a
 	# JSON reopen (number types and last-ulp floats change in the store round
 	# trip); facts, clocks, proof and partial progress stay compared value by value.
-	if not _check(_action_saved_facts_equal(source_facts, _action_facts()) and _saved_json_domain(source_graph) == _saved_json_domain(restored_graph) and (_partial_ready() if action_fault == "none" else true)
-		and float(slot.control.logical_game_seconds) == float(source_clock.world) and float(slot.control.fire_clock.action_seconds) == float(source_clock.action) and int(slot.control.fire_clock.sequence) == int(source_clock.sequence)
-		and selected == slot.region_bind_proof(action_owner.terrain), "positive reopen restores exact hot graph, partial progress, stable items, reserved cells and both clocks", {"source_graph_sha": SiegeCheckpoint.state_hash(source_graph), "restored_graph_sha": SiegeCheckpoint.state_hash(restored_graph), "clock": source_clock}): return false
+	var restored_facts := _action_facts()
+	# Exact first. A crowd step's length is a native window cursor difference, not a clean 1/30, and the Store's JSON read
+	# can move such a double by one ulp (the project hashes siege values in the saved numeric domain for the same reason):
+	# the restored value is then the saved value, so facts that differ only within the save's own round trip are the same
+	# persisted facts (as region_captivity_payload_admission compares them). The exact result is reported either way.
+	var facts_exact: bool = _action_saved_facts_equal(source_facts, restored_facts)
+	var facts_persisted: bool = facts_exact or _action_saved_facts_equal(_persisted_facts(source_facts), _persisted_facts(restored_facts))
+	if not facts_exact and facts_persisted: print("EPOCH_NOTE facts differ only within the save's float round trip")
+	var reopen_parts := {"facts": facts_persisted, "facts_exact": facts_exact, "graph": _saved_json_domain(source_graph) == _saved_json_domain(restored_graph),
+		"partial_ready": _partial_ready() if action_fault == "none" else true,
+		"clock": float(slot.control.logical_game_seconds) == float(source_clock.world) and float(slot.control.fire_clock.action_seconds) == float(source_clock.action) and int(slot.control.fire_clock.sequence) == int(source_clock.sequence),
+		"proof": selected == slot.region_bind_proof(action_owner.terrain)}
+	if not bool(reopen_parts.facts): _facts_diff("facts", source_facts, restored_facts, [0])
+	var reopen_ok: bool = true
+	for part: String in reopen_parts:
+		if part != "facts_exact" and not bool(reopen_parts[part]): reopen_ok = false
+	if not _check(reopen_ok, "positive reopen restores exact hot graph, partial progress, stable items, reserved cells and both clocks",
+		{"parts": reopen_parts, "source_graph_sha": SiegeCheckpoint.state_hash(source_graph), "restored_graph_sha": SiegeCheckpoint.state_hash(restored_graph), "clock": source_clock,
+		"restored_clock": [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "proof": selected, "restored_proof": slot.region_bind_proof(action_owner.terrain)}): return false
 	# A manual fresh-Slot reopen wires the restored main original as the common
 	# adapter host, as the original controller did for the first Slot, and
 	# completes the positive restore of every travelling party's original owner
@@ -503,8 +634,11 @@ func _apply_actual_fault() -> bool:
 	var before := _action_facts()
 	if action_fault == "crew_loss":
 		var person: Dictionary = action_owner.site_controller.person_actions._person(int(action_context.crew[0]), false)
-		if not _check(not person.is_empty() and person.owner is TerrainArmy, "actual crew loss resolves its original row"): return false
-		person.owner.apply_unit_contact(int(person.unit), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
+		if not _check(not person.is_empty() and (person.owner is TerrainArmy or person.owner is CrowdPersonOwner), "actual crew loss resolves its original row"): return false
+		# Crowd: a crowd refuses an environmental packet; the same melee contact is delivered.
+		var crowd_row: bool = person.owner is CrowdPersonOwner
+		var unit: int = int(person.owner.index_for_identity(int(action_context.crew[0]))) if crowd_row else int(person.unit)
+		person.owner.apply_unit_contact(unit, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": not crowd_row})
 		var knocked: Dictionary = action_owner.site_controller.person_actions._person(int(action_context.crew[0]), false)
 		if not _check(float(knocked.ko) > 0.0 and float(knocked.hp) > 0.0, "original contact supplies real crew KO and original life duration", {"hp": knocked.hp, "ko": knocked.ko}): return false
 		var stopped := transport.order_siege(str(action_context.key), "stop", {}, int(action_context.commander), true)

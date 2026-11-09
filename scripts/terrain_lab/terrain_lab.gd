@@ -966,7 +966,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 ## (site_controller.capture_region_checkpoint): capture_save, then _apply_region_crowd_capture. Without it the capture
 ## guard refuses the active crowd as unadmitted. A failed write fails the conversion (the caller keeps the mark).
 func _region_write_converted_crowd_section() -> Dictionary:
-	var captured: Dictionary = crowd_site.capture_save()
+	var captured: Dictionary = crowd_site.capture_save(true)
 	if not captured.ok: return captured
 	site_controller._capture_positions()
 	site_controller._apply_region_crowd_capture(captured)
@@ -6036,7 +6036,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	# A crowd replay ran its native World; the completed candidate carries that World's capture, as a crowd checkpoint
 	# writes it (capture_region_checkpoint), not the section it was loaded from (2026-11-08).
 	if _cold_replay_lab.crowd_site != null and _cold_replay_lab.crowd_site.active and completed_data == _cold_replay_lab.terrain:
-		var crowd_captured: Dictionary = _cold_replay_lab.crowd_site.capture_save()
+		var crowd_captured: Dictionary = _cold_replay_lab.crowd_site.capture_save(true)
 		if not crowd_captured.ok: return crowd_captured
 		_cold_replay_lab.site_controller._capture_positions()
 		_cold_replay_lab.site_controller._apply_region_crowd_capture(crowd_captured)
@@ -10366,7 +10366,7 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	var crowd_captured := {}
 	if crowd_admitted:
 		context["backend"] = "native"
-		crowd_captured = child.crowd_site.capture_save()
+		crowd_captured = child.crowd_site.capture_save(true)
 		if not crowd_captured.ok: child.free(); return crowd_captured
 	child.site_controller._capture_positions()
 	if crowd_admitted: child.site_controller._apply_region_crowd_capture(crowd_captured)
@@ -10680,7 +10680,7 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 	var crowd_admitted: bool = crowd_site != null and crowd_site.active
 	var crowd_captured := {}
 	if crowd_admitted:
-		crowd_captured = crowd_site.capture_save()
+		crowd_captured = crowd_site.capture_save(true)
 		if not crowd_captured.ok: return crowd_captured
 	site_controller._capture_positions()
 	if crowd_admitted: site_controller._apply_region_crowd_capture(crowd_captured)
@@ -11654,6 +11654,7 @@ func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveS
 		"action_seconds": float(clock.action_seconds), "fire_epoch": str(clock.epoch), "fire_sequence": int(clock.sequence),
 		"body_hash": RegionCheckpoint.state_hash(canonical.site), "graph_hash": graph.graph_hash,
 		"context": snapshot.context, "owners": snapshot.owners}
+	if region_body_diag: ticket["body_copy"] = canonical.site.duplicate(true)
 	var checked := _region_check_selected_restore_ticket(ticket, canonical)
 	if not checked.ok:
 		if is_instance_valid(staged.crowd_site): staged.crowd_site.free()
@@ -11662,6 +11663,25 @@ func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveS
 	return SiteRuntime.ok("", {"data": canonical, "region_bind_token": token, "crowd_site": staged.crowd_site,
 		"selected": true, "source_generation": int(proof.generation),
 		"effects_complete": bool(snapshot.context.effects_complete), "zero_world_only": not bool(snapshot.context.effects_complete)})
+
+## Diagnostic only (tests set it): a selected-restore ticket keeps a copy of its canonical body, and a STALE_SELECTED_REGION_BODY
+## refusal prints which site keys (and which vehicle fields) changed between the ticket and the finish check.
+static var region_body_diag := false
+
+static func _region_body_diff(before: Dictionary, after: Dictionary) -> void:
+	for key: String in before.keys() + after.keys():
+		if not before.has(key) or not after.has(key):
+			print("REGION_BODY_DIFF key %s before_has=%s after_has=%s" % [key, str(before.has(key)), str(after.has(key))])
+			continue
+		if RegionCheckpoint.state_hash({"v": before[key]}) == RegionCheckpoint.state_hash({"v": after[key]}): continue
+		print("REGION_BODY_DIFF key %s changed" % key)
+		if key == "vehicles" and before[key] is Dictionary and after[key] is Dictionary:
+			for vehicle_id: String in before[key].keys() + after[key].keys():
+				var old: Dictionary = before[key].get(vehicle_id, {})
+				var new: Dictionary = after[key].get(vehicle_id, {})
+				for field: String in old.keys() + new.keys():
+					if RegionCheckpoint.state_hash({"v": old.get(field)}) != RegionCheckpoint.state_hash({"v": new.get(field)}):
+						print("REGION_BODY_DIFF vehicle %s.%s before=%s after=%s" % [vehicle_id, field, JSON.stringify(old.get(field)).left(400), JSON.stringify(new.get(field)).left(400)])
 
 func _region_check_selected_restore_ticket(ticket: Dictionary, data: TerrainData) -> Dictionary:
 	var slot: RegionSaveSlot = ticket.slot
@@ -11673,7 +11693,9 @@ func _region_check_selected_restore_ticket(ticket: Dictionary, data: TerrainData
 	var clock: Dictionary = slot.control.fire_clock
 	if float(slot.control.logical_game_seconds) != float(ticket.game_seconds) or float(clock.action_seconds) != float(ticket.action_seconds) \
 		or str(clock.epoch) != str(ticket.fire_epoch) or int(clock.sequence) != int(ticket.fire_sequence): return SiteRuntime.fail("STALE_SELECTED_REGION_CLOCK")
-	if RegionCheckpoint.state_hash(data.site) != ticket.body_hash: return SiteRuntime.fail("STALE_SELECTED_REGION_BODY")
+	if RegionCheckpoint.state_hash(data.site) != ticket.body_hash:
+		if ticket.has("body_copy"): _region_body_diff(ticket.body_copy, data.site)
+		return SiteRuntime.fail("STALE_SELECTED_REGION_BODY")
 	var snapshot := SiteStore.validate_region_snapshot(data, {})
 	if not snapshot.ok: return snapshot
 	if RegionCheckpoint.state_hash({"owners": snapshot.owners}) != RegionCheckpoint.state_hash({"owners": ticket.owners}) \

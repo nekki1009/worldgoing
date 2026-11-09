@@ -219,14 +219,14 @@ static void zero_game_time_and_rejected_action_time() {
 }
 
 static void kw06_and_c_api() {
-    test_case = "Current original KW09 omits pending Site input and reload defaults to one";
+    test_case = "Current original save (KW21) omits pending Site input and reload defaults to one";
     World w(1); setup(w);
     const auto blob = w.save();
-    REQUIRE(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '0' && blob[3] == '9');
+    REQUIRE(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '2' && blob[3] == '1'); // the current magic (this test was written at KW09)
     const auto ordinary_hash = w.state_hash();
     REQUIRE(w.set_recovery_input(barracks, 1.25));
     REQUIRE(w.state_hash() != ordinary_hash); // Pending input does affect the next step and its hash.
-    REQUIRE(w.save() == blob); // It adds zero bytes or fields to current original KW09.
+    REQUIRE(w.save() == blob); // It adds zero bytes or fields to the current save.
     World loaded(1); setup(loaded);
     REQUIRE(loaded.set_recovery_input(barracks, 1.25));
     if (!loaded.load(w.save())) { REQUIRE(false); return; }

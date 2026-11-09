@@ -11600,8 +11600,8 @@ func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 	if crowd_admitted: request.context["backend"] = "native"
 	var crowd_captured := {}
 	if crowd_admitted:
-		# capture_save keeps the existing BUSY guards (arrows in flight, pending captivity, siege commit).
-		crowd_captured = lab.crowd_site.capture_save()
+		# capture_save keeps the BUSY guards for arrows in flight and pending captivity; siege work in progress is saved (KW21).
+		crowd_captured = lab.crowd_site.capture_save(true)
 		if not crowd_captured.ok: return crowd_captured
 	if not read_only: _capture_positions() # Original presenters; ordinary-save guards remain.
 	if crowd_admitted: _apply_region_crowd_capture(crowd_captured)

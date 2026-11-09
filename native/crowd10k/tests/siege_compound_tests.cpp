@@ -44,14 +44,15 @@ static void admission_atomicity() {
 
 static void phase_barrier_and_save() {
 	test_case="one native clock, same progress, pending claims, complete acknowledgement";
-	World w(1);setup(w);const auto ids=w.person_id;const auto token=begin(w,2);REQUIRE(token>0);REQUIRE(w.save().empty());
+	World w(1);setup(w);const auto ids=w.person_id;const auto token=begin(w,2);REQUIRE(token>0);
+	{ const auto mid=w.save();REQUIRE(!mid.empty());World back(1);REQUIRE(back.load(mid) && back.state_hash()==w.state_hash() && back.save()==mid); } // KW21: a pending compound saves
 	REQUIRE(!w.settle_siege_compound(token));REQUIRE(!w.set_siege_crew(0,false));
 	step(w);close(w.py[0],10.625);close(w.py[1],10.625);close(w.siege_compound_state(token)->elapsed,.25);
 	REQUIRE(w.siege_claims_cell(cell(10,12)));auto occupancy=w.occupancy_mask({});REQUIRE(occupancy[cell(10,12)]==1);
 	// A legacy state setter cannot overwrite a committed original position.
 	auto stale=w.get_soldier_state(0);stale.x=20.5f;stale.y=20.5f;w.set_soldier_state(0,stale);close(w.px[0],9.5);close(w.py[0],10.625);
 	for(int i=0;i<7;++i)step(w);
-	REQUIRE(w.siege_compound_state(token)->complete);close(w.py[0],11.5);close(w.py[1],11.5);REQUIRE(w.save().empty());
+	REQUIRE(w.siege_compound_state(token)->complete);close(w.py[0],11.5);close(w.py[1],11.5);REQUIRE(!w.save().empty()); // KW21: an unsettled complete compound saves
 	REQUIRE(w.siege_claims_cell(cell(10,10)));REQUIRE(w.settle_siege_compound(token));REQUIRE(!w.siege_compound_state(token));REQUIRE(!w.siege_claims_cell(cell(10,10)));REQUIRE(w.person_id==ids);
 	REQUIRE(w.set_siege_crew(0,false));REQUIRE(w.set_siege_crew(1,false));
 	auto blob=w.save();REQUIRE(!blob.empty());World loaded(1);REQUIRE(loaded.load(blob));REQUIRE(loaded.person_id==ids);close(loaded.py[0],11.5);REQUIRE(loaded.state_hash()==w.state_hash());
@@ -168,7 +169,7 @@ static void reject_tail(World &w,const TailCase &c,double duration=1) {
 static void check_tail_progress(World &w,const TailCase &c,int64_t token,double p) {
     const auto *g=w.siege_compound_state(token);REQUIRE(g!=nullptr);if(!g)return;
     close(g->elapsed/g->duration,p);REQUIRE(g->complete==(p==1));REQUIRE(!g->cancelled && !g->aborted);
-    REQUIRE(w.save().empty());
+    { const auto mid=w.save();REQUIRE(!mid.empty());World back(1);REQUIRE(back.load(mid) && back.state_hash()==w.state_hash() && back.save()==mid); } // KW21
     for(int claimed:c.swept)REQUIRE(w.siege_claims_cell(claimed));
     const auto occupancy=w.occupancy_mask({});for(int claimed:c.swept)REQUIRE(occupancy[claimed]==1);
     for(size_t k=0;k<c.members.size();++k) {
@@ -277,7 +278,7 @@ static void tail_interruptions_finish_original_barrier() {
     for(int reason=0;reason<3;++reason) {
         World w(1);auto c=tail_case(w,E);const auto token=begin_tail(w,c);REQUIRE(token>0);if(token<=0)continue;
         step(w);if(reason==0)w.apply_contact(0,1,100);else if(reason==1)w.apply_contact(0,200,0);else REQUIRE(w.cancel_siege_compound(token));
-        REQUIRE(!w.settle_siege_compound(token));REQUIRE(w.save().empty());
+        REQUIRE(!w.settle_siege_compound(token));REQUIRE(!w.save().empty()); // KW21: a cancelled, unfinished compound saves
         for(int tick=0;tick<3;++tick)step(w);
         const auto *g=w.siege_compound_state(token);REQUIRE(g && g->complete && g->cancelled && !g->aborted);if(!g)continue;
         for(const auto &m:c.members) { close(w.px[m.soldier],m.to%40+.5);close(w.py[m.soldier],m.to/40+.5);REQUIRE(w.person_id[m.soldier]==m.person); }
@@ -376,7 +377,7 @@ static void own_team_yields_and_turn_completes() {
 	REQUIRE(a > 0 && b > 0);
 	if (a <= 0 || b <= 0) return;
 	REQUIRE(one.siege_claims_cell(cell(11, 11)) && one.siege_claims_cell(cell(9, 10)));
-	REQUIRE(one.save().empty()); // a pending compound refuses save, as before: no mid-yield save exists
+	{ const auto mid=one.save();REQUIRE(!mid.empty());World back(1);REQUIRE(back.load(mid) && back.state_hash()==one.state_hash()); } // KW21: a mid-yield save exists (Nekki 2026-11-09 A)
 	for (int tick = 1; tick <= 12; ++tick) {
 		step(one); step(four);
 		REQUIRE(one.state_hash() == four.state_hash());
@@ -639,8 +640,31 @@ static void commander_keeps_command_through_turn(int size_x, int size_y, int rad
 	REQUIRE(!one.siege_turn_hold(0)); // settled: the ordinary slot returns
 }
 
+static void midaction_save_resumes() {
+	test_case="KW21 (Nekki 2026-11-09 A): a compound and a single crew step in progress save, load and finish as the live World does";
+	World w(1);setup(w);const auto token=begin(w,2);REQUIRE(token>0);if(token<=0)return;
+	step(w);step(w); // 0.5 s of the 2 s translation
+	const auto mid=w.save();REQUIRE(!mid.empty());REQUIRE(mid.size()>4 && mid[0]=='K' && mid[1]=='W' && mid[2]=='2' && mid[3]=='1');
+	World back(1);REQUIRE(back.load(mid));REQUIRE(back.state_hash()==w.state_hash() && back.save()==mid);
+	REQUIRE(back.siege_group(0)==0 && back.siege_group(1)==0 && back.is_siege_crew(0) && back.is_siege_crew(1) && back.siege_serial==w.siege_serial);
+	const auto *g=back.siege_compound_state(token);REQUIRE(g!=nullptr);if(!g)return;REQUIRE(!g->complete && !g->cancelled);close(g->elapsed,.5);close(back.py[0],10.75);
+	REQUIRE(back.siege_claims_cell(cell(10,12)) && back.escort_mode[0]==5 && back.escort_goal[0]==cell(9,11));
+	for(int i=0;i<6;++i){step(w);step(back);REQUIRE(w.state_hash()==back.state_hash());}
+	REQUIRE(w.siege_compound_state(token)->complete && back.siege_compound_state(token)->complete);
+	close(back.py[0],11.5);close(back.py[1],11.5);
+	REQUIRE(w.settle_siege_compound(token) && back.settle_siege_compound(token));REQUIRE(w.state_hash()==back.state_hash());
+	// A single crew approach step in progress saves too (mode 5 with its source cell); a KW20 blob never held one.
+	REQUIRE(w.order_siege_step(0,cell(9,12)));step(w);
+	REQUIRE(w.escort_mode[0]==5 && w.escort_goal[0]==cell(9,12) && w.siege_step_source[0]==cell(9,11));
+	const auto walking=w.save();REQUIRE(!walking.empty());
+	World again(1);REQUIRE(again.load(walking));REQUIRE(again.state_hash()==w.state_hash() && again.save()==walking);
+	REQUIRE(again.escort_mode[0]==5 && again.escort_goal[0]==cell(9,12) && again.siege_step_source[0]==cell(9,11) && again.is_siege_crew(0));
+	for(int i=0;i<12;++i){step(w);step(again);REQUIRE(w.state_hash()==again.state_hash());}
+	REQUIRE(w.escort_goal[0]==-1 && again.escort_goal[0]==-1 && again.siege_step_source[0]==-1);close(again.py[0],12.5);
+}
+
 int main() {
-	admission_atomicity();phase_barrier_and_save();hit_death_cancel_finish();terrain_abort_one_fall();crew_exclusion_and_thread_determinism();approach_source_and_wreck_navigation();original_orders_are_preserved();
+	admission_atomicity();phase_barrier_and_save();midaction_save_resumes();hit_death_cancel_finish();terrain_abort_one_fall();crew_exclusion_and_thread_determinism();approach_source_and_wreck_navigation();original_orders_are_preserved();
 	true_tail_four_directions();tail_rejections();stationary_rotation_keeps_full_sweep();tail_interruptions_finish_original_barrier();
 	original_contact_revision_import();
 	own_team_yields_and_turn_completes();enemy_in_sweep_still_blocks();yield_slot_targets_avoid_claims();
