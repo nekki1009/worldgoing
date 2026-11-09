@@ -266,13 +266,25 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or is_instance_valid(lab._cold_replay_lab):
 		return Runtime.fail("BUSY", "船隊旅程、跨界或補算尚未結束")
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
-	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
+	# B (Nekki 2026-11-09): a crowd departure has no deferred intent, so the admitted-original-siege rule of the grid intent
+	# path (RegionSaveSlot.prepare_region_player_departure) applies here: a stopped team outside the hostile guard (checked
+	# below) leaves a Site whose combat is its admitted original siege; any other combat refuses as before.
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 and not _crowd_siege_departure_admitted(controller): return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
 	var identity: int = lab.controlled_person_id()
 	# S4 (Nekki 2026-11-03): no crowd actor leaves alone; the player is a roster captain and departs with its team.
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
 	if not plan.ok: return plan
 	# SHIPSEA: a team aboard its ships leaves by sea (the same extraction as a grid sea departure). Partial boarding refuses.
 	var sea: bool = controller.vehicles.team_has_embarked(int(plan.team_id))
+	# B (Nekki 2026-11-09): the player's crowd departure has no deferred intent. A member still walking (a move goal or native
+	# speed at or above the settle rule, as moving_member_count counts) refuses now; the request is made again once stopped.
+	# The native exit gate reads no speed, so a walking team was released mid-stride before this. Only the player's request
+	# is gated here: NPC dispatch and other departure_plan readers keep their own rules.
+	if not sea:
+		for member: int in plan.people:
+			var walker: Variant = lab.crowd_site.person_owner(member)
+			if walker is CrowdPersonOwner and walker.is_walking(int(walker.index_for_identity(member))):
+				return Runtime.fail("NOT_READY", "隊員仍在移動；停下後才能整隊出發")
 	if sea:
 		var aboard := 0
 		for member: int in plan.people:
@@ -331,6 +343,18 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
 	var text := ("已整隊出海（群眾 %d 人、%d 艘船）%s" % [census.people.size(), census.vehicles.size(), note]) if sea else ("已整隊出發（群眾 %d 人）%s" % [census.people.size(), note])
 	return Runtime.ok(text, {"token": result.token})
+
+
+## The Site's combat is its admitted original siege and no fire is active: the same waiver the grid intent departure applies
+## (prepare_region_player_departure); a generic combat or BUSY state is never waived.
+static func _crowd_siege_departure_admitted(controller: Node) -> bool:
+	var lab: Node = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	var siege: Dictionary = RegionSaveSlot.RegionBattle.prepare_original_siege(lab)
+	if not siege.ok or not siege.get("present", false): return false
+	for row: Dictionary in slot.control.get("fire_clock", {}).get("index", {}).values():
+		if bool(row.get("fire_active", false)): return false
+	return not Runtime.fire_active(lab.terrain) and lab.terrain.site.get("fire", {}).is_empty()
 
 
 static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Dictionary:

@@ -22,6 +22,7 @@ func _initialize() -> void:
 	action_speed = 1.0
 	action_coordinate = Vector2i(1, 0)
 	nation_goal_coordinate = Vector2i(2, 0)
+	center_birth_parked = false # The siege registry needs the exact attacker/defender topology (no parked third faction).
 	_run.call_deferred()
 
 func _run() -> void:
@@ -30,12 +31,9 @@ func _run() -> void:
 	if not _write_manifest(): _finish(); return
 	if not await _setup_action_world(): _finish(); return
 	if not _nation_initial_bodies(): _finish(); return
-	if not _deploy_center_attackers(action_owner): _finish(); return
-	# Actual initial founder protects the real center. This is declared
-	# GENESIS placement before any positive interval, not route relocation.
-	if not _check(action_owner.character.place(Vector2i(19, 19), true)
-		and int(Settlement.capture_sample(action_owner).attacker) == -1,
-		"original finite center founder prevents a fabricated capture timer during this route fixture"): _finish(); return
+	# Crowd port: every scenario body of the cold owner is born in one GD window and joins the crowd with the attackers
+	# (a second clear after a cold conversion is refused), so the static hostile body is born before the attackers deploy.
+	if not _crowd_release(action_owner): _finish(); return
 	var enemy: TerrainArmy = null
 	for slot_index: int in range(action_owner.combat_armies.size() + 1):
 		action_owner._ensure_army_slots(slot_index + 1)
@@ -53,11 +51,24 @@ func _run() -> void:
 	action_owner.site_controller.initialize_team_items(enemy)
 	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
 	land_static_id = enemy.combat_identity(0)
+	var enemy_team_id: int = enemy.team_id
+	if not _deploy_center_attackers(action_owner): _finish(); return
+	var enemy_owner: Variant = _team_owner(action_owner, enemy_team_id)
+	if not _check(enemy_owner != null, "the static hostile body has a live holder after the attackers deploy", enemy_team_id): _finish(); return
+	# Actual initial founder protects the real center. This is declared
+	# GENESIS placement before any positive interval, not route relocation.
+	# Crowd port: the founder is the cold owner's native soldier (placed as every crowd fixture places a person).
+	var crowd_action: bool = _crowd_on(action_owner) and action_owner.crowd_site.active
+	var founder_placed: bool = _place_controlled_person(action_owner, center_founder, Vector2i(19, 19)) if crowd_action else action_owner.character.place(Vector2i(19, 19), true)
+	if not _check(founder_placed and int(Settlement.capture_sample(action_owner).attacker) == -1,
+		"original finite center founder prevents a fabricated capture timer during this route fixture"): _finish(); return
 	# Bodies holding position are not an assault; command the existing attackers.
 	var command_clock: Array = [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
-	var assault: Dictionary = center_attackers.issue_combat_order(center_attackers.current_commander, TerrainArmy.CombatOrder.ATTACK)
+	# Crowd: an ATTACK names its target person, the center's founder (the attackers' only enemy of the other side).
+	var assault: Dictionary = center_attackers.issue_combat_order(center_attackers.current_commander, TerrainArmy.CombatOrder.ATTACK) if center_attackers is TerrainArmy \
+		else action_owner.crowd_site.issue_order(int(center_attackers.team_id), TerrainArmy.CombatOrder.ATTACK, Vector2i(-1, -1), center_founder, "test")
 	if not _check(assault.get("ok", false) and center_attackers.combat_order == TerrainArmy.CombatOrder.ATTACK
-		and enemy.combat_order == TerrainArmy.CombatOrder.HOLD
+		and enemy_owner.combat_order == TerrainArmy.CombatOrder.HOLD
 		and command_clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence],
 		"actual original assault command preserves the static entry body and pays no interval", assault): _finish(); return
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok,
@@ -81,12 +92,12 @@ func _run() -> void:
 		"original current body and actual center produce the existing siege registry without a hand-authored battle", admitted): _finish(); return
 	var known := slot.record_region_officer_geography_observation(lab, nation_head, nation_goal_coordinate)
 	if not _check(known.ok, "actual resident Nation officer knows only the public final target geography", known): _finish(); return
-	var team := slot._region_delivery_team(lab, nation_remote_team_ref)
+	var team: Variant = slot._region_nation_team(lab, nation_remote_team_ref)
 	if not _check(team != null, "the actual independent NPC cohort resolves by its original stable team reference"): _finish(); return
 	var person: Dictionary = lab.site_controller.person_actions._person(team.combat_identity(team.current_commander), false)
 	var component := RegionTravelSite.start_component(slot, Vector2i.ZERO, person.cell, lab.terrain)
 	land_token = "npc_static_entry_%d" % OS.get_process_id()
-	var prepared := slot.prepare_npc_region_dispatch(lab, nation_id, team.team_id, nation_goal_coordinate, component, [], land_token)
+	var prepared := slot.prepare_npc_region_dispatch(lab, nation_id, int(team.team_id), nation_goal_coordinate, component, [], land_token)
 	var route_shape: Dictionary = _land_dispatch_diagnostics(prepared)
 	# The original v1 land plan has no mode key; its party owns travel mode.
 	if not _check(prepared.get("ok", false) and prepared.get("party") is Dictionary and prepared.party.get("mode", "") == "land"
@@ -140,7 +151,18 @@ func _land_until_contact() -> bool:
 		if str(slot.region_registry().parties[land_token].phase) == "entered": return true
 		if Time.get_ticks_msec() > deadline: return _check(false, "original earliest contact exceeded deadline")
 		var step := lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
-		if not step.get("ok", false): return _check(false, "original main common caller accepts the next real NPC route interval", step)
+		if not step.get("ok", false):
+			# Observation only: the queued NPC contact's current physical revalidation names what changed.
+			var revalidation: Dictionary = {}
+			for queued: Dictionary in slot.region_registry().events:
+				if str(queued.get("payload", {}).get("token", "")) == land_token and str(queued.get("payload", {}).get("contact_receipt", {}).get("kind", "")) == "npc_siege_channel":
+					revalidation = slot._region_validate_npc_siege_contact(queued)
+					if not revalidation.get("valid", true):
+						var witness: Dictionary = queued.payload.contact_receipt.witness
+						revalidation["static_person"] = action_owner.site_controller.person_actions._person(int(witness.person_id), false).duplicate()
+						revalidation["static_person"].erase("owner"); revalidation["static_person"].erase("body"); revalidation["static_person"].erase("holder"); revalidation["static_person"].erase("cargo")
+						revalidation["witness"] = witness
+			return _check(false, "original main common caller accepts the next real NPC route interval", {"step": step, "revalidation": revalidation})
 		if count % 60 == 0: await process_frame
 	return _check(false, "original earliest contact exceeded the bounded actual caller count")
 

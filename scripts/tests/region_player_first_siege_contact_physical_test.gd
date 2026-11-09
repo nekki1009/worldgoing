@@ -13,6 +13,23 @@ var player_contact_results: Array[Dictionary] = []
 var player_contact_original_consumer: Callable
 var player_contact_panel: PlayerContactPanel
 var player_contact_route: Dictionary = {}
+var player_hostile_team_id := -1
+var player_defense_team_id := -1
+
+## Crowd port (2026-11-10): a team order through its live holder (TerrainArmy under --grid, crowd_site.issue_order on a
+## crowd Site; a crowd ATTACK names its target person).
+func _player_team_order(original: TerrainLab, team: Variant, kind: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1) -> Dictionary:
+	if team == null: return SiteRuntime.fail("NO_TARGET", "team")
+	if team is TerrainArmy: return team.issue_combat_order(team.current_commander, kind, goal)
+	return original.crowd_site.issue_order(int(team.team_id), kind, goal, target_id, "test")
+
+## A free original Army slot of `original` (born GD, joining the crowd with the attackers on a crowd Site).
+func _player_free_slot(original: TerrainLab) -> TerrainArmy:
+	for slot_index: int in range(original.combat_armies.size() + 1):
+		original._ensure_army_slots(slot_index + 1)
+		var candidate: TerrainArmy = original.combat_armies[slot_index]
+		if not candidate.has_army() and not candidate.combat_enabled and candidate.combat_units.is_empty(): return candidate
+	return null
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 480000
@@ -23,6 +40,7 @@ func _initialize() -> void:
 	action_speed = 1.0
 	action_coordinate = Vector2i(1, 0)
 	nation_goal_coordinate = Vector2i(2, 0)
+	center_birth_parked = false # The siege registry needs the exact attacker/defender topology (no parked third faction).
 	for argument: String in OS.get_cmdline_args() + OS.get_cmdline_user_args():
 		if argument.begins_with("--player-witness-case="): player_witness_case = argument.trim_prefix("--player-witness-case=")
 	_run.call_deferred()
@@ -33,30 +51,42 @@ func _player_static_genesis() -> bool:
 	nation_goal = goal.lab
 	_freeze(nation_goal)
 	if not _check(nation_goal.character.place(Vector2i(80, 80), true), "initial final-Site founder stays on genuine dry ground outside all real route entries"): return false
-	if not _deploy_center_attackers(action_owner): return false
-	if player_witness_case != "ended":
-		if not _check(action_owner.character.place(Vector2i(19, 19), true) and int(Settlement.capture_sample(action_owner).attacker) == -1, "initial real founder protects the original center before paid player travel"): return false
-	action_owner._ensure_army_slots(4)
-	var hostile: TerrainArmy = action_owner.combat_armies[2]
+	# Crowd port: the founder is placed as the cold owner's native soldier; every scenario body of the cold owner is born in
+	# one GD window and joins the crowd with the attackers (a second clear after a cold conversion is refused), so the hostile
+	# and defender bodies are born before the attackers deploy. --grid keeps the GD rows.
+	var crowd_action: bool = _crowd_on(action_owner) and action_owner.crowd_site.active
+	if not _crowd_release(action_owner): return false
+	var hostile: TerrainArmy = _player_free_slot(action_owner)
+	if not _check(hostile != null, "a free original slot holds the static hostile body"): return false
+	hostile.team_id = action_owner._next_army_identity()
 	hostile.faction_id = 2; hostile.roster_size = 1
 	var hostile_cells: Array[Vector2i] = [Vector2i(1, 50)]
 	if not _check(hostile.deploy_at(action_owner.terrain, null, null, hostile_cells) and hostile.enable_combat(false, 0), "initial original allocator births the actual military body adjacent to the true west entry"): return false
 	action_owner.site_controller.initialize_team_items(hostile)
+	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
 	land_static_id = hostile.combat_identity(0)
+	player_hostile_team_id = hostile.team_id
 	if player_witness_case == "dead":
-		var defense: TerrainArmy = action_owner.combat_armies[3]
+		var defense: TerrainArmy = _player_free_slot(action_owner)
+		if not _check(defense != null, "a free original slot holds the finite defenders"): return false
+		defense.team_id = action_owner._next_army_identity()
 		defense.faction_id = 1; defense.roster_size = 3; defense.training = 100.0
 		var defense_cells: Array[Vector2i] = [Vector2i(2, 50), Vector2i(1, 49), Vector2i(1, 51)]
 		if not _check(defense.deploy_at(action_owner.terrain, null, null, defense_cells) and defense.enable_combat(false, 0), "initial original allocator creates the finite real defenders for actual melee casualty"): return false
 		action_owner.site_controller.initialize_team_items(defense)
-	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
+		action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
+		player_defense_team_id = defense.team_id
+	if not _deploy_center_attackers(action_owner): return false
+	if player_witness_case != "ended":
+		var founder_placed: bool = _place_controlled_person(action_owner, center_founder, Vector2i(19, 19)) if crowd_action else action_owner.character.place(Vector2i(19, 19), true)
+		if not _check(founder_placed and int(Settlement.capture_sample(action_owner).attacker) == -1, "initial real founder protects the original center before paid player travel"): return false
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "original marker publishes actual center, stock, holders and all initial bodies before any paid interval"): return false
-	var attackers: TerrainArmy = center_attackers # Slot 0 holds the successor's team after the handover.
-	var begun: Dictionary = attackers.issue_combat_order(attackers.current_commander, TerrainArmy.CombatOrder.ATTACK)
+	var attackers: Variant = center_attackers # Slot 0 holds the successor's team after the handover.
+	var begun: Dictionary = _player_team_order(action_owner, attackers, TerrainArmy.CombatOrder.ATTACK, Vector2i(-1, -1), center_founder)
 	if not _check(begun.ok, "actual center attacker captain creates its real original siege activity before the player forecast", begun): return false
 	var battle: Dictionary = slot.refresh_original_region_siege_battle(action_owner)
 	if not _check(battle.ok and not str(battle.get("battle_id", "")).is_empty(), "actual original center and hostile body publish the existing siege owner", battle): return false
-	var held: Dictionary = attackers.issue_combat_order(attackers.current_commander, TerrainArmy.CombatOrder.HOLD)
+	var held: Dictionary = _player_team_order(action_owner, attackers, TerrainArmy.CombatOrder.HOLD)
 	return _check(held.ok, "same genuine captain stops its unstarted center attack through the original public command while the existing siege channel remains owned", held)
 
 func _player_ground_route(status: Dictionary, context: Dictionary) -> Dictionary:
@@ -92,6 +122,44 @@ func _player_walk_to_departure() -> bool:
 	var identity: int = lab.controlled_person_id()
 	var goal := Vector2i(10, 50)
 	var started: float = float(slot.control.logical_game_seconds)
+	if lab.crowd_site != null and lab.crowd_site.active:
+		# Crowd: host input steers the continuous body along a fresh shortest route each shared interval until it stands on
+		# the goal cell (a continuous body keeps no one-cell edges), then stops. Due arrival endpoints are consumed first:
+		# a pending region operation makes the host input a no-op.
+		var due: Dictionary = slot.consume_due_region_events()
+		if not _check(due.ok, "the arrived successor's due endpoints are consumed before departure positioning", due): return false
+		# A shell born restore_only has movement input off (TerrainLab._ready); the fixture enables it as the test window does.
+		lab.movement_input_enabled = true
+		for interval: int in range(2048):
+			if Time.get_ticks_msec() > deadline: return _check(false, "original player departure positioning exceeded deadline")
+			var walker: Dictionary = controller.person_actions._person(identity, false)
+			if not _check(not walker.is_empty(), "same original successor owns departure positioning"): return false
+			# A continuous body covers several cells per shared interval; it stops once it stands beside or on the goal cell.
+			var gap := Vector2i(walker.cell) - goal
+			if maxi(absi(gap.x), absi(gap.y)) <= 1:
+				lab._clear_movement_input()
+				if not await _action_until(func() -> bool:
+					var current: Dictionary = controller.person_actions._person(identity, false)
+					return not current.is_empty() and not bool(current.moving), "the crowd successor stops at the interior departure cell"): return false
+				var stood := Vector2i(controller.person_actions._person(identity, false).cell)
+				return _check(float(slot.control.logical_game_seconds) > started and lab.controlled_person_id() == identity and maxi(absi(stood.x - goal.x), absi(stood.y - goal.y)) <= 2,
+					"original paid movement places the same successor inside the source Site before hostile genesis", {"cell": stood, "goal": goal})
+			var route: Array[Vector2i] = PlayerContactBattle.original_siege_path(lab, identity, goal)
+			if not _check(not route.is_empty(), "original local navigation reaches the interior departure cell", walker.cell): return false
+			var toward: Vector2i = route[0] if route[0] != Vector2i(walker.cell) or route.size() == 1 else route[1]
+			# A held direction key is the wish to walk the shared step samples each interval (a one-off _try_move wish is
+			# overwritten by that sampling).
+			var heading := Vector2i(signi(toward.x - int(walker.cell.x)), signi(toward.y - int(walker.cell.y)))
+			lab._held_directions.clear()
+			lab._held_directions[KEY_W] = heading
+			lab._last_direction_key = KEY_W
+			lab._try_move(heading)
+			if not _action_step(): return false
+			if interval % 60 == 0: await process_frame
+		return _check(false, "departure positioning exceeded its bounded shared intervals", {"cell": controller.person_actions._person(identity, false).get("cell"),
+			"operation_pending": controller.region_operation_pending(), "player_index": lab.crowd_site.player_index, "wish": lab.crowd_site.wish,
+			"departure_defers": controller._region_departure_defers_person(identity), "housing_intercept": controller.person_actions.intercept_housing_input(identity),
+			"ship_journey": lab._ship_person_in_journey(identity), "ground_crossing": controller.ground_crossing_blocks_input()})
 	for edge: int in range(200):
 		if Time.get_ticks_msec() > deadline: return _check(false, "original player departure positioning exceeded deadline")
 		var person: Dictionary = controller.person_actions._person(identity, false)
@@ -192,12 +260,10 @@ func _player_accepted_contact_controls() -> bool:
 
 func _player_public_fault() -> bool:
 	if player_witness_case == "moved":
-		var hostile: TerrainArmy = action_owner.combat_armies[2]
-		var move: Dictionary = hostile.issue_combat_order(hostile.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(3, 52))
+		var move: Dictionary = _player_team_order(action_owner, _team_owner(action_owner, player_hostile_team_id), TerrainArmy.CombatOrder.MOVE, Vector2i(3, 52))
 		return _check(move.ok, "existing actual hostile captain begins public MOVE after its real witness was queued", move)
 	if player_witness_case == "dead":
-		var defense: TerrainArmy = action_owner.combat_armies[3]
-		var attack: Dictionary = defense.issue_combat_order(defense.current_commander, TerrainArmy.CombatOrder.ATTACK)
+		var attack: Dictionary = _player_team_order(action_owner, _team_owner(action_owner, player_defense_team_id), TerrainArmy.CombatOrder.ATTACK, Vector2i(-1, -1), land_static_id)
 		return _check(attack.ok, "existing actual defender captain orders real original melee after the old witness was queued", attack)
 	return true
 
@@ -372,8 +438,13 @@ func _run() -> void:
 	if not _check(player_witness_case in ["positive", "moved", "dead", "ended"], "one original real player witness case", player_witness_case): _finish(); return
 	if not _write_manifest(): _finish(); return
 	if not await _setup_action_world(): _finish(); return
+	# Crowd port: the intermediate Site's hostile bodies are born (GD window, then the crowd) before any paid interval passes
+	# there: a live crowd cannot return to GD once time has passed (FIRE_CLOCK_MISMATCH). The successor's paid walk at the
+	# source Site follows; under --grid the walk still precedes the hostile genesis.
+	var crowd_main: bool = _crowd_on(lab) and lab.crowd_site.active
+	if crowd_main and not _player_static_genesis(): _finish(); return
 	if not await _player_walk_to_departure(): _finish(); return
-	if not _player_static_genesis(): _finish(); return
+	if not crowd_main and not _player_static_genesis(): _finish(); return
 	if not _player_depart_and_plan() or not _player_public_fault(): _finish(); return
 	var first: Dictionary = slot.advance_region_travel(1)
 	if not _check(first.ok and player_contact_results.is_empty() and float(slot.control.logical_game_seconds) < float(player_contact_event.at), "original map caller accepts a genuine partial positive approach before the earliest contact", first): _finish(); return

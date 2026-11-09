@@ -21,6 +21,9 @@ var center_defender := -1
 var center_founder := -1
 var center_heir := -1
 var center_attackers: Variant # TerrainArmy under --grid, CrowdPersonOwner on a crowd Site.
+## Crowd: the later center cases' people (a civilian, two defender rows, a third faction) are born parked with the attackers.
+## A scenario whose siege registry needs an exact two-faction topology (the static entry family) turns this off.
+var center_birth_parked := true
 var center_attacker_ids: Array[int] = [] # The attackers' person ids in roster order (a crowd owner's unit index differs).
 var center_parked: Dictionary = {} # Crowd: scenario people born parked at fixture time (see _birth_parked_teams).
 const Garrison = preload("res://scripts/terrain_lab/site_garrison.gd")
@@ -480,7 +483,7 @@ func _place_controlled(original: TerrainLab, cell: Vector2i, faction: int, with_
 ## case walks its people into the zone as fixture moves when it needs them.
 func _birth_parked_teams(original: TerrainLab) -> bool:
 	center_parked = {}
-	if not _crowd_on(original): return true
+	if not _crowd_on(original) or not center_birth_parked: return true
 	# Called with the crowd already in GD (inside the attackers' release/admit, one conversion for all scenario teams).
 	var data := original.terrain
 	var specs := [["civilian", 1, [Vector2i(70, 72), Vector2i(70, 71)]], ["knocked", 1, [Vector2i(70, 70), Vector2i(72, 70)]],

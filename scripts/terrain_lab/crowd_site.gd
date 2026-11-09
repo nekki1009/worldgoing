@@ -3571,15 +3571,25 @@ func _section_player() -> Dictionary:
 	return {"person_id": controlled, "soldier_index": player_index}
 
 
-func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictionary:
-	var siege_guard := siege_admission_guard(data)
+## bind_context: the region context a bind validates a projected candidate under when the candidate carries no
+## region_snapshot of its own (TerrainLab._region_project_original_bind_child).
+func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_context: Dictionary = {}) -> Dictionary:
+	# KW21: a load admits siege work in progress, as a region checkpoint and a reopen do. Saved data with a siege action in
+	# progress comes only from a region checkpoint (an ordinary save refuses it); its native blob carries the compounds and
+	# crew steps and its owner graph the projectiles. The arrival bind's candidate has had the party inserted and carries no
+	# region_snapshot any more (found 2026-11-10: a player arriving at a crowd Site whose NPC ballista was mid-action was
+	# refused BUSY at commit_arrival, through the cold owner's own live siege guard on the candidate).
+	var siege_guard := siege_admission_guard(data, true)
 	if not siege_guard.ok: return siege_guard
 	# All original saved Site validators run before rebuilding the native
 	# candidate navigation. The supplied native remains byte-checked.
 	# A Region snapshot Site validates as its Store load does, with the snapshot's own context (2026-11-08: a ration
 	# delivery saved there is its region recipe, which an ordinary save refuses as BUSY).
-	var region_context: Dictionary = {}
+	var region_context: Dictionary = bind_context
 	var snapshot: Variant = data.site.get("region_snapshot")
+	# An arrival bind's candidate (the destination with the party inserted) carries no region_snapshot of its own any more;
+	# the bind passes its region context, so a mid-action siege vehicle validates as the bind's own capture admits it
+	# (found 2026-11-10: it read CORRUPT_SAVE "攻城作業尚未收束" under the ordinary save rule).
 	if snapshot is Dictionary and snapshot.get("context") is Dictionary: region_context = snapshot.context
 	var checked := SiteStore._validate_state(data, data.site, clampi(OS.get_processor_count(), 1, 8), native_candidate, region_context)
 	if not checked.ok: return checked

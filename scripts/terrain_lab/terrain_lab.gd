@@ -10,6 +10,8 @@ const ZOOM_STEP := 1.20
 const ACTION_STEP := 1.0 / 120.0
 const ACTION_FRAME_BUDGET_USEC := 20000 # Leave rendering time while bounded catch-up repays slow frames.
 const ACTION_TIME_EPSILON := 0.000000000001
+## Accumulated minute-phase drift admitted at a step's end (action seconds); see _region_owner_action_limit.
+const PHASE_BOUNDARY_TOLERANCE := 0.00000001
 const SIMULATION_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
 const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
@@ -606,14 +608,14 @@ func exchange_snapshot_guard(value: TerrainData) -> Dictionary:
 					return SiteRuntime.fail("MISSING_ASSET", "原人物同素體碰撞素材缺失；未替換現場")
 	return SiteRuntime.ok()
 
-func prepare_crowd_load(value: TerrainData, native_candidate: Variant = null) -> Dictionary:
+func prepare_crowd_load(value: TerrainData, native_candidate: Variant = null, bind_context: Dictionary = {}) -> Dictionary:
 	if value == null: return SiteRuntime.fail("NO_TARGET")
 	if not value.site.has("crowd"): return SiteRuntime.ok("", {"crowd_site": null})
 	# prepare_load retains every public guard. A same-transaction detached native
 	# candidate is reused only after invariants and exact blob equality pass.
 	var candidate := CrowdSiteScript.new()
 	candidate.setup(self)
-	var prepared: Dictionary = candidate.prepare_load(value, native_candidate)
+	var prepared: Dictionary = candidate.prepare_load(value, native_candidate, bind_context)
 	if not prepared.ok:
 		candidate.free()
 		return prepared
@@ -8384,7 +8386,13 @@ func _region_owner_action_limit(maximum: float, combat_left: float) -> float:
 	for remaining: float in site_controller._pending_deaths.values():
 		if remaining > ACTION_TIME_EPSILON: limit = minf(limit, remaining)
 	var game_limit := (1.0 - float(terrain.site.get("phase", 0.0))) * 60.0
-	limit = minf(limit, RegionSaveSlot.GameplayClock.action_for_game(game_limit, simulation_speed, minf(maximum, combat_left)))
+	var phase_limit: float = RegionSaveSlot.GameplayClock.action_for_game(game_limit, simulation_speed, minf(maximum, combat_left))
+	# The minute phase is a fraction accumulated step by step; after tens of thousands of steps it drifts from the world
+	# clock by up to ~1e-10 game s (found 2026-11-10: a departed crowd Site's cold replay saw its 840 s minute boundary
+	# 7e-11 s inside a journal step the live Site had crossed whole -> REGION_OWNER_UNCLIPPED_ENDPOINT). A boundary that
+	# close to the step's end is the step's own minute crossing, which the step processes as the live Site did; only a
+	# boundary genuinely inside the step clips it.
+	if phase_limit < maximum - PHASE_BOUNDARY_TOLERANCE: limit = minf(limit, phase_limit)
 	for actor: TerrainTestCharacter in combat_actors:
 		if not actor_present(actor): continue
 		if actor.is_moving(): limit = minf(limit, maxf(ACTION_TIME_EPSILON, actor._movement_duration - actor._movement_elapsed))
@@ -9683,7 +9691,7 @@ func _region_gameplay_boundary_location(controller: String, token: String, party
 	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
 	if slot == null or expected_slot == null or expected_slot.get_ref() != slot: return SiteRuntime.fail("WRONG_BOUNDARY_SLOT")
 	if controller not in ["player", "npc"] or party.get("controller") != controller or party.get("party_id") != token: return SiteRuntime.fail("INVALID_BOUNDARY_OWNER")
-	if event.get("at") != float(slot.control.logical_game_seconds): return SiteRuntime.fail("STALE_REGION_CONTACT")
+	if absf(float(event.get("at", -1.0)) - float(slot.control.logical_game_seconds)) > 0.00000001: return SiteRuntime.fail("STALE_REGION_CONTACT")
 	var requested: Variant = event.get("payload", {}).get("site", [coordinate.x, coordinate.y])
 	if not requested is Array or requested.size() != 2 or requested[0] != coordinate.x or requested[1] != coordinate.y: return SiteRuntime.fail("WRONG_BOUNDARY_SITE")
 	var actual: Dictionary = slot.region_original_party_runtime_proof(token, party)
@@ -10518,7 +10526,9 @@ func _region_project_original_bind_child(child: TerrainLab, target: TerrainData,
 	# Staged before the ticket records the body hash the bind admission checks.
 	var staged_crowd: Dictionary = {"ok": true, "crowd_site": null}
 	if target.site.has("crowd"):
-		staged_crowd = child.prepare_crowd_load(target)
+		# The projected target carries no region_snapshot of its own; it validates under this bind's region context (an
+		# arrival into a Site whose siege work is in progress is admitted as the bind's own capture admits it).
+		staged_crowd = child.prepare_crowd_load(target, null, context)
 		if not staged_crowd.ok: return staged_crowd
 	var token := "region_projection_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	child._region_owner_bind_tickets[token] = {"kind": "projection", "data": target, "body_hash": RegionCheckpoint.state_hash(target.site),

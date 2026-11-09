@@ -54,6 +54,12 @@ static func validate_context(value: Variant, expected: Dictionary = {}) -> Dicti
 			if absf(float(value[field]) - float(expected[field])) > maxf(0.00000001, absf(float(expected[field])) * 0.000000001):
 				return Runtime.fail("STALE_REGION_CONTEXT", field)
 			continue
+		# The queued events carry times too (event and contact "at"); a copy read back from the saved JSON can differ from
+		# the in-memory registry in the last ulp (found 2026-11-10 on a crowd Site: 2221.999999999955 vs 2221.9999999999554).
+		# Their numbers use the same clock tolerance; every string, key and structure stays exact.
+		if field == "events" and value.has(field) and supported(expected[field]):
+			if not _same_with_clock_tolerance(_hash_numbers(value[field]), _hash_numbers(expected[field])): return Runtime.fail("STALE_REGION_CONTEXT", field)
+			continue
 		if not value.has(field) or not supported(expected[field]) or JSON.stringify(_hash_numbers(value[field]), "", true, true) != JSON.stringify(_hash_numbers(expected[field]), "", true, true):
 			return Runtime.fail("STALE_REGION_CONTEXT", field)
 	if not supported(value): return Runtime.fail("INVALID_REGION_CONTEXT", "unsupported value")
@@ -263,6 +269,24 @@ static func validate(state: Dictionary, snapshot: Variant, expected: Dictionary 
 	if not owners is Dictionary: return Runtime.fail("INVALID_REGION_OWNERS")
 	return Runtime.ok("", {"context": checked.context, "owners": owners, "snapshot": snapshot.duplicate(true)})
 
+
+## Structural equality of two _hash_numbers values where numbers may differ by the clock tolerance used for the context's
+## game/action seconds (1e-8 absolute, or 1e-9 relative for large values). Strings, keys and shapes compare exactly.
+static func _same_with_clock_tolerance(left: Variant, right: Variant, depth: int = 0) -> bool:
+	if depth > 48: return false
+	if left is float and right is float:
+		return absf(left - right) <= maxf(0.00000001, absf(right) * 0.000000001)
+	if left is Dictionary and right is Dictionary:
+		if left.size() != right.size(): return false
+		for key: Variant in right:
+			if not left.has(key) or not _same_with_clock_tolerance(left[key], right[key], depth + 1): return false
+		return true
+	if left is Array and right is Array:
+		if left.size() != right.size(): return false
+		for index: int in right.size():
+			if not _same_with_clock_tolerance(left[index], right[index], depth + 1): return false
+		return true
+	return typeof(left) == typeof(right) and left == right
 
 static func _hash_numbers(value: Variant) -> Variant:
 	if value is int or value is float: return float(value)

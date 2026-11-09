@@ -471,6 +471,10 @@ func _save_checked_owner_capture(data: TerrainData, site: Vector2i, path: String
 	var saved: Dictionary
 	var source_context: Dictionary = {}
 	if original != null:
+		# A crowd owner is captured as every checkpoint captures it (its native section written to its own Site): a detached
+		# read-only copy has no crowd section of its own and is refused (found 2026-11-10: a departure's map handoff,
+		# begin_region_travel, collected a live crowd cold owner read-only and failed REGION_BACKEND_UNADMITTED).
+		if read_only and original.site_controller._crowd_active(): read_only = false
 		var effects_complete := original._region_point_pending.is_empty() and not original._region_point_consuming and pending_region_events().is_empty()
 		var capture: Dictionary = original.site_controller.capture_region_checkpoint("region_checkpoint" if effects_complete else "region_barrier",
 			effects_complete, original._region_point_pending, "", read_only)
@@ -1907,7 +1911,7 @@ func _region_stamp_siege_contact(identity: String, at: float, owner: String, pay
 		if body.get("cell") is Array and body.cell.size() == 2: route_entry = Vector2i(int(body.cell[0]), int(body.cell[1]))
 	if route_entry != entry: return fail("INVALID_SIEGE_CONTACT")
 	var gap: Vector2i = entry - Vector2i(person.cell)
-	var ready: bool = person.owner.exchange_ready(int(person.unit)) if person.owner is TerrainArmy else person.owner.exchange_ready()
+	var ready: bool = person.owner.exchange_ready(int(person.unit)) if person.owner is TerrainArmy or person.owner is CrowdPersonOwner else person.owner.exchange_ready()
 	if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry) \
 		or original.site_controller.vehicles.blocks_person_step(int(witness.person_id), person.cell, person.cell, entry, entry): return fail("INVALID_SIEGE_CONTACT")
 	var reference: Dictionary = selected.party.content.travel_identity.refs.person.get(str(int(selected.party.leader_person_id)), {})
@@ -4162,7 +4166,7 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	if contact_entry:
 		var channel := _region_validate_npc_siege_contact(event)
 		if not channel.ok: return channel
-		if not bool(channel.valid): return fail("STALE_NPC_CONTACT")
+		if not bool(channel.valid): return fail("STALE_NPC_CONTACT", str(channel.get("reason", "")))
 	if str(planned.plan.get("mode", "land")) == "land" and not contact_entry:
 		var guarded := _region_guard_current_land_arrival(token, party, planned.plan, str(reference.plan_path))
 		if not guarded.ok: return guarded
@@ -6484,7 +6488,9 @@ func _region_player_endpoint_location(status: Dictionary, party: Dictionary, coo
 		return _region_endpoint_sea_location(status.get("plan", {}), party, coordinate)
 	var contact: Dictionary = event.get("payload", {}).get("contact_receipt", {})
 	if not contact.is_empty():
-		if float(contact.get("at", -1.0)) != float(control.logical_game_seconds): return fail("STALE_REGION_CONTACT")
+		# Same-point tolerance (1e-8) as every other endpoint consumer: a crowd Site's clock is never a round number and
+		# lands within ulps of the queued contact time (found 2026-11-10).
+		if absf(float(contact.get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001: return fail("STALE_REGION_CONTACT")
 		var position: Dictionary = contact.get("second", {}).get("position", {})
 		if not joint_pair_equals(position.get("site"), coordinate) or status.site != coordinate:
 			return _region_original_boundary_location("player", status.token, party, coordinate, event)
@@ -6513,7 +6519,7 @@ func _region_npc_endpoint_location(token: String, coordinate: Vector2i, event: D
 	var step: Dictionary = planned.plan.steps[int(position.step_index)]
 	var entry := RegionRoute.entry_cell(step)
 	if not contact.is_empty():
-		if float(contact.get("at", -1.0)) != float(control.logical_game_seconds): return fail("STALE_REGION_CONTACT")
+		if absf(float(contact.get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001: return fail("STALE_REGION_CONTACT")
 		var accepted: Dictionary = contact.get("first", {}).get("position", {})
 		if accepted.get("site") != position.site or not accepted.get("cell") is Array or accepted.cell.size() != 2:
 			return fail("STALE_REGION_CONTACT")
@@ -8564,7 +8570,7 @@ func _region_validate_npc_sea_pair_event(event: Dictionary) -> Dictionary:
 	for original: Dictionary in region_registry().events:
 		if str(original.id) == str(event.get("id", "")): queued = original
 	if queued.is_empty() or queued.status != "pending" or var_to_bytes(queued) != var_to_bytes(event): return fail("STALE_REGION_EVENT")
-	if queued.kind != "reinforcement" or bool(queued.player) or float(queued.at) != float(control.logical_game_seconds): return fail("STALE_REGION_CONTACT")
+	if queued.kind != "reinforcement" or bool(queued.player) or absf(float(queued.at) - float(control.logical_game_seconds)) > 0.00000001: return fail("STALE_REGION_CONTACT")
 	var receipt: Dictionary = queued.payload.get("contact_receipt", {})
 	if receipt.get("kind") != "npc_sea_sweep_boundary" or str(queued.payload.get("token", "")) != str(receipt.get("incoming_token", "")): return fail("INVALID_REGION_CONTACT")
 	var current := _region_npc_sea_pair_boundary(str(receipt.incoming_token), str(receipt.get("primary_token", "")))
@@ -11215,7 +11221,9 @@ func _region_first_player_siege_contact(to: float, interval: Dictionary = {}) ->
 					or SiteSettlement._role(person) == "civilian" or original.site_controller.vehicles.is_siege_crew(int(identity)): continue
 				var body_owner: Variant = person.owner
 				var unit := int(person.unit)
-				var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy else body_owner.exchange_ready()
+				# A crowd row (CrowdPersonOwner) reads exchange readiness by its native index, as a grid row does (found 2026-11-10:
+				# the crowd owner was called with the actor's zero-argument form while forecasting a player's siege contact).
+				var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy or body_owner is CrowdPersonOwner else body_owner.exchange_ready()
 				var gap: Vector2i = entry - Vector2i(person.cell)
 				if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry): continue
 				if original.site_controller.vehicles.blocks_person_step(int(identity), person.cell, person.cell, entry, entry): continue
@@ -11283,7 +11291,7 @@ func _region_validate_player_siege_contact(event: Dictionary) -> Dictionary:
 	var cell: Vector2i = person.cell
 	var body_owner: Variant = person.owner
 	var unit := int(person.unit)
-	var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy else body_owner.exchange_ready()
+	var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy or body_owner is CrowdPersonOwner else body_owner.exchange_ready()
 	var gap: Vector2i = entry - cell
 	if [cell.x, cell.y] != witness.person_cell or [entry.x, entry.y] != witness.entry or not ready or absi(gap.x) + absi(gap.y) != 1 \
 		or not original.terrain.can_attack_across(cell, entry) or original.site_controller.vehicles.blocks_person_step(identity, cell, cell, entry, entry):
@@ -11601,7 +11609,9 @@ func _region_validate_npc_siege_contact(event: Dictionary) -> Dictionary:
 	var witness: Variant = contact.get("witness")
 	if not witness is Dictionary or not RegionTravel._frame_pair(witness.get("person_cell")) or not RegionTravel._frame_pair(witness.get("entry")) or not witness.get("party_reference") is Dictionary or not witness.get("static_reference") is Dictionary or str(witness.get("battle_id", "")) != str(event.get("payload", {}).get("battle_id", "")) or str(witness.get("party_token", "")) != str(event.get("payload", {}).get("token", "")):
 		return fail("INVALID_NPC_CONTACT")
-	if float(contact.get("at", -1.0)) != float(event.get("at", -2.0)) or float(event.at) != float(control.logical_game_seconds): return fail("STALE_NPC_CONTACT")
+	# The same-point tolerance every other endpoint consumer uses (1e-8): a crowd Site's clipped shared step lands within
+	# 1 ulp of the event time (found 2026-11-10 porting region_npc_static_siege_entry: 34.5 vs 34.49999999999997).
+	if float(contact.get("at", -1.0)) != float(event.get("at", -2.0)) or absf(float(event.at) - float(control.logical_game_seconds)) > 0.00000001: return fail("STALE_NPC_CONTACT")
 	var token := str(witness.party_token)
 	var reference: Dictionary = region_registry().parties.get(token, {})
 	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) != "travelling": return {"ok": true, "valid": false, "reason": "NPC_ROUTE_CHANGED"}
