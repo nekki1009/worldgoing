@@ -1026,6 +1026,12 @@ func _packed_equip(appearance: Dictionary) -> int:
 
 
 func _appearance(identity: int) -> Dictionary:
+	var prof: int = Time.get_ticks_usec() if lab != null and lab.combat_profile_enabled else 0 # Optional counters only.
+	var projected := _appearance_now(identity)
+	if prof > 0: lab._combat_profile_stage("crowd_appearance", prof)
+	return projected
+
+func _appearance_now(identity: int) -> Dictionary:
 	var body: Variant = _actors[identity] if _actors.has(identity) else _records[identity]
 	var original: Dictionary = body.capture_state().appearance if _actors.has(identity) else body.appearance
 	var data: TerrainData = _staged_data if _staged_data != null else lab.terrain
@@ -1247,6 +1253,8 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	if not active:
 		return false
 	TerrainArmy.begin_contact_step() # Same original shared slice; clear both body query caches once.
+	# Optional profile counters (TerrainLab.combat_profile_enabled; never a clock): where a crowd step's wall time goes.
+	var prof: int = Time.get_ticks_usec() if lab.combat_profile_enabled else 0
 	if not sync_terrain():
 		last_event_error = SiteRuntime.fail("INVALID_TERRAIN", "群眾地形更新失敗")
 		return false
@@ -1255,6 +1263,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	if not siege_inputs.ok:
 		last_event_error = siege_inputs
 		return false
+	prof = lab._combat_profile_stage("crowd_sync_in", prof)
 	if lab.site_controller != null and siege_native_supported():
 		lab.site_controller.vehicles.update_siege(elapsed)
 		lab._tactical_ai_elapsed += elapsed
@@ -1268,6 +1277,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		if not siege_inputs.ok:
 			last_event_error = siege_inputs
 			return false
+	prof = lab._combat_profile_stage("crowd_siege_host", prof)
 	var started := Time.get_ticks_usec()
 	_advance_garrison_returns(elapsed)
 	var recovery_input_supported := ClassDB.class_has_method(&"ArmyCrowd", &"set_recovery_input")
@@ -1310,6 +1320,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 				last_event_error = SiteRuntime.fail("CROWD_BUILD_MISMATCH", "Native 原隊安全休息輸入失敗")
 				return false
 			owner_ref.advance_fire_hazard_navigation(fire_snapshot)
+	prof = lab._combat_profile_stage("crowd_inputs", prof)
 	if _work_fatigue_tick >= 0:
 		if not _work_fatigue_ready or absf(elapsed - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS:
 			last_event_error = SiteRuntime.fail("CLOCK_NOT_READY", "原 World 同區間全池預檢尚未完成")
@@ -1324,6 +1335,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	else:
 		_audio_native_prepare()
 		if not bool(crowd.step_clock(elapsed, game_seconds, combat_left)): return false
+	prof = lab._combat_profile_stage("crowd_native_step", prof)
 	for owner_ref: CrowdPersonOwner in owners: owner_ref.settle_fire_navigation_steps()
 	# Advance previously committed corpses only; new deaths retain this slice's event values.
 	_advance_dead_person_fatigue(game_seconds)
@@ -1333,6 +1345,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		siege_inputs = sync_siege_inputs()
 		if not siege_inputs.ok: last_event_error = siege_inputs
 	_occupancy_cache.clear()
+	prof = lab._combat_profile_stage("crowd_post", prof)
 	var events_started := Time.get_ticks_usec()
 	var mark: float = crowd.combat_mark()
 	if mark > 0.0 and lab.terrain != null:
@@ -1342,6 +1355,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		_battle_tick(combat_left)
 		settle_events()
 	sync_rider_dismounts()
+	prof = lab._combat_profile_stage("crowd_events", prof)
 	event_cost_last_us = Time.get_ticks_usec() - events_started
 	event_cost_count += 1
 	event_cost_total_us += event_cost_last_us
@@ -1350,6 +1364,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	_steps += 1
 	# Native advanced this slice: the vehicle records and their cached native bodies follow it, so the GD view never lags.
 	if lab.site_controller != null: lab.site_controller.vehicles.sync_convoy_records()
+	lab._combat_profile_stage("crowd_convoy_sync", prof)
 	return true
 
 func _advance_garrison_returns(elapsed: float) -> void:

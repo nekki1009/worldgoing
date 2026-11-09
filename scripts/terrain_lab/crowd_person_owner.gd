@@ -884,6 +884,17 @@ func _command_index(index: int) -> int:
 	return -1 if owner == null or owner is TerrainTestCharacter else owner.index_for_identity(combat_identity(index))
 
 func _order_owner() -> Variant:
+	# Inside TerrainLab's read-only native BEGIN window the original team plans do not change: derive once per window
+	# (each call walks every member against every plan; the window reads it per person and pass).
+	var lab_ref: Variant = crowd_site.lab if crowd_site != null else null
+	if lab_ref != null and lab_ref.native_begin_memo_active:
+		var key := "order_owner:%d" % get_instance_id()
+		if not lab_ref.native_begin_memo.has(key): lab_ref.native_begin_memo[key] = _order_owner_now()
+		var cached: Variant = lab_ref.native_begin_memo[key]
+		if cached == null or is_instance_valid(cached): return cached
+	return _order_owner_now()
+
+func _order_owner_now() -> Variant:
 	for index: int in combat_units:
 		var owner: Variant = _command_owner(index)
 		if owner != null: return owner
@@ -968,7 +979,20 @@ func _combat_attack_cell(index: int) -> Vector2i:
 	return Vector2i(ground.floor())
 
 func ranged_profile(index: int, ammo_mode: String = "NORMAL") -> Dictionary:
-	return SiteCombatRules.fire_ranged_profile(str(equipment_appearance(index).get("parts", {}).get("weapon", "none")), ammo_mode)
+	var lab_ref: Variant = crowd_site.lab if crowd_site != null else null
+	var prof: int = Time.get_ticks_usec() if lab_ref != null and lab_ref.combat_profile_enabled else 0 # Optional counters only.
+	var weapon: String
+	if lab_ref != null and lab_ref.native_begin_memo_active and combat_units.has(index):
+		# The native BEGIN pre-validation window is read-only: each person's weapon is derived once per window.
+		var key := "weapon:%d" % combat_identity(index)
+		if not lab_ref.native_begin_memo.has(key):
+			lab_ref.native_begin_memo[key] = str(equipment_appearance(index).get("parts", {}).get("weapon", "none"))
+		weapon = lab_ref.native_begin_memo[key]
+	else:
+		weapon = str(equipment_appearance(index).get("parts", {}).get("weapon", "none"))
+	var profile: Dictionary = SiteCombatRules.fire_ranged_profile(weapon, ammo_mode)
+	if prof > 0: lab_ref._combat_profile_stage("crowd_ranged_profile", prof)
+	return profile
 
 func exchange_stats(index: int) -> Dictionary:
 	var owner: Variant = _command_owner(index)

@@ -1778,11 +1778,13 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	# A native crowd replay takes the interval tactical boundary as its native combat begin, as the live region path does.
 	if replaying and not formula_interval and crowd_site != null and crowd_site.active and not fire_replay_interval.is_empty():
 		pre_step_combat_left = float(fire_replay_interval.get("tactical_seconds", 0.0))
+	var shared_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	if not gd_original and not formula_interval:
 		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)
 		pre_step_combat_left = float(native_begin.combat_begin)
+	shared_prof = _combat_profile_stage("shared_native_begin_prepare", shared_prof)
 	# Classify/clip before the first body/work mutation. All consumers below
 	# receive exactly the same accepted original action and game interval.
 	# P0's original capture timer clips at its real completion before work/body.
@@ -1867,6 +1869,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			native_point = joint_point
 		_region_point_pending = native_point
 		_publish_native_begin_shared_window(native_begin)
+	shared_prof = _combat_profile_stage("shared_window", shared_prof)
 	var site_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	site_controller.prepare_settlement_interval()
 	site_controller.tick(elapsed, completed_game_seconds)
@@ -1879,7 +1882,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	var movement_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	if not replaying and not _shared_movement_prepared: _advance_movement_input()
 	_combat_profile_stage("movement_input", movement_started)
+	var combat_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0
 	_advance_combat(elapsed, pre_step_combat_left)
+	shared_prof = _combat_profile_stage("advance_combat", combat_prof)
 	_fatigue_work_seconds.clear()
 	fault = site_controller.original_step_fault_guard()
 	if not fault.ok: return site_controller.latch_original_step_fault(fault)
@@ -1930,6 +1935,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		recorded.completed_action_request = region_whole_action_request and bool(recorded.get("ok", false)) \
 			and terrain == original_site and site_controller.region_slot == region_request_slot \
 			and float(region_request_slot.control.fire_clock.action_seconds) == float(region_joint_interval.action_end)
+	_combat_profile_stage("shared_record", shared_prof)
 	recorded.completed = true
 	recorded.action_seconds = elapsed
 	recorded.game_seconds = completed_game_seconds
@@ -6543,7 +6549,9 @@ func _resolve_physical_ranged_fire(people: Array[Dictionary], draft: Dictionary 
 	var round_robin: int = _fire_round_robin if draft.is_empty() else int(draft.round_robin)
 	if not physical_ranged_enabled or terrain == null or crowd_site != null and crowd_site.active and not crowd_site.fire_host_active():
 		return SiteRuntime.fail("UNSUPPORTED_AMMO")
+	var fp: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	_advance_fire_policy_decisions(people, draft)
+	fp = _combat_profile_stage("fire_policy_decisions", fp)
 	var groups := {}
 	var present_groups := {}
 	for person: Dictionary in people:
@@ -6551,9 +6559,10 @@ func _resolve_physical_ranged_fire(people: Array[Dictionary], draft: Dictionary 
 		var group := int(owner_ref.team_id) if owner_ref is TerrainArmy or owner_ref is CrowdPersonOwner and owner_ref.has_army() else -int(person.id)
 		present_groups[group] = true
 		if site_controller != null and site_controller._region_departure_defers_person(int(person.id)): continue
-		if reservations.has(int(person.id)) or not _fire_person_ready(person): continue
+		if reservations.has(int(person.id)): continue
+		# Both filters are pure reads; the cheaper weapon check runs first (2026-11-09 perf), the same people pass.
 		var profile: Dictionary = owner_ref.ranged_profile(int(person.unit), str(owner_ref.ranged_ammo_mode)) if int(person.unit) >= 0 else owner_ref.ranged_profile(str(owner_ref.ranged_ammo_mode))
-		if profile.is_empty(): continue
+		if profile.is_empty() or not _fire_person_ready(person): continue
 		var cargo: Dictionary = owner_ref.combat_hot_get(int(person.unit), &"cargo", {}) if owner_ref is CrowdPersonOwner else (owner_ref.combat_units[int(person.unit)].get("cargo", {}) if int(person.unit) >= 0 else owner_ref.ammo_inventory)
 		if int(cargo.get(str(profile.ammo), 0)) < 1: continue
 		if not groups.has(group): groups[group] = []
@@ -6573,9 +6582,11 @@ func _resolve_physical_ranged_fire(people: Array[Dictionary], draft: Dictionary 
 		starts[group] = start % members.size()
 		scanned[group] = 0
 		remaining += members.size()
+	fp = _combat_profile_stage("fire_group_scan", fp)
 	var summary := {"granted": 0, "deferred": 0, "codes": {}, "window_begin": fire_action_cursor,
 		"window_end": fire_action_cursor + FIRE_RELEASE_WINDOW_SECONDS}
 	var friendly := _ranged_friendly_cells()
+	fp = _combat_profile_stage("fire_friendly_cells", fp)
 	while remaining > 0:
 		if fire_projectiles.size() + reservations.size() >= fire_projectile_capacity:
 			summary.deferred += remaining
@@ -7713,9 +7724,16 @@ func _advance_fire_policy_decisions(people: Array[Dictionary], draft: Dictionary
 	# The original release scheduler supplies the completed action cursor.
 	# Observation continues during cooldown or LOS rejection, without releasing.
 	var seen := {}
+	# The owner-level conditions do not depend on the person: read them once per owner (2026-11-09 perf; each read of a
+	# crowd owner's ranged_enabled / ranged_fire_policy walks the original team plans).
+	var owner_ok := {}
 	for person: Dictionary in people:
 		var owner_ref: Variant = person.get("owner")
-		if not is_instance_valid(owner_ref) or owner_ref.data != terrain or not owner_ref.ranged_enabled or owner_ref.ranged_fire_policy.is_empty(): continue
+		if not is_instance_valid(owner_ref): continue
+		var owner_key: int = owner_ref.get_instance_id()
+		if not owner_ok.has(owner_key):
+			owner_ok[owner_key] = owner_ref.data == terrain and owner_ref.ranged_enabled and not owner_ref.ranged_fire_policy.is_empty()
+		if not bool(owner_ok[owner_key]): continue
 		var unit := int(person.unit)
 		if not (owner_ref.combat_can_act(unit) if unit >= 0 else owner_ref.can_act()): continue
 		var group := _fire_policy_group(owner_ref)
@@ -14532,8 +14550,25 @@ func _gd_mesh_work_needed() -> bool:
 			if team.combat_can_act(index) and bool(team.combat_hot_get(index, &"attack")) and team.ranged_profile(index).is_empty(): return true
 	return false
 
+## Read-only memo for the pure native BEGIN pre-validation below (2026-11-09 perf): the window reads, never writes, the
+## people's equipment and the crowd teams' original order owners, so each is derived once per window instead of once per
+## candidate pass and person (the window runs its ranged scan up to three times; a 96-person logistics team paid ~40 ms
+## per tick for it). Keys: "weapon:<person>", "order_owner:<crowd owner instance>".
+var native_begin_memo: Dictionary = {}
+var native_begin_memo_active := false
+
 func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) -> Dictionary:
+	native_begin_memo.clear()
+	native_begin_memo_active = true
+	var prepared := _prepare_native_begin_shared_window_body(maximum, combat_begin)
+	native_begin_memo_active = false
+	native_begin_memo.clear()
+	return prepared
+
+func _prepare_native_begin_shared_window_body(maximum: float, combat_begin: float) -> Dictionary:
+	var nb: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	_wire_fire_ranged()
+	nb = _combat_profile_stage("nb_wire_fire", nb)
 	var input_batches: Array[Dictionary] = []
 	# Host ammo inputs exist only for Native shooting on a fire host. A host-less
 	# Crowd site has no Native releases (empty preview), so it publishes none.
@@ -14544,14 +14579,18 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 			input_batches.append({"owner": owner_ref, "rows": inputs.rows})
 	for inputs: Dictionary in input_batches: inputs.owner.publish_host_ranged_ammo_inputs(inputs.rows)
 	var game_maximum: float = SiteRuntime.game_seconds(maximum, combat_begin) * simulation_speed
+	nb = _combat_profile_stage("nb_ammo_inputs", nb)
 	var held: Dictionary = _collect_original_shared_work_requests(maximum, game_maximum, minf(maximum, combat_begin), combat_begin)
 	if not held.ok: return held
+	nb = _combat_profile_stage("nb_collect_work", nb)
 	maximum = float(held.action_seconds)
 	var original_requests: Array = _shared_work_requests.duplicate(false)
 	var without_query: Dictionary = prepare_native_begin_ranged(maximum, false, 0)
 	if not without_query.ok: return without_query
+	nb = _combat_profile_stage("nb_ranged", nb)
 	var without: Dictionary = _native_begin_bound(original_requests, maximum, combat_begin, without_query.prepared.preview)
 	if not without.ok: return without
+	nb = _combat_profile_stage("nb_bound", nb)
 	# A hypothetical later query is not today's command/permission. When the
 	# actual no-query prefix ends before that original boundary, keep it legal
 	# without probing/refusing a future GD release or changing fair cursors.
@@ -14563,14 +14602,18 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 		if not with_query.ok: return with_query
 		with_pulse = _native_begin_bound(original_requests, maximum, combat_begin, with_query.prepared.preview)
 		if not with_pulse.ok: return with_pulse
+		nb = _combat_profile_stage("nb_query_pulse", nb)
 	var witness: Dictionary = _native_begin_transition_witness(original_requests, without, with_pulse, without_query.prepared.preview, with_query.prepared.preview)
 	var window: Dictionary = _native_begin_ranged_window(_exchange_phase, maximum, float(without.action_seconds), float(with_pulse.action_seconds),
 		float(witness.get("transition", -1.0)), float(witness.get("minimum_next_fatigue", NAN)), float(witness.get("transition_at", NAN)))
 	if not window.ok: return window
+	nb = _combat_profile_stage("nb_witness_window", nb)
 	var ranged: Dictionary = prepare_native_begin_ranged(float(window.action_seconds))
 	if not ranged.ok: return ranged
+	nb = _combat_profile_stage("nb_ranged", nb)
 	var accepted: Dictionary = _native_begin_bound(original_requests, float(window.action_seconds), combat_begin, ranged.prepared.preview)
 	if not accepted.ok: return accepted
+	nb = _combat_profile_stage("nb_bound", nb)
 	# No looping/reselection. A mismatch is rejected before the first shot cost.
 	if float(accepted.action_seconds) != float(window.action_seconds): return SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED")
 	var validated: Dictionary = validate_native_begin_ranged(ranged.prepared)
@@ -14586,6 +14629,7 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 	if not retimed.ok: return retimed
 	var training_retime: Dictionary = site_controller.retime_shared_native_training_begin(float(result.game_seconds), result.requests, result)
 	if not training_retime.ok: return training_retime
+	nb = _combat_profile_stage("nb_validate_retime", nb)
 	_shared_work_action_seconds = float(result.action_seconds)
 	_shared_work_game_seconds = float(result.game_seconds)
 	_shared_work_requests = result.requests
@@ -14594,16 +14638,19 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 	var captured: Dictionary = _capture_original_shared_prefixes(result.requests, float(result.game_seconds))
 	if not captured.ok: return captured
 	result["captured"] = captured
+	nb = _combat_profile_stage("nb_capture_prefixes", nb)
 	var supplies: Dictionary = site_controller.prepare_native_sustain_point(float(result.game_seconds), result.requests, accepted.lower)
 	if not supplies.ok: return supplies
 	var supply_check: Dictionary = site_controller.validate_native_sustain_point(supplies)
 	if not supply_check.ok: return supply_check
 	result["sustain"] = supplies
+	nb = _combat_profile_stage("nb_sustain", nb)
 	var body: Dictionary = crowd_site.prepare_native_begin_work_point(accepted.lower, result.requests, float(result.action_seconds),
 		float(result.game_seconds), maxf(0.0, float(result.combat_begin) - float(result.action_seconds)), ranged.prepared.native_inputs,
 		ranged.prepared.preview, accepted.projection)
 	if not body.ok: return body
 	result["body"] = body
+	_combat_profile_stage("nb_body_point", nb)
 	return result
 
 func _publish_native_begin_shared_window(prepared: Dictionary) -> Dictionary:
@@ -14944,7 +14991,9 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 		or not exchange_enabled or not is_finite(action_seconds) or action_seconds <= 0.0 \
 		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
 	if query_override not in [-1, 0, 1] or register_candidate and query_override != -1: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+	var rp: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	var people: Array[Dictionary] = _siege_people()
+	rp = _combat_profile_stage("rng_people", rp)
 	var draft: Dictionary = {"owner": self, "data": terrain, "site": terrain.site,
 		"crowd_site": crowd_site, "world": crowd_site.crowd, "action_seconds": action_seconds,
 		"phase": _exchange_phase, "action_cursor": fire_action_cursor,
@@ -14960,12 +15009,15 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 	if query_override >= 0: draft["query_due"] = query_override == 1
 	# Without a fire host _resolve_physical_ranged_fire refuses every query
 	# (UNSUPPORTED_AMMO); a host-less Crowd site has no ranged query to make.
+	rp = _combat_profile_stage("rng_draft", rp)
 	if bool(draft.query_due) and crowd_site.fire_host_active():
 		var selected: Dictionary = _resolve_physical_ranged_fire(people, draft)
 		if not selected.ok: return selected
+	rp = _combat_profile_stage("rng_resolve_query", rp)
 	# Original prior reservations are examined even if no new query is due.
 	_commit_fire_releases(draft)
 	if not draft.error.is_empty(): return draft.error
+	rp = _combat_profile_stage("rng_commit_releases", rp)
 	var native_inputs: PackedInt64Array = PackedInt64Array()
 	for row: Dictionary in draft.releases:
 		var release: Dictionary = row.release

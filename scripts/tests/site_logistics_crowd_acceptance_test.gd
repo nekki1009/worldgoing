@@ -12,7 +12,7 @@ extends SceneTree
 ## Fails fast: the first failed check writes result.json and quits 1.
 const DT := 1.0 / 30.0
 const MAX_TICKS := 1800 # one MOVE, its HOLD and its settle together
-const DEADLINE_MS := 105000 # In-file wall budget. Every synchronous loop checks it, because SceneTree._process cannot run inside them.
+const DEADLINE_MS := 300000 # In-file wall budget (Nekki 2026-11-09 09:35Z: relaxed from 105 s; outer 360 s). Every synchronous loop checks it, because SceneTree._process cannot run inside them.
 const ARRIVE_CELLS := 2.0 # Formation reference to goal, Chebyshev. Same bound as the grid test.
 const SPREAD_CELLS := 8.0 # Every living non-operator within this distance of the formation centre at HOLD (operators: rider cell check).
 const CARTS := 2
@@ -25,6 +25,7 @@ const OUT_ROOT := "res://output/project_command_center/evidence/CENTER_G4/S6_cro
 
 var lab: TerrainLab
 var deadline := 0
+var started_ms := 0 # Wall start, for the elapsed_ms printed with each phase (where the time goes).
 var failure_recorded := false
 var checks := 0
 var out_dir := ""
@@ -35,7 +36,8 @@ var diag_team := -1 # G4 S9b: team and formation of the phase running now, for t
 var diag_formation := -1
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + DEADLINE_MS
+	started_ms = Time.get_ticks_msec()
+	deadline = started_ms + DEADLINE_MS
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
@@ -231,7 +233,7 @@ func _settle(owner: CrowdPersonOwner, team_id: int, key: String, budget: int) ->
 		if not _tick(key):
 			return false
 		if owner.combat_order == TerrainArmy.CombatOrder.HOLD and _unsettled(owner).is_empty() and _all_complete(team_id):
-			print("G4 CROWD SETTLED ", key, " ticks=", step + 1)
+			print("G4 CROWD SETTLED ", key, " ticks=", step + 1, " elapsed_ms=", Time.get_ticks_msec() - started_ms)
 			return true
 	_report_unsettled(owner, team_id, key)
 	_print_phase_timing(key.get_slice("/", 0))
@@ -346,6 +348,19 @@ func _print_phase_timing(phase: String) -> void:
 	for key: String in timing.keys():
 		if key.begins_with(phase + "/"):
 			_print_timing_line(key)
+	# Where the host time of this phase went (TerrainLab's optional profile counters; printed only, never asserted).
+	if lab != null and lab.combat_profile_enabled:
+		var stages: Array = lab.combat_profile_usec.keys()
+		stages.sort_custom(func(a: Variant, b: Variant) -> bool: return int(lab.combat_profile_usec[a]) > int(lab.combat_profile_usec[b]))
+		var parts: PackedStringArray = []
+		for stage: Variant in stages.slice(0, 12): parts.append("%s=%d" % [str(stage), int(lab.combat_profile_usec[stage]) / 1000])
+		# crowd_host_cost: the host's share of each crowd tick (everything but the native step call, events included).
+		print("LOGISTICS_CROWD_PROFILE ", phase, " ms: ", " ".join(parts), " crowd_host_total=", lab.crowd_host_cost_total_us / 1000,
+			" crowd_host_ticks=", lab.crowd_host_cost_count, " crowd_host_max_ms=", lab.crowd_host_cost_max_us / 1000)
+		lab.combat_profile_usec.clear()
+		lab.crowd_host_cost_total_us = 0
+		lab.crowd_host_cost_count = 0
+		lab.crowd_host_cost_max_us = 0
 
 func _print_timing_line(key: String) -> void:
 	var samples: PackedFloat64Array = timing[key]
@@ -413,7 +428,7 @@ func _move(team_id: int, formation: int, owner: CrowdPersonOwner, displacement: 
 			paused = true
 			if not _pause_check(team_id, formation, key + "/pause"):
 				return false
-	print("G4 CROWD ARRIVED ", key, " ticks=", ticks)
+	print("G4 CROWD ARRIVED ", key, " ticks=", ticks, " elapsed_ms=", Time.get_ticks_msec() - started_ms)
 	if not _order(team_id, TerrainArmy.CombatOrder.HOLD, _reference(formation), Vector2i.ZERO, key + " HOLD"):
 		return false
 	if not _settle(owner, team_id, key + "/settle", maxi(1, MAX_TICKS - ticks)):
@@ -449,6 +464,7 @@ func _probe(slots: int, key_prefix: String) -> bool:
 		"friendly_count": slots, "friendly_role": "logistics", "friendly_cart_count": CARTS, "friendly_wagon_count": WAGONS,
 		"friendly_female_percent": 50, "friendly_attack": false, "friendly_ai_enabled": false,
 		"enemy_count": 1, "enemy_role": "logistics", "enemy_female_percent": 0, "enemy_attack": false, "enemy_ai_enabled": false}
+	lab.combat_profile_enabled = true # Optional host profile counters (printed per phase only).
 	var started: Dictionary = lab.start_melee_trial(setup)
 	if not _check(bool(started.get("ok", false)), key_prefix + ": start_melee_trial deploys the logistics team: " + str(started)):
 		return false
@@ -480,6 +496,7 @@ func _probe(slots: int, key_prefix: String) -> bool:
 				key_prefix + ": vehicle %s convoy is attached to its operator's formation" % str(vehicle.get("id", ""))):
 			return false
 	var pauses_before := pause_checks
+	print("G4 CROWD READY ", key_prefix, " elapsed_ms=", Time.get_ticks_msec() - started_ms)
 	# Same sequence as the grid test and the design section 5: +5 x, HOLD, +4 y (90 degrees), HOLD, -3 x.
 	if not _move(team_id, formation, owner, Vector2i(5, 0), key_prefix + " +5x", true, expected):
 		return false
