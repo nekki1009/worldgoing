@@ -572,7 +572,12 @@ static func _role(person: Dictionary) -> String:
 static func _leader_of(_lab: Variant, person: Dictionary) -> int:
 	var owner: Variant = person.owner
 	if owner is TerrainArmy and owner.current_commander >= 0 and owner.command_eligible(owner.current_commander): return owner.combat_identity(owner.current_commander)
-	if owner is CrowdOwner: return int(owner.crowd_site.formation_state(int(owner.formation_index)).get("current_person", person.person_id))
+	if owner is CrowdOwner:
+		# As the grid branch: with no eligible commander (native current_person -1, e.g. a knocked-out captain) the
+		# occupying person itself leads (found 2026-11-09: a crowd fall appointed leader -1).
+		var current := int(owner.crowd_site.formation_state(int(owner.formation_index)).get("current_person", -1))
+		var current_index := int(owner.index_for_identity(current)) if current > 0 else -1
+		return current if current_index >= 0 and owner.command_eligible(current_index) else int(person.person_id)
 	return int(person.person_id)
 
 ## People standing in the capture zone, read from their original owners.

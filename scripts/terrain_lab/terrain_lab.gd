@@ -1701,6 +1701,14 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	var fire_step_guard := _fire_step_guard()
 	if not fire_step_guard.ok: return fire_step_guard
 	# A native crowd replay never consumes its own region point mid-interval; the slot consumes it after the commit.
+	# A completed point the slot did not reach (the live step stopped at REGION_EVENT_PENDING and the world events were
+	# consumed by the zero-time caller, so _finish_original_cold_region_points never ran) is finished here as the slot
+	# would, before the next piece prepares its native begin window over it (found 2026-11-09: CLOCK_NOT_READY from
+	# settle_native_supply_begin_endpoint on a cold center owner holding a captive).
+	if replaying and crowd_site != null and crowd_site.active and not _region_point_pending.is_empty() \
+			and bool(_region_point_pending.get("interval_complete", false)) and not _region_point_consuming:
+		var cold_finished := consume_region_point(false)
+		if not cold_finished.get("ok", false) or not cold_finished.get("complete", false): return cold_finished
 	if not _region_point_pending.is_empty() and not (replaying and crowd_site != null and crowd_site.active):
 		var prior_point := consume_region_point()
 		if not prior_point.ok: return prior_point

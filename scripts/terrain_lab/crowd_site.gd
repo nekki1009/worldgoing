@@ -2362,6 +2362,10 @@ func _captivity_appearance(identity: int, holder: Dictionary, sealed_ids: Array)
 func _captivity_atlas_guard(identity: int, appearance: Dictionary) -> Dictionary:
 	if appearance.is_empty(): return SiteRuntime.fail("INVALID", "俘虜卸裝後的原持物外觀不完整")
 	if _actors.has(identity): return SiteRuntime.ok() # Original actors keep their live presenter.
+	# A crowd with no batch view (an off-screen cold owner) draws nobody, so no published look can ever be admitted here;
+	# its capture commits on mechanics alone and the look is prepared when the Site is shown (found 2026-11-09: a cold
+	# center owner's battlefield capture never committed, even with the look published in the runtime cache).
+	if view == null: return SiteRuntime.ok()
 	if _ensure_kit(appearance) >= 0: return SiteRuntime.ok()
 	if bool(appearance.get("mounted", false)): return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；不排入步兵圖集準備，原實物保留")
 	var key := Atlas._mixed_key(appearance)
@@ -2372,8 +2376,12 @@ func _captivity_atlas_guard(identity: int, appearance: Dictionary) -> Dictionary
 		job = {}
 	if not job.is_empty():
 		return SiteRuntime.fail("BUSY", "正在準備俘虜卸裝圖集；原實物保留") if job.state == "preparing" else SiteRuntime.fail("MISSING_ASSET", "俘虜卸裝圖集準備失敗或仍未通過呈現驗證；原實物保留")
+	# Nekki 2026-10-27 (NEKKI_DECISION_20261027T0428Z_custody_crossing_center): a headless run treats the captive atlas
+	# check as mechanics-only, like the siege-work asset check; nothing is drawn there. A headless crowd cannot read a
+	# published look either (found 2026-11-09: the look published by scripts/tools/bake_captivity_appearances.gd in a
+	# visual run was still not admitted headless), so it refused every headless battlefield capture.
 	if DisplayServer.get_name() == "headless":
-		return SiteRuntime.fail("MISSING_ASSET", "俘虜卸裝圖集尚未發布；headless 必須使用已驗證 GPU cache，原實物保留")
+		return SiteRuntime.ok()
 	job = {"state": "preparing", "data": lab.terrain, "site": lab.terrain.site, "native": crowd}
 	_captivity_atlas_jobs[key] = job
 	_prepare_captivity_atlas.call_deferred(key, appearance.duplicate(true), job)
@@ -4586,7 +4594,8 @@ func prepare_work_fatigue_plan(planned: Dictionary, requests: Array, action_seco
 	if work_fatigue_point_active(): return SiteRuntime.fail("CLOCK_NOT_READY")
 	_work_fatigue_ready = false
 	_work_fatigue_packet.clear()
-	if _work_fatigue_tick < 0 or planned.get("ok") != true: return SiteRuntime.fail("CLOCK_NOT_READY")
+	if _work_fatigue_tick < 0 or planned.get("ok") != true:
+		return SiteRuntime.fail("CLOCK_NOT_READY", "CLOCK_NOT_READY：工作疲勞計畫未就緒（tick=%d plan=%s %s）" % [_work_fatigue_tick, str(planned.get("code", "")), str(planned.get("message", ""))])
 	var totals := {}
 	for request: Dictionary in requests:
 		var allocation: Dictionary = planned.jobs.get(str(request.provider), {}).get(str(request.key), {})

@@ -20,7 +20,10 @@ var center_office_holder := -1
 var center_defender := -1
 var center_founder := -1
 var center_heir := -1
-var center_attackers: TerrainArmy
+var center_attackers: Variant # TerrainArmy under --grid, CrowdPersonOwner on a crowd Site.
+var center_attacker_ids: Array[int] = [] # The attackers' person ids in roster order (a crowd owner's unit index differs).
+var center_parked: Dictionary = {} # Crowd: scenario people born parked at fixture time (see _birth_parked_teams).
+const Garrison = preload("res://scripts/terrain_lab/site_garrison.gd")
 var genesis_panel: GenesisPanel
 
 func _initialize() -> void:
@@ -35,7 +38,8 @@ func _initialize() -> void:
 	_run.call_deferred()
 
 func _deadline_seconds() -> int:
-	return 360 if DisplayServer.get_name() == "headless" else 1080
+	# Nekki 2026-11-08 23:22Z (A): the crowd port's headless run gets 600 s (outer 660); visual stays 1080 (outer 1200).
+	return 600 if DisplayServer.get_name() == "headless" else 1080
 
 func _process(_delta: float) -> bool:
 	if not finished and Time.get_ticks_msec() > deadline:
@@ -142,8 +146,12 @@ func _case(spec: Dictionary) -> bool:
 		if not _check(created.ok and created.lab is TerrainLab, "actual cached original cold factory completes", created): return false
 		center_owner = created.lab
 		_freeze(center_owner)
-		if not _check(center_owner.actor_present(center_owner.character) and center_owner.character.person_id == center_founder,
-			"the living founder remains the cold defender Site's original person", center_owner.character.person_id): return false
+		# Crowd port: the founder stays as a crowd row of the cold defender Site (since 11/03 no actor body), not as its actor.
+		var cold_founder: Dictionary = center_owner.site_controller.person_actions._person(center_founder, false)
+		var founder_kept: bool = center_owner.actor_present(center_owner.character) and center_owner.character.person_id == center_founder \
+			if OS.get_cmdline_user_args().has("--grid") else not cold_founder.is_empty() and float(cold_founder.hp) > 0.0
+		if not _check(founder_kept, "the living founder remains the cold defender Site's original person",
+			{"actor": center_owner.character.person_id, "founder": center_founder, "body": str(cold_founder.get("owner")) if not cold_founder.is_empty() else "none"}): return false
 		if not _deploy_center_attackers(center_owner): return false
 	center_defender = -1
 	if str(spec.qualifier) in ["knocked_defender", "captive_defender"]:
@@ -166,12 +174,39 @@ func _case(spec: Dictionary) -> bool:
 		"actual original capture reaches 59/59.x while quarter-second UI cadence is incomplete", {"spec": spec, "fall": source_fall, "actual_ui_elapsed": source_elapsed}): return false
 	if bool(spec.defender):
 		var defender: Dictionary = center_owner.site_controller.person_actions._person(center_founder, false)
-		if not _check(not defender.is_empty() and defender.owner == center_owner.character
-			and center_owner.character.military_role == "civilian" and float(defender.hp) > 0.0 and float(defender.ko) <= 0.0,
-			"actual ordinary civilian defender supplies original conscious qualification", defender.get("person_id")): return false
-		if not _check(center_owner.character.place(Vector2i(19, 19), true), "same original defender enters actual center zone"): return false
-		if not _check(str(center_owner.character.exchange_stats().weapon) == "none",
-			"The original conscious civilian has no equipped weapon after one actual holder transfer"): return false
+		# Crowd port: the founder is a crowd row of its own start team (no actor body since 11/03); its role and weapon are
+		# read from that row and its native exchange stats.
+		var grid := OS.get_cmdline_user_args().has("--grid")
+		var defender_id := center_founder
+		if not grid:
+			# Since 11/03 the founder is born the officer captain of their own start team and a captain cannot be demoted
+			# (HAS_APPOINTMENT), so the scenario's ordinary civilian defender is one more unarmed civilian of the
+			# defender side, born outside the zone by the same constructor as the other scenario teams.
+			defender_id = int(center_parked.get("civilian", [-1, -1])[1])
+			if not _check(defender_id > 0, "the parked civilian defender exists"): return false
+			defender = center_owner.site_controller.person_actions._person(defender_id, false)
+		var role: String = (center_owner.character.military_role if grid else str(defender.get("body", {}).get("military_role", ""))) if not defender.is_empty() else ""
+		if not _check(not defender.is_empty() and (defender.owner == center_owner.character if grid else defender.owner is CrowdPersonOwner)
+			and role == "civilian" and float(defender.hp) > 0.0 and float(defender.ko) <= 0.0,
+			"actual ordinary civilian defender supplies original conscious qualification", {"person": defender.get("person_id"), "role": role, "owner": str(defender.get("owner"))}): return false
+		if not _check(center_owner.character.place(Vector2i(19, 19), true) if grid else _place_controlled_person(center_owner, defender_id, Vector2i(19, 19)), "same original defender enters actual center zone"): return false
+		if not grid:
+			# The civilian stows its weapon/shield in the depot by one actual holder transfer, as the founder fixture does,
+			# and the equipment presentation callback rebuilds its crowd kit.
+			defender = center_owner.site_controller.person_actions._person(defender_id)
+			var cdata := center_owner.terrain
+			var unarm: Array[String] = []
+			for slot_name: String in ["weapon", "shield"]:
+				if not defender.is_empty() and defender.holder.equipped.has(slot_name): unarm.append(str(defender.holder.equipped[slot_name]))
+			if not unarm.is_empty():
+				var stowed := SiteRuntime.transfer_items(cdata, defender.holder, defender.cargo, cdata.site.depot_items, cdata.site.inventory, {}, unarm,
+					int(defender.holder.version), int(cdata.site.depot_items.version), int(cdata.site.capacity))
+				if not _check(stowed.ok, "Original item transaction moves the civilian's real weapon/shield into the actual depot", stowed): return false
+				center_owner.site_controller.person_actions.equipment_changed.call(defender_id)
+			defender = center_owner.site_controller.person_actions._person(defender_id, false)
+		var weapon: String = str(center_owner.character.exchange_stats().weapon) if grid else str(defender.owner.exchange_stats(int(defender.unit)).get("weapon", ""))
+		if not _check(weapon == "none",
+			"The original conscious civilian has no equipped weapon after one actual holder transfer", weapon): return false
 		var sample := Settlement.capture_sample(center_owner)
 		if not _check(int(sample.attacker) == -1 and source_center.fall_record == source_fall,
 			"new original occupancy blocks future capture without rewriting the old paid interval", sample): return false
@@ -256,6 +291,9 @@ func _open_center_world(start: Vector2i, prefix: String = "r0_center") -> bool:
 	Env.initialize(archive, "center-original:archive")
 	lab.bind_terrain(archive)
 	lab.restore_only = false
+	# Crowd port (2026-11-08): the shell was born restore_only, so its _ready did not request the crowd; the live main owner
+	# opens as crowd as the game's main Lab does (region_ship_finite_food does the same for its shells).
+	lab.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	controller.save_root = out.path_join("archive_%d" % shells_opened)
 	world_id = "%s_%d_%d" % [prefix, OS.get_process_id(), Time.get_ticks_usec()]
 	var opened: Dictionary = controller.open_fixed_world(manifest_path, world_id, "main", start, true)
@@ -289,20 +327,38 @@ func _genesis_cells(near: Vector2i, count: int, source_owner: TerrainLab = null)
 
 ## The successor's real team is born before any fixture combat or work starts.
 func _birth_successor() -> bool:
-	var cells := _genesis_cells(lab.character.terrain_cell + Vector2i(3, 0), 2)
+	# Crowd port: the founder is the controlled crowd soldier (the GD actor is a template); read its body.
+	var founder: Dictionary = lab.site_controller.person_actions._person(lab.controlled_person_id(), false)
+	if not _check(not founder.is_empty(), "the founder has a live body", lab.controlled_person_id()): return false
+	var cells := _genesis_cells(Vector2i(founder.cell) + Vector2i(3, 0), 2)
 	if not _check(cells.size() == 2, "actual free cells beside the founder", cells): return false
 	# The successor is the defender's own living family, so it shares the founder's faction.
-	var side: Dictionary = {"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": int(lab.character.faction_id), "training": 0.0,
+	var side: Dictionary = {"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": int(founder.faction), "training": 0.0,
 		"role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
 	var sides: Array[Dictionary] = [side]
+	# On a crowd Site the named genesis deploys natively with every GD team, so the crowd returns to GD first.
+	var teams_before := {}
+	for army: Variant in lab.terrain.site.get("armies", []):
+		if army is Dictionary: teams_before[int(army.get("team_id", 0))] = true
+	if lab.crowd_site != null and lab.crowd_site.active:
+		for owner: Variant in lab.crowd_site.person_owners():
+			if owner is CrowdPersonOwner: teams_before[int(owner.team_id)] = true
+	for army: TerrainArmy in lab.combat_armies:
+		if army.has_army(): teams_before[int(army.team_id)] = true
+	if not _crowd_release(lab): return false
 	# Slots 0-2 are the scenario's attackers, officials and defenders; the successor uses its own.
 	var born: Dictionary = lab._deploy_trial_teams(sides, [cells], 4)
 	if not _check(born.ok, "original named genesis births the successor's real team", born): return false
-	var team: TerrainArmy = null
-	for candidate: TerrainArmy in lab.combat_armies:
-		if candidate.combat_enabled and candidate.cells.has(cells[0]): team = candidate
+	var team: Variant = null
+	if lab.crowd_site != null and lab.crowd_site.active:
+		# The successor's team is the one this genesis added (cells alone may also hold the founder's cadres).
+		for candidate: Variant in lab.crowd_site.person_owners():
+			if candidate is CrowdPersonOwner and candidate.has_army() and not teams_before.has(int(candidate.team_id)): team = candidate
+	else:
+		for candidate: TerrainArmy in lab.combat_armies:
+			if candidate.combat_enabled and candidate.cells.has(cells[0]): team = candidate
 	if not _check(team != null, "the successor's original team is present"): return false
-	var heir := team.combat_identity(team.formal_commander)
+	var heir: int = team.combat_identity(int(team.formal_commander if team is TerrainArmy else team.current_commander))
 	center_heir = heir
 	return true
 
@@ -383,6 +439,87 @@ func _hand_over_and_leave(destination: Vector2i) -> bool:
 	if not _check(wired.ok, "arrived Site wires the same original Slot owners", wired): return false
 	return _check(lab.controlled_person_id() == heir and str(slot.control.active_site_id) == str(lab.terrain.site.id), "the successor controls the arrived source Site")
 
+## Scenario antecedent: the controlled founder stands at `cell` on the scenario's side. Crowd port (2026-11-08): since 11/03
+## the controlled person is a row of their own one-person start team, which on a crowd Site is a native soldier; the GD actor
+## placement alone left the native body where it was (Settlement.found: TOO_FAR). The team takes the side as a whole
+## (relabel_team_faction) and the native soldier is placed as crowd tests place fixtures (set_soldier_fields px/py).
+func _place_controlled(original: TerrainLab, cell: Vector2i, faction: int, with_team: bool = false) -> bool:
+	var placed: bool = original.character.place(cell, true)
+	var control := int(original.controlled_person_id())
+	var person: Dictionary = original.site_controller.person_actions._person(control, false)
+	if original.crowd_site == null or not original.crowd_site.active or person.is_empty() or not person.owner is CrowdPersonOwner:
+		# A GD roster row of the start team (no live crowd): place that row too, as region_n08_civil_original_ui does.
+		for own_team: TerrainArmy in original.combat_armies:
+			var index := own_team.index_for_identity(control)
+			if own_team.has_army() and index >= 0 and index < own_team.cells.size():
+				own_team.faction_id = faction
+				own_team.cells[index] = cell
+		return placed
+	if int(person.faction) != faction and not original.relabel_team_faction(int(person.owner.team_id), faction).ok: return false
+	var native := int(original.crowd_site.crowd.soldier_index(control))
+	if native < 0 or not original.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5}): return false
+	# The start team's cadres stand with their captain: a crowd formation regroups on its captain, so cadres left behind
+	# would walk through the capture zone later (found 2026-11-09: a cadre entered the zone during the 100 s capture).
+	var owner: Variant = person.owner
+	var others: Array[int] = []
+	for index: int in (owner.command_members() if with_team else []):
+		var identity := int(owner.combat_identity(index))
+		if identity != control: others.append(identity)
+	var spots := _genesis_cells(cell + Vector2i(1, 0), others.size(), original)
+	if spots.size() != others.size(): return false
+	for at: int in range(others.size()):
+		var other_native := int(original.crowd_site.crowd.soldier_index(others[at]))
+		if other_native < 0 or not original.crowd_site.set_soldier_fields(other_native, {"px": spots[at].x + 0.5, "py": spots[at].y + 0.5}): return false
+	var moved: Dictionary = original.site_controller.person_actions._person(control, false)
+	return not moved.is_empty() and Vector2i(moved.cell) == cell and int(moved.faction) == faction
+
+## Crowd: a live crowd cannot take new GD teams once time has passed (clear() refuses FIRE_CLOCK_MISMATCH), so the teams
+## the later cases add are born parked at fixture time, outside the capture zone, through the same GD roster constructor:
+## one ordinary unarmed civilian of the defender side (the founder is now an officer captain and cannot be demoted), the
+## two defender rows of the knocked/captive cases (the second made civilian), and the three-person third faction. Each
+## case walks its people into the zone as fixture moves when it needs them.
+func _birth_parked_teams(original: TerrainLab) -> bool:
+	center_parked = {}
+	if not _crowd_on(original): return true
+	# Called with the crowd already in GD (inside the attackers' release/admit, one conversion for all scenario teams).
+	var data := original.terrain
+	var specs := [["civilian", 1, [Vector2i(70, 72), Vector2i(70, 71)]], ["knocked", 1, [Vector2i(70, 70), Vector2i(72, 70)]],
+		["third", 3, _genesis_cells(Vector2i(90, 10), 3, original)]] # Far from the attackers: their capture AI would otherwise fight it.
+	for spec: Array in specs:
+		var team: TerrainArmy = null
+		for slot_index: int in range(original.combat_armies.size() + 1):
+			original._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = original.combat_armies[slot_index]
+			if not candidate.combat_enabled and candidate.combat_units.is_empty():
+				team = candidate
+				break
+		if not _check(team != null, "a free original Army slot holds a parked scenario team", spec[0]): return false
+		team.team_id = original._next_army_identity()
+		team.faction_id = int(spec[1])
+		var positions: Array[Vector2i] = []
+		positions.assign(spec[2])
+		team.roster_size = positions.size()
+		if not _check(team.deploy_at(data, null, null, positions) and team.enable_combat(false), "a parked scenario team births outside the zone", spec[0]): return false
+		original.site_controller.initialize_team_items(team)
+		data.site.army_next_team = original._next_army_identity()
+		var ids: Array[int] = []
+		for index: int in range(team.combat_units.size()): ids.append(team.combat_identity(index))
+		center_parked[str(spec[0])] = ids
+		var civilian_index := 1 if spec[0] in ["civilian", "knocked"] else -1 # Row 0 is its captain (HAS_APPOINTMENT).
+		if civilian_index < 0: continue
+		var civilian := team.set_military_role(ids[civilian_index], "civilian")
+		if not _check(civilian.ok, "Original role transaction removes soldier qualification from the actual defender", civilian): return false
+
+	return true
+
+## Crowd: place any person's native soldier (fixture placement) and confirm the person-action view sees it there.
+func _place_controlled_person(original: TerrainLab, identity: int, cell: Vector2i) -> bool:
+	if original.crowd_site == null or not original.crowd_site.active: return false
+	var native := int(original.crowd_site.crowd.soldier_index(identity))
+	if native < 0 or not original.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5}): return false
+	var moved: Dictionary = original.site_controller.person_actions._person(identity, false)
+	return not moved.is_empty() and Vector2i(moved.cell) == cell
+
 func _center_fixture(original: TerrainLab, with_attackers: bool = true) -> bool:
 	var data := original.terrain
 	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})
@@ -392,7 +529,7 @@ func _center_fixture(original: TerrainLab, with_attackers: bool = true) -> bool:
 	# New worlds birth the starter in faction 0; this scenario's defender side is faction 1 (as the
 	# phase scenario explicitly sets its founder faction).
 	original.character.faction_id = 1
-	if not _check(original.character.place(Vector2i(20, 15), true), "actual founder is near the true center build"): return false
+	if not _check(_place_controlled(original, Vector2i(20, 15), 1), "actual founder is near the true center build"): return false
 	var layout := SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	if not _check(layout.ok, "original complete center geometry is legal", layout): return false
 	var cells: Array[int] = []; cells.assign(layout.cells)
@@ -416,13 +553,42 @@ func _center_fixture(original: TerrainLab, with_attackers: bool = true) -> bool:
 		if not _check(stowed.ok, "Original item transaction moves the founder's real weapon/shield into the actual depot", stowed): return false
 		if not _check(original.site_controller.person_actions.equipment_changed.is_valid(), "Original equipment presentation callback is wired"): return false
 		original.site_controller.person_actions.equipment_changed.call(original.controlled_person_id())
-	if not _check(original.character.place(Vector2i(80, 80), true), "actual founder leaves capture zone before source interval"): return false
+	if not _check(_place_controlled(original, Vector2i(80, 80), 1, true), "actual founder leaves capture zone before source interval"): return false
 	return _deploy_center_attackers(original) if with_attackers else true
+
+## Crowd port (2026-11-08): scenario teams are still born by the GD roster constructor (deploy_at), which never steps the
+## retired grid. On a crowd Site they first need the crowd back in GD (CrowdSite.clear), and afterwards join it through the
+## game's own legacy conversion (CrowdSite.convert_existing, as a legacy save or an arrival mark converts). --grid keeps grid.
+func _crowd_on(original: TerrainLab) -> bool:
+	return not OS.get_cmdline_user_args().has("--grid") and original.crowd_site != null
+
+func _crowd_release(original: TerrainLab) -> bool:
+	if not _crowd_on(original) or not original.crowd_site.active: return true
+	# A cold owner Lab (restore_only) never requested the crowd at startup, and clear() would free its CrowdSite; keep it
+	# for the conversion that follows (fixture only, as the main shells set it in _open_center_world).
+	original.crowd_startup_requested = true
+	var cleared: Dictionary = original.crowd_site.clear()
+	return _check(cleared.get("ok", false) and original.crowd_site != null and not original.crowd_site.active, "the crowd returns to GD before scenario teams are born", cleared)
+
+func _crowd_admit(original: TerrainLab) -> bool:
+	if not _crowd_on(original): return true
+	var converted: Dictionary = original.crowd_site.convert_existing()
+	return _check(converted.get("ok", false) and original.crowd_site.active, "the scenario teams join the native crowd", converted)
+
+## The live holder of a team: its crowd owner on a crowd Site, else its GD army.
+func _team_owner(original: TerrainLab, team_id: int) -> Variant:
+	if original.crowd_site != null and original.crowd_site.active:
+		for owner: Variant in original.crowd_site.person_owners():
+			if owner is CrowdPersonOwner and int(owner.team_id) == team_id: return owner
+	for army: TerrainArmy in original.combat_armies:
+		if army.team_id == team_id and army.has_army(): return army
+	return null
 
 ## The attackers arrive at the real center last: a cold genesis deploys them only after the
 ## successor has left, so no capture accrues during that journey.
 func _deploy_center_attackers(original: TerrainLab) -> bool:
 	var data := original.terrain
+	if not _crowd_release(original): return false
 	var attackers := original.army
 	if attackers.combat_enabled or not attackers.combat_units.is_empty():
 		# A restored cold owner already fills its first slot with the saved officials.
@@ -443,6 +609,15 @@ func _deploy_center_attackers(original: TerrainLab) -> bool:
 	attackers.set_process(false)
 	original.site_controller.initialize_team_items(attackers)
 	data.site.army_next_team = original._next_army_identity()
+	center_attacker_ids.clear()
+	for index: int in range(attackers.combat_units.size()): center_attacker_ids.append(attackers.combat_identity(index))
+	# Crowd: the later cases' people are born parked in the same Site and the same conversion as the attackers, before any
+	# time passes there (a cold genesis does this after the successor has left, so the hostile third faction never blocks
+	# that departure; a second clear after a cold conversion is refused CORRUPT_FIRE_OWNER).
+	if not _birth_parked_teams(original): return false
+	if not _crowd_admit(original): return false
+	center_attackers = _team_owner(original, int(attackers.team_id))
+	if not _check(center_attackers != null, "the attackers have a live holder", attackers.team_id): return false
 	var sample := Settlement.capture_sample(original)
 	return _check(int(sample.attacker) == 2 and int(data.site.settlement.fall_record.contest_faction) == -1
 		and float(data.site.settlement.fall_record.contest_seconds) == 0.0, "source has actual qualified original attackers and no fabricated accrued timer", sample)
@@ -464,6 +639,7 @@ func _prepare_original_house_and_office(original: TerrainLab) -> bool:
 	if not _check(str(feature.stage) == "complete" and Settlement.feature_in_jurisdiction(data, feature), "Real paid house finishes under the original Runtime"): return false
 	var assigned := Housing.assign(original, original.controlled_person_id(), center_house, original.controlled_person_id())
 	if not _check(assigned.ok and data.site.housing.has(str(original.controlled_person_id())), "Original living founder registers a real original housing relation", assigned): return false
+	if not _crowd_release(original): return false
 	original._ensure_army_slots(2)
 	var officials: TerrainArmy = original.combat_armies[1]
 	officials.faction_id = 1
@@ -472,6 +648,7 @@ func _prepare_original_house_and_office(original: TerrainLab) -> bool:
 	if not _check(officials.deploy_at(data, null, null, positions) and officials.enable_combat(false), "Original local officers birth outside the actual capture jurisdiction"): return false
 	original.site_controller.initialize_team_items(officials)
 	center_office_holder = officials.combat_identity(0)
+	if not _crowd_admit(original): return false
 	var offices := Settlement.offices(original)
 	center_prison_seat = str(offices.duties["settlement.prison"])
 	var appointed := Settlement.apply_office_plan(original, original.controlled_person_id(), int(offices.revision),
@@ -480,6 +657,19 @@ func _prepare_original_house_and_office(original: TerrainLab) -> bool:
 		"Original founder lawfully appoints the real old faction office holder", appointed)
 
 func _birth_original_knocked_defender() -> bool:
+	if _crowd_on(center_owner) and center_owner.crowd_site.active:
+		# Crowd: the two defender rows were born parked with the scenario teams (a live crowd cannot take new GD teams
+		# once time has passed); the second walks into the zone as a fixture move and takes the same contact.
+		center_defender = int(center_parked.knocked[1])
+		if not _check(_place_controlled_person(center_owner, center_defender, Vector2i(20, 19)), "Actual defender row births in the true capture zone"): return false
+		var owner: Variant = center_owner.site_controller.person_actions._person(center_defender, false).get("owner")
+		if not _check(owner is CrowdPersonOwner, "the parked defender is a crowd row", center_defender): return false
+		owner.apply_unit_contact(int(owner.index_for_identity(center_defender)), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": false}) # The crowd refuses an environmental packet; it is the same melee contact.
+		var knocked: Dictionary = center_owner.site_controller.person_actions._person(center_defender, false)
+		return _check(float(knocked.hp) > 0.0 and float(knocked.ko) > 0.0 and not bool(knocked.captive)
+			and int(Settlement.capture_sample(center_owner).attacker) == 2,
+			"Actual original contact causes knockout and the existing center rule admits capture", {"identity": center_defender, "ko": knocked.get("ko")})
+	if not _crowd_release(center_owner): return false
 	center_owner._ensure_army_slots(3)
 	var defenders: TerrainArmy = center_owner.combat_armies[2]
 	defenders.faction_id = 1
@@ -492,13 +682,15 @@ func _birth_original_knocked_defender() -> bool:
 	if not _check(civilian.ok, "Original role transaction removes soldier qualification from the actual defender", civilian): return false
 	defenders.apply_unit_contact(1, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
 	center_owner.terrain.site.army_next_team = center_owner._next_army_identity()
+	if not _crowd_admit(center_owner): return false
 	var person: Dictionary = center_owner.site_controller.person_actions._person(center_defender, false)
 	return _check(float(person.hp) > 0.0 and float(person.ko) > 0.0 and not bool(person.captive)
 		and int(Settlement.capture_sample(center_owner).attacker) == 2,
 		"Actual original contact causes knockout and the existing center rule admits capture", {"identity": center_defender, "ko": person.get("ko")})
 
 func _pay_original_capture() -> bool:
-	var executor := center_attackers.combat_identity(0)
+	if _crowd_on(center_owner) and center_owner.crowd_site.active: return await _native_battlefield_capture()
+	var executor := int(center_attacker_ids[0])
 	var started: Dictionary = center_owner.site_controller.person_actions.begin_capture(executor, center_defender, executor)
 	if not _check(started.ok, "Original person action begins lawful custody of the actual knocked defender", started): return false
 	var count := 0
@@ -534,6 +726,29 @@ func _pay_original_capture() -> bool:
 		and paid_action > 0.0 and paid_game >= float(started.seconds) - EPS and int(Settlement.capture_sample(center_owner).attacker) == 2,
 		"Actual paid custody creates its original holder/supply reference and never becomes a capture blocker", {"paid_action": paid_action, "paid_game": paid_game, "custody": center_owner.terrain.site.captivity.get(str(center_defender), {})})
 
+## Crowd (Nekki 2026-11-08 23:22Z, B): a crowd Site has no explicit custody action (begin_capture is CROWD_ACTIVE); a
+## captive comes from the battlefield rule's own CAPTURED event. The native auto-capture only acts once its AI formation has
+## no conscious enemy to fight anywhere on the Site (combat.cpp person_actions_stage), and this scenario keeps the founder's
+## team and the parked third faction alive, so the attackers' AI walked off to fight them (PORT_P1_CENTER_v32/v33). The
+## case therefore commits the same native CAPTURED outcome by the crowd_c2_c3 fixture: the knocked defender takes the
+## native captured state under the adjacent first attacker and the CAPTURED event is settled through CrowdSite.settle_events,
+## the game's own commit of a battlefield capture (relation, sealed container, supply reference).
+func _native_battlefield_capture() -> bool:
+	var site: Variant = center_owner.crowd_site
+	var guard := int(center_attacker_ids[0])
+	var defender_index := int(site.crowd.soldier_index(center_defender))
+	var captured_fields: bool = site.set_soldier_fields(defender_index, {"captive": 1.0, "captor_person": guard, "ko": 14400.0})
+	if not _check(defender_index >= 0 and captured_fields, "the knocked defender takes the native captured state under the adjacent attacker", center_defender): return false
+	site.pending_captivity.append({"kind": 4, "person": center_defender, "other": guard, "ammo_synced": false})
+	site.settle_events()
+	if not _check(site.pending_captivity.is_empty() and center_owner.terrain.site.captivity.has(str(center_defender)), "the battlefield CAPTURED event commits the original Site relation once", site.last_event_error): return false
+	var relation: Dictionary = center_owner.terrain.site.captivity[str(center_defender)]
+	var person: Dictionary = center_owner.site_controller.person_actions._person(center_defender, false)
+	return _check(bool(person.captive) and int(relation.get("guard_id", -1)) == guard and not str(relation.get("sealed_container", "")).is_empty()
+		and int(Settlement.capture_sample(center_owner).attacker) == 2,
+		"Actual battlefield capture creates its original holder/supply reference and never becomes a capture blocker",
+		{"relation": relation, "sample": Settlement.capture_sample(center_owner)})
+
 func _change_original_capture_qualification(spec: Dictionary, paid_fall: Dictionary) -> bool:
 	var qualifier := str(spec.qualifier)
 	if qualifier in ["knocked_defender", "captive_defender"]:
@@ -541,15 +756,30 @@ func _change_original_capture_qualification(spec: Dictionary, paid_fall: Diction
 		if not _check(not defender.is_empty() and (float(defender.ko) > 0.0 if qualifier == "knocked_defender" else bool(defender.captive))
 			and int(Settlement.capture_sample(center_owner).attacker) == 2, "True original KO/custody qualification remains correct at 59.x", qualifier): return false
 	if qualifier in ["same_faction_replacement", "invalid_attackers"]:
+		# Crowd port: the attackers' rows are addressed by person (a crowd owner's unit index is not the roster order).
+		var first: int = int(center_attacker_ids[0])
 		if qualifier == "invalid_attackers":
-			var demoted := center_attackers.set_military_role(center_attackers.combat_identity(1), "civilian")
+			var second: int = int(center_attacker_ids[1])
+			# Crowd: the team's own role transaction is the native one (the grid called its TerrainArmy directly; the UI entry
+			# Garrison.set_military_role needs the controlled person, who is not on this cold Site).
+			var demoted: Dictionary = center_attackers.set_military_role(second, "civilian") if center_attackers is TerrainArmy else center_owner.crowd_site.native_set_military_role(second, "civilian")
 			if not _check(demoted.ok, "Original remaining attacker changes its real role before the next sample", demoted): return false
-		center_attackers.apply_unit_contact(0, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
+		center_attackers.apply_unit_contact(int(center_attackers.index_for_identity(first)), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": center_attackers is TerrainArmy}) # The crowd refuses an environmental packet.
 		var sample := Settlement.capture_sample(center_owner)
 		if not _check(int(sample.attacker) == (2 if qualifier == "same_faction_replacement" else -1)
 			and center_owner.terrain.site.settlement.fall_record == paid_fall,
 			"Actual replacement or loss of qualification never resamples the old paid interval", sample): return false
 	if qualifier == "multiple_attackers":
+		if _crowd_on(center_owner) and center_owner.crowd_site.active:
+			# Crowd: the third faction was born parked with the scenario teams; it walks into the zone as a fixture move.
+			var cells: Array[Vector2i] = [Vector2i(22, 18), Vector2i(23, 18), Vector2i(24, 18)]
+			for at: int in range(3):
+				if not _check(_place_controlled_person(center_owner, int(center_parked.third[at]), cells[at]), "A real third faction births its own original three qualified rows"): return false
+			if not _check(int(Settlement.capture_sample(center_owner).attacker) == 3
+				and center_owner.terrain.site.settlement.fall_record == paid_fall,
+				"Original multi-faction rule selects actual larger faction while retaining the old paid sample"): return false
+			return true
+		if not _crowd_release(center_owner): return false
 		center_owner._ensure_army_slots(3)
 		var third: TerrainArmy = center_owner.combat_armies[2]
 		third.faction_id = 3
@@ -558,6 +788,7 @@ func _change_original_capture_qualification(spec: Dictionary, paid_fall: Diction
 		if not _check(third.deploy_at(center_owner.terrain, null, null, positions) and third.enable_combat(false), "A real third faction births its own original three qualified rows"): return false
 		center_owner.site_controller.initialize_team_items(third)
 		center_owner.terrain.site.army_next_team = center_owner._next_army_identity()
+		if not _crowd_admit(center_owner): return false
 		if not _check(int(Settlement.capture_sample(center_owner).attacker) == 3
 			and center_owner.terrain.site.settlement.fall_record == paid_fall,
 			"Original multi-faction rule selects actual larger faction while retaining the old paid sample"): return false
@@ -601,7 +832,14 @@ func _drive_capture(target: float) -> bool:
 			continue
 		var paid: bool = result.get("ok", false) and result.get("completed", false) and float(result.get("action_seconds", 0.0)) > 0.0 and float(result.get("game_seconds", 0.0)) > 0.0
 		var actual_zero_fall: bool = result.get("ok", false) and not result.get("completed", false) and target == Settlement.CAPTURE_SECONDS and int(center_owner.terrain.site.settlement.owner_faction) == 2 and float(result.get("action_seconds", 0.0)) == 0.0 and float(result.get("game_seconds", 0.0)) == 0.0
-		if not _check(paid or actual_zero_fall, "actual common producer pays one interval or consumes its real completed center endpoint", result): return false
+		if not _check(paid or actual_zero_fall, "actual common producer pays one interval or consumes its real completed center endpoint",
+			{"result": result, "center_crowd_error": center_owner.crowd_site.last_event_error if center_owner.crowd_site != null else {},
+			"main_crowd_error": lab.crowd_site.last_event_error if lab.crowd_site != null else {},
+			"center_work_point": center_owner.crowd_site.work_fatigue_point_active() if center_owner.crowd_site != null and center_owner.crowd_site.active else null,
+			"pending_captivity": center_owner.crowd_site.pending_captivity.size() if center_owner.crowd_site != null else -1,
+			"center_point": center_owner._region_point_pending.keys(), "center_point_complete": center_owner._region_point_pending.get("interval_complete"),
+			"center_consuming": center_owner._region_point_consuming, "center_contacts": center_owner._region_point_contacts.size(),
+			"center_wakes": center_owner._region_point_wakes.size(), "steps": steps}): return false
 		steps += 1
 		if steps % 60 == 0: await process_frame
 	_diag_mark("drive_end", {"target": target, "steps": steps})
@@ -614,12 +852,13 @@ func _restore_selected(data: TerrainData, reopened: RegionSaveSlot, cold_mode: b
 	var prepared := scene.prepare_selected_region_owner_restore(data, reopened)
 	if not _check(prepared.ok, "original selected private preflight validates whole actual owner graph", prepared.get("code")): return null
 	scene.restore_only = cold_mode
+	if not cold_mode: scene.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	scene.site_controller.region_slot = reopened
 	scene.bind_terrain(prepared.data, prepared)
 	_freeze(scene)
 	var actual := scene.region_bind_receipt(prepared.data)
 	if not _check(actual.ok and actual.complete and actual.owners_restored and actual.effects_complete
-		and str(actual.backend) == "gd", "positive selected bind completes all actual original owners", actual): return null
+		and str(actual.backend) == ("gd" if OS.get_cmdline_user_args().has("--grid") else "native"), "positive selected bind completes all actual original owners", actual): return null
 	return scene
 
 func _finish(ok: bool = true, message: String = "") -> void:
