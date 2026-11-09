@@ -1,6 +1,6 @@
 # 考試與學校建物 — 規劃報告 V0.1
 
-日期：2026-11-09　作者：Claude（規劃考試與學校建物 thread）　狀態：**待 Nekki 決定 §13**；只定規則，不動程式。施工由專案指揮中心排程。
+日期：2026-11-09　作者：Claude（規劃考試與學校建物 thread）　狀態：**定案**（Nekki 2026-11-09 17:51Z「都依建議」，§13 八題全部採 A）；只定規則，不動程式。施工由專案指揮中心排程。
 
 依據：`reports/civil-military-office-plan.md`（11/09 定案：`civil_role = none / clerk 文吏 / official 文官`，三個取得入口，§10 明寫考試與學校未規劃）、研究機構計畫（工法室／匠作院／考工院，https://claude.ai/artifact/XykhrgJfj8XMenP1Re2gQy ，11/06 四題全依建議）、`reports/tech-tree-v2-draft.md` §6（工位試作與一師一徒授課契約）與 N07 技藝傳習制度、`reports/settlement-center-levels-draft.md`（聚落五級）、`OFFICE_POSITIONS_AND_DUTIES_PLAN.md` 與 v2 整合計畫（`nation.education` 已列為文職責名稱）、性格七軸草案、聲望規劃（11/05）、開局流程規劃（範本庫、能力點上限 200）。
 
@@ -244,7 +244,7 @@ score = learning × 0.6
 
 ---
 
-## 12. 不在本報告範圔
+## 12. 不在本報告範圍
 
 | 項目 | 處理 |
 |---|---|
@@ -259,6 +259,8 @@ score = learning × 0.6
 ---
 
 ## 13. 要 Nekki 決定的問題（每題附建議）
+
+〔2026-11-09 定案〕Nekki 回「都依建議」：1-A、2-A、3-A、4-A、5-A、6-A、7-A、8-A。以下保留原題供對照。
 
 1. **學校分級**：**A 三級（蒙學／鄉學／國學）跟聚落等級走（建議）**／B 單一「學堂」建物，一棟教到 100，鄉試國試都在那考。
 2. **考試制度**：**A 門檻制、無名額、冷卻＋明示開考（建議）**／B 名額制（每場取前 N 名），需加名額設定與排序 UI。
