@@ -5,7 +5,26 @@ extends Control
 
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
-const RegionLabScript = preload("res://scripts/region_lab/region_lab.gd")
+## Menu background: the Taiwan overview classes (R8) and content scope (R8) drawn with the RegionLab palette.
+## Two single-channel textures replace the RG8 interleave loop over 4.56 M cells; display only, no validation.
+const BACKGROUND_FOLDER := "res://assets/region_lab/earth_tw_tm2_121_v1_r4"
+const BACKGROUND_SIZE := Vector2i(1900, 2400) # manifest.json summary.size; checked against the file length below.
+const BACKGROUND_SHADER := """
+shader_type canvas_item;
+uniform sampler2D scope_texture : filter_nearest;
+uniform bool has_scope = true;
+void fragment() {
+    float kind = floor(texture(TEXTURE, UV).r * 255.0 + 0.5);
+    float scope = has_scope ? floor(texture(scope_texture, UV).r * 255.0 + 0.5) : 1.0;
+    vec3 color = vec3(0.28, 0.23, 0.32);
+    if (kind == 1.0) { color = vec3(0.10, 0.27, 0.40); }
+    else if (kind == 2.0) { color = vec3(0.39, 0.57, 0.34); }
+    else if (kind == 3.0) { color = vec3(0.27, 0.63, 0.72); }
+    else if (kind == 4.0) { color = vec3(0.73, 0.73, 0.48); }
+    if (scope == 0.0) { color = mix(color, vec3(0.14, 0.16, 0.19), 0.72); }
+    COLOR = vec4(color, 1.0);
+}
+"""
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
 const DEFAULT_HAIR_DYE := "9b775dff"
@@ -136,22 +155,20 @@ func _build_background() -> void:
 	base.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	base.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(base)
-	var source := RegionData.new()
-	if not bool(source.load_manifest().get("ok", false)): return
-	var overview: Dictionary = source.get_overview()
-	var classes: PackedByteArray = overview.get("classes", PackedByteArray())
-	var scopes: PackedByteArray = overview.get("content_scope", PackedByteArray())
-	var width := int(overview.get("width", 0))
-	var height := int(overview.get("height", 0))
-	if width <= 0 or height <= 0 or classes.size() != width * height: return
-	var pixels := PackedByteArray()
-	pixels.resize(classes.size() * 2)
-	for i: int in range(classes.size()):
-		pixels[i * 2] = classes[i]
-		pixels[i * 2 + 1] = scopes[i] if scopes.size() == classes.size() else 1
+	# The map texture is built after the first frame so the menu appears at once.
+	_build_background_map.call_deferred()
+
+# Reads the two raw overview layers directly. The full RegionData load (manifest JSON, SHA-256 of every
+# layer, per-cell range checks) stays with RegionLab and the Site, which need the verified data; the menu
+# background is decoration, so a missing or odd-sized file only leaves the plain colour.
+func _build_background_map() -> void:
+	if not is_inside_tree(): return
+	var classes := FileAccess.get_file_as_bytes(BACKGROUND_FOLDER.path_join("summary.u8"))
+	if classes.size() != BACKGROUND_SIZE.x * BACKGROUND_SIZE.y: return
+	var scopes := FileAccess.get_file_as_bytes(BACKGROUND_FOLDER.path_join("content_scope.u8"))
 	var map := TextureRect.new()
 	map.name = "TaiwanBackground"
-	map.texture = ImageTexture.create_from_image(Image.create_from_data(width, height, false, Image.FORMAT_RG8, pixels))
+	map.texture = ImageTexture.create_from_image(Image.create_from_data(BACKGROUND_SIZE.x, BACKGROUND_SIZE.y, false, Image.FORMAT_R8, classes))
 	map.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	map.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	map.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -159,11 +176,16 @@ func _build_background() -> void:
 	map.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map.modulate = Color(1, 1, 1, 0.55)
 	var shader := Shader.new()
-	shader.code = RegionLabScript.PALETTE_SHADER
+	shader.code = BACKGROUND_SHADER
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
+	var has_scope := scopes.size() == classes.size()
+	mat.set_shader_parameter("has_scope", has_scope)
+	if has_scope:
+		mat.set_shader_parameter("scope_texture", ImageTexture.create_from_image(Image.create_from_data(BACKGROUND_SIZE.x, BACKGROUND_SIZE.y, false, Image.FORMAT_R8, scopes)))
 	map.material = mat
 	add_child(map)
+	move_child(map, 1) # Right above the base colour, below the menu panel.
 
 # --- Main page.
 

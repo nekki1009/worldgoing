@@ -152,7 +152,33 @@ static func _write_json(path: String, value: Dictionary) -> void:
 	if file != null: file.store_string(JSON.stringify(value, "\t"))
 
 
+## The released sources cannot change while the game runs, so the SHA-256 work below (a 6 MB manifest and
+## its resource pair) runs once per process. The stamp (path, size, modified time of the checked files)
+## guards the rare case of files replaced under a running editor; a changed stamp recomputes.
+static var _source_choices_cache: Array[Dictionary] = []
+static var _source_choices_stamp := ""
+
+static func _source_choices_fingerprint() -> String:
+	var parts: Array[String] = []
+	var paths: Array[String] = ["res://assets/region_lab/earth_tw_tm2_121_v1_r4/manifest.terrain_mapped_potential_v1.json"]
+	for pair: Dictionary in RegionData.RESOURCE_SOURCE_PAIRS.values(): paths.append(str(pair.path))
+	for path: String in paths:
+		var file := FileAccess.open(path, FileAccess.READ)
+		parts.append("%s|%d|%d" % [path, file.get_length() if file != null else -1, FileAccess.get_modified_time(path)])
+	return "\n".join(parts)
+
 static func new_world_source_choices() -> Array[Dictionary]:
+	var stamp := _source_choices_fingerprint()
+	var result: Array[Dictionary] = []
+	if stamp == _source_choices_stamp and not _source_choices_cache.is_empty():
+		result.assign(_source_choices_cache.duplicate(true))
+		return result
+	result = _compute_new_world_source_choices()
+	_source_choices_cache.assign(result.duplicate(true))
+	_source_choices_stamp = stamp
+	return result
+
+static func _compute_new_world_source_choices() -> Array[Dictionary]:
 	# Selection projects original released source metadata; it grants neither
 	# knowledge nor policy. Candidate publication requires the same release gates.
 	var result: Array[Dictionary] = [{"path": RegionData.DEFAULT_MANIFEST, "label": "台灣（原地類規則）"}]
