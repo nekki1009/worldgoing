@@ -269,7 +269,8 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	# B (Nekki 2026-11-09): a crowd departure has no deferred intent, so the admitted-original-siege rule of the grid intent
 	# path (RegionSaveSlot.prepare_region_player_departure) applies here: a stopped team outside the hostile guard (checked
 	# below) leaves a Site whose combat is its admitted original siege; any other combat refuses as before.
-	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 and not _crowd_siege_departure_admitted(controller): return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
+	var siege_admitted: bool = _crowd_siege_departure_admitted(controller)
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 and not siege_admitted: return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
 	var identity: int = lab.controlled_person_id()
 	# S4 (Nekki 2026-11-03): no crowd actor leaves alone; the player is a roster captain and departs with its team.
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
@@ -293,9 +294,9 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 		if aboard < plan.people.size(): return Runtime.fail("CROWD_SEA_PARTIAL", "群眾隊伍部分隊員未上船；海路須全隊上船")
 	var faction: int = int(plan.faction)
 	if _hostile_near(lab, faction, plan.cells, int(plan.get("team_id", -1)), identity): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
-	var guard: Dictionary = controller.supply_save_guard()
+	var guard: Dictionary = controller.supply_save_guard(false, false, false, siege_admitted)
 	if not guard.ok: return guard
-	var captured: Dictionary = controller._capture_for_save()
+	var captured: Dictionary = controller._capture_for_save(siege_admitted)
 	if not captured.ok: return captured
 	var site: Vector2i = controller._current_region_site()
 	# A sea party departs from the boat (component 0, as the grid sea departure does); a land party needs a route out.
@@ -311,6 +312,9 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	# Every refusal begin_region_travel decides before extraction runs first (no release yet).
 	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
 	if not pre.ok: return pre
+	# A team leaving its Site's admitted original siege hands the Site over as the cold owner of that siege, with every paid
+	# partial kept, as the grid intent departure does (RegionSaveSlot.begin_region_travel_bound_origin).
+	if siege_admitted and not sea: return _depart_crowd_bound(controller, plan, spec, component)
 	# Validate the whole extraction on a copy: nothing is released if this refuses. A sea probe uses the converted team
 	# as the release will (the Site's own army stub of this team is replaced by it, as the recaptured Site does below).
 	var probe_site: Dictionary = lab.terrain.site.duplicate(true)
@@ -330,7 +334,7 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	# RegionTravel.extract erases the marker on the party army.
 	var departing: Dictionary = _grid_party_army(lab, released.army)
 	departing["crowd"] = true
-	var recaptured: Dictionary = lab.crowd_site.capture_save()
+	var recaptured: Dictionary = lab.crowd_site.capture_save(siege_admitted)
 	if not recaptured.ok: return recaptured
 	recaptured.rosters.append(departing)
 	controller._apply_region_crowd_capture(recaptured)
@@ -355,6 +359,34 @@ static func _crowd_siege_departure_admitted(controller: Node) -> bool:
 	for row: Dictionary in slot.control.get("fire_clock", {}).get("index", {}).values():
 		if bool(row.get("fire_active", false)): return false
 	return not Runtime.fire_active(lab.terrain) and lab.terrain.site.get("fire", {}).is_empty()
+
+
+## B + admitted siege (2026-11-10): the live Site is checkpointed at this point, the origin's crowd section is produced on a
+## native copy (CrowdSite.departure_origin_candidate), and the Slot extracts the party from that candidate state, binds the
+## origin as the cold owner of its siege and commits, exactly the grid intent departure's commit without an intent.
+static func _depart_crowd_bound(controller: Node, plan: Dictionary, spec: Dictionary, component: int) -> Dictionary:
+	var lab: Node = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
+	if not checkpoint.ok: return checkpoint
+	var origin: Dictionary = lab.crowd_site.departure_origin_candidate(plan)
+	if not origin.ok: return origin
+	var state: Dictionary = lab.terrain.site.duplicate(true)
+	var armies: Array = []
+	for roster: Variant in state.get("armies", []):
+		if roster is Dictionary and not bool(roster.get("crowd", false)): armies.append(roster)
+	armies.append_array(origin.rosters)
+	var departing: Dictionary = _grid_party_army(lab, origin.army)
+	departing["crowd"] = true
+	armies.append(departing)
+	state["armies"] = armies
+	state["crowd"] = origin.section
+	var result: Dictionary = slot.begin_region_travel_bound_origin(controller, state, spec, component)
+	if not result.ok: return result
+	open_travel_map(controller, str(slot.pin.world_instance_id), str(slot.pin.slot_id), controller._region_manifest_path)
+	var census := RegionTravel.census(result.party)
+	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
+	return Runtime.ok("已整隊出發（群眾 %d 人；原地攻城留在冷 owner）%s" % [census.people.size(), note], {"token": result.token})
 
 
 static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Dictionary:

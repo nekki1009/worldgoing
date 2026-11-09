@@ -1052,6 +1052,10 @@ func _appearance_now(identity: int) -> Dictionary:
 		hp = float(body.get("hp"))
 	# The original presentation owner keeps worn gear on the remains holder.
 	if hp <= 0.0 and bool(body.get("loot_settled")):
+		# Decision A2 on crowd (2026-11-10): a settled fallen member that travelled inert with its team left its remains
+		# container at the Site it fell in. Here it is drawn with its own saved look, as it fell; an empty holder would
+		# project an unarmed look no atlas kit covers (MISSING_ASSET at the arrival conversion).
+		if not data.site.get("ground_loot", {}).has(str(body.get("remains_id"))): return original.duplicate(true)
 		holder = data.site.ground_loot.get(str(body.get("remains_id")), SiteRuntime.new_item_state("empty-remains"))
 	var projected := SiteRuntime.equipment_appearance(data, holder, original)
 	# CAV-3: an ordinary person rides only by the mount slot. A controlled Actor also keeps its live-editor
@@ -3119,11 +3123,20 @@ func departure_plan(identity: int) -> Dictionary:
 	var cells: Array[Vector2i] = []
 	var controlled_cell := Vector2i(-1, -1)
 	var team_sea: bool = lab.site_controller.vehicles.team_has_embarked(int(roster.team_id))
+	# Decision A2 on crowd (2026-11-10): a dead member whose remains are settled does not block the team; it is inert and
+	# leaves with it (released by site_person_release_dead). A dead member whose remains are not settled yet refuses.
+	var inert: Array[int] = []
 	for unit: Dictionary in roster.units:
 		var member := int(unit.person_id)
 		if not _index_by_id.has(member) or _actors.has(member) or has_pending_capture(member):
 			return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
 		var owner: Variant = person_owner(member)
+		if owner != null and float(soldier_state(int(_index_by_id[member])).get("hp", 1.0)) <= 0.0:
+			if not bool(owner.combat_hot_get(int(_index_by_id[member]), &"loot_settled", false)):
+				return SiteRuntime.fail("NOT_READY", "陣亡隊員的遺物尚未結算；結算後才能整隊出發")
+			if member == identity: return SiteRuntime.fail("NO_TARGET", "受控本人已陣亡")
+			inert.append(member)
+			continue
 		# The controlled captain holds host control; _split_exit_ready hands it back for the query only.
 		# SHIPSEA: an embarked team leaves by sea, so an aboard member asks the aboard gate for its own vessel.
 		# A land team's driver crews its own cart or wagon convoy, which the native exit gate never admits; a driver whose
@@ -3136,9 +3149,72 @@ func departure_plan(identity: int) -> Dictionary:
 		people.append(member)
 		cells.append(cell)
 		if member == identity: controlled_cell = cell
+	if people.is_empty(): return SiteRuntime.fail("NOT_READY", "隊伍沒有可出發的在世隊員")
 	return SiteRuntime.ok("", {"roster": roster, "team_id": int(roster.team_id), "faction": int(roster.faction_id),
-		"people": people, "cells": cells, "controlled_cell": controlled_cell})
+		"people": people, "cells": cells, "controlled_cell": controlled_cell, "inert": inert})
 
+
+## A crowd team leaving a Site whose combat is its admitted original siege (RegionTravelSite._depart_crowd_bound): the
+## origin's crowd section is produced by the same native releases run on a COPY of the native World, so the live Site stays
+## the selected checkpoint the cold-owner bind authenticates (as the grid intent departure extracts from a copy). Nothing
+## live is released; the commit's bind publishes this section into the Lab. Returns {ok, section, rosters, army}.
+## Teams with carts, wagons or ships keep the live path (refused here).
+func departure_origin_candidate(plan: Dictionary) -> Dictionary:
+	if not plan.get("ok", false): return plan
+	var team_id := int(plan.team_id)
+	if lab.site_controller.vehicles.team_has_embarked(team_id): return SiteRuntime.fail("UNSUPPORTED", "攻城中的船隊出發尚未支援")
+	for vehicle: Dictionary in lab.site_controller.vehicles.records().values():
+		if str(vehicle.get("kind", "")) in ["cart", "wagon"] and int(vehicle.get("team_id", 0)) == team_id:
+			return SiteRuntime.fail("UNSUPPORTED", "攻城中帶車隊出發尚未支援")
+	var army_conversion: Dictionary = departure_army_snapshot(plan)
+	if not army_conversion.ok: return army_conversion
+	var captured: Dictionary = capture_save(true)
+	if not captured.ok: return captured
+	var copy: Object = ClassDB.instantiate("ArmyCrowd") if ClassDB.class_exists("ArmyCrowd") else null
+	if copy == null: return SiteRuntime.fail("INVALID_CROWD", "群眾原生模組無法建立")
+	copy.call("setup", 1, int(lab.terrain.seed_value))
+	if not bool(copy.call("load_state", Marshalls.base64_to_raw(str(captured.section.blob)))): return SiteRuntime.fail("INVALID_CROWD", "群眾副本無法載入")
+	var roster: Dictionary = {}
+	for row: Dictionary in captured.rosters:
+		if int(row.get("team_id", -1)) == team_id: roster = row
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "群眾副本中沒有出發隊伍")
+	var army: Dictionary = army_conversion.snapshot.duplicate(true)
+	for identity: int in plan.people:
+		var index := int(_index_by_id[identity])
+		if index == player_index: copy.call("set_host_control", index, false)
+		var receipt: PackedFloat64Array = copy.call("site_person_release", index)
+		if receipt.size() != 8: return SiteRuntime.fail("RELEASE_REFUSED", "群眾副本拒絕釋放隊員")
+		_apply_army_receipt(army, identity, receipt)
+	for identity: int in plan.get("inert", []):
+		var dead_receipt: PackedFloat64Array = copy.call("site_person_release_dead", int(_index_by_id[identity]))
+		if dead_receipt.size() != 8: return SiteRuntime.fail("RELEASE_REFUSED", "群眾副本拒絕釋放陣亡隊員")
+		_apply_army_receipt(army, identity, dead_receipt)
+	var bytes: PackedByteArray = copy.call("save_state")
+	if bytes.is_empty(): return SiteRuntime.fail("INVALID_CROWD", "群眾副本無法保存")
+	var digest := HashingContext.new()
+	digest.start(HashingContext.HASH_SHA256)
+	digest.update(bytes)
+	var section: Dictionary = captured.section.duplicate(true)
+	section["blob"] = Marshalls.raw_to_base64(bytes)
+	section["blob_sha256"] = digest.finish().hex_encode()
+	var formation := int(roster.crowd_formation)
+	for team: Dictionary in section.teams:
+		if int(team.get("formation", -1)) == formation: team["departed"] = true
+	if plan.people.has(int(section.get("player", {}).get("person_id", -1))):
+		section["player"] = {"person_id": int(section.player.person_id), "soldier_index": -1}
+	var kept: Array[Dictionary] = []
+	for row: Dictionary in captured.rosters:
+		if int(row.get("team_id", -1)) != team_id: kept.append(row)
+	return SiteRuntime.ok("", {"section": section, "rosters": kept, "army": army})
+
+## A native release receipt written onto the travelling grid army row (as _apply_release_receipt does on a roster row).
+static func _apply_army_receipt(army: Dictionary, identity: int, receipt: PackedFloat64Array) -> void:
+	for row: Dictionary in army.get("units", []):
+		if int(row.get("person_id", 0)) != identity: continue
+		row["hp"] = float(receipt[0])
+		row["cell"] = [int(receipt[4]), int(receipt[5])]
+		row["crowd_position"] = [receipt[6], receipt[7]]
+		return
 
 ## True when `member` drives a cart or wagon of `team_id` whose native convoy stands complete (not moving, not stalled) and
 ## the person is conscious, free, not surrendering and not fighting.
@@ -3222,6 +3298,14 @@ func departure_release(plan: Dictionary) -> Dictionary:
 			var cargo: Dictionary = record.get("cargo", {})
 			if int(receipt.ammo) > 0: cargo[key] = int(receipt.ammo)
 			else: cargo.erase(key)
+	# Decision A2: the settled dead leave with the team, inert (their rows are in the travelling snapshot read above).
+	for identity: int in plan.get("inert", []):
+		var dead_owner: Variant = person_owner(identity)
+		var dead_receipt: Dictionary = dead_owner.release_dead_for_departure(int(_index_by_id[identity])) if dead_owner != null else {}
+		if dead_receipt.is_empty():
+			return SiteRuntime.fail("RELEASE_REFUSED", "原生陣亡者釋放被拒（已釋放 %d 人）；請重新檢查" % released.size())
+		released.append(identity)
+		_apply_release_receipt(roster, identity, dead_receipt)
 	for identity: int in released:
 		_index_by_id.erase(identity)
 		_owner_by_id.erase(identity)

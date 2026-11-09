@@ -499,6 +499,17 @@ bool World::site_person_release_aboard(int i, int vehicle, SitePersonRelease &ou
 	return true;
 }
 
+bool World::site_person_release_dead(int i, SitePersonRelease &out) {
+	if (work_point_active_ || work_point_finish_ready_) return false;
+	if (i < 0 || i >= soldier_count() || released[i] || hp[i] > 0.0 || captive[i] || is_aboard(i) || siege_group(i) >= 0) return false;
+	const int fi = form[i];
+	if (fi < 0 || fi >= (int)formations.size()) return false;
+	const int pool = formations[fi].fatigue_count;
+	release_ready(i, out);
+	formations[fi].fatigue_count = pool; // the death already left the shared pool (combat.cpp); release_ready would count it twice
+	return true;
+}
+
 void World::release_ready(int i, SitePersonRelease &out) {
 	Formation &f = formations[form[i]];
 	out = SitePersonRelease{};

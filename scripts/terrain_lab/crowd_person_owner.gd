@@ -791,6 +791,17 @@ func release_for_departure(index: int, aboard_vehicle: int = -1) -> Dictionary:
 	return {"hp": receipt[0], "fatigue": receipt[1], "fatigue_rest": receipt[2], "ammo": int(receipt[3]),
 		"cell": Vector2i(int(receipt[4]), int(receipt[5])), "position": Vector2(receipt[6], receipt[7])}
 
+## Decision A2 on crowd (2026-11-10): native release of a dead member leaving with its team (site_person_release_dead).
+## Returns {} and changes nothing when refused or when the DLL predates it.
+func release_dead_for_departure(index: int) -> Dictionary:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or crowd_site.lab._region_deferring_endpoint(): return {}
+	if not crowd_site.crowd.has_method("site_person_release_dead"): return {}
+	var receipt: PackedFloat64Array = crowd_site.crowd.site_person_release_dead(index)
+	if receipt.size() != 8: return {}
+	combat_units.erase(index)
+	return {"hp": receipt[0], "fatigue": receipt[1], "fatigue_rest": receipt[2], "ammo": int(receipt[3]),
+		"cell": Vector2i(int(receipt[4]), int(receipt[5])), "position": Vector2(receipt[6], receipt[7])}
+
 # G1 S2 ship glue. The native World owns the aboard state (site_person_board / land / set_deck / retarget_aboard).
 # Every mutator below refuses without changing anything, so the GD caller can stop before writing its rows.
 # Crowd soldiers have no GD rescue or patient bookkeeping, so the TerrainArmy ship readers see none.

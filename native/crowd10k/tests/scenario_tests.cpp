@@ -1604,6 +1604,39 @@ static void test_site_person_release() {
 	check_valid(loaded);
 }
 
+// Decision A2 on crowd (2026-11-10): a dead soldier is released from its formation so its team can depart with it.
+static void test_site_person_release_dead() {
+	std::printf("[site exit dead] a dead soldier releases once; the living, the captive and the released are refused; the death is not counted twice\n");
+	Scene s;
+	s.formation(0, 10, 10, 0, 3, sword()); // soldiers 0..2, team 0
+	s.formation(1, 40, 40, kPi, 1, sword()); // soldier 3, team 1
+	s.w.finalize();
+	SitePersonRelease rel;
+	CHECK(!s.w.site_person_release_dead(1, rel), "a living soldier is refused");
+	CHECK(!s.w.site_person_release_dead(-1, rel) && !s.w.site_person_release_dead(s.w.soldier_count(), rel), "invalid index refused");
+	const int fi = s.w.form[1];
+	const int pool_alive = s.w.formations[fi].fatigue_count;
+	s.w.apply_contact(1, s.w.hp[1], 0.0); // soldier 1 dies
+	CHECK(s.w.hp[1] <= 0.0 && s.w.formations[fi].fatigue_count == pool_alive - 1, "the death leaves the shared pool once (%d)", s.w.formations[fi].fatigue_count);
+	const int roster0 = s.w.formations[fi].roster;
+	const int pool0 = s.w.formations[fi].fatigue_count;
+	s.w.captive[1] = 1;
+	CHECK(!s.w.site_person_release_dead(1, rel), "a captive corpse is refused");
+	s.w.captive[1] = 0;
+	CHECK(s.w.site_person_release_dead(1, rel), "the dead soldier is released");
+	CHECK(s.w.released[1] == 1 && s.w.slot[1] == -1 && rel.hp <= 0.0, "released flag set, slot cleared, receipt keeps hp %.2f", rel.hp);
+	bool listed = false;
+	for (int k : s.w.formations[fi].members) if (k == 1) listed = true;
+	CHECK(!listed, "the released corpse is off the member list");
+	CHECK(s.w.formations[fi].roster == roster0 - 1 && s.w.formations[fi].fatigue_count == pool0, "roster drops by one; the shared pool is not reduced again");
+	CHECK(!s.w.site_person_release_dead(1, rel) && !s.w.site_person_release(1, rel), "a released corpse cannot be released again");
+	CHECK(s.w.site_person_release(0, rel), "the living member still releases normally afterwards");
+	const std::vector<uint8_t> blob = s.w.save();
+	World loaded(1);
+	CHECK(!blob.empty() && loaded.load(blob) && loaded.released[1] == 1 && loaded.state_hash() == s.w.state_hash(), "the released corpse survives save/load");
+	check_valid(loaded);
+}
+
 // CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5, section 9 acceptance). Each block states the rule it checks.
 static Equip spear_steel() { Equip e; e.family = F_SPEAR; e.material = M_IRON; e.armor = A_STEEL; return e; }
 static void place_start(Scene &s, const std::vector<std::pair<float, float>> &xy) {
@@ -2423,6 +2456,7 @@ int main() {
 	test_edge_deploy();
 	test_melee_contact_and_exchange_fatigue();
 	test_site_person_release();
+	test_site_person_release_dead();
 	test_cavalry();
 	test_cavalry_charge();
 	test_cavalry_speed();

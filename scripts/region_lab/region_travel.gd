@@ -2041,9 +2041,16 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 		for row: Variant in army.get("units", []):
 			if row is Dictionary and departed.has(int(row.get("person_id", 0))):
 				return fail("UNSUPPORTED_CROWD_RETURN", "離開的人回到原地點尚未支援")
-			# Dead or gone rows have no native soldier here; the crowd roster would not close without one.
-			if row is Dictionary and (float(row.get("hp", 0.0)) <= 0.0 or bool(row.get("member_gone", false))):
-				return fail("UNSUPPORTED_CROWD_DEAD_ARRIVAL", "群眾目的地暫不接收已死或已離隊的到站人物")
+			# Decision A2 on crowd (2026-11-10): a settled dead row (loot_settled) arrives inert with its team. It joins the
+			# native crowd as its team's corpse (its hp 0 is written by _crowd_arrival_teams; the native state writer
+			# unbinds it from the shared pool once), the same form a fallen member has at the Site it fell in. A dead row
+			# that is not settled, the leader, the controlled person, or a gone row still refuses.
+			if row is Dictionary and bool(row.get("member_gone", false)):
+				return fail("UNSUPPORTED_CROWD_DEAD_ARRIVAL", "群眾目的地暫不接收已離隊的到站人物")
+			if row is Dictionary and float(row.get("hp", 0.0)) <= 0.0:
+				var row_id := int(row.get("person_id", 0))
+				if not bool(row.get("loot_settled", false)) or row_id == int(party.get("leader_person_id", -1)) or row_id == int(arriving.get("controlled_person_id", -1)):
+					return fail("UNSUPPORTED_CROWD_DEAD_ARRIVAL", "群眾目的地只接收已結算遺物的隨隊陣亡者")
 	# A controlled roster member of an arriving player party is admitted: it becomes the crowd's controlled soldier. Any other
 	# actor, or a controlled person that an NPC party carries or that sits on no arriving roster, is refused as before.
 	var controlled_id := int(arriving.get("controlled_person_id", -1))

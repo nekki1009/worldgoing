@@ -173,6 +173,13 @@ int wg_crowd_site_person_release_aboard(wg_crowd *c,int i,int vehicle,double *ou
 	out[4] = static_cast<double>(r.cell_x); out[5] = static_cast<double>(r.cell_y); out[6] = r.x; out[7] = r.y;
 	return 1;
 }
+int wg_crowd_site_person_release_dead(wg_crowd *c,int i,double *out) {
+	wg::SitePersonRelease r;
+	if (!c || !out || !c->world.site_person_release_dead(i,r)) return 0;
+	out[0] = r.hp; out[1] = r.fatigue; out[2] = r.fatigue_rest; out[3] = static_cast<double>(r.ammo);
+	out[4] = static_cast<double>(r.cell_x); out[5] = static_cast<double>(r.cell_y); out[6] = r.x; out[7] = r.y;
+	return 1;
+}
 int wg_crowd_has_projectiles(const wg_crowd *c) { return c && !c->world.projectiles.empty() ? 1 : 0; }
 double wg_crowd_combat_mark(const wg_crowd *c) { return c->world.combat_mark; }
 double wg_crowd_combat_left(const wg_crowd *c) { return c->world.combat_left; }

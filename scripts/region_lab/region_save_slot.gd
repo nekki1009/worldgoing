@@ -11363,6 +11363,41 @@ func commit_region_player_departure(prepared: Dictionary) -> Dictionary:
 	if int(prepared.generation) != int(_marker.generation) or int(prepared.runtime_revision) != int(region_registry().revision) \
 		or float(prepared.world) != float(control.logical_game_seconds) or float(prepared.action) != float(control.fire_clock.action_seconds) \
 		or int(prepared.fire_sequence) != int(control.fire_clock.sequence) or not bool(prepared.binding.can_publish.call()): return fail("STALE_BIND")
+	return _commit_region_departure_bound(prepared)
+
+## B + admitted siege on a crowd Site (2026-11-10): the grid intent departure's prepare without an intent. `state` is the
+## live Site's state with the origin crowd section produced on a native copy (CrowdSite.departure_origin_candidate); the
+## live Lab was checkpointed at this same point, so the cold-owner bind authenticates it as the selected source.
+func begin_region_travel_bound_origin(controller: SiteController, state: Dictionary, spec: Dictionary, start_component: int) -> Dictionary:
+	var lab: TerrainLab = controller.lab
+	if controller.region_slot != self or lab == null or lab.terrain == null: return fail("WRONG_SLOT")
+	var pre := region_travel_preflight(lab.terrain, spec, start_component)
+	if not pre.ok: return pre
+	var original: Dictionary = state.duplicate(true)
+	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
+	if not fire_capture.ok: return fire_capture
+	var extraction_spec: Dictionary = spec.duplicate(true)
+	extraction_spec.game_seconds = float(control.logical_game_seconds)
+	var token := "travel_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	var extracted := RegionTravel.extract(original, extraction_spec, token)
+	if not extracted.ok: return extracted
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	extracted.party.upkeep.original_deaths = {}
+	extracted.origin.erase("region_snapshot")
+	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+	candidate.set_meta(&"region_bind_source", lab.terrain)
+	if not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "cold_exact")
+	if not binding.get("ok", false): return binding
+	if not binding.get("data") is TerrainData or not binding.get("can_publish") is Callable or not binding.get("save_candidate") is Callable or not binding.get("publish") is Callable or not binding.get("discard") is Callable: return fail("MISSING_REGION_ADAPTER")
+	var committed := _commit_region_departure_bound({"ok": true, "controller": controller, "lab": lab, "source": lab.terrain, "coordinate": pre.from,
+		"component": start_component, "token": token, "candidate": binding.data, "binding": binding, "party": extracted.party, "vacated_housing": extracted.vacated_housing})
+	if not committed.ok and not bool(committed.get("committed", false)): binding.discard.call()
+	return committed
+
+## The grid intent departure's commit after its intent checks (shared with begin_region_travel_bound_origin).
+func _commit_region_departure_bound(prepared: Dictionary) -> Dictionary:
+	var controller: SiteController = prepared.controller
 	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY")
 	var generation := int(_marker.generation) + 1
 	var source_path := _generation_path(generation, prepared.coordinate)

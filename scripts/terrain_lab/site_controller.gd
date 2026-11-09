@@ -2871,17 +2871,22 @@ func _capture_positions(state: Dictionary = {}, read_only: bool = false) -> void
 			armies.append(team.capture_combat_state(read_only))
 	state["armies"] = armies
 
+## admit_active_siege: a crowd team leaving a Site whose combat is its admitted original siege (RegionTravelSite
+## ._crowd_siege_departure_admitted). The Site is saved through a region checkpoint, which admits siege work in progress
+## (KW21), so the ordinary siege guard is the region one here; every other guard is unchanged.
 func supply_save_guard(ignore_ground_crossing: bool = false, allow_dirty_fire_save: bool = false,
-		allow_checkpointed_fire_jobs: bool = false) -> Dictionary:
+		allow_checkpointed_fire_jobs: bool = false, admit_active_siege: bool = false) -> Dictionary:
 	var fault: Dictionary = original_step_fault_guard()
 	if not fault.ok: return fault
 	if region_operation_pending(): return Runtime.fail("BUSY", "原船隊或固定世界補算等待中，不能保存或換場")
 	if not ignore_ground_crossing and not _ground_crossing.is_empty():
 		return Runtime.fail("BUSY", "原跨界 ACTION 或冷地點補算尚未提交，不能保存或換場")
-	var siege_guard := Store.siege_save_guard(lab.terrain, allow_dirty_fire_save)
-	if not siege_guard.ok: return siege_guard
+	var siege_admitted: bool = admit_active_siege and _crowd_active()
+	if not siege_admitted:
+		var siege_guard := Store.siege_save_guard(lab.terrain, allow_dirty_fire_save)
+		if not siege_guard.ok: return siege_guard
 	if _crowd_active():
-		var crowd_guard: Dictionary = lab.crowd_site.save_guard()
+		var crowd_guard: Dictionary = lab.crowd_site.save_guard(siege_admitted)
 		if not crowd_guard.ok: return crowd_guard
 	var cape_guard := cape_policy_guard()
 	if not cape_guard.ok: return cape_guard
@@ -2954,7 +2959,7 @@ func _archive_live_site() -> Dictionary:
 func _crowd_active() -> bool:
 	return lab != null and lab.get("crowd_site") != null and lab.crowd_site.active
 
-func _capture_for_save() -> Dictionary:
+func _capture_for_save(admit_active_siege: bool = false) -> Dictionary:
 	_trade().sync_cursor()
 	var boarding: Dictionary = vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
@@ -2962,7 +2967,8 @@ func _capture_for_save() -> Dictionary:
 	if _crowd_active():
 		# One synchronous native sync supplies both the original actor snapshot
 		# and the crowd blob. Store.save retains the full public validation.
-		captured = lab.crowd_site.capture_save()
+		# admit_active_siege: see supply_save_guard (a crowd departure from an admitted original siege).
+		captured = lab.crowd_site.capture_save(admit_active_siege)
 		if not captured.ok: return captured
 	_capture_positions()
 	if _crowd_active():

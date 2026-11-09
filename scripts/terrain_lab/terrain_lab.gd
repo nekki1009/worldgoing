@@ -6117,7 +6117,11 @@ func _fire_save_guard_impl(allow_dirty_fire_save: bool) -> Dictionary:
 		return SiteRuntime.fail("BUSY", "原 Fire 事件或射擊準備尚未正式保存；保留目前現場與存檔")
 	var checkpointed_fire_owners := not allow_dirty_fire_save and fire_owner_snapshot_matches_checkpoint()
 	if crowd_site != null and crowd_site.active:
-		var crowd_guard: Dictionary = crowd_site.save_guard()
+		# The fire guard keeps the crowd's captivity and arrow-in-flight refusals; siege work in progress is the siege
+		# guard's (Store.siege_save_guard / supply_save_guard run it before this), as the grid fire guard never checks siege.
+		# A region departure from an admitted original siege reaches this through region_travel_preflight's fire hook
+		# (found 2026-11-10: BUSY "攻城操作或 crew 原人物步尚未收束" from the fire guard after the siege guard admitted it).
+		var crowd_guard: Dictionary = crowd_site.save_guard(true)
 		if not crowd_guard.ok: return crowd_guard
 	if site_controller != null:
 		var job_guard: Dictionary = site_controller.person_actions.fire_jobs_save_guard(fire_action_cursor) \
