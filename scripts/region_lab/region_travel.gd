@@ -2213,7 +2213,9 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 				if not bool(native.call("site_person_set_deck", index, deck.x, deck.y)): return fail("NATIVE_REFUSED", "原生群眾拒絕到站甲板位置")
 			if identity == leader_person_id: leader_cell = cell
 			if identity == controlled_id: controlled_index = index
-		if not bool(native.call("set_order_owner", formation, false)): return fail("INVALID", "原隊伍命令 owner 匯入失敗")
+		# The arrived team keeps the tactical policy it travelled with (its roster's tactical_ai.enabled, as the grid arrival
+		# restores it); before, every crowd arrival imported the formation with its AI owner off (2026-11-09, remote_nation port).
+		if not bool(native.call("set_order_owner", formation, bool(army.get("tactical_ai", {}).get("enabled", false)))): return fail("INVALID", "原隊伍命令 owner 匯入失敗")
 		army["crowd"] = true
 		army["schema"] = 2
 		army["roster_version"] = 1

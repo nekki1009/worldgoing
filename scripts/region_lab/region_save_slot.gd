@@ -9632,6 +9632,12 @@ static func _region_team_hold(team: Variant) -> Dictionary:
 	if team is CrowdPersonOwner: return team.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
 	return team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
 
+## ORDSERIAL: a received army command through the captain's own public order API: TerrainArmy.issue_combat_order, or
+## crowd_site.issue_order (source "ui", as _region_team_hold) for a crowd team. Both add one to the team's order serial.
+static func _region_team_issue_order(team: Variant, order: int, goal: Vector2i) -> Dictionary:
+	if team is CrowdPersonOwner: return team.crowd_site.issue_order(int(team.team_id), order, goal, -1, "ui")
+	return team.issue_combat_order(team.current_commander, order, goal)
+
 
 ## ORDSERIAL: the captain restores the tactical policy it had before the command (crowd: the formation's AI owner).
 static func _region_team_restore_policy(team: Variant) -> Dictionary:
@@ -9732,19 +9738,20 @@ func _region_consume_carried_report(report: Dictionary) -> Dictionary:
 		if not received_nation.ok or not received_nation.get("delivered", false): return received_nation
 		actual_effect = received_nation.effect
 	if str(transfer.kind) == "army_command":
-		var team := _region_delivery_team(original, transfer.team_ref)
-		# G6: a crowd-owned team's TerrainArmy slot is a disabled command source; it never takes a Region order.
-		if team != null and original.crowd_site != null and original.crowd_site.active and original.crowd_site.owns_original_team(team): team = null
-		if team == null or team.current_commander < 0 or team.combat_identity(team.current_commander) != int(receiver.person_id) \
+		# ORDSERIAL (2026-11-09, crowd port of region_carried_intel): under an active crowd the receiving team is the crowd's
+		# command owner, as the nation command path resolves it (_region_nation_team); the grid team's disabled slot never
+		# stands in for it (G6). Without a crowd the original TerrainArmy receives, as before.
+		var team: Variant = _region_nation_team(original, transfer.team_ref)
+		if team == null or int(team.current_commander) < 0 or int(team.combat_identity(team.current_commander)) != int(receiver.person_id) \
 			or not team.command_eligible(team.current_commander): return {"ok": true, "delivered": false, "receipt": {"code": "COMMAND_AUTHORITY_CHANGED", "complete": true, "effects_complete": true}}
 		var command: Dictionary = transfer.command
 		var before_serial := int(team.get_order_serial())
 		var before_ranged_serial := int(team.ranged_order_serial)
-		var ordered := team.issue_combat_order(team.current_commander, int(command.order), Vector2i(int(command.goal[0]), int(command.goal[1])))
+		var ordered := _region_team_issue_order(team, int(command.order), Vector2i(int(command.goal[0]), int(command.goal[1])))
 		if not ordered.ok: return {"ok": true, "delivered": false, "receipt": {"code": "ORIGINAL_COMMAND_REJECTED", "complete": true, "effects_complete": true}}
 		actual_effect = {"kind": "original_army_order", "team_ref": transfer.team_ref.duplicate(true), "commander_ref": transfer.receiver_ref.duplicate(true),
 			"source_order_serial": int(command.source_order_serial), "before_order_serial": before_serial, "accepted_order_serial": int(team.get_order_serial()),
-			"before_ranged_order_serial": before_ranged_serial, "accepted_ranged_order_serial": int(team.ranged_order_serial), "original_order_delay": float(team._order_delay)}
+			"before_ranged_order_serial": before_ranged_serial, "accepted_ranged_order_serial": int(team.ranged_order_serial), "original_order_delay": _region_team_order_delay(team)}
 	return {"ok": true, "delivered": true, "receiver": int(receiver.person_id), "receipt": {"code": "DELIVERED", "courier_token": str(transfer.courier_token),
 		"source_generation": int(_marker.generation), "arrival_mapping_sha256": str(transfer.arrival_mapping_sha256), "receiver_ref": transfer.receiver_ref.duplicate(true), "effect": actual_effect}}
 

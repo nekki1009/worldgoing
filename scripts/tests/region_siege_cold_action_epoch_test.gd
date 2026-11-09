@@ -199,28 +199,34 @@ func _fixture_action_owner() -> bool:
 ## convert, write the converted section); a bound owner keeps the backend it was bound with, so the owner is made again
 ## from its published file and binds natively (as region_captivity_payload_admission does).
 func _cold_convert_owner() -> bool:
+	var remade: TerrainLab = _cold_convert_owner_lab(action_owner)
+	if remade == null: return false
+	action_owner = remade
+	return true
+
+## Converts a never-visited cold owner's GD rosters to a crowd and returns the owner made again from its published file
+## (null after a failed check). The caller replaces its own reference.
+func _cold_convert_owner_lab(owner: TerrainLab) -> TerrainLab:
 	var attached: Node = load("res://scripts/terrain_lab/crowd_site.gd").new()
 	attached.name = "CrowdSite"
-	action_owner.add_child(attached)
-	attached.setup(action_owner)
-	action_owner.crowd_site = attached
+	owner.add_child(attached)
+	attached.setup(owner)
+	owner.crowd_site = attached
 	var converted: Dictionary = attached.convert_existing()
-	if converted.get("ok", false): converted = action_owner._region_write_converted_crowd_section()
-	if not _check(converted.get("ok", false) and attached.active, "the cold Site's authored rosters convert to its native crowd", converted): return false
+	if converted.get("ok", false): converted = owner._region_write_converted_crowd_section()
+	if not _check(converted.get("ok", false) and attached.active, "the cold Site's authored rosters convert to its native crowd", converted): return null
 	var parked: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
-	if not _check(parked.ok, "the cold Site's converted crowd publishes", parked): return false
-	var site_id := str(action_owner.terrain.site.id)
-	var parked_owner: TerrainLab = action_owner
+	if not _check(parked.ok, "the cold Site's converted crowd publishes", parked): return null
+	var site_id := str(owner.terrain.site.id)
 	slot._region_original_labs.erase(site_id)
-	parked_owner.get_parent().remove_child(parked_owner)
-	parked_owner.queue_free()
+	owner.get_parent().remove_child(owner)
+	owner.queue_free()
 	var remade: Dictionary = lab._region_gameplay_owner_lab(site_id, "cold_exact")
 	if not _check(remade.get("ok", false) and remade.get("lab") is TerrainLab and remade.lab.crowd_site != null and remade.lab.crowd_site.active
 		and str(remade.activation.get("backend", "")) == "native", "the cold owner made again from its file binds its native crowd",
-		{"code": remade.get("code"), "message": remade.get("message"), "cause": remade.get("cause"), "activation": remade.get("activation")}): return false
-	action_owner = remade.lab
-	_freeze(action_owner)
-	return true
+		{"code": remade.get("code"), "message": remade.get("message"), "cause": remade.get("cause"), "activation": remade.get("activation")}): return null
+	_freeze(remade.lab)
+	return remade.lab
 
 func _action_vehicle() -> Dictionary:
 	return action_owner.terrain.site.get("vehicles", {}).get(str(action_context.get("key", "")), {})
@@ -507,10 +513,11 @@ func _action_saved_facts_controls() -> bool:
 func _reopen_actual_partial() -> bool:
 	if not _action_saved_facts_controls(): return false
 	if _crowd_on(action_owner) and action_owner.crowd_site.active:
-		# Crowd: hot body state lives natively and reaches the Site rows at a capture; publish it once, so the checkpoint below
-		# compares settled rows and still proves it adds no work, material, flight or time.
-		var published: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
-		if not _check(published.ok, "the crowd's native body state publishes before the reopen", published): return false
+		# Crowd: hot body state lives natively and reaches the Site rows at a capture. Sync the rows once (sync_to_site: no
+		# checkpoint, no generation), so the checkpoint below compares settled rows and still proves it adds no work, material,
+		# flight or time, and a reopen still publishes exactly once (remote_nation counts the generation).
+		var synced: Dictionary = action_owner.crowd_site.sync_to_site()
+		if not _check(synced.ok, "the crowd's native body state syncs before the reopen", synced): return false
 	var source_facts := _action_facts()
 	var source_clock := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "sequence": int(slot.control.fire_clock.sequence)}
 	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)

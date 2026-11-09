@@ -229,9 +229,26 @@ func _delivery_binding_prefix_ready() -> bool:
 
 func _delivery_prepare_and_commit() -> bool:
 	for key: String in lab.terrain.resource_base: Env.change(lab.terrain, key, {"cleared": true, "remaining": 0})
+	# Crowd port: the live main crowd returns to GD for the scenario teams (no time has passed since its world-open) and they
+	# join the native crowd after birth (as region_siege_original_phase births its infantry); the NPC dispatch then finds the
+	# source team in the crowd rosters. Each team takes a free slot with a fresh identity.
+	var crowd_main: bool = _crowd_on(lab) and lab.crowd_site.active
+	if not _crowd_release(lab): return false
 	lab._ensure_army_slots(3)
 	var source: TerrainArmy = lab.combat_armies[1]
 	var enemy: TerrainArmy = lab.combat_armies[2]
+	if crowd_main:
+		var free: Array[TerrainArmy] = []
+		for slot_index: int in range(lab.combat_armies.size() + 2):
+			lab._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = lab.combat_armies[slot_index]
+			if not candidate.combat_enabled and candidate.combat_units.is_empty(): free.append(candidate)
+			if free.size() == 2: break
+		if not _check(free.size() == 2, "two free original Army slots hold the source and enemy teams"): return false
+		source = free[0]
+		enemy = free[1]
+		source.team_id = lab._next_army_identity()
+		enemy.team_id = source.team_id + 1
 	var start_x := 90 if delivery_case == "receiver_captive" else 99
 	source.faction_id = 1
 	source.roster_size = 3 if delivery_case == "ko" else 2
@@ -246,6 +263,13 @@ func _delivery_prepare_and_commit() -> bool:
 	lab.site_controller.initialize_team_items(enemy)
 	lab.terrain.site.army_next_team = lab._next_army_identity()
 	var captain := source.combat_identity(source.current_commander)
+	if not _crowd_admit(lab): return false
+	if crowd_main:
+		# The grid teams had no AI; a converted crowd formation's AI would issue orders of its own, and every accepted order
+		# moves the team's order serial, which the signed command is checked against at reception (COMMAND_AUTHORITY_CHANGED).
+		for team_id: int in [int(source.team_id), int(enemy.team_id)]:
+			var ai_off: Dictionary = lab.crowd_site.set_team_ai(team_id, false)
+			if not _check(ai_off.get("ok", false), "a scenario team keeps its AI off after joining the crowd", {"team": team_id, "result": ai_off}): return false
 	var nation_id := "courier_nation_%d" % OS.get_process_id()
 	var members: Array[int] = []
 	for index: int in source.combat_units.size(): members.append(source.combat_identity(index))
@@ -388,10 +412,12 @@ func _delivery_positive_receipts() -> bool:
 	if not _check(actual_view.has(DeliveryAI.observation_object_key(delivery_source_receipt)) and actual_view[DeliveryAI.observation_object_key(delivery_source_receipt)] == delivered.delivered_receipt,
 		"receiver's own TypedPersonRef learns exactly the source observation after physical delivery", actual_view): return false
 	var effect: Dictionary = actual_command.delivery.result.effect
-	var incoming := slot._region_delivery_team(action_owner, actual_command.delivery.team_ref)
+	# Crowd port: the receiving team is the crowd's command owner under an active crowd (ORDSERIAL, as the game resolves it).
+	var incoming: Variant = slot._region_nation_team(action_owner, actual_command.delivery.team_ref)
 	if not _check(incoming != null and int(incoming.get_order_serial()) == int(effect.accepted_order_serial)
-		and int(incoming.ranged_order_serial) == int(effect.accepted_ranged_order_serial) and int(effect.accepted_ranged_order_serial) > int(effect.before_ranged_order_serial)
-		and float(incoming._order_delay) == float(effect.original_order_delay)
+		and int(incoming.ranged_order_serial) == int(effect.accepted_ranged_order_serial)
+		and (int(effect.accepted_ranged_order_serial) == int(effect.before_ranged_order_serial) if incoming is CrowdPersonOwner else int(effect.accepted_ranged_order_serial) > int(effect.before_ranged_order_serial))
+		and RegionSaveSlot._region_team_order_delay(incoming) == float(effect.original_order_delay)
 		and float(effect.original_order_delay) > 0.0, "same actual original captain order serial and original skill-dependent command delay are paid once", effect): return false
 	var unrelated := DeliveryAI.view(slot.region_registry(), delivery_receiver, float(slot.control.logical_game_seconds), str(lab.terrain.site.id), DeliveryAI.person_ref(lab.terrain.site, delivery_receiver))
 	return _check(not unrelated.has(DeliveryAI.observation_object_key(delivery_source_receipt)) and not slot.region_player_known_intel().has(DeliveryAI.observation_object_key(delivery_source_receipt)),

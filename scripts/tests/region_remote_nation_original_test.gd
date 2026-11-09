@@ -55,10 +55,10 @@ func _run() -> void:
 	if not _write_manifest() or not _setup_action_world() or not _nation_initial_bodies(): _finish(); return
 	if not _nation_initial_remote_departure(): _finish(); return
 	if not await _nation_until(func() -> bool: return slot.region_registry().parties[nation_initial_remote_token].phase == "entered", "same real source cohort physically reaches its foreign membership Site before a remote order exists"): _finish(); return
-	var team := _nation_receiver_team()
+	var team: Variant = _nation_receiver_team()
 	if not _check(team != null and team.tactical_ai_enabled and team.current_commander >= 0
 		and DeliveryAI.person_ref(action_owner.terrain.site, team.combat_identity(team.current_commander)) == nation_remote_commander_ref,
-		"same actual original remote captain and its pre-existing tactical policy survive the first physical arrival"): _finish(); return
+		"same actual original remote captain and its pre-existing tactical policy survive the first physical arrival", {"team": str(team), "ai": team.tactical_ai_enabled if team != null else null, "commander": team.current_commander if team != null else null, "ref": DeliveryAI.person_ref(action_owner.terrain.site, team.combat_identity(team.current_commander)) if team != null and team.current_commander >= 0 else null, "expected": nation_remote_commander_ref}): _finish(); return
 	var target := slot.record_region_officer_geography_observation(lab, nation_head, nation_goal_coordinate)
 	if not _check(target.ok and not target.receipt.value.has("power") and target.receipt.value.keys().size() == 3,
 		"qualified true source officer records only public Atlas geography at the actual settled World", target): _finish(); return
@@ -106,6 +106,9 @@ func _nation_initial_bodies() -> bool:
 	lab.terrain.site.capacity = 100000
 	for item: String in Env.ITEM_NAMES: lab.terrain.site.inventory[item] = 1000
 	if not _check(SiteRuntime.initialize_item_storage(lab.terrain.site).ok, "finite initial Source Depot is owned by the actual item allocator"): return false
+	# Crowd port: the live main crowd returns to GD for the scenario teams (no time has passed since its world-open); the
+	# existing rosters are snapshotted and compared while they are GD rows, and every team joins the native crowd after birth.
+	if not _crowd_release(lab): return false
 	var existing_teams: Array[TerrainArmy] = []
 	var existing_snapshots: Array[PackedByteArray] = []
 	for existing: TerrainArmy in lab.combat_armies:
@@ -147,6 +150,9 @@ func _nation_initial_bodies() -> bool:
 	nation_head = headquarters.combat_identity(headquarters.current_commander)
 	nation_guard = headquarters.combat_identity(1)
 	nation_courier_team = genesis_teams[2].team_id
+	var remote: TerrainArmy = genesis_teams[1]
+	if not _check(remote.set_tactical_ai_enabled(remote.current_commander, true).ok, "actual remote captain enables its own original local tactical policy before departure"): return false
+	if not _crowd_admit(lab): return false
 	nation_id = "source_nation_%d" % OS.get_process_id()
 	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", nation_head, true)}
@@ -154,8 +160,6 @@ func _nation_initial_bodies() -> bool:
 	var explicit_head: Dictionary = lab.site_controller.equipment_orders.apply_nation_office_plan(nation_head, nation_id, int(offices.revision),
 		[{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(offices).id)}])
 	if not _check(explicit_head.ok, "initial original Nation office plan explicitly keeps strategic dispatch with its true resident head", explicit_head): return false
-	var remote: TerrainArmy = genesis_teams[1]
-	if not _check(remote.set_tactical_ai_enabled(remote.current_commander, true).ok, "actual remote captain enables its own original local tactical policy before departure"): return false
 	var created: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), "cold_exact")
 	if not _check(created.ok and created.lab is TerrainLab, "actual strategic Site has its own complete original cold owner", created.get("code")): return false
 	nation_goal = created.lab
@@ -198,6 +202,11 @@ func _nation_initial_bodies() -> bool:
 		nation_goal.site_controller.initialize_team_items(enemy)
 	for index: int in goal_existing.size():
 		if not _check(var_to_bytes(goal_existing[index].capture_combat_state(true)) == goal_snapshots[index], "target enemy Genesis preserves original resident bodies, IDs, gear and orders", goal_existing[index].team_id): return false
+	if not OS.get_cmdline_user_args().has("--grid") and nation_goal.crowd_site == null and nation_goal.restore_only:
+		# Crowd port: the never-visited strategic Site converts its born enemies to a crowd and is made again from its file
+		# (as region_siege_cold_action_epoch does), so arrivals and off-screen steps there run natively.
+		nation_goal = _cold_convert_owner_lab(nation_goal)
+		if nation_goal == null: return false
 	nation_goal.terrain.site.army_next_team = nation_goal._next_army_identity()
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "initial Source, receiver and strategic target whole graphs publish together"): return false
 	# Stable nation/team refs come from the original travel identity allocator,
@@ -246,8 +255,9 @@ func _nation_departure_contact_probes() -> bool:
 	if not _check(foreign.ok and foreign.get("contact", false) and str(foreign.get("contact_receipt", {}).get("kind", "")) == "same_component", "(c) the same position for a party from another node is still a player encounter", foreign): return false
 	return _check(before == var_to_bytes([slot.control, slot._marker]), "departure contact probes change no Slot state")
 
-func _nation_receiver_team() -> TerrainArmy:
-	return slot._region_delivery_team(action_owner, nation_remote_team_ref)
+## The receiving team: the crowd's command owner under an active crowd (ORDSERIAL: _region_nation_team), else the grid team.
+func _nation_receiver_team() -> Variant:
+	return slot._region_nation_team(action_owner, nation_remote_team_ref)
 
 func _nation_send_command() -> bool:
 	var courier := slot._region_delivery_team(lab, nation_courier_team_ref)
@@ -295,7 +305,7 @@ func _partial_ready() -> bool:
 	return not _nation_report().is_empty() and DeliveryAI.validate_carried_report(_nation_report()).ok
 
 func _nation_unknown_before_receipt() -> bool:
-	var team := _nation_receiver_team()
+	var team: Variant = _nation_receiver_team()
 	var known := DeliveryAI.view(slot.region_registry(), team.combat_identity(team.current_commander), float(slot.control.logical_game_seconds), str(action_owner.terrain.site.id), nation_remote_commander_ref)
 	return _check(not known.has(DeliveryAI.observation_object_key(nation_source_observation)) and not slot.region_registry().observations.has(nation_report_id), "actual remote recipient and player learn no instruction before its physical courier arrives", {"recipient": known, "player": slot.region_player_known_intel()})
 
@@ -327,7 +337,7 @@ func _nation_fault() -> bool:
 			and int(nation.offices.revision) != int(_nation_report().delivery.command.offices_revision),
 			"same original guard body and citizenship survive lawful head replacement; the immutable signed command keeps its old office revision")
 	if nation_case == "receiver_superseded":
-		var team := _nation_receiver_team()
+		var team: Variant = _nation_receiver_team()
 		return _check(team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD).ok, "actual current captain independently supersedes the signed old local order before reception")
 	var source_fault := nation_case.begins_with("source_")
 	var original: TerrainLab = lab if source_fault else action_owner
@@ -337,7 +347,7 @@ func _nation_fault() -> bool:
 	var fatal := nation_case.ends_with("dead")
 	person.owner.apply_unit_contact(int(person.unit), {"result": {"hp": float(person.hp) + 1.0 if fatal else 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
 	if fatal: return _check(float(person.owner.combat_hot_get(int(person.unit), &"hp", 1.0)) <= 0.0, "actual original contact owns authority death; this is an explicit fault, not fabricated combat")
-	var guard_id := nation_guard if source_fault else _nation_receiver_team().combat_identity(1)
+	var guard_id: int = nation_guard if source_fault else int(_nation_receiver_team().combat_identity(1))
 	var binding: Dictionary = original.site_controller.person_actions.begin_capture(guard_id, int(person.person_id), guard_id)
 	return _check(binding.ok, "true original nearby guard begins a real paid authority binding with no assigned elapsed/captive result", binding)
 
@@ -346,14 +356,14 @@ func _nation_received_prefix() -> bool:
 	var result: Dictionary = actual.delivery.result
 	var effect: Dictionary = result.effect
 	var reference: Dictionary = slot.region_registry().parties[nation_courier_token]
-	var team := _nation_receiver_team()
+	var team: Variant = _nation_receiver_team()
 	var view := DeliveryAI.view(slot.region_registry(), team.combat_identity(team.current_commander), float(slot.control.logical_game_seconds), str(action_owner.terrain.site.id), nation_remote_commander_ref)
 	return _check(result.code == "DELIVERED" and reference.phase == "entered" and float(result.game_seconds) == float(reference.arrival_game_seconds)
 		and effect.kind == "original_nation_dispatch" and effect.execution == "pending" and float(effect.original_order_delay) > 0.0
-		and float(team._order_delay) > 0.0 and float(slot.control.fire_clock.action_seconds) - float(effect.received_action_seconds) < float(effect.original_order_delay)
-		and int(effect.accepted_ranged_order_serial) > int(effect.before_ranged_order_serial) and not team.tactical_ai_enabled
+		and RegionSaveSlot._region_team_order_delay(team) > 0.0 and float(slot.control.fire_clock.action_seconds) - float(effect.received_action_seconds) < float(effect.original_order_delay)
+		and (int(effect.accepted_ranged_order_serial) == int(effect.before_ranged_order_serial) if team is CrowdPersonOwner else int(effect.accepted_ranged_order_serial) > int(effect.before_ranged_order_serial)) and not team.tactical_ai_enabled
 		and view.has(DeliveryAI.observation_object_key(nation_source_observation)) and not slot.region_player_known_intel().has(DeliveryAI.observation_object_key(nation_source_observation)),
-		"true physical receiver alone gains the original geography and its own public command incurs an unfinished original skill delay", {"effect": effect, "remaining": team._order_delay, "known": view})
+		"true physical receiver alone gains the original geography and its own public command incurs an unfinished original skill delay", {"effect": effect, "remaining": RegionSaveSlot._region_team_order_delay(team), "known": view})
 
 func _nation_dispatched_receipt() -> bool:
 	var effect: Dictionary = _nation_report().delivery.result.effect
@@ -387,9 +397,14 @@ func _nation_actual_tactical_effect() -> bool:
 	var current: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), str(slot.region_registry().modes.get(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), {}).get("mode", "cold_exact")))
 	if not current.get("ok", false): return false
 	nation_goal = current.lab
-	var team := slot._region_delivery_team(nation_goal, nation_remote_team_ref)
-	return team != null and team.tactical_ai_enabled and team.tactical_ai_orders > 0 and team.combat_order == TerrainArmy.CombatOrder.ATTACK \
-		and team.tactical_ai_status == "接敵" and team.tactical_ai_target_id >= 0
+	var team: Variant = slot._region_nation_team(nation_goal, nation_remote_team_ref)
+	if team == null or not team.tactical_ai_enabled or team.combat_order != TerrainArmy.CombatOrder.ATTACK: return false
+	if team is CrowdPersonOwner:
+		# Crowd: the native formation AI issued the ATTACK (no test order was given to this team) and the formation reports
+		# itself engaged ("attacking"); the grid test read the same facts from SiteArmyAI's counters and status text.
+		var state: Dictionary = team.crowd_site.formation_state(int(team.formation_index))
+		return bool(state.get("attacking", false))
+	return team.tactical_ai_orders > 0 and team.tactical_ai_status == "接敵" and team.tactical_ai_target_id >= 0
 
 func _nation_graphs() -> Dictionary:
 	var graphs := {}
