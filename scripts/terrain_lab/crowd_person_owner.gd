@@ -1051,8 +1051,15 @@ func native_exchange_initiates(index: int, other_id: int, melee: bool = false) -
 	# Read-only queries only: siege_crew_assigned/released here are native setters, not reads.
 	if vehicles != null and (vehicles.is_siege_crew(identity) or vehicles.is_embarked(identity) and not vehicles.ship_can_attack(identity)): return false
 	if identity == int(crowd_site.lab.controlled_person_id()) or not is_member(index): return int(state.get("target_person", -1)) == other_id
-	if melee and combat_order == TerrainArmy.CombatOrder.HOLD and not is_sustain_routed() and _cold_get(index, "work_task", {}).is_empty() \
-		and bool(state.get("needs_attack_order", false)): return true
+	if melee and combat_order == TerrainArmy.CombatOrder.HOLD and not is_sustain_routed() and _cold_get(index, "work_task", {}).is_empty():
+		if bool(state.get("needs_attack_order", false)): return true
+		# The original nonhelm boat defence (TerrainArmy.exchange_initiates): an embarked HOLD crew answers only a current
+		# physical hull contact with an able hostile embarked person (a travelling party's native contact frame, 2026-11-10).
+		if vehicles != null and vehicles.is_embarked(identity) and current_commander >= 0 and command_eligible(current_commander) \
+				and vehicles.ship_combat_contact(identity, other_id):
+			var other: Dictionary = vehicles.ship_person(other_id)
+			return not other.is_empty() and vehicles.is_embarked(other_id) and int(other.faction) != faction_id \
+				and not bool(other.captive) and other.owner.combat_can_act(int(other.unit))
 	return bool(state.get("attacking", false)) and combat_order in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.PURSUE] \
 		and current_commander >= 0 and not bool(state.get("needs_attack_order", false)) and not is_sustain_routed()
 

@@ -1073,6 +1073,45 @@ static void aboard_is_never_a_melee_target() {
 	REQUIRE(w.validate());
 }
 
+static void hull_melee_needs_a_host_pair() {
+	test_case = "hull melee: aboard hostile soldiers duel only over a host-published pair; a bad pair is refused; no knockback off a deck";
+	World w(1); setup(w);
+	const int enemy = w.add_formation(1, 34.5f, 30.5f, 3.14159265f, 1, 1, T_MELEE, 0);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	const int foe = w.add_soldier(enemy, e, R_CAPTAIN, 2001);
+	w.formations[enemy].ai_enabled = false;
+	REQUIRE(w.site_person_board(0, 0));
+	REQUIRE(w.site_person_board(foe, 0));
+	// Refusals: odd length, out of range, same soldier, a non-aboard soldier, a friendly pair. Each keeps the list empty.
+	REQUIRE(!w.set_aboard_melee_pairs({0}));
+	REQUIRE(!w.set_aboard_melee_pairs({0, 99}));
+	REQUIRE(!w.set_aboard_melee_pairs({0, 0}));
+	REQUIRE(!w.set_aboard_melee_pairs({1, foe}));
+	REQUIRE(w.site_person_board(1, 0));
+	REQUIRE(!w.set_aboard_melee_pairs({0, 1}));
+	const double hp0 = w.hp[0], hpf = w.hp[foe];
+	// Without a pair, aboard soldiers never duel (the existing rule).
+	for (int t = 0; t < 120; ++t) step(w);
+	REQUIRE(w.hp[0] == hp0 && w.hp[foe] == hpf);
+	// With the pair published every step, HOLD self-defence over the hull contact lands blows.
+	const float fx = w.px[foe], fy = w.py[foe];
+	bool hit = false;
+	for (int t = 0; t < 600 && !hit; ++t) {
+		REQUIRE(w.set_aboard_melee_pairs({foe, 0}));
+		step(w);
+		hit = w.hp[0] < hp0 || w.hp[foe] < hpf;
+	}
+	if (!hit) std::printf("HULL_DIAG init0=%d initf=%d ready0=%d readyf=%d recv0=%d recvf=%d cmd0=%d cmdf=%d ord0=%d ordf=%d hostile=%d\n",
+		(int)w.aboard_initiates(0), (int)w.aboard_initiates(foe), (int)w.exchange_ready(0), (int)w.exchange_ready(foe),
+		(int)w.aboard_can_receive(0), (int)w.aboard_can_receive(foe), w.formations[w.form[0]].current_cmd, w.formations[enemy].current_cmd,
+		(int)w.formations[w.form[0]].order, (int)w.formations[enemy].order, (int)w.hostile(w.team[0], w.team[foe]));
+	REQUIRE(hit);
+	REQUIRE(w.aboard[0] == 1 && w.aboard[foe] == 1);
+	REQUIRE(w.knock_t[0] <= 0.0 && w.knock_t[foe] <= 0.0);
+	(void)fx; (void)fy;
+	REQUIRE(w.validate());
+}
+
 static void land_refusals_and_landing() {
 	test_case = "landing: unwalkable, occupied, out of bounds and non-aboard refused; a free cell rejoins and re-settles";
 	World w(1); setup(w, 20);
@@ -1622,6 +1661,7 @@ int main(int argc, char **argv) {
 	aboard_formal_commander_resumes_command();
 	aboard_stays_while_formation_passes();
 	aboard_is_never_a_melee_target();
+	hull_melee_needs_a_host_pair();
 	land_refusals_and_landing();
 	deck_position_moves_only_the_aboard_soldier();
 	save_load_mid_aboard_matches();

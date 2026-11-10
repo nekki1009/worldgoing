@@ -14358,6 +14358,11 @@ func settle_native_supply_begin_endpoint(maximum: float) -> Dictionary:
 		held.state.merge(candidate.state)
 		if held.kind == "team": held.entry.revision = int(held.entry.revision) + int(candidate.revision_delta)
 		elif int(candidate.revision_delta) > 0: held.entry.version = int(held.entry.version) + 1
+	# The ephemeral meal readout every GD meal path publishes (2026-11-10: a native zero meal published none).
+	for candidate: Dictionary in candidates:
+		var meal := {"ok": true, "consumed_rations": candidate.consumed_rations}
+		if candidate.held.kind == "team": _observe_original_food_result("team", str(candidate.held.owner.team_id), float(candidate.state.at), meal)
+		else: _observe_original_food_result("person", str(candidate.held.owner_id), float(candidate.state.at), meal)
 	return Runtime.ok("Original zero meal settled before Native snapshot, no elapsed/HP/fatigue", {"game_seconds": limit})
 
 func _native_sustain_original_team(team: TerrainArmy) -> bool:
@@ -14521,7 +14526,7 @@ func _native_sustain_due_candidate(held: Dictionary, payments: Array) -> Diction
 	var revision: int = 1 if float(result.consumed_rations) > 0.0 else 0
 	if int(held.revision) + revision > 2147483647: return Runtime.fail("STALE_SOURCE")
 	return Runtime.ok("Original zero meal candidate", {"held": held, "state": state, "stock": stock,
-		"before_food": before, "revision_delta": revision, "damage": {}})
+		"before_food": before, "revision_delta": revision, "damage": {}, "consumed_rations": result.get("consumed_rations", 0.0)})
 
 func selected_settlement_defense_step(plan_id: String, operator_id: int, action: String = "construct", part: String = "") -> Dictionary:
 	if action == "construct":

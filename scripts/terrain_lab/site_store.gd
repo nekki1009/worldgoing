@@ -1941,7 +1941,7 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		native_seen[identity] = true
 	# G6.5: a cadre split takes the controlled person out with the sub-party; the Site then holds no controlled person.
 	var no_controlled: bool = int(section.player.get("person_id", 0)) == -1 and int(section.player.get("soldier_index", 0)) == -1 \
-		and not state.has("controlled_person_id") and state.get("actors", {}).get("player", {}).is_empty()
+		and int(state.get("controlled_person_id", -1)) == -1 and state.get("actors", {}).get("player", {}).is_empty() # An NPC travel frame names -1.
 	if not no_controlled and (not _integer(section.player.get("person_id"), 1, next_id - 1) or not _integer(section.player.get("soldier_index"), 0, blob_ids.size() - 1) or int(section.player.person_id) != int(state.get("controlled_person_id", state.actors.get("player", {}).get("person_id", -1))) or blob_ids[int(section.player.soldier_index)] != int(section.player.person_id)):
 		return Runtime.fail("INVALID_CROWD", "群眾受控人物引用不符：" + JSON.stringify({"player": section.player, "controlled": state.get("controlled_person_id", null), "blob_size": blob_ids.size()}))
 	return Runtime.ok("", {"native": native})
@@ -3807,7 +3807,9 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not institution_validation.ok: return institution_validation
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
-	if state.has("controlled_person_id") and (not _integer(state.controlled_person_id, 1, 2147483647) or not people.has(int(state.controlled_person_id))):
+	# -1 names no controlled person (an NPC travel frame's view, 2026-11-10); any other value must be a real person.
+	var no_controlled_person: bool = state.has("controlled_person_id") and _integer(state.controlled_person_id, -1, -1)
+	if state.has("controlled_person_id") and not no_controlled_person and (not _integer(state.controlled_person_id, 1, 2147483647) or not people.has(int(state.controlled_person_id))):
 		return Runtime.fail("CORRUPT_SAVE", "受控原人物不存在")
 	if state.has("family") and not FamilyContinuity.validate_family(state.family, str(state.get("id", ""))):
 		return Runtime.fail("CORRUPT_SAVE", "家族原人物引用名單")
@@ -4718,6 +4720,14 @@ static func _region_capture_completion_guard(state: Dictionary, context: Diction
 
 ## World identity/policy stays in the original Slot pin projection. The fixed
 ## terrain base remains unchanged and supplies the geography comparison only.
+## The Site a pin's geography belongs to. A travelling party's native contact frame (state id "travel:<token>", Nekki
+## 2026-11-10 A) borrows the geography of its physical source Site, which its region_party_owner meta names.
+static func _pin_site_id(data: TerrainData, state: Dictionary) -> String:
+	var identity := str(state.get("id", ""))
+	if identity.begins_with("travel:") and data != null and data.has_meta(&"region_party_owner"):
+		return str(data.get_meta(&"region_party_owner").get("physical_source", ""))
+	return identity
+
 static func _validate_world_pin(data: TerrainData, state: Dictionary) -> Dictionary:
 	var source_base: Variant = data.parameters.get("fixed_base") if data != null else null
 	var declared_land: bool = source_base is Dictionary and source_base.has("land_condition_rule")
@@ -4748,7 +4758,7 @@ static func _validate_world_pin(data: TerrainData, state: Dictionary) -> Diction
 		if not _world_pin_identity(pin[key]): return Runtime.fail("SAVE_VERSION", "Site 原世界與存檔身分非法")
 	for key: String in ["atlas_id", "base_revision", "manifest_sha256", "ramp_rule_revision"]:
 		if not pin[key] is String or str(pin[key]).is_empty() or pin[key] != base.get(key): return Runtime.fail("SAVE_VERSION", "Site 原世界地理 pin 不符 " + key)
-	if str(pin.manifest_sha256).length() != 64 or not str(pin.manifest_sha256).is_valid_hex_number(false) or not _integer(pin.grid_contract_version, 1, 1000) or int(pin.grid_contract_version) != int(base.get("grid_contract_version", -1)) or str(state.get("id", "")) != str(base.get("site_id", "")) or not _same_resource_pin(pin, base):
+	if str(pin.manifest_sha256).length() != 64 or not str(pin.manifest_sha256).is_valid_hex_number(false) or not _integer(pin.grid_contract_version, 1, 1000) or int(pin.grid_contract_version) != int(base.get("grid_contract_version", -1)) or _pin_site_id(data, state) != str(base.get("site_id", "")) or not _same_resource_pin(pin, base):
 		return Runtime.fail("SAVE_VERSION", "Site 原世界地理／資源 pin 不符")
 	var policy := TechnologyPolicy.candidate(pin, int(pin.format) == 1)
 	if not policy.ok: return policy

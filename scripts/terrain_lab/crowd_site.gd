@@ -172,6 +172,27 @@ func set_input(direction: Vector2, run: bool) -> void:
 
 
 # Native arrays are decoded at the boundary; identities never pass through a float.
+## This step's hull contacts as native soldier index pairs [a, b, ...]: two hostile aboard people who may each act from their
+## deck (SiteVehicleTransport.ship_can_attack) and stand in a current hull contact (ship_combat_contact). Read-only.
+func _aboard_melee_pairs() -> PackedInt32Array:
+	var pairs := PackedInt32Array()
+	if lab == null or lab.site_controller == null: return pairs
+	var vehicles: SiteVehicleTransport = lab.site_controller.vehicles
+	var aboard: Array = []
+	for owner_ref: CrowdPersonOwner in owners:
+		for index: int in owner_ref.combat_units.keys():
+			var identity := owner_ref.combat_identity(index)
+			if identity > 0 and vehicles.is_embarked(identity) and vehicles.ship_can_attack(identity):
+				aboard.append([identity, index, int(owner_ref.faction_id)])
+	for first: int in aboard.size():
+		for second: int in range(first + 1, aboard.size()):
+			var a: Array = aboard[first]
+			var b: Array = aboard[second]
+			if RegionFactionQuery.same_side(int(a[2]), int(b[2])): continue
+			if vehicles.ship_combat_contact(int(a[0]), int(b[0])):
+				pairs.append(int(a[1])); pairs.append(int(b[1]))
+	return pairs
+
 func contains_person(identity: int) -> bool:
 	return _index_by_id.has(identity)
 
@@ -681,7 +702,8 @@ func convert_existing() -> Dictionary:
 	var data: TerrainData = lab.terrain
 	if float(data.site.get("combat_left", 0.0)) > 0.0:
 		return SiteRuntime.fail("BATTLE_IN_PROGRESS", "戰鬥尚未脫離，不能轉為群眾；原存檔保持一般模式")
-	if lab.has_ship_journey() or lab.site_controller.ship_journey_active():
+	# A travelling party's contact frame carries its hulls on their region route (kinematic poses), not a Site journey.
+	if not lab.terrain.has_meta(&"region_party_world_frame") and (lab.has_ship_journey() or lab.site_controller.ship_journey_active()):
 		return SiteRuntime.fail("SHIP_JOURNEY_PENDING", "船隊仍在跨區旅程中，不能轉為群眾；原存檔保持一般模式")
 	var prepared := d5_prepare_existing(self)
 	if not prepared.ok: return prepared
@@ -1328,6 +1350,16 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 				last_event_error = SiteRuntime.fail("CROWD_BUILD_MISMATCH", "Native 原隊安全休息輸入失敗")
 				return false
 			owner_ref.advance_fire_hazard_navigation(fire_snapshot)
+	# Hull melee (2026-11-10): aboard people are outside the native spatial hash, so this step's hull contacts are published
+	# for the native exchange round (original ship_combat_contact; helm and moving hulls excluded by ship_can_attack).
+	var hull_pairs := _aboard_melee_pairs()
+	if crowd.has_method("set_aboard_melee_pairs"):
+		if not bool(crowd.set_aboard_melee_pairs(hull_pairs)):
+			last_event_error = SiteRuntime.fail("NATIVE_REFUSED", "原生拒絕船舷接觸配對")
+			return false
+	elif not hull_pairs.is_empty():
+		last_event_error = SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少船上近戰輸入")
+		return false
 	prof = lab._combat_profile_stage("crowd_inputs", prof)
 	if _work_fatigue_tick >= 0:
 		if not _work_fatigue_ready or absf(elapsed - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS:

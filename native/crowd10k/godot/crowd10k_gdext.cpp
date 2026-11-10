@@ -1161,6 +1161,16 @@ void m_apply_siege_contact(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !arg_num(a[1],hp) || !arg_num(a[2],stun) || !arg_num(a[3],stagger)) { ret_bool(r,false); return; }
 	ret_bool(r, w.apply_siege_contact((int)i,hp,stun,stagger));
 }
+// set_aboard_melee_pairs(pairs: PackedInt32Array flat [a, b, ...]) -> bool: host hull contacts for the next step only.
+void m_set_aboard_melee_pairs(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	void *k = arg_packed(a[0], INTS);
+	if (!k) { ret_bool(r, false); return; }
+	const int64_t count = packed_size(size_ints, k);
+	std::vector<int> flat; flat.reserve((size_t)count);
+	for (int64_t q = 0; q < count; ++q) flat.push_back((int)*ints_read(k, q));
+	ret_bool(r, w.set_aboard_melee_pairs(flat));
+}
 void m_apply_melee_contact(CALL_ARGS) {
 	SELF; NEED(3); WORLD; int64_t i; double hp, stun;
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !arg_num(a[1],hp) || !arg_num(a[2],stun)) { ret_bool(r,false); return; }
@@ -1584,6 +1594,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("set_fire_safe_rest_input", m_set_fire_safe_rest_input, {{INT,"formation"},{BOOL,"safe"}}, BOOL);
 	add_method("apply_siege_contact",m_apply_siege_contact,{{INT,"soldier"},{FLOAT,"hp_loss"},{FLOAT,"stun_add"},{FLOAT,"stagger"}},BOOL);
 	add_method("apply_melee_contact",m_apply_melee_contact,{{INT,"soldier"},{FLOAT,"hp_loss"},{FLOAT,"stun_add"}},BOOL);
+	add_method("set_aboard_melee_pairs", m_set_aboard_melee_pairs, {{INTS, "pairs"}}, BOOL);
 	add_method("charge_exchange_fatigue",m_charge_exchange_fatigue,{{INT,"soldier"},{FLOAT,"amount"}},BOOL);
 	add_method("site_person_exit_ready",m_site_person_exit_ready,{{INT,"soldier"}},BOOL);
 	add_method("site_person_release",m_site_person_release,{{INT,"soldier"}},DOUBLES);

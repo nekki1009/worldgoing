@@ -11797,7 +11797,8 @@ func _region_npc_live_ship_action(original: TerrainLab, vehicle: Dictionary) -> 
 	var actual_ref: Dictionary = original.terrain.site.travel_identity.refs.vehicle.get(identity, {})
 	if actual_ref.is_empty() or party.content.travel_identity.refs.vehicle.get(identity) != actual_ref: return fail("PARTY_BODY_CLOSURE")
 	var team: Variant = original.site_controller.vehicles._siege_team(vehicle)
-	if not team is TerrainArmy or not team.command_eligible(team.current_commander) or team.is_sustain_routed(): return {"ok": true, "eligible": false}
+	# A native contact frame's team is its crowd owner (Nekki 2026-11-10 A); it answers the same command queries.
+	if not (team is TerrainArmy or team is CrowdPersonOwner) or not team.command_eligible(team.current_commander) or team.is_sustain_routed(): return {"ok": true, "eligible": false}
 	# A true current hostile crew contact retains the original defensive stop.
 	for own: Dictionary in original.site_controller.vehicles.ship_people(vehicle):
 		var own_id := int(own.id)

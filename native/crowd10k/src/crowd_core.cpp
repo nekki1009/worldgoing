@@ -2590,6 +2590,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	pt.total = ms_since(t0);
 	last = pt;
 	time += dt;
+	aboard_pairs_.clear(); // host hull contacts serve one step only
 	++tick;
 }
 

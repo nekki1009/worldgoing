@@ -31,6 +31,45 @@ bool World::initiates(int i, bool melee) const {
 	}
 }
 
+// An aboard soldier's melee initiative over a host-published hull contact: the same orders as initiates(), with HOLD
+// answering the contact itself (the original nonhelm boat defence, TerrainArmy.exchange_initiates).
+bool World::aboard_initiates(int i) const {
+	// Aboard is itself a crewed state (is_crewed); only siege and convoy crew stay out of a hull duel.
+	if (formations[form[i]].garrisoned || is_siege_crew(i) || is_convoy_crew(i) || escort_mode[i] >= 3) return false;
+	if (host_ctl[i]) return host_engage[i] != 0;
+	const Formation &f = formations[form[i]];
+	if (f.routed) return false;
+	switch (f.order) {
+	case Order::HOLD: return f.current_cmd >= 0 && rescue_of[i] < 0 && capture_of[i] < 0;
+	case Order::ATTACK:
+	case Order::PURSUE: return f.attacking && f.current_cmd >= 0 && !f.needs_attack_order;
+	default: return false;
+	}
+}
+
+bool World::aboard_exchange_ready(int i) const {
+	if (!can_act(i) || !is_aboard(i) || is_siege_crew(i) || is_convoy_crew(i) || escort_mode[i] >= 3 || stagger[i] > 0.0 || exch_cd[i] > 0.0
+	    || rescue_of[i] >= 0 || capture_of[i] >= 0 || knock_t[i] > 0.0) return false;
+	const Formation &f = formations[form[i]];
+	return !(f.routed && f.order != Order::HOLD);
+}
+
+bool World::set_aboard_melee_pairs(const std::vector<int> &flat) {
+	if (flat.size() % 2) return false;
+	std::vector<std::pair<int, int>> pairs;
+	for (size_t k = 0; k < flat.size(); k += 2) {
+		int a = flat[k], b = flat[k + 1];
+		if (a < 0 || b < 0 || a >= soldier_count() || b >= soldier_count() || a == b) return false;
+		if (!is_aboard(a) || !is_aboard(b) || !hostile(team[a], team[b])) return false;
+		if (a > b) std::swap(a, b);
+		pairs.push_back({a, b});
+	}
+	std::sort(pairs.begin(), pairs.end());
+	pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+	aboard_pairs_ = std::move(pairs);
+	return true;
+}
+
 ExStats World::ex_stats(int i) const {
 	const Formation &f = formations[form[i]];
 	ExStats s;
@@ -295,6 +334,16 @@ void World::exchange_round_run() {
 			if (viable) activate_skill(i, enemy_sectors(i) >= 2 ? SK_BRACE : SK_POWER);
 		}
 	pool_.run(chunks_, [&](int ch) { exchange_collect(ch); });
+	// Host hull contacts: aboard soldiers are outside the spatial hash; each published pair duels once with the same
+	// rules and roll as a ground pair (serial, appended to the first chunk so the merge order stays by chunk).
+	for (const auto &pr : aboard_pairs_) {
+		const int i = pr.first, j = pr.second;
+		if (!aboard_can_receive(i) || !aboard_can_receive(j) || !hostile(team[i], team[j])) continue;
+		if (!(aboard_exchange_ready(i) && aboard_initiates(i)) && !(aboard_exchange_ready(j) && aboard_initiates(j))) continue;
+		ExStats sa = ex_stats(i), sb = ex_stats(j);
+		double roll = exchange_roll(person_id[i], person_id[j], exchange_round, cfg.seed);
+		pair_buf_[0].push_back({i, j, exchange_result(sa, sb, roll)});
+	}
 	// Merge: every edge used pre-resolution stats; each person pays / receives one merged outcome.
 	ex_participants_.clear();
 	auto side = [&](int i, int other, double hp_v, double stun_v, double fat, double stag, bool knock, int rank, double margin) {
@@ -345,7 +394,7 @@ void World::exchange_round_run() {
 		int o = e.r_other;
 		if (o >= 0) face[i] = std::atan2(py[o] - py[i], px[o] - px[i]);
 		double prev = stagger[i]; // previous stagger survives a knockback (max(previous, new))
-		if (e.knock && o >= 0) {  // big loss: pushed one cell away from the reaction opponent
+		if (e.knock && o >= 0 && !is_aboard(i)) {  // big loss: pushed one cell away (never off a deck)
 			float dx = px[i] - px[o], dy = py[i] - py[o], d = std::sqrt(dx * dx + dy * dy);
 			if (d < 1e-4f) { dx = -std::cos(face[i]); dy = -std::sin(face[i]); d = 1; }
 			knock_dx[i] = dx / d * 4.0f; knock_dy[i] = dy / d * 4.0f; knock_t[i] = 0.25;

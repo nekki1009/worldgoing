@@ -902,6 +902,8 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# GD rosters there, and a road battle becomes a Site.
 	var party_bind: bool = str(_region_owner_bind_tickets.get(str(prepared.get("region_bind_token", "")), {}).get("kind", "")).begins_with("party") \
 		or not _region_party_token.is_empty() or terrain.has_meta(&"region_party_owner")
+	# Nekki 2026-11-10 (A): a travelling party's live contact frame converts later, before its first planned interval
+	# (_region_party_frame_native), after its complete GD owner graph is restored here.
 	var legacy_convert: bool = crowd_startup_requested and not party_bind
 	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested() and not party_bind
 	if arrival_convert and (terrain.site.has("crowd") or not _has_active_grid_team()):
@@ -1786,7 +1788,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if replaying and not formula_interval and crowd_site != null and crowd_site.active and not fire_replay_interval.is_empty():
 		pre_step_combat_left = float(fire_replay_interval.get("tactical_seconds", 0.0))
 	var shared_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
-	if not gd_original and not formula_interval:
+	# A travelling party's native contact frame (Nekki 2026-11-10 A) consumes its formula interval through the same native
+	# begin window as any crowd step; other formula intervals are GD hosts.
+	if not gd_original and (not formula_interval or party_consuming):
 		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)
@@ -9524,6 +9528,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if not permit.get("unpaused", false): return {"ok": permit.get("ok", true), "pending": true, "source": permit}
 	# Restore every real NPC party before selecting an ACTION prefix. Travel's
 	# pure upkeep is the GAME consumer; these originals own get-up/down timers.
+	var native_frames := {} # token -> a travelling party's native contact frame Lab (Nekki 2026-11-10 A)
 	for token: String in slot.region_registry().parties:
 		if str(slot.region_registry().parties[token].get("phase", "")) != "travelling": continue
 		var selected_party := slot._region_npc_party(token)
@@ -9531,6 +9536,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		var party_original := prepare_region_party_original_owner(token, selected_party.party, slot)
 		if not party_original.ok: return party_original
 		maximum = minf(maximum, party_original.lab._region_party_original_action_limit(maximum))
+		if party_original.lab.crowd_site != null and party_original.lab.crowd_site.active: native_frames[token] = party_original.lab
 	if maximum <= ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_ZERO_ENDPOINT_REQUIRED")
 	var action_begin := float(slot.control.fire_clock.action_seconds)
 	for original: TerrainLab in originals:
@@ -9538,6 +9544,14 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if original._siege_tactical_active() or original._fire_activity() or original._region_melee_tactical_demand(): demand = maximum
 		var demanded := slot.set_region_tactical_demand(str(original.terrain.site.id), action_begin + demand)
 		if not demanded.ok: return demanded
+	# A native contact frame in combat demands tactical time as a Site original does; its formula owner guard requires it.
+	for token: String in native_frames:
+		var frame: TerrainLab = native_frames[token]
+		var frame_demand := minf(maximum, float(frame.terrain.site.get("combat_left", 0.0)))
+		if frame._fire_activity() or frame._siege_tactical_active() or frame._region_melee_tactical_demand(): frame_demand = maximum
+		if frame_demand <= 0.0: continue
+		var frame_demanded := slot.set_region_tactical_demand("travel:" + token, action_begin + frame_demand)
+		if not frame_demanded.ok: return frame_demanded
 	var tactical := slot.GameplayClock.tactical_seconds(slot.region_registry(), action_begin, maximum, minf(maximum, local_tactical))
 	var forecast := RegionSaveSlot.preview_fire_interval(slot.control.fire_clock, float(slot.control.logical_game_seconds), maximum, simulation_speed, tactical)
 	if not forecast.ok: return forecast
@@ -9639,12 +9653,12 @@ func _region_original_interval_guard(interval: Dictionary) -> Dictionary:
 			or int(interval.get("sequence", -1)) != int(clock.sequence) + 1 \
 			or absf(float(interval.game_begin) - float(slot.control.logical_game_seconds)) > ACTION_TIME_EPSILON \
 			or absf(float(interval.action_begin) - float(clock.action_seconds)) > ACTION_TIME_EPSILON:
-			return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
+			return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "party clock " + JSON.stringify({"interval": [interval.get("epoch"), interval.get("sequence"), interval.get("game_begin"), interval.get("action_begin")], "clock": [clock.epoch, clock.sequence, slot.control.logical_game_seconds, clock.action_seconds]}))
 	else:
 		var settled := RegionSaveSlot.validate_settlement(terrain.site, float(interval.game_begin))
 		if not settled.ok or settled.get("legacy", true) or _replay_pending_residue(float(settled.get("pending", INF))) > 0.0: return SiteRuntime.fail("REGION_OWNER_SOURCE")
 	if not _region_point_pending.is_empty() or not terrain.get_meta(&"fire_boundary", {}).is_empty(): return SiteRuntime.fail("REGION_ENDPOINT_PENDING")
-	if not is_finite(fire_action_cursor) or absf(fire_action_cursor - float(interval.action_begin)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
+	if not is_finite(fire_action_cursor) or absf(fire_action_cursor - float(interval.action_begin)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "owner fire cursor %.12f, interval begin %.12f" % [fire_action_cursor, float(interval.action_begin)])
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
 	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
 	var fire_guard := _fire_step_guard()
@@ -11120,9 +11134,9 @@ func prepare_region_party_original_owner(token: String, party: Dictionary, slot:
 	original.bind_terrain(data)
 	var bound := original.region_bind_receipt(data)
 	if not bound.get("complete", false): return bound
-	if RegionPartyTravel._body_records(data.site).keys().size() != party.person_ids.size(): return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+	if RegionPartyTravel._body_records(data.site).keys().size() != party.person_ids.size(): return SiteRuntime.fail("PARTY_BODY_CLOSURE", "prepare_region_party_original_owner#0")
 	for identity: Variant in party.person_ids:
-		if original._original_person_target(int(identity)).is_empty(): return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+		if original._original_person_target(int(identity)).is_empty(): return SiteRuntime.fail("PARTY_BODY_CLOSURE", "prepare_region_party_original_owner#1")
 	original._region_party_token = token
 	original._region_party_input_hash = fingerprint
 	var pending: Dictionary = party.upkeep.get("original_deaths", {})
@@ -11158,6 +11172,15 @@ func _region_party_original_action_limit(maximum: float) -> float:
 				var remaining := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"get_up"]) - float(row.get("age", 0.0))
 				if remaining > ACTION_TIME_EPSILON: limit = minf(limit, remaining)
 			if float(row.get("grace", 0.0)) > ACTION_TIME_EPSILON: limit = minf(limit, float(row.grace))
+	# A native contact frame (Nekki 2026-11-10 A) consumes whole formula intervals, so its own native begin window (exchange
+	# query pulse, work and ranged transitions) clips the interval here, as the joint planner previews a live crowd Site.
+	# The frame converts on its first planned interval; a refused conversion is reported by the step itself.
+	if _region_party_frame_native().ok and crowd_site != null and crowd_site.active and limit > ACTION_TIME_EPSILON:
+		var tactical := limit if _fire_activity() or _siege_tactical_active() or _region_melee_tactical_demand() \
+			else minf(limit, float(terrain.site.get("combat_left", 0.0)))
+		var window: Dictionary = _prepare_native_begin_shared_window(limit, tactical)
+		_clear_shared_work_step()
+		if window.get("ok", false): limit = minf(limit, float(window.action_seconds))
 	return limit
 
 
@@ -11263,10 +11286,36 @@ func _region_capture_original_party(original: TerrainLab, party: Dictionary, slo
 		game_seconds: float = -1.0, action_seconds: float = -1.0, read_only: bool = false) -> Dictionary:
 	var state: Dictionary = original.terrain.site.duplicate(true) if read_only else original.terrain.site
 	original.site_controller._capture_positions(state, read_only)
+	# A live contact frame stepping as a native crowd (Nekki 2026-11-10 A): its people live in the native state, so the
+	# party's teams are read as the plain TerrainArmy-shaped party rows a crowd departure writes (ClearHandoff.roster_snapshot
+	# plus the ship row fields), which every party consumer reads. The frame's own native section and crowd rosters ride
+	# beside them (content.crowd / content.crowd_rosters), exactly as a crowd Site saves, so a reopened frame resumes natively.
+	var party_armies: Array = state["armies"]
+	var native_section := {}
+	var native_rosters: Array = []
+	if original.crowd_site != null and original.crowd_site.active:
+		var native: Dictionary = original.crowd_site.capture_save(true)
+		if not native.ok: return native
+		native_section = native.section.duplicate(true)
+		native_rosters = native.rosters.duplicate(true)
+		party_armies = []
+		for roster: Variant in state.armies:
+			if roster is Dictionary and not bool(roster.get("crowd", false)): party_armies.append(roster)
+		for roster: Dictionary in native.rosters:
+			var shaped: Dictionary = original.crowd_site.departure_army_snapshot({"ok": true, "roster": roster})
+			if not shaped.ok: return shaped
+			var row: Dictionary = shaped.snapshot
+			row.erase("crowd")
+			party_armies.append(row)
 	var result := party.duplicate(true)
 	var content: Dictionary = result.content
 	for field: String in RegionPartyTravel.CONTENT_DICTS: content[field] = state.get(field, {}).duplicate(true)
-	content["armies"] = state["armies"].duplicate(true)
+	content["armies"] = party_armies.duplicate(true)
+	if native_section.is_empty():
+		content.erase("crowd"); content.erase("crowd_rosters")
+	else:
+		content["crowd"] = native_section
+		content["crowd_rosters"] = native_rosters
 	content["controlled_person_id"] = int(state["controlled_person_id"]) if str(party.controller) == "player" else -1
 	content["manual_cargo"] = state["manual"]["cargo"].duplicate(true) if content.actors.has("player") else state["worker"]["cargo"].duplicate(true)
 	if party.content.has("family"): content["family"] = state["family"].duplicate(true)
@@ -11276,7 +11325,7 @@ func _region_capture_original_party(original: TerrainLab, party: Dictionary, slo
 	if not identified.ok: return identified
 	content["travel_identity"] = identified.state.travel_identity
 	RegionPartyTravel._retain_identity(content)
-	if RegionPartyTravel.census(result).people != RegionPartyTravel.census(party).people: return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+	if RegionPartyTravel.census(result).people != RegionPartyTravel.census(party).people: return SiteRuntime.fail("PARTY_BODY_CLOSURE", "_region_capture_original_party#2")
 	result.upkeep.original_deaths = {}
 	for identity: int in original.site_controller._pending_deaths: result.upkeep.original_deaths[str(identity)] = float(original.site_controller._pending_deaths[identity])
 	result.upkeep.at = float(slot.control.logical_game_seconds) if game_seconds < 0.0 else game_seconds
@@ -12872,16 +12921,71 @@ func _region_advance_live_party_host(maximum_action_seconds: float) -> Dictionar
 func _region_advance_original_party_body(original: TerrainLab, before: Dictionary, interval: Dictionary) -> Dictionary:
 	var guarded: Dictionary = original._region_original_interval_guard(interval)
 	if not guarded.ok: return guarded
+	var native := original._region_party_frame_native()
+	if not native.ok: return native
 	original._region_owner_interval_active = true
 	var result: Dictionary = original._advance_original_shared_step(float(interval.action_end) - float(interval.action_begin),
 		float(interval.game_end), interval, true)
 	original._region_owner_interval_active = false
 	if not result.ok or not result.get("completed", false): return result
+	# A native frame accumulates its fire cursor over native begin windows; it lands on the accepted interval end within
+	# float drift (1e-11 seen at 78 s, 2026-11-10). The accepted end is the clock, as the cold replay finish check does.
+	if original.crowd_site != null and original.crowd_site.active:
+		var drift := absf(original.fire_action_cursor - float(interval.action_end))
+		if drift > PHASE_BOUNDARY_TOLERANCE: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "native frame cursor %.12f, interval end %.12f" % [original.fire_action_cursor, float(interval.action_end)])
+		original.fire_action_cursor = float(interval.action_end)
+		original.terrain.set_meta(&"fire_completed_action_end", original.fire_action_cursor)
+		# The exchange phase accumulates the same drift; a phase a few ULPs off the action grid later clips a native begin
+		# window to a sub-epsilon query gap (6e-14 seen, 2026-11-10), which no formula interval can consume.
+		# The frame's own minute/phase game clock is the party's GAME clock (the domain view derives it from upkeep.at); its
+		# native accumulation lands a few ULPs off the accepted end, which later clips a meal/work boundary to a 6e-14 prefix.
+		var site_game := (float(original.terrain.site.get("minute", 0)) + float(original.terrain.site.get("phase", 0.0))) * 60.0
+		if absf(site_game - float(interval.game_end)) > maxf(PHASE_BOUNDARY_TOLERANCE, float(interval.game_end) * 0.000000001):
+			return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "native frame game clock %.9f, interval end %.9f" % [site_game, float(interval.game_end)])
+		var frame_clock := _region_party_clock_fields(float(interval.game_end))
+		original.terrain.site["minute"] = frame_clock[0]
+		original.terrain.site["phase"] = frame_clock[1]
+		# Sustain ledgers advance by the same native windows; one a residue short of the frame clock left its meal 3.6e-12 s
+		# ahead (a 6e-14 s window). Ledger times within the boundary tolerance read the frame clock (RegionTravel.rebase_clocks
+		# names the same ledgers).
+		var frame_game := float(frame_clock[0]) * 60.0 + float(frame_clock[1]) * 60.0
+		var ledgers: Array = []
+		for supply: Variant in original.terrain.site.get("team_supply", {}).values():
+			if supply is Dictionary and supply.get("sustain") is Dictionary: ledgers.append(supply.sustain)
+		for personal: Variant in original.terrain.site.get("person_supply", {}).values():
+			if personal is Dictionary: ledgers.append(personal)
+		for sustain: Dictionary in ledgers:
+			if sustain.has("at") and absf(float(sustain.at) - frame_game) <= PHASE_BOUNDARY_TOLERANCE: sustain["at"] = frame_game
+		var grid_phase := snappedf(original._exchange_phase, ACTION_STEP)
+		if absf(grid_phase - original._exchange_phase) <= PHASE_BOUNDARY_TOLERANCE:
+			original._exchange_phase = 0.0 if grid_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP else grid_phase
+		# Its pending native point (consumed after this interval) ends on the same accepted end.
+		if not original._region_point_pending.is_empty() and original._region_point_pending.has("fire_action_end"):
+			if absf(float(original._region_point_pending.fire_action_end) - float(interval.action_end)) > PHASE_BOUNDARY_TOLERANCE:
+				return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "native frame point end %.12f, interval end %.12f" % [float(original._region_point_pending.fire_action_end), float(interval.action_end)])
+			original._region_point_pending.fire_action_end = float(interval.action_end)
 	var captured: Dictionary = _region_capture_original_party(original, before, site_controller.region_slot,
 		float(interval.game_end), float(interval.action_end))
 	if not captured.ok: return captured
 	return {"ok": true, "party": captured.party, "complete": true, "token": str(before.party_id),
 		"game_seconds": float(interval.game_end), "action_seconds": float(interval.action_end)}
+
+## Nekki 2026-11-10 (A): a travelling party's live contact frame steps as a native crowd. The frame is bound with its
+## complete GD owner graph (the commit proves that graph), and converts here, before its first positive step, so the
+## step's captured party is the first one in native form. Coarse travel (no frame) never converts.
+func _region_party_frame_native() -> Dictionary:
+	if not CrowdSiteScript.requested() or terrain == null or not terrain.has_meta(&"region_party_world_frame"): return SiteRuntime.ok()
+	if crowd_site != null and crowd_site.active: return SiteRuntime.ok()
+	if terrain.site.has("crowd"): return SiteRuntime.fail("REGION_BACKEND_UNADMITTED", "接觸框帶有群眾區段但群眾未啟用")
+	if not _has_active_grid_team(): return SiteRuntime.ok()
+	if crowd_site == null:
+		crowd_site = CrowdSiteScript.new()
+		crowd_site.name = "CrowdSite"
+		add_child(crowd_site)
+		crowd_site.setup(self)
+	var converted: Dictionary = crowd_site.convert_existing()
+	if converted.ok: converted = _region_write_converted_crowd_section()
+	return converted
 
 func _region_can_publish_party_bind(nonce: String) -> bool:
 	var ticket: Dictionary = _region_owner_bind_tickets.get(nonce, {})
@@ -13016,7 +13120,7 @@ func _region_party_bootstrap_child(token: String, party: Dictionary, slot: Regio
 	child._region_owner_bind_tickets[nonce] = {"kind": "party-bootstrap", "data": data,
 		"body_hash": RegionCheckpoint.state_hash(data.site), "context": context, "owners": owners,
 		"slot": slot, "proof": proof.duplicate(true), "party": party, "graph": graph}
-	child.bind_terrain(data, {"ok": true, "crowd_site": null, "region_bind_token": nonce})
+	child.bind_terrain(data, _region_party_crowd_admission(data, nonce, child))
 	var bound: Dictionary = child._region_bind_receipt_value.duplicate(true)
 	child._region_owner_bind_tickets.erase(nonce)
 	if child.terrain != data or child._region_bound_data != data or bound.get("owners_restored") != true:
@@ -13107,18 +13211,24 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 		data = RegionPartyEnv.navigation_for_state(opened.data, opened.data.site)
 	var content: Dictionary = party.content
 	var view: Dictionary = opened.data.site.duplicate(true)
-	for field: String in ["region_snapshot", "region_life_events", "fire_owners", "fire", "fire_settlement", "initial_scenario", "family"]:
+	# The physical source Site's own native crowd section is not this party's (found 2026-11-10: every live frame view
+	# carried the source Site's crowd blob, so a frame looked already converted).
+	for field: String in ["region_snapshot", "region_life_events", "fire_owners", "fire", "fire_settlement", "initial_scenario", "family", "crowd"]:
 		view.erase(field)
 	for field: String in ["features", "changes", "terrain_changes", "inventory", "water_status", "water_links", "building_economy", "housing", "captivity", "escort_orders"]:
 		view[field] = {}
 	view["zones"] = []; view["notices"] = []; view["total_produced"] = 0; view["combat_left"] = 0.0
 	for field: String in RegionPartyTravel.CONTENT_DICTS: view[field] = content.get(field, {}).duplicate(true)
 	view["armies"] = content.get("armies", []).duplicate(true)
+	if content.has("crowd"):
+		view["crowd"] = content.crowd.duplicate(true)
+		view["armies"] = content.get("crowd_rosters", []).duplicate(true)
 	view["id"] = "travel:" + token
 	# Derived view of the SAME party GAME clock; never a Site publication.
 	var game := float(party.upkeep.at)
-	view["minute"] = floori(game / 60.0)
-	view["phase"] = game / 60.0 - float(view.minute)
+	var frame_clock := _region_party_clock_fields(game)
+	view["minute"] = frame_clock[0]
+	view["phase"] = frame_clock[1]
 	view["actor_presence_version"] = 1
 	view["controlled_person_id"] = int(content.get("controlled_person_id", party.leader_person_id))
 	view["army_trial_active"] = not view.armies.is_empty()
@@ -13136,6 +13246,14 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 	elif not transport.is_empty():
 		transport["orders"] = content.get("fire_orders", []).duplicate(true)
 		transport["member_cursor"] = content.get("fire_member_cursor", []).duplicate(true)
+	# A native frame's crowd teams hold the disabled command row a live crowd owner writes before it has fired, as a crowd
+	# arrival team gets (RegionTravel._crowd_fire_placeholder), so its staged crowd load sees one fire order per team.
+	if content.has("crowd") and not transport.is_empty() and transport.get("orders") is Array:
+		for roster: Dictionary in view.armies:
+			var group := int(roster.get("team_id", 0))
+			var has_order := false
+			for row: Variant in transport.orders: has_order = has_order or row is Dictionary and int(row.get("group", 0)) == group
+			if group > 0 and not has_order: transport.orders.append(RegionPartyTravel._crowd_fire_placeholder(view, group))
 	if transport.is_empty(): view.erase("fire_transport")
 	else: view["fire_transport"] = transport
 	data.site = view
@@ -13168,10 +13286,29 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 	if not original_vehicles.ok: return original_vehicles
 	var hull := SiteVehicleTransport.validate_region_ship_projection(data)
 	if not hull.ok: return hull
-	if RegionPartyTravel._body_records(view).size() != party.person_ids.size(): return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+	if RegionPartyTravel._body_records(view).size() != party.person_ids.size(): return SiteRuntime.fail("PARTY_BODY_CLOSURE", "_region_party_domain_view#3")
 	if view.actors.size() > 2 or view.actors.keys().any(func(key: Variant) -> bool: return str(key) not in ["player", "npc"]):
 		return SiteRuntime.fail("PARTY_ACTOR_CAPACITY")
 	return SiteRuntime.ok("", {"data": data})
+
+## A party's derived minute/phase for its GAME clock. A time a drift residue short of a whole minute is that minute: the
+## frame's own step crossed it (wrapped its phase), and 0.99999999999 would clip the next window to 4e-13 s (2026-11-10).
+static func _region_party_clock_fields(game: float) -> Array:
+	var whole := roundf(game / 60.0)
+	if absf(whole * 60.0 - game) <= PHASE_BOUNDARY_TOLERANCE: return [int(whole), 0.0]
+	var minute := floori(game / 60.0)
+	return [minute, game / 60.0 - float(minute)]
+
+## A party bind's admission: a native contact frame's saved section is staged like a crowd Site load (Nekki 2026-11-10 A);
+## a GD party binds with no crowd. A refused staging is returned as the admission, which bind_terrain shows and refuses.
+func _region_party_crowd_admission(data: TerrainData, token: String, binder: TerrainLab) -> Dictionary:
+	if not data.site.has("crowd"): return {"ok": true, "crowd_site": null, "region_bind_token": token}
+	var staged := binder.prepare_crowd_load(data)
+	if not staged.ok: return staged
+	# The Store validation that staging runs normalizes the view as a crowd Site load does; the bind ticket proves that body.
+	var ticket: Dictionary = binder._region_owner_bind_tickets.get(token, {})
+	if not ticket.is_empty() and ticket.get("data") == data: ticket["body_hash"] = RegionCheckpoint.state_hash(data.site)
+	return {"ok": true, "crowd_site": staged.crowd_site, "region_bind_token": token}
 
 static func _region_party_scene_owners(owners: Dictionary) -> Dictionary:
 	var scene := {"scene": owners.scene}
@@ -13285,11 +13422,12 @@ func _region_prepare_party_graph_bind(token: String, candidate: Dictionary, slot
 	child._region_owner_bind_tickets[bootstrap] = {"kind": "party-candidate", "data": target.data,
 		"body_hash": RegionCheckpoint.state_hash(target.data.site), "context": context.context, "owners": _region_party_scene_owners(owners),
 		"slot": slot, "party": candidate, "graph": graph, "proofs": selected_rows, "sources": sources}
-	child.bind_terrain(target.data, {"ok": true, "crowd_site": null, "region_bind_token": bootstrap})
+	child.bind_terrain(target.data, _region_party_crowd_admission(target.data, bootstrap, child))
 	child._region_owner_bind_tickets.erase(bootstrap)
 	_region_discard_party_children(children)
 	if child.terrain != target.data or child._region_bound_data != target.data or child._region_bind_receipt_value.get("owners_restored") != true:
-		_region_discard_party_child(child); return SiteRuntime.fail("REGION_CHILD_BIND_FAILED", str(child._region_bind_receipt_value))
+		var refused := str(child._region_bind_receipt_value) # Read before the child is freed.
+		_region_discard_party_child(child); return SiteRuntime.fail("REGION_CHILD_BIND_FAILED", refused)
 	child.set_process(false); child.set_process_input(false); child.set_process_unhandled_input(false)
 	for actor: TerrainTestCharacter in child.combat_actors: actor.set_process(false)
 	for team: TerrainArmy in child.combat_armies: team.set_process(false)
@@ -13315,7 +13453,7 @@ func _region_publish_original_party_upkeep(original: TerrainLab, candidate: Dict
 	for identity: int in people:
 		var target: Dictionary = original._original_person_target(identity)
 		if target.is_empty() or absf(float(target.hp) - float(people[identity].hp)) > ACTION_TIME_EPSILON:
-			return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+			return SiteRuntime.fail("PARTY_BODY_CLOSURE", "_region_publish_original_party_upkeep#4")
 		targets[identity] = target
 	for field: String in ["team_supply", "person_supply"]:
 		var current: Dictionary = original.terrain.site.get(field, {})
@@ -13371,7 +13509,7 @@ func _region_publish_party_bind(proof: Dictionary, nonce: String) -> Dictionary:
 	ticket["proof"] = proof.duplicate(true)
 	_region_party_token = token
 	_region_party_input_hash = ticket.party_hash
-	bind_terrain(ticket.data, {"ok": true, "crowd_site": null, "region_bind_token": nonce})
+	bind_terrain(ticket.data, _region_party_crowd_admission(ticket.data, nonce, self))
 	var bound: Dictionary = _region_bind_receipt_value.duplicate(true)
 	if terrain != ticket.data or _region_bound_data != ticket.data or bound.get("owners_restored") != true:
 		return SiteRuntime.fail("COMMITTED_UNBOUND", "Selected party and full original graph remain resumable")
@@ -13501,7 +13639,7 @@ func _region_bind_selected_party(token: String, party: Dictionary, slot: RegionS
 	_region_party_token = token
 	_region_party_input_hash = _region_party_hash(party)
 	site_controller.region_slot = slot
-	bind_terrain(target.data, {"ok": true, "crowd_site": null, "region_bind_token": nonce})
+	bind_terrain(target.data, _region_party_crowd_admission(target.data, nonce, self))
 	var bound: Dictionary = _region_bind_receipt_value.duplicate(true)
 	if int(slot._marker.generation) != generation or terrain != target.data or _region_bound_data != target.data \
 			or bound.get("owners_restored") != true:
@@ -13858,7 +13996,7 @@ func _region_prepare_party_family_bind(token: String, candidate: Dictionary, slo
 	child._region_owner_bind_tickets[bootstrap] = {"kind": "party-candidate", "data": target.data,
 		"body_hash": RegionCheckpoint.state_hash(target.data.site), "context": graph.context,
 		"owners": _region_party_scene_owners(graph.owners), "slot": slot, "party": candidate, "graph": graph, "sources": sources}
-	child.bind_terrain(target.data, {"ok": true, "crowd_site": null, "region_bind_token": bootstrap})
+	child.bind_terrain(target.data, _region_party_crowd_admission(target.data, bootstrap, child))
 	child._region_owner_bind_tickets.erase(bootstrap)
 	_region_discard_party_child(original)
 	if child.terrain != target.data or child._region_bound_data != target.data or child._region_bind_receipt_value.get("owners_restored") != true:
@@ -13899,13 +14037,13 @@ func _region_refresh_original_live_frame(party: Dictionary, original: TerrainLab
 	for identity: Variant in bodies:
 		var body: Dictionary = bodies[identity]
 		var cell: Variant = body.get("cell")
-		if not RegionPartyTravel._frame_pair(cell) or not refs.person.has(str(identity)): return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+		if not RegionPartyTravel._frame_pair(cell) or not refs.person.has(str(identity)): return SiteRuntime.fail("PARTY_BODY_CLOSURE", "_region_refresh_original_live_frame#5")
 		var at := origin + Vector2i(int(cell[0]), int(cell[1]))
 		people[str(identity)] = {"reference": refs.person[str(identity)].duplicate(), "world_cell": [at.x, at.y]}
 	var vehicles := {}
 	for identity: String in result.content.get("vehicles", {}):
 		var vehicle: Dictionary = result.content.vehicles[identity]
-		if not vehicle.get("cell") is int or not refs.vehicle.has(identity): return SiteRuntime.fail("PARTY_BODY_CLOSURE")
+		if not vehicle.get("cell") is int or not refs.vehicle.has(identity): return SiteRuntime.fail("PARTY_BODY_CLOSURE", "_region_refresh_original_live_frame#6")
 		var at := origin + original.terrain.cell_from_index(int(vehicle.cell))
 		var record := {"reference": refs.vehicle[identity].duplicate(), "world_cell": [at.x, at.y], "pose": {}}
 		if str(vehicle.get("kind", "")) == "ship":
@@ -14933,8 +15071,12 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 				if end > 0.0: limit = minf(limit, end)
 				var rate: float = float(segment.rate)
 				var start: float = PersonFatigue.read(group.body)
-				if rate > 0.0 and start < 30.0: limit = minf(limit, (30.0 - start) / rate)
-				elif rate > 0.0 and start < 100.0: limit = minf(limit, (100.0 - start) / rate)
+				# A band boundary closer than the person-work tolerance is already reached, as the rest limit below: a pool a
+				# rounding residue short of 30 clipped a travelling frame's window to 4e-13 s (2026-11-10).
+				var band_end := INF
+				if rate > 0.0 and start < 30.0: band_end = (30.0 - start) / rate
+				elif rate > 0.0 and start < 100.0: band_end = (100.0 - start) / rate
+				if band_end > PersonFatigue.WORK_PLAN_EPS: limit = minf(limit, band_end)
 				break
 	# A successful pulse sets the original formation's charged_this_step flag;
 	# safe_fatigue_rest is therefore false for that pool in the actual next step.

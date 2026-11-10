@@ -322,7 +322,7 @@ func _food_results() -> bool:
 			owned = owned or outcome.owner_kind == "party" and outcome.owner_id == fleet.token or outcome.owner_kind == "team" and outcome.owner_id == str(fleet.team) and outcome.site_id == fleet.site
 		var actual_child := false
 		if is_instance_valid(fleet_live_lab) and outcome.owner_kind == "team" and outcome.site_id == str(fleet_live_lab.terrain.site.id):
-			for team: TerrainArmy in fleet_live_lab.combat_armies:
+			for team: Variant in fleet_live_lab.team_owners():
 				actual_child = actual_child or outcome.owner_id == str(team.team_id)
 		owned = owned or actual_child
 		if not owned: continue
@@ -677,7 +677,7 @@ func _fleet_reopen() -> bool:
 		var travelling := slot._region_npc_party(token)
 		var owner: Dictionary = lab.prepare_region_party_original_owner(token, travelling.party, slot) if travelling.ok else travelling
 		if not _check(owner.ok and owner.lab is TerrainLab and owner.receipt.get("complete", false)
-			and owner.receipt.get("owners_restored", false), "fresh original bind restores the selected party's complete owner", {"token": token, "code": owner.get("code", "OK")}): return false
+			and owner.receipt.get("owners_restored", false), "fresh original bind restores the selected party's complete owner", {"token": token, "code": owner.get("code", "OK"), "message": str(owner.get("message", "")).left(800)}): return false
 		var actual := slot.region_original_party_runtime_proof(token, travelling.party)
 		if not _check(actual.ok and actual.lab == owner.lab, "restored travelling party has its actual current runtime proof", {"token": token, "code": actual.get("code", "OK")}): return false
 	if not fleet_primary.is_empty() and not _bind_live_observer(): return false
@@ -742,12 +742,39 @@ func _bind_live_observer() -> bool:
 func _crew(index: int, row: int) -> Dictionary:
 	var fleet: Dictionary = fleets[index]
 	var reference: Dictionary = fleet.refs.person[str(fleet.people[row])]
-	for team: TerrainArmy in fleet_live_lab.combat_armies:
-		for unit: int in team.combat_units.size():
-			var identity := team.combat_identity(unit)
+	# The frame's team holders: native crowd owners once the frame steps as a crowd (Nekki 2026-11-10 A), else GD armies.
+	for team: Variant in fleet_live_lab.team_owners():
+		for unit: int in _unit_indices(team):
+			var identity: int = team.combat_identity(unit)
 			if fleet_live_lab.terrain.site.travel_identity.refs.person.get(str(identity), {}) == reference:
 				return fleet_live_lab.site_controller.vehicles.ship_person(identity)
 	return {}
+
+## Failure evidence only: what the frame holds when a bow crew cannot be read.
+func _crew_facts(index: int) -> Dictionary:
+	var fleet: Dictionary = fleets[index]
+	var facts := {"want": fleet.refs.person.get(str(fleet.people[1]), {}), "native": _native_frame(), "teams": []}
+	if not is_instance_valid(fleet_live_lab): return facts
+	for team: Variant in fleet_live_lab.team_owners():
+		var rows: Array = []
+		for unit: int in _unit_indices(team):
+			var identity: int = team.combat_identity(unit)
+			rows.append([identity, fleet_live_lab.terrain.site.travel_identity.refs.person.get(str(identity), {}), not fleet_live_lab.site_controller.vehicles.ship_person(identity).is_empty()])
+		facts.teams.append({"team": team.team_id, "rows": rows})
+	return facts
+
+## Whether `person` (a ship_person record) would start an exchange with `other_id`: the native order form on a crowd
+## frame (CrowdPersonOwner.native_exchange_initiates), the GD form on a grid frame.
+func _initiates(person: Dictionary, other_id: int, melee: bool) -> bool:
+	if person.owner is CrowdPersonOwner: return person.owner.native_exchange_initiates(int(person.unit), other_id, melee)
+	return person.owner.exchange_initiates(int(person.unit), other_id, melee)
+
+## A team holder's row indices: a GD army's rows are 0..n-1; a crowd owner's combat_units is keyed by native index.
+static func _unit_indices(team: Variant) -> Array:
+	return team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())
+
+func _native_frame() -> bool:
+	return is_instance_valid(fleet_live_lab) and fleet_live_lab.crowd_site != null and fleet_live_lab.crowd_site.active
 
 func _actual_exchange(first: int, second: int, result: Dictionary) -> void:
 	var a := _crew(0, 1)
@@ -781,7 +808,7 @@ func _melee_bodies() -> Dictionary:
 	for fleet_index: int in 2:
 		var person: Dictionary = _crew(fleet_index, 1)
 		if person.is_empty(): return {}
-		var owner: TerrainArmy = person.owner
+		var owner: Variant = person.owner
 		var unit: int = int(person.unit)
 		var body: Dictionary = person.row
 		bodies[str(int(person.id))] = {"owner": owner.get_instance_id(), "unit": unit,
@@ -895,14 +922,15 @@ func _real_melee() -> bool:
 	var b := _crew(1, 1)
 	var helm := _crew(0, 0)
 	var vehicles: SiteVehicleTransport = fleet_live_lab.site_controller.vehicles
-	if not _check(not vehicles.ship_can_attack(int(helm.id)) and not helm.owner.exchange_initiates(int(helm.unit), int(b.id), true), "real seated helm cannot initiate original melee"): return false
-	if not _check(not a.owner.exchange_initiates(int(a.unit), int(helm.id), true) and not a.owner.exchange_initiates(int(a.unit), -999999, true) and not a.owner.exchange_initiates(int(a.unit), int(b.id), false), "friendly same-boat, absent identity and nonmelee queries do not gain a naval defense order"): return false
+	if not _check(not vehicles.ship_can_attack(int(helm.id)) and not _initiates(helm, int(b.id), true), "real seated helm cannot initiate original melee"): return false
+	if not _check(not _initiates(a, int(helm.id), true) and not _initiates(a, -999999, true) and not _initiates(a, int(b.id), false), "friendly same-boat, absent identity and nonmelee queries do not gain a naval defense order"): return false
 	if fleet_case == "friendly":
-		if not _check(not a.owner.exchange_initiates(int(a.unit), int(b.id), true) and not b.owner.exchange_initiates(int(b.unit), int(a.id), true), "real friendly frame contacts do not authorize combat"): return false
+		if not _check(not _initiates(a, int(b.id), true) and not _initiates(b, int(a.id), true), "real friendly frame contacts do not authorize combat"): return false
 		if not await _fleet_coarse_to_meal(): return false
 		if not await _fleet_until(func() -> bool: return fleet_live_meals > 0.0, "actual original NPC child Controller publishes a genuine accepted meal result"): return false
 		return _check(fleet_exchanges.is_empty(), "friendly actual paid frame produces no hostile exchange")
-	if not _check(a.owner.exchange_initiates(int(a.unit), int(b.id), true) and b.owner.exchange_initiates(int(b.unit), int(a.id), true), "actual lawful nonhelm HOLD crews receive only original current defensive contact authorization"): return false
+	if not _check(_initiates(a, int(b.id), true) and _initiates(b, int(a.id), true), "actual lawful nonhelm HOLD crews receive only original current defensive contact authorization"): return false
+	if _native_frame(): return await _native_melee(a, b)
 	if not await _fleet_until(func() -> bool: return not fleet_exchanges.is_empty(), "actual main paid caller resolves the genuine original reciprocal melee pair"): return false
 	a = _crew(0, 1); b = _crew(1, 1)
 	var sequences := {}
@@ -913,6 +941,24 @@ func _real_melee() -> bool:
 		sequences[key] = true
 		physical_effects = physical_effects and _melee_effect_applied(exchange)
 	return _check(not fleet_exchanges.is_empty() and physical_effects and fleet_live_lab._region_point_pending.is_empty(), "genuine accepted original exchange changes real life/fatigue/cooldown effects after its endpoint is consumed", {"exchanges": fleet_exchanges})
+
+## Native contact frame (Nekki 2026-11-10 A): the crowd resolves melee natively, with no GD exchange_resolved pair. The
+## accepted evidence is the bow crews' own bodies: a hit lands (life or hit revision changes) on a paid step, the frame's
+## endpoint is consumed, and every other body of both fleets stays in the frame.
+func _native_melee(a: Dictionary, b: Dictionary) -> bool:
+	var before := _melee_bodies()
+	if not _check(before.size() == 2, "both bow crews are readable native bodies before melee", before): return false
+	var landed := func() -> bool:
+		var now := _melee_bodies()
+		if now.size() != 2: return true # A fallen crew leaves the frame's readable bodies: that is a landed blow too.
+		for key: String in before:
+			if not now.has(key): return true
+			if float(now[key].hp) < float(before[key].hp) - EPS or int(now[key].hit_revision) != int(before[key].hit_revision): return true
+		return false
+	if not await _fleet_until(landed, "actual main paid caller lets the native crowd resolve the bow crews' melee"): return false
+	var after := _melee_bodies()
+	print("FLEET_NATIVE_MELEE ", JSON.stringify({"before": before, "after": after, "world": slot.control.logical_game_seconds}))
+	return _check(fleet_live_lab._region_point_pending.is_empty() and fleet_live_lab.crowd_site.active, "native melee lands on a consumed paid endpoint and the frame stays a live native crowd", {"before": before, "after": after})
 
 ## Wall-clock phase marks (evidence only): each phase's elapsed milliseconds since the previous mark.
 var fleet_phase_marks: Array = []
@@ -955,6 +1001,16 @@ func _run() -> void:
 	_fleet_phase("frame_reopen")
 	if not await _real_melee() or not _food_results(): _finish(); return
 	_fleet_phase("melee_or_meal")
+	# Native frame (Nekki 2026-11-10 A): a checkpoint and fresh reopen after the frame stepped as a crowd restores the same
+	# party, which converts again on its next interval and keeps stepping.
+	if _native_frame():
+		if not await _fleet_reopen(): _finish(); return
+		_fleet_phase("native_frame_reopen")
+		for extra: int in 240:
+			if not _fleet_step(): _finish(); return
+			if extra % 60 == 0: await process_frame
+		if not _check(_native_frame() and not _crew(0, 1).is_empty() and not _crew(1, 1).is_empty(), "the reopened frame converts again and keeps both bow crews as native bodies"): _finish(); return
+		_fleet_phase("native_frame_continue")
 	var held := _live_food_held()
 	if not _check(held >= 0.0 and absf(held + fleet_meals - 12.0) <= EPS, "real mapped two-boat held plus actual accepted original consumption conserves all twelve delivered rations", {"held": held, "accepted_consumed": fleet_meals, "live_controller_consumed": fleet_live_meals}): _finish(); return
 	report["two_npc_sea"] = {"case": fleet_case, "fleets": fleets, "primary": fleet_primary, "paid_action": action_paid, "paid_game": action_game_paid, "cold": fleet_cold, "exchanges": fleet_exchanges, "actual_food_results": fleet_food, "all_six_cases": "OPEN_NOT_RUN"}
@@ -986,7 +1042,7 @@ func _fleet_reservation_observation(paid: bool) -> bool:
 	var boats: Array[Dictionary] = []
 	for index: int in 2:
 		var person := _crew(index, 1)
-		if person.is_empty(): return _check(false, "reservation observer keeps actual stable bow crew")
+		if person.is_empty(): return _check(false, "reservation observer keeps actual stable bow crew", _crew_facts(index))
 		boats.append(vehicles.records()[str(person.row.embarked_vehicle_id)])
 	var first: Dictionary = vehicles._claims(boats[0])
 	var second: Dictionary = vehicles._claims(boats[1])

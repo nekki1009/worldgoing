@@ -882,6 +882,13 @@ public:
 	void charge_stats(int rider, int victim, double speed, rules::ExStats &a, rules::ExStats &b) const;
 	rules::ExResult charge_result(int rider, int victim, double speed) const; // the exchange result with those modifiers
 	bool can_receive(int i) const { return can_act(i) && !is_aboard(i) && exch_cd[i] <= 0.000000001; }
+	// Hull melee (2026-11-10): an aboard person fights only across a hull contact the host publishes for this step.
+	// set_aboard_melee_pairs takes flat [a, b, ...] soldier pairs; each must be two distinct aboard, hostile soldiers.
+	// The list is scratch input for the next step only (cleared at its end): not saved, not hashed.
+	bool set_aboard_melee_pairs(const std::vector<int> &flat);
+	bool aboard_can_receive(int i) const { return can_act(i) && is_aboard(i) && exch_cd[i] <= 0.000000001; }
+	bool aboard_initiates(int i) const;
+	bool aboard_exchange_ready(int i) const;
 	bool exchange_ready(int i) const;
 	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
 	bool initiates(int i, bool melee) const;
@@ -961,6 +968,7 @@ private:
 	std::vector<std::vector<int>> wake_buf_, getup_buf_; // per chunk: woke / finished get-up this step
 	std::vector<ExAcc> ex_acc_;
 	std::vector<int> ex_participants_;
+	std::vector<std::pair<int, int>> aboard_pairs_; // host hull-contact pairs for the current step (lower index first)
 	std::vector<int32_t> rescued_by_, capturing_by_;
 	std::vector<int> rescuers_, capturers_, captives_;
 	std::vector<uint8_t> held_; // captives per guard (scratch, rebuilt when auto-capture looks for guards)
