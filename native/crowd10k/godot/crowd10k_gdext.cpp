@@ -1200,6 +1200,11 @@ void m_site_person_release_dead(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !w.site_person_release_dead((int)i,rel)) { return_doubles(r,{}); return; }
 	return_doubles(r,{rel.hp, rel.fatigue, rel.fatigue_rest, double(rel.ammo), double(rel.cell_x), double(rel.cell_y), rel.x, rel.y});
 }
+// A person returning to a Site they left: the released slot carrying their id takes an unused placeholder id.
+void m_site_person_retag_released(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, placeholder;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],placeholder) && i>=0 && i<w.soldier_count() && w.site_person_retag_released((int)i,placeholder));
+}
 // G1 S1 aboard. Refusals return false / an empty array and change nothing. site_person_aboard: [aboard, vehicle].
 void m_site_person_board(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, vehicle;
@@ -1565,6 +1570,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("site_person_exit_ready_aboard",m_site_person_exit_ready_aboard,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
 	add_method("site_person_release_aboard",m_site_person_release_aboard,{{INT,"soldier"},{INT,"vehicle"}},DOUBLES);
 	add_method("site_person_release_dead",m_site_person_release_dead,{{INT,"soldier"}},DOUBLES);
+	add_method("site_person_retag_released",m_site_person_retag_released,{{INT,"soldier"},{INT,"placeholder"}},BOOL);
 	add_method("site_person_board",m_site_person_board,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
 	add_method("site_person_land",m_site_person_land,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("site_person_set_deck",m_site_person_set_deck,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);

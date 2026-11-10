@@ -52,6 +52,8 @@ int wg_crowd_site_person_release_aboard(wg_crowd *c, int i, int vehicle, double 
 /* Decision A2 on crowd: release of a dead soldier (hp <= 0, not captive, not aboard, no siege group). Same out[8] layout as
  * wg_crowd_site_person_release. 0 refuses and writes nothing. */
 int wg_crowd_site_person_release_dead(wg_crowd *c, int i, double *out);
+/* A person returning to a Site they left: their released slot takes `placeholder` (unused, >= 0). 1 ok, 0 refused. */
+int wg_crowd_site_person_retag_released(wg_crowd *c, int i, int64_t placeholder);
 /* G1 S1 aboard: board / land / set_deck / retarget_aboard return 1 on success, 0 refused with no change.
  * site_person_aboard writes out[2] = {aboard, vehicle} and returns 1, or 0 for an unknown soldier. */
 int wg_crowd_site_person_board(wg_crowd *c, int i, int vehicle);

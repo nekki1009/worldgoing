@@ -180,6 +180,7 @@ int wg_crowd_site_person_release_dead(wg_crowd *c,int i,double *out) {
 	out[4] = static_cast<double>(r.cell_x); out[5] = static_cast<double>(r.cell_y); out[6] = r.x; out[7] = r.y;
 	return 1;
 }
+int wg_crowd_site_person_retag_released(wg_crowd *c,int i,int64_t placeholder) { return c && c->world.site_person_retag_released(i,placeholder) ? 1 : 0; }
 int wg_crowd_has_projectiles(const wg_crowd *c) { return c && !c->world.projectiles.empty() ? 1 : 0; }
 double wg_crowd_combat_mark(const wg_crowd *c) { return c->world.combat_mark; }
 double wg_crowd_combat_left(const wg_crowd *c) { return c->world.combat_left; }

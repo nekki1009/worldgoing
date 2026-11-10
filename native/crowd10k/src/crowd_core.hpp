@@ -748,6 +748,10 @@ public:
 	// roster drops. Refuses (writes nothing) unless dead, not released, not captive, not aboard, in no siege group, of a
 	// valid formation, and no work point is running.
 	bool site_person_release_dead(int i, SitePersonRelease &out);
+	// A person returning to a Site they left (2026-11-10): the released (tombstoned) slot that still carries the person's id
+	// takes `placeholder` instead, so the person can join again as a new soldier. Refuses (writes nothing) unless the slot is
+	// released and the placeholder is a non-negative id no soldier carries.
+	bool site_person_retag_released(int i, int64_t placeholder);
 	bool exit_ready_checks(int i, bool aboard_ok) const;
 	void release_ready(int i, SitePersonRelease &out); // the release body; callers have passed the exit gate
 	// G1 S1 aboard. Board: a ready soldier (the site_person_exit_ready guards) goes aboard vehicle >= 0; it keeps roster,

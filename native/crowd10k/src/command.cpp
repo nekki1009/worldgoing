@@ -510,6 +510,14 @@ bool World::site_person_release_dead(int i, SitePersonRelease &out) {
 	return true;
 }
 
+bool World::site_person_retag_released(int i, int64_t placeholder) {
+	if (i < 0 || i >= soldier_count() || !released[i] || placeholder < 0) return false;
+	if (soldier_index(placeholder) >= 0) return false;
+	person_id[i] = placeholder;
+	person_index_.clear(); // rebuilt on the next lookup
+	return true;
+}
+
 void World::release_ready(int i, SitePersonRelease &out) {
 	Formation &f = formations[form[i]];
 	out = SitePersonRelease{};

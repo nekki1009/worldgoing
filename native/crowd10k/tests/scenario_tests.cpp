@@ -1637,6 +1637,28 @@ static void test_site_person_release_dead() {
 	check_valid(loaded);
 }
 
+// A person returning to a Site they left (2026-11-10): the released slot gives up the person's id to a placeholder.
+static void test_site_person_retag_released() {
+	std::printf("[site return] only a released slot is retagged, to an unused id; the person id is free again; save/load keeps it\n");
+	Scene s;
+	s.formation(0, 10, 10, 0, 2, sword());
+	s.w.finalize();
+	const int64_t person = s.w.person_id[1];
+	const int64_t placeholder = (int64_t(1) << 40) + 1;
+	CHECK(!s.w.site_person_retag_released(1, placeholder), "a live soldier is not retagged");
+	SitePersonRelease rel;
+	CHECK(s.w.site_person_release(1, rel), "the soldier leaves the Site");
+	CHECK(!s.w.site_person_retag_released(1, s.w.person_id[0]), "a placeholder another soldier carries is refused");
+	CHECK(!s.w.site_person_retag_released(1, -5), "a negative placeholder is refused");
+	CHECK(s.w.soldier_index(person) == 1, "before the retag the released slot still holds the person's id");
+	CHECK(s.w.site_person_retag_released(1, placeholder), "the released slot is retagged");
+	CHECK(s.w.person_id[1] == placeholder && s.w.soldier_index(person) == -1 && s.w.soldier_index(placeholder) == 1, "the person id is free; the placeholder resolves to the slot");
+	const std::vector<uint8_t> blob = s.w.save();
+	World loaded(1);
+	CHECK(!blob.empty() && loaded.load(blob) && loaded.person_id[1] == placeholder && loaded.state_hash() == s.w.state_hash(), "the retag survives save/load");
+	check_valid(loaded);
+}
+
 // CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5, section 9 acceptance). Each block states the rule it checks.
 static Equip spear_steel() { Equip e; e.family = F_SPEAR; e.material = M_IRON; e.armor = A_STEEL; return e; }
 static void place_start(Scene &s, const std::vector<std::pair<float, float>> &xy) {
@@ -2457,6 +2479,7 @@ int main() {
 	test_melee_contact_and_exchange_fatigue();
 	test_site_person_release();
 	test_site_person_release_dead();
+	test_site_person_retag_released();
 	test_cavalry();
 	test_cavalry_charge();
 	test_cavalry_speed();
