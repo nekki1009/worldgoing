@@ -518,6 +518,93 @@ bool World::site_person_retag_released(int i, int64_t placeholder) {
 	return true;
 }
 
+bool World::site_formation_reuse(int fi, int t, float cx, float cy, float facing, int cols, float spacing, Troop tr, double training) {
+	if (!finalized_ || work_point_active_ || work_point_finish_ready_) return false;
+	if (fi < 0 || fi >= (int)formations.size() || t < 0 || t > 255 || cols < 1 || tr > T_CROSSBOW) return false;
+	if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(facing) || !std::isfinite(spacing) || !std::isfinite(training)) return false;
+	const Formation &old = formations[fi];
+	if (old.roster != 0 || !old.members.empty()) return false;
+	const int n = soldier_count();
+	for (int i = 0; i < n; ++i) if (form[i] == fi && !released[i]) return false;
+	// The same values add_formation gives a new formation; the index (and so the seed of its random stream) is its own.
+	Formation f;
+	f.team = t; f.cx = f.goal_x = f.origin_x = cx; f.cy = f.goal_y = f.origin_y = cy;
+	f.facing = f.goal_facing = facing; f.cols = cols; f.spacing = spacing; f.troop = tr; f.training = training;
+	f.rng = 0x9E3779B97F4A7C15ull ^ ((uint64_t)fi * 0xBF58476D1CE4E5B9ull) ^ (uint64_t)cfg.seed;
+	formations[fi] = std::move(f);
+	const size_t count = formations.size();
+	if (touch_.size() == count * count) for (size_t k = 0; k < count; ++k) touch_[(size_t)fi * count + k] = touch_[k * count + (size_t)fi] = 0;
+	if ((size_t)fi < lag_acc_.size()) lag_acc_[fi] = 0;
+	if ((size_t)fi < lag_cnt_.size()) lag_cnt_[fi] = 0;
+	if ((size_t)fi < work_point_pools_.size()) work_point_pools_[fi] = WorkPointPool{};
+	build_faction_slots();
+	return true;
+}
+
+bool World::site_person_readmit(int i, int fi, const rules::Equip &e, Role r, uint16_t ammo_count) {
+	if (!finalized_ || work_point_active_ || work_point_finish_ready_) return false;
+	if (i < 0 || i >= soldier_count() || !released[i] || fi < 0 || fi >= (int)formations.size()) return false;
+	if (e.family > rules::F_SHOVEL || e.material > rules::M_STEEL || e.armor > rules::A_MINGGUANG) return false;
+	// The formation it left keeps no reference to it (release_ready dropped its membership, roster place and officer entry).
+	Formation &o = formations[form[i]];
+	if (o.formal_cmd == i) o.formal_cmd = -1;
+	if (o.acting_cmd == i) o.acting_cmd = -1;
+	if (o.current_cmd == i) o.current_cmd = -1;
+	if (o.target_person == i) o.target_person = -1;
+	o.members.erase(std::remove(o.members.begin(), o.members.end(), i), o.members.end());
+	o.officer_order.erase(std::remove(o.officer_order.begin(), o.officer_order.end(), i), o.officer_order.end());
+	o.command_dirty = true;
+	Formation &f = formations[fi];
+	// Every per-soldier value add_soldier writes, in its order; ability and person_id are the person's own and stay.
+	px[i] = nx[i] = f.cx; py[i] = ny[i] = f.cy; vx[i] = vy[i] = 0.f; face[i] = f.facing;
+	anim_t[i] = 0.f;
+	hp[i] = 100.0;
+	for (auto *v : {&stun, &grace, &ko, &getup, &stagger, &exch_cd, &ranged_cd, &skill_cd, &knock_t, &act_t, &escape_t}) (*v)[i] = 0.0;
+	knock_dx[i] = knock_dy[i] = 0.f;
+	rest_hold[i] = 0; rest_x[i] = rest_y[i] = 0.f; rest_best[i] = 1e9f; rest_t[i] = 0.f;
+	team[i] = (uint8_t)f.team; state[i] = S_SLOT; los_ok[i] = 1; skill[i] = (uint8_t)rules::SK_NONE;
+	role[i] = (uint8_t)r; captive[i] = 0; present[i] = 1;
+	troop[i] = (uint8_t)(e.family == rules::F_BOW ? T_BOW : e.family == rules::F_CROSSBOW ? T_CROSSBOW : T_MELEE);
+	running[i] = 0; near_enemy[i] = 0; fire_blocked[i] = 0; bandaged[i] = 0;
+	form[i] = fi; slot[i] = -1; target[i] = -1; cell[i] = -1; enc_target[i] = -1;
+	rescue_of[i] = -1; capture_of[i] = -1; captor[i] = -1; life_ck[i] = 0;
+	prison_id[i] = 0; escort_goal[i] = -1; escort_mode[i] = 0; housing_attendance_cell[i] = -1;
+	contact_revision[i] = 0;
+	siege_crew[i] = 0; siege_member_group[i] = -1; siege_step_source[i] = -1;
+	if ((size_t)i < siege_wreck_exit.size()) siege_wreck_exit[i].clear();
+	convoy_of[i] = 0;
+	start_x[i] = NAN; start_y[i] = NAN;
+	host_ctl[i] = 0; host_run[i] = 0; host_engage[i] = 0; host_vx[i] = host_vy[i] = 0.f;
+	vis_kind[i] = (uint8_t)V_IDLE; vis_t0[i] = -1e9; kit[i] = -1;
+	fire_visual[i] = 0;
+	ammo[i] = ammo_count; equip[i] = e;
+	military_role[i] = 1; post_holder[i] = 1;
+	released[i] = 0;
+	aboard[i] = 0; aboard_vehicle[i] = -1;
+	absent[i] = 0; absent_kind[i] = 0; surrendered[i] = 0;
+	mounted[i] = 0; cav_hits[i] = 0;
+	for (int k = 0; k < cav::HEADING_WINDOW; ++k) cav_hist[(size_t)i * cav::HEADING_WINDOW + k] = 0.f;
+	cav_hold[i] = 0.0; cav_down[i] = 0.0;
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) { cav_hit_who[(size_t)i * cav::RECENT_VICTIMS + k] = -1; cav_hit_t[(size_t)i * cav::RECENT_VICTIMS + k] = -1e9; }
+	cav_spent[i] = 0;
+	for (int j = 0; j < soldier_count(); ++j) { // nothing names the slot's previous stay
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	rescued_by_[i] = -1; capturing_by_[i] = -1; attackers_[i] = 0; slot_tx_[i] = f.cx; slot_ty_[i] = f.cy; slot_clip_[i] = 1.f;
+	// Joins the formation as a soldier added to a finalized World does.
+	f.members.push_back(i);
+	f.roster++; f.fatigue_count++;
+	if (r == R_CAPTAIN && f.formal_cmd < 0) f.formal_cmd = i;
+	if (r == R_OFFICER && std::find(f.officer_order.begin(), f.officer_order.end(), i) == f.officer_order.end()) f.officer_order.push_back(i);
+	if (r != R_REGULAR) ensure_ability(i, f);
+	compact_slots(f); // the joining soldier takes the last soldier slot
+	build_faction_slots(); build_hash();
+	const size_t ev = events.size(); settle_command(f, fi); events.resize(ev);
+	f.commander_present = f.current_cmd >= 0 && command_eligible(f.current_cmd);
+	return true;
+}
+
 void World::release_ready(int i, SitePersonRelease &out) {
 	Formation &f = formations[form[i]];
 	out = SitePersonRelease{};

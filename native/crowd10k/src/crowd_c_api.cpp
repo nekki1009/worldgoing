@@ -181,6 +181,16 @@ int wg_crowd_site_person_release_dead(wg_crowd *c,int i,double *out) {
 	return 1;
 }
 int wg_crowd_site_person_retag_released(wg_crowd *c,int i,int64_t placeholder) { return c && c->world.site_person_retag_released(i,placeholder) ? 1 : 0; }
+int wg_crowd_site_formation_reuse(wg_crowd *c,int formation,int team,float cx,float cy,float facing,int cols,float spacing,int troop,double training) {
+	if (!c || troop < 0 || troop > 2) return 0;
+	return c->world.site_formation_reuse(formation,team,cx,cy,facing,cols,spacing,(wg::Troop)troop,training) ? 1 : 0;
+}
+int wg_crowd_site_person_readmit(wg_crowd *c,int i,int formation,int32_t equip,int role,int ammo) {
+	if (!c || role < 0 || role > 2 || ammo < 0 || ammo > 65535) return 0;
+	wg::rules::Equip q;
+	q.family = (uint8_t)(equip & 255); q.material = (uint8_t)((equip >> 8) & 255); q.armor = (uint8_t)((equip >> 16) & 255); q.shield = ((equip >> 24) & 1) != 0;
+	return c->world.site_person_readmit(i,formation,q,(wg::Role)role,(uint16_t)ammo) ? 1 : 0;
+}
 int wg_crowd_has_projectiles(const wg_crowd *c) { return c && !c->world.projectiles.empty() ? 1 : 0; }
 double wg_crowd_combat_mark(const wg_crowd *c) { return c->world.combat_mark; }
 double wg_crowd_combat_left(const wg_crowd *c) { return c->world.combat_left; }

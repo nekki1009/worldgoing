@@ -13,6 +13,63 @@ class DepartureRouteProbe extends SiteController:
 var departure_evidence: Dictionary = {}
 var departure_intent_exercised := false
 
+## Crowd port (decision B, Nekki 2026-11-09): a crowd Site has no deferred departure intent. A request while the controlled
+## captain or any team member is still walking is refused outright (departure_plan NOT_READY, nothing changes); a request
+## once every member stands departs at once with a token. The grid branches (--grid) keep the paid-edge intent/cancel proof.
+func _crowd_body(person: Dictionary) -> bool:
+	return int(person.unit) >= 0 and person.owner is CrowdPersonOwner
+
+func _crowd_person_view(person: Dictionary) -> Dictionary:
+	return person.owner.person(int(person.unit), false)
+
+## The controlled soldier's wish to walk: a held direction key, which the shared step samples each interval
+## (_advance_movement_input; with movement input off that sampling clears the wish every tick, found 2026-11-10). A shell
+## born restore_only has movement input off, so the fixture enables it as the test window does. Zero stops.
+func _crowd_hold_direction(direction: Vector2i) -> void:
+	lab.movement_input_enabled = true
+	lab._held_directions.clear()
+	if direction == Vector2i.ZERO:
+		lab._clear_movement_input()
+		return
+	lab._held_directions[KEY_W] = direction
+	lab._last_direction_key = KEY_W
+	lab._try_move(direction)
+
+## Members of the controlled captain's team, as identities (crowd owner or grid army).
+## living_only: the members a departure selects (Decision A2: a settled fallen member is not selected, it travels inert);
+## otherwise every member the travelling party carries.
+func _departure_team_people(team: Variant, living_only: bool = false) -> Array[int]:
+	var people: Array[int] = []
+	if team is CrowdPersonOwner:
+		for index: int in team.command_members():
+			if team.member_gone(index): continue
+			if living_only and float(team.person(index, false).get("hp", 0.0)) <= 0.0: continue
+			people.append(team.combat_identity(index))
+	else:
+		for index: int in team.combat_units.size():
+			if not team.member_gone(index) and team.is_member(index): people.append(team.combat_identity(index))
+	people.sort()
+	return people
+
+## Cells of every living member of a crowd team now (a crowd body has no committed edge endpoint). A fallen member is no
+## body to rally or guard: as departure_plan's cells, only the living count (Decision A2: the settled dead travel inert).
+func _crowd_team_cells(team: CrowdPersonOwner) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for index: int in team.command_members():
+		var view: Dictionary = team.person(index, false)
+		if not view.is_empty() and float(view.get("hp", 0.0)) > 0.0: cells.append(Vector2i(view.cell))
+	return cells
+
+## The crowd captain's team as departure_plan reads it (the controlled person must be its formal captain).
+func _crowd_captain_plan() -> Dictionary:
+	return lab.crowd_site.departure_plan(lab.controlled_person_id())
+
+func _departure_body_idle(person: Dictionary) -> bool:
+	if _crowd_body(person):
+		var view: Dictionary = _crowd_person_view(person)
+		return not person.owner.is_walking(int(person.unit)) and float(view.get("ko", 0.0)) <= 0.0
+	return not person.owner._combat_action_blocks_step(int(person.unit)) if int(person.unit) >= 0 else person.owner.action_time <= 0.0
+
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 780000 # Nekki 2026-10-26: in-file 780 s, outer 840 s.
 	out = "res://.godot-temp/region_c07_departure/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
@@ -38,8 +95,11 @@ func _action_step() -> bool:
 func _phase_player_intervene() -> bool:
 	if not await super._phase_player_intervene(): return false
 	if not _check(float(lab.terrain.site.combat_left) > 0.0 and not _phase_battle().is_empty(), "original positive intervention selected an actually ongoing siege"): return false
-	var legacy := RegionTravelSite.depart(controller)
-	if not _check(not legacy.ok and str(legacy.get("code", "")) == "IN_COMBAT", "legacy immediate departure still refuses active combat", legacy): return false
+	if not _crowd_body(lab.controlled_target()):
+		# Crowd (B): the immediate path is the crowd departure itself (it admits the Site's original siege as the grid intent
+		# path does), so no refusal probe is made here; the walking/stopped claims below exercise it.
+		var legacy := RegionTravelSite.depart(controller)
+		if not _check(not legacy.ok and str(legacy.get("code", "")) == "IN_COMBAT", "legacy immediate departure still refuses active combat", legacy): return false
 	if not await _departure_walk_clear(0): return false
 	if not await _departure_cancel_paid_edge(): return false
 	if not await _departure_leave_reopen_reenter(): return false
@@ -56,8 +116,16 @@ func _departure_controlled_body() -> Dictionary:
 		for index: int in team.combat_units.size():
 			if not team.member_gone(index) and team.combat_identity(index) == identity: matches += 1
 	var person: Dictionary = lab.controlled_target()
+	if _crowd_body(person):
+		# Crowd: the controlled person is one native soldier row of its crowd owner; the GD rosters are disabled holders.
+		var owner: CrowdPersonOwner = person.owner
+		matches = 1 if owner.is_member(int(person.unit)) and owner.combat_identity(int(person.unit)) == identity else 0
 	if not _check(matches == 1 and not person.is_empty(), "departure resolves exactly one actual controlled body", identity): return {}
-	if int(person.unit) >= 0:
+	if _crowd_body(person):
+		var crowd_team: CrowdPersonOwner = person.owner
+		if not _check(crowd_team.current_commander == int(person.unit) and crowd_team.index_for_identity(identity) == int(person.unit)
+			and _crowd_captain_plan().ok, "actual controlled crowd row is its team's genuine current commander and formal captain", identity): return {}
+	elif int(person.unit) >= 0:
 		var team: TerrainArmy = person.owner
 		if not _check(team.current_commander == int(person.unit) and lab.controlled_member_index(team) == int(person.unit)
 			and team.combat_identity(int(person.unit)) == identity, "actual controlled Army row is its genuine current commander", identity): return {}
@@ -65,18 +133,28 @@ func _departure_controlled_body() -> Dictionary:
 	return person
 
 func _departure_body_moving(person: Dictionary) -> bool:
+	if _crowd_body(person): return person.owner.is_walking(int(person.unit))
 	return person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL if int(person.unit) >= 0 else person.owner.is_moving()
 
 func _departure_body_state(person: Dictionary) -> Dictionary:
+	if _crowd_body(person):
+		var view: Dictionary = _crowd_person_view(person)
+		return {"cell": view.get("cell"), "position": view.get("position"), "hp": view.get("hp"), "ko": view.get("ko"), "captive": view.get("captive")}
 	return person.owner.capture_combat_state(true) if int(person.unit) >= 0 else person.owner.capture_state()
 
 func _departure_body_remaining(person: Dictionary) -> float:
+	if _crowd_body(person): return 0.0 # A crowd body commits no edge: B refuses a walking request instead of waiting.
 	if int(person.unit) < 0: return float(person.owner.capture_state().movement_left)
 	var team: TerrainArmy = person.owner
 	var index: int = int(person.unit)
 	return (1.0 - float(team.move_progress[index])) * float(team.move_duration[index])
 
 func _departure_body_step(person: Dictionary, direction: Vector2i) -> bool:
+	if _crowd_body(person):
+		# Crowd: a held direction key is the controlled soldier's wish to walk; the shared step samples it each interval
+		# (_advance_movement_input), which also overwrites a one-off _try_move wish, so the fixture holds the key.
+		_crowd_hold_direction(direction)
+		return true
 	if int(person.unit) < 0: return person.owner.step(direction)
 	var team: TerrainArmy = person.owner
 	var index: int = int(person.unit)
@@ -89,6 +167,14 @@ func _departure_body_step(person: Dictionary, direction: Vector2i) -> bool:
 
 func _departure_body_hold(person: Dictionary) -> bool:
 	var held: Dictionary
+	if _crowd_body(person):
+		# Crowd: the controlled captain's own input stops (wish zero); a one-person team takes no team order (NO_ORDERS), a
+		# larger team closes its formation order with the public HOLD.
+		_crowd_hold_direction(Vector2i.ZERO)
+		var crowd_team: CrowdPersonOwner = person.owner
+		if bool(lab.crowd_site.formation_state(int(crowd_team.formation_index)).get("no_orders", false)): return true
+		held = lab.crowd_site.issue_order(int(crowd_team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
+		return _check(held.ok, "actual crowd captain closes future team orders with public HOLD before the departure request", held)
 	if int(person.unit) < 0:
 		var team: TerrainArmy = lab.player_army()
 		if team == null or lab.controlled_member_index(team) != team.formal_commander: return true
@@ -101,6 +187,7 @@ func _departure_body_hold(person: Dictionary) -> bool:
 func _departure_walk_clear(margin: int) -> bool:
 	var person: Dictionary = _departure_controlled_body()
 	if person.is_empty(): return false
+	if _crowd_body(person): return await _departure_crowd_walk_clear(person, margin)
 	var faction: int = int(person.owner.faction_id)
 	var path: Array[Vector2i] = []
 	var replans: int = 0
@@ -127,6 +214,44 @@ func _departure_walk_clear(margin: int) -> bool:
 		path.pop_front()
 		if not await _action_until(func() -> bool: return not _departure_body_moving(person), "original common body owner completes each safe departure edge"): return false
 	return _check(false, "legal nonengaged departure cells were not reachable within 512 actual edges")
+
+## Crowd: the controlled soldier is steered along a fresh shortest route each shared interval (a continuous body keeps no
+## one-cell edges) until it stands on a legal nonengaged departure cell, then stops and its team rallies and holds.
+## Crowd stop buffer (cells) beyond the requested margin: a continuous body that stops on the first clear cell can settle
+## a fraction of a cell back across the hostile guard edge (found 2026-11-10: stopped at exactly ENEMY_RADIUS).
+const CROWD_WALK_BUFFER: int = 2
+
+func _departure_crowd_walk_clear(person: Dictionary, requested_margin: int) -> bool:
+	var margin: int = requested_margin + CROWD_WALK_BUFFER
+	var faction: int = int(person.owner.faction_id)
+	# The captain's team walks with it, as the grid walk's per-edge team MOVE does: a crowd formation whose captain is
+	# steered by host input is not centred on him (host_center off), so without its own MOVE the rest of the team stays
+	# where it stands (found 2026-11-10: a member left on the arrival edge beside the hostile body was killed there).
+	var crowd_team: CrowdPersonOwner = person.owner
+	var takes_orders: bool = not bool(lab.crowd_site.formation_state(int(crowd_team.formation_index)).get("no_orders", false))
+	var team_goal := Vector2i(-1, -1)
+	for interval: int in range(2048):
+		var cell := Vector2i(lab.controlled_target().cell)
+		if _departure_cell_settled(faction, cell, margin):
+			_crowd_hold_direction(Vector2i.ZERO)
+			if not await _action_until(func() -> bool: return not _departure_body_moving(person), "the controlled crowd soldier stops on its legal departure cell"): return false
+			if not await _departure_team_clear(person): return false
+			if not _departure_body_hold(person): return false
+			# The claim is the requested margin (the grid claim); the buffer only decides where the body stops.
+			return _check(_departure_cell_settled(faction, Vector2i(lab.controlled_target().cell), requested_margin), "actual controlled body reaches legal nonengaged departure cells through original paid movement", lab.controlled_target().cell)
+		var path: Array[Vector2i] = _departure_safe_path(person, margin)
+		if not _check(not path.is_empty(), "a legal nonengaged departure cell is reachable through unblocked walkable cells", cell): return false
+		if takes_orders and path.back() != team_goal:
+			team_goal = path.back()
+			var marched: Dictionary = lab.crowd_site.issue_order(int(crowd_team.team_id), TerrainArmy.CombatOrder.MOVE, team_goal, -1, "ui")
+			if not _check(marched.ok, "the actual crowd captain's public formation MOVE takes its team to the same departure-safe cell", marched): return false
+		var direction := Vector2i(signi(path[0].x - cell.x), signi(path[0].y - cell.y))
+		if not _check(_departure_body_step(person, direction), "original public host input accepts a real route departure direction", {"cell": cell, "next": path[0]}): return false
+		if not _action_step(): return false
+		if interval % 60 == 0: await process_frame
+	return _check(false, "legal nonengaged departure cells were not reached within 2048 shared intervals",
+		{"cell": lab.controlled_target().get("cell"), "moving": _departure_body_moving(person), "wish": lab.crowd_site.wish, "input_enabled": lab.movement_input_enabled,
+			"housing_intercept": controller.person_actions.intercept_housing_input(lab.controlled_person_id()), "path": _departure_safe_path(person, margin).slice(0, 4)})
 
 func _departure_cell_gap(first: Vector2i, second: Vector2i) -> int:
 	return absi(first.x - second.x) + absi(first.y - second.y)
@@ -163,6 +288,9 @@ func _departure_selected_endpoints(extra: Array[Vector2i]) -> Array[Vector2i]:
 	var person: Dictionary = lab.controlled_target()
 	var cells: Array[Vector2i] = [Vector2i(person.cell)]
 	cells.append_array(extra)
+	if _crowd_body(person):
+		if _crowd_captain_plan().ok: cells.append_array(_crowd_team_cells(person.owner))
+		return cells
 	var team: TerrainArmy = lab.player_army()
 	if team == null and int(person.unit) >= 0: team = person.owner
 	if int(person.unit) >= 0 and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
@@ -198,7 +326,10 @@ func _departure_safe_path(person: Dictionary, margin: int) -> Array[Vector2i]:
 			var next: Vector2i = cell + direction
 			if came_from.has(next): continue
 			if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next): continue
-			if int(person.unit) >= 0 and person.owner.blocks_person_cell(next): continue
+			# Crowd: a continuous body cannot slide along the world border (its radius meets the edge), so a crowd route keeps
+			# off the border cells; the arrival edge the body starts on is left at once.
+			if _crowd_body(person) and (next.x <= 0 or next.y <= 0 or next.x >= lab.terrain.size.x - 1 or next.y >= lab.terrain.size.y - 1): continue
+			if int(person.unit) >= 0 and not _crowd_body(person) and person.owner.blocks_person_cell(next): continue
 			if _departure_actor_at(next): continue
 			came_from[next] = cell
 			frontier.append(next)
@@ -211,6 +342,7 @@ func _departure_safe_path(person: Dictionary, margin: int) -> Array[Vector2i]:
 	return path
 
 func _departure_team_clear(person: Dictionary) -> bool:
+	if _crowd_body(person): return await _departure_crowd_team_clear(person)
 	var team: TerrainArmy = person.owner if int(person.unit) >= 0 else lab.player_army()
 	if team == null or lab.controlled_member_index(team) != team.formal_commander: return true
 	var selected: Dictionary = RegionTravelSite.selected_departure(controller)
@@ -222,7 +354,59 @@ func _departure_team_clear(person: Dictionary) -> bool:
 	selected = RegionTravelSite.selected_departure(controller)
 	return _check(selected.ok and not selected.waiting and team.combat_order == TerrainArmy.CombatOrder.HOLD, "actual selected team is rallied and held before any intent", selected)
 
-func _departure_team_engaged(team: TerrainArmy) -> bool:
+## Crowd: the captain's formation rallies on the captain with the public MOVE, settles, and holds; the read-only crowd
+## selection then reports the whole team ready.
+func _departure_crowd_team_clear(person: Dictionary) -> bool:
+	var team: CrowdPersonOwner = person.owner
+	if bool(lab.crowd_site.formation_state(int(team.formation_index)).get("no_orders", false)): return true # A one-person team: the captain alone.
+	var selected: Dictionary = RegionTravelSite.selected_departure(controller)
+	if selected.ok and not selected.waiting and team.combat_order == TerrainArmy.CombatOrder.HOLD and team.moving_member_count() == 0: return true
+	if not bool(lab.crowd_site.formation_state(int(team.formation_index)).get("no_orders", false)):
+		var gathered: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.MOVE, Vector2i(lab.controlled_target().cell), -1, "ui")
+		if not _check(gathered.ok, "original crowd captain MOVE rallies all selected rows before the request", gathered): return false
+	for interval: int in range(18000):
+		if team.moving_member_count() == 0 and not _departure_team_engaged(team): break
+		if Time.get_ticks_msec() > deadline or interval == 17999:
+			var rows: Array = []
+			for index: int in team.command_members():
+				var view: Dictionary = team.person(index, false)
+				rows.append({"id": team.combat_identity(index), "cell": view.get("cell"), "walking": team.is_walking(index), "goal": team.has_move_goal(index), "speed": team.drift_speed(index),
+					"native": lab.crowd_site.soldier_state(index), "exit_ready": team.site_exit_ready(index), "fighting": lab.crowd_site.person_fighting(team.combat_identity(index))})
+			var state: Dictionary = lab.crowd_site.formation_state(int(team.formation_index))
+			var near: Array = []
+			for other: Variant in lab.crowd_site.person_owners():
+				if not other is CrowdPersonOwner or int(other.faction_id) == int(team.faction_id): continue
+				for other_index: int in other.combat_units.keys():
+					var other_view: Dictionary = other.person(int(other_index), false)
+					if other_view.is_empty(): continue
+					var ground: Vector2 = other.combat_ground(int(other_index)) / TerrainRenderer.CELL_PIXELS
+					var enemy_cell := Vector2i(floori(ground.x), floori(ground.y))
+					var guarded: bool = false
+					for own_cell: Vector2i in _crowd_team_cells(team):
+						if maxi(absi(enemy_cell.x - own_cell.x), absi(enemy_cell.y - own_cell.y)) <= RegionTravelSite.ENEMY_RADIUS: guarded = true
+					if guarded:
+						near.append({"id": other.combat_identity(int(other_index)), "team": int(other.team_id), "faction": int(other.faction_id), "cell": other_view.cell, "ground_cell": enemy_cell,
+							"can_act": other.combat_can_act(int(other_index)), "hp": other_view.get("hp"), "ko": other_view.get("ko"), "ai": lab.crowd_site.formation_state(int(other.formation_index)).get("ai_enabled")})
+			for row: Dictionary in rows:
+				var native: Dictionary = row.get("native", {})
+				row["native"] = {"hp": native.get("hp"), "ko": native.get("ko"), "state": native.get("state"), "stun": native.get("stun"), "grace": native.get("grace")}
+			return _check(false, "original paid crowd formation reaches actual departure-safe cells", {"rows": rows, "hostiles_in_guard": near, "team_cells": _crowd_team_cells(team), "attacking": state.get("attacking"), "order": state.get("order"), "host_center": state.get("host_center"),
+				"hostile_near": RegionTravelSite._hostile_near(lab, int(team.faction_id), _crowd_team_cells(team)), "captain": lab.controlled_target().get("cell")})
+		if not _action_step(): return false
+		if interval % 60 == 0: await process_frame
+	_check(true, "original paid crowd formation reaches actual departure-safe cells")
+	if not _departure_body_hold(person): return false
+	# Decision A2 on crowd: a member who fell (here at the arrival entry, in the crowd's own melee) leaves with the team only
+	# once the original death owner has settled its remains; the plan refuses until then, so the request waits for it.
+	if not await _action_until(func() -> bool:
+		var plan: Dictionary = lab.crowd_site.departure_plan(lab.controlled_person_id())
+		return plan.get("ok", false) or str(plan.get("code", "")) != "NOT_READY", "the original death owner settles every fallen member's remains before the request"): return false
+	selected = RegionTravelSite.selected_departure(controller)
+	return _check(selected.ok and not selected.waiting and team.moving_member_count() == 0, "actual selected crowd team is rallied and stopped before any request", selected)
+
+func _departure_team_engaged(team: Variant) -> bool:
+	if team is CrowdPersonOwner:
+		return bool(lab.crowd_site.formation_state(int(team.formation_index)).get("attacking", false)) or RegionTravelSite._hostile_near(lab, int(team.faction_id), _crowd_team_cells(team))
 	for row: int in team.combat_units.size():
 		if bool(team.combat_hot_get(row, &"attack", false)): return true
 	return RegionTravelSite._hostile_near(lab, team.faction_id, team.cells)
@@ -230,6 +414,12 @@ func _departure_team_engaged(team: TerrainArmy) -> bool:
 ## Counterfactual grace is restored before checking; no tick/save/intent is run.
 ## Only dispatch endpoints are observed; the paid-step proof is the real body.
 func _departure_route_controls(paid: bool) -> bool:
+	if _crowd_body(lab.controlled_target()):
+		# Crowd (B): there is no intent route to probe; the public dispatch reads no committed step and takes the immediate
+		# path whether or not the body walks. Nothing is run here (a probe controller would really depart a crowd).
+		var before: PackedByteArray = var_to_bytes([slot.control, slot._marker, _departure_body_state(lab.controlled_target())])
+		var remaining: float = RegionTravelSite.controlled_departure_step_remaining(controller)
+		return _check(remaining == 0.0 and before == var_to_bytes([slot.control, slot._marker, _departure_body_state(lab.controlled_target())]), "crowd dispatch has no deferred intent route: the committed-step proof reads zero and the read changes no clock or body", {"paid": paid, "remaining": remaining})
 	var probe: DepartureRouteProbe = DepartureRouteProbe.new()
 	probe.lab = lab
 	probe.region_slot = slot
@@ -248,6 +438,7 @@ func _departure_route_controls(paid: bool) -> bool:
 	return _check(correct and before == var_to_bytes([slot.control, slot._marker, lab.terrain.site, _departure_body_state(lab.controlled_target())]), "new A dispatch depends only on real controlled committed step at grace0 and grace>0; isolated probes restore every clock/body/source byte", results)
 
 func _departure_start_paid_edge(person: Dictionary) -> bool:
+	if _crowd_body(person): return await _departure_crowd_start_walk(person)
 	var faction: int = int(person.owner.faction_id)
 	var accepted := false
 	var chosen: Array[Vector2i] = []
@@ -270,9 +461,45 @@ func _departure_start_paid_edge(person: Dictionary) -> bool:
 	if not _check(not RegionTravelSite._hostile_near(lab, faction, endpoints), "every selected body's cell and committed paid-edge endpoint stays outside the actual hostile guard before the request", endpoints): return false
 	return _departure_route_controls(true)
 
+## Crowd: the controlled captain starts walking toward a departure-safe neighbouring cell and is read walking after a paid
+## shared interval (no HOLD here: a crowd HOLD would stop the body the next claim needs walking).
+func _departure_crowd_start_walk(person: Dictionary) -> bool:
+	var faction: int = int(person.owner.faction_id)
+	var chosen: Array[Vector2i] = []
+	for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+		var next := Vector2i(lab.controlled_target().cell) + direction
+		if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next) or RegionTravelSite._hostile_near(lab, faction, [next]): continue
+		if _departure_body_step(person, direction):
+			chosen.append(next)
+			break
+	if not _check(not chosen.is_empty(), "original controlled host input commits a real departure-safe walking direction"): return false
+	var paid_before := action_paid
+	if not await _action_until(func() -> bool: return action_paid > paid_before and _departure_body_moving(person), "original queue reaches the first accepted positive paid interval with the crowd captain walking"): return false
+	var endpoints: Array[Vector2i] = _departure_selected_endpoints(chosen)
+	if not _check(not RegionTravelSite._hostile_near(lab, faction, endpoints), "every selected body's cell stays outside the actual hostile guard before the request", endpoints): return false
+	return _departure_route_controls(true)
+
+## Crowd (B): a departure request while the captain walks is refused outright, records no intent and changes no clock,
+## marker, journey or body; the captain then stops and holds.
+func _departure_crowd_refused_while_walking() -> bool:
+	var person: Dictionary = _departure_controlled_body()
+	if person.is_empty(): return false
+	var paid_before: float = action_paid
+	if not await _departure_crowd_start_walk(person): return false
+	var before: PackedByteArray = var_to_bytes([slot.control, slot._marker, _action_graph()])
+	var refused: Dictionary = RegionTravelSite.request_departure(controller)
+	if not _check(not refused.ok and str(refused.get("code", "")) == "NOT_READY" and controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty()
+		and before == var_to_bytes([slot.control, slot._marker, _action_graph()]) and _departure_body_moving(person), "B: a walking crowd captain's public departure request is refused at once, records no intent and changes no clock, marker, siege body or journey", refused): return false
+	_crowd_hold_direction(Vector2i.ZERO)
+	if not await _action_until(func() -> bool: return not _departure_body_moving(person), "the refused crowd captain stops on its own input"): return false
+	if not _departure_body_hold(person): return false
+	departure_evidence["cancel"] = {"mode": "crowd_refused_while_walking", "refused": refused, "paid_action_before": paid_before, "paid_action_after": action_paid, "body_at_stop": _departure_body_state(person)}
+	return true
+
 func _departure_cancel_paid_edge() -> bool:
 	var person: Dictionary = _departure_controlled_body()
 	if person.is_empty(): return false
+	if _crowd_body(person): return await _departure_crowd_refused_while_walking()
 	var paid_before: float = action_paid
 	if not await _departure_start_paid_edge(person): return false
 	var requested := RegionTravelSite.request_departure(controller)
@@ -300,7 +527,8 @@ func _departure_make_npc_partial() -> bool:
 	# Finish only this finite accepted NPC tail, never wait for the entire siege.
 	if not await _action_until(func() -> bool: return _action_vehicle().action.is_empty() and action_owner.siege_projectiles.is_empty(), "original already-paid finite NPC tail settles without cancelling its command or refilling ammunition"): return false
 	var vehicle := _action_vehicle()
-	var next_facing := Vector2i.RIGHT if vehicle.facing != [1, 0] else Vector2i.UP
+	# A facing restored from a save holds floats; [1.0, 0.0] != [1, 0] as arrays, so compare as cells.
+	var next_facing := Vector2i.RIGHT if Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])) != Vector2i.RIGHT else Vector2i.UP
 	var ordered: Dictionary = controller.vehicles.order_siege(str(action_context.key), "turn", {"facing": [next_facing.x, next_facing.y]}, int(action_context.commander), true)
 	if not _check(ordered.ok, "the existing actual NPC captain accepts a finite original siege turn", ordered): return false
 	var before := action_paid
@@ -312,25 +540,30 @@ func _departure_leave_reopen_reenter() -> bool:
 	var person: Dictionary = _departure_controlled_body()
 	if person.is_empty(): return false
 	var identity: int = lab.controlled_person_id()
-	var idle: bool = not person.owner._combat_action_blocks_step(int(person.unit)) if int(person.unit) >= 0 else person.owner.action_time <= 0.0
+	var idle: bool = _departure_body_idle(person)
 	if not _check(not _departure_body_moving(person) and idle and not RegionTravelSite._hostile_near(lab, int(person.owner.faction_id), [Vector2i(person.cell)]), "departing selection is actually closed and outside the original hostile guard"): return false
 	var battle_id := str(_phase_battle().id)
 	var stable_player_ref: Dictionary = report.player_intervention.real_player_reference.duplicate(true)
 	# Decision A hands control to the real heir; captain departure owns its full team.
 	var expected: Dictionary = _departure_heir_team(person)
 	var chosen: Dictionary = RegionTravelSite.selected_departure(controller)
-	if not _check(expected.ok and chosen.ok and chosen.people == expected.people and identity == center_heir and not expected.people.has(center_founder), "living heir departure selects exactly its original team and excludes the founder", {"expected": expected, "chosen": chosen.get("people"), "founder": center_founder, "heir": center_heir}): return false
+	if not _check(expected.ok and chosen.ok and chosen.people == expected.get("living", expected.people) and identity == center_heir and not expected.people.has(center_founder), "living heir departure selects exactly its original team and excludes the founder", {"expected": expected, "chosen": chosen.get("people"), "founder": center_founder, "heir": center_heir}): return false
 	var source_census: Dictionary = RegionTravel.census({"content": lab.terrain.site})
-	if not await _departure_start_paid_edge(person): return false
-	var asked := RegionTravelSite.request_departure(controller)
-	if not _check(asked.ok and asked.get("pending", false), "public departure request accepts only the actual typed siege source", asked): return false
-	for count: int in range(18000):
-		if not slot.region_travel_journey().is_empty(): break
-		if Time.get_ticks_msec() > deadline: return _check(false, "departure endpoint exceeded the bounded deadline")
-		if not _action_step(): return false
-		if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
-			return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
-		if count % 60 == 0: await process_frame
+	if _crowd_body(person):
+		# B: the stopped crowd captain's request departs at once (no intent, no endpoint wait).
+		var crowd_asked: Dictionary = RegionTravelSite.request_departure(controller)
+		if not _check(crowd_asked.ok and str(crowd_asked.get("token", "")) != "" and not crowd_asked.get("pending", false), "B: the stopped crowd captain's public departure request departs the whole team at once with a token", crowd_asked): return false
+	else:
+		if not await _departure_start_paid_edge(person): return false
+		var asked := RegionTravelSite.request_departure(controller)
+		if not _check(asked.ok and asked.get("pending", false), "public departure request accepts only the actual typed siege source", asked): return false
+		for count: int in range(18000):
+			if not slot.region_travel_journey().is_empty(): break
+			if Time.get_ticks_msec() > deadline: return _check(false, "departure endpoint exceeded the bounded deadline")
+			if not _action_step(): return false
+			if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
+				return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
+			if count % 60 == 0: await process_frame
 	if not _check(not slot.region_travel_journey().is_empty() and str(slot.control.active_site_id).is_empty() and lab.restore_only and controller._region_departure_intent.is_empty(), "real finish_tick commits exactly one party plus remaining original cold owner"): return false
 	if not _check(not _action_vehicle().action.is_empty() and _phase_battle().id == battle_id and str(_phase_battle().mode) == "cold_exact", "legal departure preserves the ongoing paid partial, same battle and actual cold activation", _action_facts()): return false
 	var facts := _action_facts()
@@ -433,6 +666,9 @@ func _departure_travel_and_open(goal: Vector2i) -> bool:
 	var visible := _shell()
 	if not _check(visible != null, "actual visible original shell exists for positive re-entry"): return false
 	visible.restore_only = false
+	# Crowd port: a shell born restore_only did not request the crowd at startup; the visible world-open does, as the game's
+	# main Lab does (--grid keeps the grid).
+	visible.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	var opened: Dictionary = visible.site_controller.open_fixed_world(manifest_path, world_id, "main", Vector2i(-1, -1), false)
 	for count: int in range(200000):
 		if str(opened.get("code", "")) != "PENDING" and not visible.site_controller.region_operation_pending(): break
@@ -506,8 +742,25 @@ func _finish(ok: bool = true, message: String = "") -> void:
 	if not failed: print("REGION_C07_CANCELLABLE_DEPARTURE_PASS")
 
 func _departure_captain_genesis_at_peace() -> bool:
+	if not OS.get_cmdline_user_args().has("--grid"):
+		var crowd_rosters: Array = []
+		for army: Variant in lab.terrain.site.get("armies", []):
+			if army is Dictionary: crowd_rosters.append({"team": army.get("team_id"), "crowd": army.get("crowd", false), "units": army.get("units", []).size()})
+		if not _check(lab.crowd_site != null and lab.crowd_site.active, "the visited peace neighbour opens as a crowd Site",
+			{"site": lab.terrain.site.get("id"), "has_crowd_section": lab.terrain.site.has("crowd"), "crowd_site": lab.crowd_site != null,
+				"requested": lab.crowd_startup_requested, "restore_only": lab.restore_only, "armies": crowd_rosters, "controlled": lab.controlled_person_id()}): return false
 	var controlled: Dictionary = _departure_controlled_body()
 	if controlled.is_empty(): return false
+	if _crowd_body(controlled):
+		# Crowd: the arrived party is a native crowd team led by the same captain; a crowd roster has no member transfer
+		# (TerrainArmy.transfer_members_to has no crowd equivalent), so the grid's captain-transfer genesis is not claimed.
+		var crowd_team: CrowdPersonOwner = controlled.owner
+		var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
+		var plan: Dictionary = _crowd_captain_plan()
+		if not _check(float(lab.terrain.site.get("combat_left", 0.0)) <= 0.0 and plan.ok and int(plan.team_id) == int(crowd_team.team_id) and crowd_team.current_commander == int(controlled.unit)
+			and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "peace neighbour retains the arrived crowd party under its same inherited captain without manufacturing genesis or a paid interval", plan): return false
+		departure_evidence["captain_genesis"] = {"mode": "crowd_no_roster_transfer", "controlled_id": lab.controlled_person_id(), "team_id": int(crowd_team.team_id), "people": plan.people, "clock": clock}
+		return true
 	if int(controlled.unit) >= 0:
 		var actual: TerrainArmy = controlled.owner
 		if not _check(float(lab.terrain.site.get("combat_left", 0.0)) <= 0.0 and lab.player_army() == actual
@@ -702,14 +955,12 @@ func _departure_captain_cancel_and_leave() -> bool:
 	return true
 
 func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
-	var team: TerrainArmy = person.owner
+	var team: Variant = person.owner
+	var crowd: bool = _crowd_body(person)
 	var identity: int = lab.controlled_person_id()
-	var team_id: int = team.team_id
+	var team_id: int = int(team.team_id)
 	var stable_reference: Dictionary = lab.terrain.site.travel_identity.refs.person.get(str(identity), {}).duplicate(true)
-	var expected: Array[int] = []
-	for index: int in team.combat_units.size():
-		if not team.member_gone(index) and team.is_member(index): expected.append(team.combat_identity(index))
-	expected.sort()
+	var expected: Array[int] = _departure_team_people(team)
 	if not _check(not expected.is_empty() and expected.has(identity) and not stable_reference.is_empty(), "inherited captain resolves the complete real Army party and original person reference", expected): return false
 	if not await _departure_walk_clear(DEPARTURE_GUARD_MARGIN): return false
 	var solo_cancel: Dictionary = departure_evidence.cancel
@@ -722,29 +973,38 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 	var hold_point: Array = departure_evidence.captain_row_cancel.hold_point
 	var selected_row: int = team.index_for_identity(int(departure_evidence.captain_row_cancel.person_id))
 	var battle_id: String = str(_phase_battle().id)
-	var asked: Dictionary = RegionTravelSite.request_departure(controller)
-	if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people == expected, "inherited captain public request selects each actual Army person exactly once", asked): return false
-	var row_query: Dictionary = RegionTravelSite.selected_departure(controller)
-	if not _check(row_query.ok and row_query.waiting and selected_row >= 0 and team.moving_to[selected_row] != TerrainArmy.INVALID_CELL and float(team.move_progress[selected_row]) > 0.0 and float(team.move_progress[selected_row]) < 1.0 and _departure_body_moving(person), "inherited captain intent waits on its own real paid step and the selected noncontrolled row", row_query.get("waiting")): return false
-	var body_before: Dictionary = _departure_body_state(person)
-	lab._try_move(Vector2i.RIGHT)
-	if not _check(body_before == _departure_body_state(person) and controller._region_departure_defers_person(identity), "pending inherited captain intent defers new input without retiming its actual Army body"): return false
-	for count: int in range(18000):
-		if not slot.region_travel_journey().is_empty(): break
-		if Time.get_ticks_msec() > deadline: return _check(false, "captain departure endpoint exceeded its bounded deadline")
-		if not _action_step(): return false
-		if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
-			return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
-		if count % 60 == 0: await process_frame
+	if crowd:
+		# B: every member stands (the row case ended with HOLD and a settled formation); the request departs at once.
+		var selection: Dictionary = RegionTravelSite.selected_departure(controller)
+		if not _check(selection.ok and not selection.waiting and selection.people == _departure_team_people(team, true) and selected_row >= 0 and not team.is_walking(selected_row) and not _departure_body_moving(person), "the inherited crowd captain's read-only selection names each team person exactly once with every row stopped", selection): return false
+		var crowd_asked: Dictionary = RegionTravelSite.request_departure(controller)
+		if not _check(crowd_asked.ok and str(crowd_asked.get("token", "")) != "" and not crowd_asked.get("pending", false), "B: the stopped inherited crowd captain's request departs the whole team at once", crowd_asked): return false
+	else:
+		var asked: Dictionary = RegionTravelSite.request_departure(controller)
+		if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people == expected, "inherited captain public request selects each actual Army person exactly once", asked): return false
+		var row_query: Dictionary = RegionTravelSite.selected_departure(controller)
+		if not _check(row_query.ok and row_query.waiting and selected_row >= 0 and team.moving_to[selected_row] != TerrainArmy.INVALID_CELL and float(team.move_progress[selected_row]) > 0.0 and float(team.move_progress[selected_row]) < 1.0 and _departure_body_moving(person), "inherited captain intent waits on its own real paid step and the selected noncontrolled row", row_query.get("waiting")): return false
+		var body_before: Dictionary = _departure_body_state(person)
+		lab._try_move(Vector2i.RIGHT)
+		if not _check(body_before == _departure_body_state(person) and controller._region_departure_defers_person(identity), "pending inherited captain intent defers new input without retiming its actual Army body"): return false
+		for count: int in range(18000):
+			if not slot.region_travel_journey().is_empty(): break
+			if Time.get_ticks_msec() > deadline: return _check(false, "captain departure endpoint exceeded its bounded deadline")
+			if not _action_step(): return false
+			if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
+				return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
+			if count % 60 == 0: await process_frame
 	if not _check(not slot.region_travel_journey().is_empty() and lab.restore_only and str(slot.control.active_site_id).is_empty() and controller._region_departure_intent.is_empty(), "original finish_tick commits the complete inherited captain party only after its real row closes"): return false
 	var selected: Dictionary = slot.region_travel_party()
 	var census: Dictionary = RegionTravel.census(selected.party) if selected.ok else {}
+	var party_army: Dictionary = selected.party.content.armies[0] if selected.ok and selected.party.content.armies.size() == 1 else {}
+	var party_captain: int = int(party_army.units[int(party_army.formal_commander)].person_id) if not party_army.is_empty() and int(party_army.formal_commander) >= 0 and int(party_army.formal_commander) < party_army.units.size() else -1
 	if not _check(selected.ok and census.get("people", []) == expected and selected.party.content.get("actors", {}).is_empty()
-		and selected.party.content.armies.size() == 1 and int(selected.party.content.armies[0].team_id) == team_id
-		and int(selected.party.content.armies[0].formal_commander) == int(person.unit), "actual extraction keeps all Army people and original row captain without an Actor clone", selected.get("code")): return false
+		and selected.party.content.armies.size() == 1 and int(party_army.team_id) == team_id
+		and (party_captain == identity if crowd else int(party_army.formal_commander) == int(person.unit)), "actual extraction keeps all Army people and original row captain without an Actor clone", selected.get("code")): return false
 	for row: Dictionary in selected.party.content.armies[0].units:
 		if not _check(row.get("destination", [-1, -1]) == [-1, -1], "each original selected row closes its paid edge before extraction"): return false
-	if not _check(int(selected.party.content.armies[0].combat_order) == TerrainArmy.CombatOrder.HOLD and float(slot.control.logical_game_seconds) > float(hold_point[0]), "captain extraction retains original HOLD and its actual paid interval"): return false
+	if not _check(int(selected.party.content.armies[0].combat_order) == TerrainArmy.CombatOrder.HOLD and (float(slot.control.logical_game_seconds) == float(hold_point[0]) if str(departure_evidence.captain_row_cancel.get("mode", "")) == "crowd_row_fallen" else float(slot.control.logical_game_seconds) > float(hold_point[0])), "captain extraction retains original HOLD and its actual paid interval (a crowd party with only a fallen row walked nothing: B departs at the same clock)", [selected.party.content.armies[0].combat_order, slot.control.logical_game_seconds, hold_point]): return false
 	if not _check(not _action_vehicle().action.is_empty() and str(_phase_battle().id) == battle_id and str(_phase_battle().mode) == "cold_exact", "inherited captain departure retains independent paid NPC siege and original battle"): return false
 	var facts: Dictionary = _action_facts()
 	var graph: Dictionary = _action_graph()
@@ -783,7 +1043,12 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 	slot = return_panel.slot
 	if not await _departure_travel_and_open(action_coordinate): return false
 	action_owner = lab
-	team = lab.player_army()
+	team = _team_owner(lab, team_id)
+	if team is CrowdPersonOwner:
+		var reentry_plan: Dictionary = _crowd_captain_plan()
+		if not _check(reentry_plan.ok and int(reentry_plan.team_id) == team_id and team.current_commander == team.index_for_identity(identity) and team.index_for_identity(identity) >= 0 and lab.terrain.site.travel_identity.refs.person.get(str(identity), {}) == stable_reference and str(_phase_battle().id) == battle_id, "real captain leave/reopen/public routes/re-entry preserves the original crowd captain role, team and same battle", reentry_plan): return false
+		departure_evidence.captain_departure = {"people": expected, "team_id": team_id, "battle_id": battle_id, "generation": generation, "clock": clock, "facts": facts, "graph_sha256": SiegeCheckpoint.state_hash(graph), "actual_reentry_formation": lab.crowd_site.formation_state(int(team.formation_index))}
+		return true
 	if not _check(team != null and team.team_id == team_id and team.formal_commander >= 0 and team.current_commander == team.formal_commander and team.combat_identity(team.current_commander) == identity and lab.controlled_member_index(team) == team.current_commander and lab.terrain.site.travel_identity.refs.person.get(str(identity), {}) == stable_reference and str(_phase_battle().id) == battle_id, "real captain leave/reopen/public routes/re-entry preserves the original Army captain role, team and same battle"): return false
 	departure_evidence.captain_departure = {"people": expected, "team_id": team_id, "battle_id": battle_id, "generation": generation, "clock": clock, "facts": facts, "graph_sha256": SiegeCheckpoint.state_hash(graph), "actual_reentry_army": team.capture_combat_state(true)}
 	return true
@@ -791,7 +1056,7 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 func _departure_other_row_refuses() -> bool:
 	if not _departure_route_controls(false): return false
 	var before: PackedByteArray = var_to_bytes([slot.control, slot._marker, lab.terrain.site, _action_graph(), _departure_body_state(lab.controlled_target())])
-	var expected_code: String = "IN_COMBAT" if float(lab.terrain.site.combat_left) > 0.0 else "BUSY"
+	var expected_code: String = "NOT_READY" if _crowd_body(lab.controlled_target()) else ("IN_COMBAT" if float(lab.terrain.site.combat_left) > 0.0 else "BUSY")
 	var refused: Dictionary = RegionTravelSite.request_departure(controller)
 	return _check(not refused.ok and str(refused.get("code")) == expected_code and controller._region_departure_intent.is_empty()
 		and before == var_to_bytes([slot.control, slot._marker, lab.terrain.site, _action_graph(), _departure_body_state(lab.controlled_target())]),
@@ -845,8 +1110,72 @@ func _departure_captain_row_partial_and_cancel(team: TerrainArmy, actor: Terrain
 	departure_evidence.captain_row_cancel = {"nonce": nonce, "person_id": row_id, "paid_before": paid_before, "paid_after": action_paid, "hold_point": hold_point, "row_before_cancel": row_before, "actor_before_cancel": actor_before}
 	return true
 
-func _departure_army_row_partial_and_cancel(team: TerrainArmy, person: Dictionary) -> bool:
+## Crowd (B): the captain's public formation MOVE walks the other rows; while a row walks, the departure request is refused
+## (NOT_READY) and changes nothing; the public HOLD then settles the formation. No intent, no cancel.
+func _departure_crowd_row_walking_refuses(team: CrowdPersonOwner, person: Dictionary, row_index: int) -> bool:
+	if not _check(not _departure_body_moving(person) and _departure_body_idle(person) and team.moving_member_count() == 0, "row waiting case starts with the actual crowd captain idle and every original row stopped"): return false
+	var row_id: int = team.combat_identity(row_index)
+	var origin := Vector2i(team.person(row_index, false).cell)
+	if RegionTravelSite._hostile_near(lab, int(team.faction_id), [origin]):
+		# A crowd row does not follow its walking captain by itself (the grid formation did): the captain's public MOVE
+		# first brings the row out of the hostile guard, beside the already clear captain.
+		var captain_cell := Vector2i(lab.controlled_target().cell)
+		var gathered: bool = false
+		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+			var beside: Vector2i = captain_cell + direction * 2
+			if not lab.terrain.contains(beside) or not lab.terrain.is_walkable(beside) or RegionTravelSite._hostile_near(lab, int(team.faction_id), [beside]): continue
+			if lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.MOVE, beside, -1, "ui").ok: gathered = true; break
+		if not _check(gathered, "genuine crowd captain's public formation MOVE gathers the row beside the clear captain", {"row": origin, "captain": captain_cell}): return false
+		if not await _action_until(func() -> bool: return team.moving_member_count() == 0 and not RegionTravelSite._hostile_near(lab, int(team.faction_id), [Vector2i(team.person(row_index, false).cell)]), "the paid crowd formation movement brings the row outside the actual hostile guard"): return false
+		var gathered_hold: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
+		if not _check(gathered_hold.ok, "public HOLD closes the gathering order", gathered_hold): return false
+		if not await _action_until(func() -> bool: return team.moving_member_count() == 0 and not _departure_body_moving(person), "the gathered crowd formation settles"): return false
+		origin = Vector2i(team.person(row_index, false).cell)
+	var paid_before: float = action_paid
+	var moved: bool = false
+	var refusals: Array = []
+	for radius: int in range(2, 5):
+		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+			var goal: Vector2i = origin + direction * radius
+			if goal == Vector2i(lab.controlled_target().cell) or not lab.terrain.contains(goal) or not lab.terrain.is_walkable(goal) or RegionTravelSite._hostile_near(lab, int(team.faction_id), [goal]): continue
+			var ordered: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.MOVE, goal, -1, "ui")
+			if ordered.ok: moved = true; break
+			refusals.append([goal, ordered.get("code", ""), ordered.get("message", "")])
+		if moved: break
+	if not _check(moved, "genuine crowd captain's public formation MOVE accepts a safe original NPC-row route", {"origin": origin, "captain": lab.controlled_target().cell, "refusals": refusals}): return false
+	if not await _action_until(func() -> bool: return action_paid > paid_before and team.is_walking(row_index), "original common movement owner pays a real interval with the selected NPC row walking"): return false
+	var hold_point: Array = [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
+	if not _check(not _departure_body_moving(person) and _departure_body_idle(person) and not RegionTravelSite._hostile_near(lab, int(team.faction_id), _departure_selected_endpoints([])), "crowd captain stays genuinely idle and every current selected row cell remains outside the actual hostile guard", _departure_selected_endpoints([])): return false
+	if not _departure_other_row_refuses(): return false
+	var held: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
+	if not _check(held.ok and team.combat_order == TerrainArmy.CombatOrder.HOLD and hold_point == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "public HOLD closes the formation order without a paid interval", held): return false
+	if not await _action_until(func() -> bool: return team.moving_member_count() == 0, "the held crowd formation settles every row"): return false
+	if not _check(not _action_vehicle().action.is_empty(), "the unrelated NPC siege stays genuinely paid partial across the refused request and the hold"): return false
+	departure_evidence["captain_row_cancel"] = {"mode": "crowd_row_walking_refused", "person_id": row_id, "paid_before": paid_before, "paid_after": action_paid, "hold_point": hold_point}
+	return true
+
+func _departure_army_row_partial_and_cancel(team: Variant, person: Dictionary) -> bool:
 	var row_index: int = -1
+	if team is CrowdPersonOwner:
+		var fallen_row: int = -1
+		for index: int in team.command_members():
+			if team.member_gone(index) or index == int(person.unit): continue
+			if team.combat_can_act(index) and float(team.person(index, false).get("hp", 0.0)) > 0.0: row_index = index; break
+			if fallen_row < 0: fallen_row = index
+		if row_index >= 0: return await _departure_crowd_row_walking_refuses(team, person, row_index)
+		# Crowd: the only other row fell in the crowd's own melee at the arrival entry (Decision A2, see the walk-clear case),
+		# so this party has no living row to walk. The walking-row refusal of B is asserted on a living team by
+		# region_crowd_journey_test; here the fallen row must be a settled dead member that the stopped team carries.
+		if not _check(fallen_row >= 0, "actual crowd captain party contains a distinct genuine noncontrolled row"): return false
+		var fallen: Dictionary = team.person(fallen_row, false)
+		var fallen_plan: Dictionary = lab.crowd_site.departure_plan(lab.controlled_person_id())
+		if not _check(float(fallen.get("hp", 1.0)) <= 0.0 and str(fallen.get("body", {}).get("remains_id", "")) != "" and bool(fallen.get("body", {}).get("loot_settled", false)) and not team.is_walking(fallen_row)
+			and fallen_plan.get("ok", false) and team.moving_member_count() == 0 and not _departure_body_moving(person) and _departure_body_idle(person),
+			"the crowd party's only other row is a settled fallen member and the stopped team's departure plan accepts it", {"hp": fallen.get("hp"), "plan": fallen_plan}): return false
+		if not _check(not _action_vehicle().action.is_empty(), "the unrelated NPC siege stays genuinely paid partial beside the fallen row"): return false
+		departure_evidence["captain_row_cancel"] = {"mode": "crowd_row_fallen", "person_id": team.combat_identity(fallen_row), "paid_before": action_paid, "paid_after": action_paid,
+			"hold_point": [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]}
+		return true
 	for index: int in team.combat_units.size():
 		if team.is_member(index) and not team.member_gone(index) and index != int(person.unit): row_index = index; break
 	if not _check(row_index >= 0, "actual captain party contains a distinct genuine noncontrolled row"): return false
@@ -899,6 +1228,20 @@ func _departure_army_row_partial_and_cancel(team: TerrainArmy, person: Dictionar
 
 ## Read the actual living heir's native team BEFORE the departure request.
 func _departure_heir_team(person: Dictionary) -> Dictionary:
+	if _crowd_body(person):
+		var crowd_team: CrowdPersonOwner = person.owner
+		var plan: Dictionary = _crowd_captain_plan()
+		if not plan.ok or int(plan.team_id) != int(crowd_team.team_id): return {"ok": false}
+		var crowd_people: Array[int] = _departure_team_people(crowd_team)
+		var crowd_rows: Dictionary = {}
+		for index: int in crowd_team.command_members():
+			if crowd_team.member_gone(index): continue
+			var crowd_identity: int = crowd_team.combat_identity(index)
+			if crowd_identity <= 0 or crowd_rows.has(str(crowd_identity)): return {"ok": false}
+			crowd_rows[str(crowd_identity)] = {"military_role": str(crowd_team.combat_hot_get(index, &"military_role", "")), "member": bool(crowd_team.combat_hot_get(index, &"member", true))}
+		var current_id: int = int(lab.crowd_site.formation_state(int(crowd_team.formation_index)).get("current_person", -1))
+		return {"ok": true, "people": crowd_people, "living": _departure_team_people(crowd_team, true),
+			"roles": {str(int(crowd_team.team_id)): {"rows": crowd_rows, "formal_id": lab.controlled_person_id(), "current_id": current_id}}}
 	if int(person.unit) < 0 or not person.owner is TerrainArmy: return {"ok": false}
 	var team: TerrainArmy = person.owner
 	if not team.combat_enabled or team.formal_commander != int(person.unit): return {"ok": false}
@@ -920,12 +1263,28 @@ func _departure_saved_team_roles(content: Dictionary) -> Dictionary:
 		var rows: Dictionary = {}
 		for row: Dictionary in team.get("units", []):
 			rows[str(int(row.person_id))] = {"military_role": str(row.military_role), "member": bool(row.member)}
+		if _crowd_on(lab):
+			# A crowd party's saved rows are the converted roster: compare its captain by identity, not by row index.
+			var units: Array = team.get("units", [])
+			var formal: int = int(team.formal_commander)
+			var current: int = int(team.current_commander)
+			roles[str(int(team.team_id))] = {"rows": rows, "formal_id": int(units[formal].person_id) if formal >= 0 and formal < units.size() else -1,
+				"current_id": int(units[current].person_id) if current >= 0 and current < units.size() else -1}
+			continue
 		roles[str(int(team.team_id))] = {"rows": rows, "formal": int(team.formal_commander), "current": int(team.current_commander)}
 	return roles
 
 
 func _departure_native_people(original: TerrainLab) -> Array[int]:
 	var people: Array[int] = []
+	if original.crowd_site != null and original.crowd_site.active:
+		# Crowd: the live bodies are the crowd's person owners; the GD rosters are disabled holders.
+		for owner: Variant in original.crowd_site.person_owners():
+			if not owner is CrowdPersonOwner: continue
+			for index: int in owner.combat_units.keys():
+				if owner.is_member(int(index)) and not owner.member_gone(int(index)): people.append(owner.combat_identity(int(index)))
+		people.sort()
+		return people
 	for actor: TerrainTestCharacter in original.combat_actors:
 		if original.actor_present(actor): people.append(actor.person_id)
 	for team: TerrainArmy in original.combat_armies:

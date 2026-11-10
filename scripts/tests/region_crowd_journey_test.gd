@@ -216,6 +216,34 @@ func _run() -> void:
 	var controlled: int = lab.controlled_person_id()
 	if not _check(controlled == captain and members.has(controlled), "the controlled captain is a member of the friendly crowd team", [controlled, captain]): return
 
+	# B (Nekki 2026-11-09): the player's crowd departure has no deferred intent. While a row of the team is still walking under
+	# the captain's public MOVE, the request refuses at once and changes nothing; after the public HOLD has settled every row,
+	# the same request departs (step 2 below).
+	var captain_owner: CrowdPersonOwner = crowd.person_owner(captain) as CrowdPersonOwner
+	if not _check(captain_owner != null and captain_owner.moving_member_count() == 0, "the friendly crowd team stands before its captain's order"): return
+	var marching: Dictionary = {}
+	for distance: int in [9, 7, 5]:
+		marching = crowd.issue_order(team_id, TerrainArmy.CombatOrder.MOVE, centre + Vector2i(0, distance), -1, "ui")
+		if marching.get("ok", false): break
+	if not _check(marching.get("ok", false) == true, "the crowd captain's public formation MOVE is accepted", marching): return
+	var walking_row: int = -1
+	for count: int in range(600):
+		if not crowd.step(1.0 / 60.0, 1.0 / 60.0, 0.0): break
+		for member: int in members:
+			if member != captain and captain_owner.is_walking(int(captain_owner.index_for_identity(member))): walking_row = member
+		if walking_row >= 0: break
+	if not _check(walking_row >= 0, "a noncontrolled row of the team walks under the formation order", crowd.last_event_error): return
+	var walking_refused: Dictionary = RegionTravelSite.request_departure(controller)
+	if not _check(not walking_refused.get("ok", false) and str(walking_refused.get("code", "")) == "NOT_READY" and controller._region_departure_intent.is_empty()
+		and slot.region_travel_journey().is_empty() and captain_owner.is_walking(int(captain_owner.index_for_identity(walking_row))),
+		"B: a walking row refuses the player's request at once, with no intent and no journey", walking_refused): return
+	var halted: Dictionary = crowd.issue_order(team_id, TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
+	if not _check(halted.get("ok", false) == true, "the crowd captain's public HOLD is accepted", halted): return
+	for count: int in range(1800):
+		if captain_owner.moving_member_count() == 0: break
+		if not crowd.step(1.0 / 60.0, 1.0 / 60.0, 0.0): break
+	if not _check(captain_owner.moving_member_count() == 0, "the held crowd formation settles every row", crowd.last_event_error): return
+
 	# Nekki 2026-11-04: the team's morale state travels; it leaves shaken, with a rally rest running.
 	var origin_formation := int(crowd.person_owner(captain).formation_index)
 	if not _check(crowd.set_formation_fields(origin_formation, {"morale": 42.0, "rally_rest": 6.0}), "the departing team is shaken"): return

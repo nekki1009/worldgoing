@@ -263,13 +263,30 @@ func _crew_walk(vehicle: Dictionary, turning: bool) -> bool:
 		if _crew_at_station(vehicle, slot, person, turning): continue # Same station rule as crew_count: no walk-back for an arrived crowd crew.
 		arrived = false
 		if person.owner is CrowdPersonOwner:
-			person.owner.siege_approach_step(index, goal)
+			if not person.owner.siege_approach_step(index, goal): _yield_crew_station(vehicle, goal, turning)
 			continue
 		# Combat foot routes use -1: the legacy per-person search quota advances
 		# only in peaceful formation ticks. Original reserve still checks this row.
 		var path: Array[Vector2i] = person.owner._find_local_route(person.cell, goal, 256, false, -1)
 		if path.size() >= 2: person.owner._reserve_combat_step(index, path[1], 0, false, false, true)
 	return arrived
+
+# SIEGE-YIELD (crew stations): a same-team soldier that is not crew and stands on a crew station steps to a free
+# neighbouring cell, so the crew can reach it. A soldier that yielded out of a turn sweep may have stopped exactly on
+# the station of the new facing; without this the turn's return stage never ends. The controlled person, enemies and
+# other teams are never moved.
+func _yield_crew_station(vehicle: Dictionary, station: Vector2i, turning: bool) -> void:
+	if not _native_siege(): return
+	var stations := {}
+	for slot: String in vehicle.crew_slots: stations[crew_cell(vehicle, slot, turning)] = true
+	for identity: int in _turn_yielders_at(vehicle, station, {}):
+		if identity == int(lab.controlled_person_id()): continue
+		var person: Dictionary = lab.crowd_site.siege_original_person(identity)
+		if person.is_empty() or bool(person.get("moving", false)): continue
+		for offset: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]:
+			var cell: Vector2i = station + offset
+			if not lab.terrain.contains(cell) or stations.has(cell) or not lab.terrain.is_walkable(cell) or not lab.terrain.can_step(station, cell): continue
+			if lab.crowd_site.siege_approach_step(identity, cell): break
 
 func _turn_sweep(vehicle: Dictionary) -> Array[int]:
 	var value: Array = vehicle.get("action", {}).get("facing", vehicle.facing)

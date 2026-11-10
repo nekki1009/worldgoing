@@ -2030,7 +2030,9 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 	var npc_contact: bool = mode == "land" and str(party.get("controller", "player")) == "npc"
 	if mode != "land" and not npc_sea or options.has("contact_frame") and not npc_contact:
 		return fail("UNSUPPORTED", "目的地群眾容器只接收陸路旅隊或 NPC 船隊（mode=%s controller=%s contact=%s）" % [mode, str(party.get("controller", "")), str(options.has("contact_frame"))])
-	# Returning to the Site a person left (a departed id still held by its tombstone or split team) is not supported yet.
+	# A person returning to the Site they left (a departed id still held by its tombstone or split team) rejoins through
+	# their own released native slot (2026-11-10, _crowd_arrival_teams); a native module without readmit still refuses.
+	var can_readmit: bool = ClassDB.class_exists("ArmyCrowd") and ClassDB.class_has_method(&"ArmyCrowd", &"site_person_readmit") and ClassDB.class_has_method(&"ArmyCrowd", &"site_formation_reuse")
 	var departed := {}
 	for team: Variant in destination.get("crowd", {}).get("teams", []):
 		for identity: Variant in team.get("departed_person_ids", []): departed[int(identity)] = true
@@ -2039,7 +2041,7 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 	for army: Variant in arriving.get("armies", []):
 		if not army is Dictionary: continue
 		for row: Variant in army.get("units", []):
-			if row is Dictionary and departed.has(int(row.get("person_id", 0))):
+			if row is Dictionary and departed.has(int(row.get("person_id", 0))) and not can_readmit:
 				return fail("UNSUPPORTED_CROWD_RETURN", "離開的人回到原地點尚未支援")
 			# Decision A2 on crowd (2026-11-10): a settled dead row (loot_settled) arrives inert with its team. It joins the
 			# native crowd as its team's corpse (its hp 0 is written by _crowd_arrival_teams; the native state writer
@@ -2102,9 +2104,60 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 	if not bool(native.call("load_state", blob)): return fail("INVALID_CROWD", "群眾候選原生內容非法")
 	var present := {}
 	for identity: Variant in native.call("person_ids"): present[int(identity)] = true
+	# A person returning to the Site they left (2026-11-10): the native blob still holds their released slot under their own
+	# person id, and a departed tombstone team (or a split team's departed_person_ids) still lists them. They rejoin through
+	# that slot (ArmyCrowd.site_person_readmit: slot index, person id and command ability kept) and leave the list that held
+	# them. A Site keeps one team entry per native formation, so a tombstone is never simply dropped: the arriving team that
+	# empties it, or that carries its team id, takes its entry and its native formation over (site_formation_reuse starts the
+	# formation again in place). People of that tombstone who are still away move to the team's departed_person_ids, the
+	# form a split team already has. A tombstone emptied by people who came back in several teams, or a solo one, is refused.
+	var held := {}
+	var kept_teams: Array = section.get("teams", []).duplicate(true)
+	for team: Variant in kept_teams:
+		for identity: Variant in team.get("departed_person_ids", []): held[int(identity)] = true
+		if bool(team.get("departed", false)):
+			for identity: Variant in team.get("person_ids", []): held[int(identity)] = true
+	var returned := {}
+	var arriving_team_ids := {}
+	for army: Dictionary in armies:
+		arriving_team_ids[int(army.get("team_id", 0))] = true
+		for row: Variant in army.get("units", []):
+			if row is Dictionary and held.has(int(row.get("person_id", 0))): returned[int(row.person_id)] = true
+	var revived := {} # arriving team id -> the tombstone entry whose native formation the team takes over
+	if not returned.is_empty():
+		if not native.has_method("site_person_readmit") or not native.has_method("site_formation_reuse"): return fail("UNSUPPORTED_CROWD_RETURN", "離開的人回到原地點尚未支援")
+		var pruned: Array = []
+		for team: Variant in kept_teams:
+			var tombstone := bool(team.get("departed", false))
+			var came := {} # arriving team id -> true, for the teams this entry's returners arrive in
+			for field: String in ["person_ids", "departed_person_ids"]:
+				if field == "person_ids" and not tombstone: continue
+				if not team.has(field): continue
+				var remaining: Array = []
+				for identity: Variant in team[field]:
+					if not returned.has(int(identity)):
+						remaining.append(identity)
+						continue
+					for army: Dictionary in armies:
+						for row: Variant in army.get("units", []):
+							if row is Dictionary and int(row.get("person_id", 0)) == int(identity): came[int(army.get("team_id", 0))] = true
+				team[field] = remaining
+			if tombstone:
+				var same_id := arriving_team_ids.has(int(team.get("team_id", -1)))
+				var taker := int(team.team_id) if same_id else -1
+				if not same_id and team.get("person_ids", []).is_empty():
+					if came.size() != 1: return fail("UNSUPPORTED_CROWD_RETURN", "同一離隊隊伍的人分成多隊返回尚未支援")
+					taker = int(came.keys()[0])
+				if taker >= 0:
+					if bool(team.get("solo", false)) or revived.has(taker): return fail("UNSUPPORTED_CROWD_RETURN", "此離隊隊伍的返回方式尚未支援")
+					revived[taker] = team
+					continue
+			pruned.append(team)
+		kept_teams = pruned
+	var seen := {}
 	var team_ids := {}
 	var slot := 0
-	for team: Variant in section.get("teams", []):
+	for team: Variant in kept_teams:
 		team_ids[int(team.get("team_id", -1))] = true
 		slot = maxi(slot, int(team.get("slot", -1)) + 1)
 	var rosters: Array = []
@@ -2135,13 +2188,17 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 		var equip := PackedInt32Array()
 		var roles := PackedByteArray()
 		var ammo := PackedInt32Array()
-		var starts := PackedFloat32Array()
 		var rows: Array = []
 		var row_cells: Array[Vector2i] = []
+		var row_ids := PackedInt64Array()   # every arriving person of the team, in roster order
+		var row_equip := PackedInt32Array()
+		var row_roles := PackedByteArray()
+		var row_ammo := PackedInt32Array()
 		for index: int in range(units.size()):
 			var row: Dictionary = units[index]
 			var identity := int(row.get("person_id", 0))
-			if identity <= 0 or present.has(identity): return fail("ID_CONFLICT", "目的地已有同一原人物")
+			if identity <= 0 or seen.has(identity) or present.has(identity) and not returned.has(identity): return fail("ID_CONFLICT", "目的地已有同一原人物")
+			seen[identity] = true
 			if not row.get("appearance") is Dictionary or not row.get("cargo") is Dictionary or not row.get("item_state") is Dictionary:
 				return fail("INVALID_CROWD", "到站人物外觀或物品格式")
 			present[identity] = true
@@ -2159,32 +2216,62 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			row["previous"] = []
 			row["target"] = -1
 			row["hits"] = []
-			ids.append(identity)
-			equip.append(packed)
-			roles.append(1 if index == formal else 2 if is_officer else 0)
-			ammo.append(int(row.cargo.get("arrow" if person_troop == 1 else "bolt", 0)) if person_troop != 0 else 0)
-			starts.append_array(PackedFloat32Array([float(cell.x) + 0.5, float(cell.y) + 0.5]))
+			var person_role := 1 if index == formal else 2 if is_officer else 0
+			var person_ammo := (int(row.cargo.get("arrow" if person_troop == 1 else "bolt", 0)) if person_troop != 0 else 0)
+			row_ids.append(identity)
+			row_equip.append(packed)
+			row_roles.append(person_role)
+			row_ammo.append(person_ammo)
+			if not returned.has(identity): # a newcomer is appended by add_soldiers; a returner takes their own slot back
+				ids.append(identity)
+				equip.append(packed)
+				roles.append(person_role)
+				ammo.append(person_ammo)
 			rows.append(row)
 			row_cells.append(cell)
 			if index == formal: team_leader = cell
 		var troop := maxi(0, first_troop)
 		var cols := maxi(1, int(ceil(sqrt(float(units.size())))))
 		# Per-Site native faction slot, as CrowdSite._native_faction: the destination teams plus those already added here.
-		var native_faction: int = CrowdSiteScript.native_slot_for(faction, section.get("teams", []) + teams)
+		var native_faction: int = CrowdSiteScript.native_slot_for(faction, kept_teams + teams)
 		if native_faction < 0: return fail("NO_SPACE", "群眾原生陣營槽已滿")
-		var formation := int(native.call("add_formation", native_faction, float(team_leader.x) + 0.5, float(team_leader.y) + 0.5, 0.0, cols, 1.0, troop, training))
+		var formation := -1
+		if revived.has(team_id): # the team takes back the native formation its tombstone kept
+			formation = int(revived[team_id].formation)
+			if not bool(native.call("site_formation_reuse", formation, native_faction, float(team_leader.x) + 0.5, float(team_leader.y) + 0.5, 0.0, cols, 1.0, troop, training)):
+				return fail("NATIVE_REFUSED", "原生群眾拒絕重新啟用離隊隊伍的陣列")
+		else:
+			formation = int(native.call("add_formation", native_faction, float(team_leader.x) + 0.5, float(team_leader.y) + 0.5, 0.0, cols, 1.0, troop, training))
 		if formation < 0: return fail("INVALID", "原隊伍無法加入群眾")
 		if not bool(native.call("set_garrisoned", formation, 0)): return fail("INVALID_GARRISON", "原駐營歸屬匯入失敗")
-		var first := int(native.call("add_soldiers", formation, ids, equip, roles, ammo))
-		if first < 0: return fail("INVALID", "原隊伍人物匯入失敗")
-		if not bool(native.call("set_start_positions", first, starts)): return fail("INVALID", "原隊伍起始位置匯入失敗")
+		var first := -1
+		if not ids.is_empty():
+			first = int(native.call("add_soldiers", formation, ids, equip, roles, ammo))
+			if first < 0: return fail("INVALID", "原隊伍人物匯入失敗")
+		# Native soldier index of every arriving person, in roster order: newcomers follow `first`; a returner is readmitted
+		# into their own released slot.
+		var indices := PackedInt32Array()
+		var appended := 0
+		for offset: int in range(rows.size()):
+			var identity := int(row_ids[offset])
+			var index := -1
+			if returned.has(identity):
+				index = int(native.call("soldier_index", identity))
+				if index < 0 or not bool(native.call("site_person_readmit", index, formation, int(row_equip[offset]), int(row_roles[offset]), clampi(int(row_ammo[offset]), 0, 65535))):
+					return fail("NATIVE_REFUSED", "原生群眾拒絕返回者回到原位置")
+			else:
+				index = first + appended
+				appended += 1
+			indices.append(index)
+			var start: Vector2i = row_cells[offset]
+			if not bool(native.call("set_start_positions", index, PackedFloat32Array([float(start.x) + 0.5, float(start.y) + 0.5]))): return fail("INVALID", "原隊伍起始位置匯入失敗")
 		# Carried morale state, after the soldiers joined (they re-derive fresh formation values).
 		if not CrowdSiteScript.apply_team_morale(native, formation, army.get("team_morale", {})): return fail("INVALID", "原隊伍士氣狀態匯入失敗")
 		for offset: int in range(rows.size()):
 			var row: Dictionary = rows[offset]
 			var cell: Vector2i = row_cells[offset]
-			var index := first + offset
-			var identity := int(ids[offset])
+			var index := int(indices[offset])
+			var identity := int(row_ids[offset])
 			if not bool(native.call("set_military_role", index, 1 if row.military_role == "officer" else 0)) \
 					or not bool(native.call("set_post_holder", index, int(holders.has(identity)))):
 				return fail("INVALID_ROLE", "原人物軍官資格匯入失敗")
@@ -2199,7 +2286,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			values[6] = 0.0 # Captives are refused by the gate.
 			values[7] = 1.0 if bool(row.get("bandaged", false)) else 0.0
 			values[12] = 0.0
-			values[13] = float(roles[offset])
+			values[13] = float(row_roles[offset])
 			values[14] = float(cell.x) + 0.5
 			values[15] = float(cell.y) + 0.5
 			refs[1] = -1
@@ -2229,8 +2316,12 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 		army["crowd_formation"] = formation
 		_settle_team(army, team_leader)
 		rosters.append(army)
-		teams.append({"slot": slot, "team_id": team_id, "formation": formation, "faction": faction,
-			"native_faction": native_faction, "troop": troop, "person_ids": Array(ids), "solo": false})
+		var team_entry := {"slot": slot, "team_id": team_id, "formation": formation, "faction": faction,
+			"native_faction": native_faction, "troop": troop, "person_ids": Array(row_ids), "solo": false}
+		if revived.has(team_id):
+			var still_away: Array = revived[team_id].get("person_ids", []) + revived[team_id].get("departed_person_ids", [])
+			if not still_away.is_empty(): team_entry["departed_person_ids"] = still_away
+		teams.append(team_entry)
 		slot += 1
 		team_ids[team_id] = true
 	# The controlled soldier takes host control before the blob is saved; the native keeps one host at most.
@@ -2243,7 +2334,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(bytes)
-	return {"ok": true, "blob": bytes, "blob_sha256": digest.finish().hex_encode(), "teams": teams, "armies": rosters, "leader_cell": leader_cell, "controlled_index": controlled_index}
+	return {"ok": true, "blob": bytes, "blob_sha256": digest.finish().hex_encode(), "teams": teams, "armies": rosters, "leader_cell": leader_cell, "controlled_index": controlled_index, "section_teams": kept_teams}
 
 ## R5/R12 commit of an arrival into a crowd destination: the arriving teams join the native blob at `cells` (roster order),
 ## the arriving controlled soldier becomes the crowd player, and every new team gets its fire command row.
@@ -2255,6 +2346,7 @@ static func _crowd_arrival_commit(destination: Dictionary, content: Dictionary, 
 	# The arriving controlled soldier is the crowd's player; its person id is already the destination id (remapped above).
 	if int(content.get("controlled_person_id", -1)) > 0:
 		destination.crowd["player"] = {"person_id": int(content.controlled_person_id), "soldier_index": int(crowd_arrival.controlled_index)}
+	destination.crowd["teams"] = crowd_arrival.section_teams # the Site's own teams, less the tombstones of people who came back
 	for team: Dictionary in crowd_arrival.teams: destination.crowd.teams.append(team)
 	# Every roster army is a fire owner and needs one command row (validator: one row per owner). An arriving team
 	# that has never fired gets the disabled row, merged below with the other fire rows.

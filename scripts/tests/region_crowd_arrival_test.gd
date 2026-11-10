@@ -268,14 +268,56 @@ func _run() -> void:
 	actor_party.content["actors"] = {"npc": {"person_id": 999999}}
 	refused = RegionTravel.insert(dest_state, actor_party, nav, entry, dest_path, 0.0, 0.0, {})
 	if not _check(refused.get("ok", true) == false and refused.get("code", "") == "UNSUPPORTED_CROWD_ACTOR_ARRIVAL", "an arriving actor is refused UNSUPPORTED_CROWD_ACTOR_ARRIVAL", refused): return
-	# Returning to the origin Site, which still holds the departed people, is refused UNSUPPORTED_CROWD_RETURN.
+	# Returning to the origin Site. The party split off its team, so the origin still holds the three people as released
+	# native slots listed in that team's departed_person_ids. They rejoin through their own slots (no new soldiers) as the
+	# party's own team in one new formation, and the team they split from no longer lists them as away.
 	var origin_state: Dictionary = origin_loaded.data.site
 	var origin_blob_before := str(origin_state.crowd.blob_sha256)
 	var origin_file_before := FileAccess.get_sha256(origin_path)
+	var origin_native: Variant = origin_loaded.get("crowd_native")
+	if not _check(origin_native is Object, "the origin loads its native crowd"): return
+	var origin_soldiers := int(origin_native.soldier_count())
+	var origin_formations := int(origin_native.formation_count())
+	var split_from: Dictionary = _team_entry(origin_state.crowd, team_id)
+	if not _check(not bool(split_from.get("departed", false)) and split_from.get("departed_person_ids", []).size() == 3 and _team_entry(origin_state.crowd, party_team).is_empty(), "the origin's team lists the three people who split off as away", split_from): return
+	var away_ids: Array = split_from.departed_person_ids.duplicate()
 	var return_nav: TerrainData = Env.navigation_for_state(origin_loaded.data, origin_state)
-	refused = RegionTravel.insert(origin_state, party.duplicate(true), return_nav, origin_loaded.data.spawn_cell, origin_path, 0.0, 0.0, {})
-	if not _check(refused.get("ok", true) == false and refused.get("code", "") == "UNSUPPORTED_CROWD_RETURN", "a return to the origin Site is refused UNSUPPORTED_CROWD_RETURN", refused): return
-	if not _check(FileAccess.get_sha256(origin_path) == origin_file_before and str(origin_state.crowd.blob_sha256) == origin_blob_before, "the refused return leaves the origin file and blob hash unchanged"): return
+	var came_back: Dictionary = RegionTravel.insert(origin_state, party.duplicate(true), return_nav, origin_loaded.data.spawn_cell, origin_path, 0.0, 0.0, {})
+	if not _check(came_back.get("ok", false) == true, "the party returns to the origin Site it left", came_back): return
+	if not _check(FileAccess.get_sha256(origin_path) == origin_file_before and str(origin_state.crowd.blob_sha256) == origin_blob_before, "the return leaves the caller's origin state and the origin file untouched"): return
+	var back_state: Dictionary = came_back.state
+	var back_entries := 0
+	var still_held := 0
+	for team: Variant in back_state.crowd.teams:
+		if int(team.get("team_id", -1)) == party_team: back_entries += 1
+		if bool(team.get("departed", false)):
+			for identity: Variant in team.get("person_ids", []):
+				if away_ids.has(identity): still_held += 1
+		for identity: Variant in team.get("departed_person_ids", []):
+			if away_ids.has(identity): still_held += 1
+	var back_entry: Dictionary = _team_entry(back_state.crowd, party_team)
+	if not _check(back_entries == 1 and not bool(back_entry.get("departed", false)) and back_entry.get("person_ids", []).size() == 3 and still_held == 0, "the returned team has one entry of three people and nobody is still listed as away", [back_entries, back_entry, still_held]): return
+	var back_ids: Array = []
+	for identity: Variant in back_entry.person_ids: back_ids.append(int(identity))
+	back_ids.sort()
+	var left_ids: Array = []
+	for identity: Variant in away_ids: left_ids.append(int(identity))
+	left_ids.sort()
+	if not _check(back_ids == left_ids, "the returned people keep the person ids they left with", [back_ids, left_ids]): return
+	var back_army: Dictionary = _army(back_state, party_team)
+	if not _check(not back_army.is_empty() and bool(back_army.get("crowd", false)) and back_army.units.size() == 3, "the returned roster is crowd=true with three people"): return
+	var back_path := "user://sites/crowd_arrival_returned.json"
+	origin_loaded.data.site = back_state
+	var back_saved: Dictionary = Store.save(origin_loaded.data, back_path)
+	if not _check(back_saved.get("ok", false) == true, "the origin Site saves after the return", back_saved): return
+	var back_loaded: Dictionary = Store.load_site(back_path, Callable(), 1, false)
+	if not _check(back_loaded.get("ok", false) == true, "the origin Site validates and reloads after the return", back_loaded): return
+	var back_native: Variant = back_loaded.get("crowd_native")
+	if not _check(int(back_native.soldier_count()) == origin_soldiers, "the returners took their own native slots back: no new soldier", [int(back_native.soldier_count()), origin_soldiers]): return
+	if not _check(int(back_native.formation_count()) == origin_formations + 1, "the returned team stands in one new formation beside the team it split from", [int(back_native.formation_count()), origin_formations]): return
+	for identity: int in back_ids:
+		var back_index := int(back_native.call("soldier_index", identity))
+		if not _check(back_index >= 0 and float(back_native.call("get_soldier_state", back_index)[0]) > 0.0, "a returned person is a living native soldier under their own id", [identity, back_index]): return
 	if not _check(FileAccess.get_sha256(dest_path) == file_before and str(dest_state.crowd.blob_sha256) == blob_before, "refusals leave the destination file and blob hash unchanged"): return
 
 	# The arrival.
@@ -311,5 +353,5 @@ func _run() -> void:
 		if not _player_state_checks(reloaded.data.site, arrival_leader): return
 		if not _player_native_checks(reloaded.data.site, restored, arrival_leader): return
 
-	print("REGION_CROWD_ARRIVAL_PASS: ", checks, " checks (case ", case_name, "); an ordinary three-person party joins the live crowd Site as a native team with its leader as captain, the Site validates and reloads, and duplicate, garrisoned and actor arrivals are refused with unchanged files")
+	print("REGION_CROWD_ARRIVAL_PASS: ", checks, " checks (case ", case_name, "); an ordinary three-person party joins the live crowd Site as a native team with its leader as captain, the Site validates and reloads, duplicate, garrisoned and actor arrivals are refused with unchanged files, and the party can return to the Site it left through its own native slots")
 	quit(0)

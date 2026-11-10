@@ -54,6 +54,10 @@ int wg_crowd_site_person_release_aboard(wg_crowd *c, int i, int vehicle, double 
 int wg_crowd_site_person_release_dead(wg_crowd *c, int i, double *out);
 /* A person returning to a Site they left: their released slot takes `placeholder` (unused, >= 0). 1 ok, 0 refused. */
 int wg_crowd_site_person_retag_released(wg_crowd *c, int i, int64_t placeholder);
+/* A person returning to a Site they left: their released slot is a fresh soldier of `formation` again (slot, person id and
+   ability kept). equip = family | material << 8 | armor << 16 | shield << 24; role 0..2; ammo 0..65535. 1 ok, 0 refused. */
+int wg_crowd_site_person_readmit(wg_crowd *c, int i, int formation, int32_t equip, int role, int ammo);
+int wg_crowd_site_formation_reuse(wg_crowd *c, int formation, int team, float cx, float cy, float facing, int cols, float spacing, int troop, double training);
 /* G1 S1 aboard: board / land / set_deck / retarget_aboard return 1 on success, 0 refused with no change.
  * site_person_aboard writes out[2] = {aboard, vehicle} and returns 1, or 0 for an unknown soldier. */
 int wg_crowd_site_person_board(wg_crowd *c, int i, int vehicle);

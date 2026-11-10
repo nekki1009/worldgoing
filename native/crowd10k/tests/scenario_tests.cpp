@@ -1659,6 +1659,81 @@ static void test_site_person_retag_released() {
 	check_valid(loaded);
 }
 
+// A person returning to a Site they left (2026-11-10): the released slot is a fresh soldier of a formation again.
+static void test_site_formation_reuse() {
+	std::printf("[site return] a formation everyone left starts over in place and takes its people back; a formation with people refuses\n");
+	Scene s;
+	const int a = s.formation(0, 10, 10, 0, 3, sword());
+	const int b = s.formation(1, 30, 30, 0, 2, sword());
+	s.w.finalize();
+	const int first = s.w.formations[a].members[0];
+	std::vector<int> people = s.w.formations[a].members;
+	std::vector<int64_t> ids;
+	for (int i : people) ids.push_back(s.w.person_id[i]);
+	CHECK(!s.w.site_formation_reuse(a, 0, 12.f, 12.f, 0.f, 2, 1.f, T_MELEE, 0.0), "a formation with people at the Site is not reused");
+	SitePersonRelease rel;
+	CHECK(s.w.site_person_release(first, rel), "one soldier leaves");
+	CHECK(!s.w.site_formation_reuse(a, 0, 12.f, 12.f, 0.f, 2, 1.f, T_MELEE, 0.0), "a formation that still has people is not reused");
+	for (int i : people) if (i != first) CHECK(s.w.site_person_release(i, rel), "the rest leave");
+	CHECK(s.w.formations[a].roster == 0 && s.w.formations[a].members.empty(), "the formation is empty");
+	check_valid(s.w);
+	const int soldiers = s.w.soldier_count();
+	const size_t formations = s.w.formations.size();
+	CHECK(!s.w.site_formation_reuse(99, 0, 12.f, 12.f, 0.f, 2, 1.f, T_MELEE, 0.0) && !s.w.site_formation_reuse(-1, 0, 12.f, 12.f, 0.f, 2, 1.f, T_MELEE, 0.0), "a formation that does not exist refuses");
+	CHECK(s.w.site_formation_reuse(a, 1, 14.f, 16.f, 0.f, 2, 1.f, T_MELEE, 0.0), "the empty formation starts over");
+	const Formation &g = s.w.formations[a];
+	CHECK(s.w.formations.size() == formations && g.team == 1 && g.cx == 14.f && g.cy == 16.f && g.roster == 0 && g.formal_cmd == -1, "it keeps its index and is a fresh formation of the given faction slot and place");
+	for (size_t k = 0; k < people.size(); ++k)
+		CHECK(s.w.site_person_readmit(people[k], a, sword(), k == 0 ? R_CAPTAIN : R_REGULAR, 0), "a person who left rejoins it");
+	CHECK(s.w.soldier_count() == soldiers && g.roster == (int)people.size() && g.members.size() == people.size() && g.formal_cmd == people[0], "everyone is back in their own slot, the captain in command");
+	for (size_t k = 0; k < people.size(); ++k) CHECK(s.w.person_id[people[k]] == ids[k] && s.w.team[people[k]] == 1 && s.w.alive(people[k]), "under their own id, in the new faction slot");
+	check_valid(s.w);
+	const std::vector<uint8_t> blob = s.w.save();
+	World loaded(1);
+	CHECK(!blob.empty() && loaded.load(blob) && loaded.state_hash() == s.w.state_hash(), "the reused formation survives save/load");
+	check_valid(loaded);
+	(void)b;
+	s.run(0.7);
+	check_valid(s.w);
+}
+
+static void test_site_person_readmit() {
+	std::printf("[site return] a released slot rejoins a formation under its own person id; live or foreign slots refuse; save/load keeps it\n");
+	Scene s;
+	const int a = s.formation(0, 10, 10, 0, 3, sword());
+	s.w.finalize();
+	const int64_t person = s.w.person_id[1];
+	const CommandAbility kept = s.w.ability[1];
+	CHECK(!s.w.site_person_readmit(1, a, sword(), R_REGULAR, 0), "a soldier still at the Site is not readmitted");
+	SitePersonRelease rel;
+	CHECK(s.w.site_person_release(1, rel), "the soldier leaves the Site");
+	const int roster_left = s.w.formations[a].roster, pool_left = s.w.formations[a].fatigue_count;
+	CHECK(!s.w.alive(1) && roster_left == 2, "the released soldier is off the roster");
+	CHECK(!s.w.site_person_readmit(1, 99, sword(), R_REGULAR, 0), "a formation that does not exist refuses");
+	CHECK(!s.w.site_person_readmit(-1, a, sword(), R_REGULAR, 0) && !s.w.site_person_readmit(s.w.soldier_count(), a, sword(), R_REGULAR, 0), "a slot out of range refuses");
+	const int b = s.w.add_formation(0, 20.f, 20.f, 0.f, 2, 1.f, T_MELEE, 0.0);
+	CHECK(b >= 0 && s.w.site_person_readmit(1, b, sword(), R_CAPTAIN, 7), "the released slot rejoins a new formation");
+	const Formation &g = s.w.formations[b];
+	CHECK(s.w.person_id[1] == person && s.w.soldier_index(person) == 1, "the person id and the slot index are kept");
+	CHECK(s.w.alive(1) && !s.w.released[1] && s.w.form[1] == b && s.w.hp[1] == 100.0 && s.w.ammo[1] == 7 && s.w.role[1] == R_CAPTAIN, "it is a fresh living soldier of the formation with the given role and ammo");
+	CHECK(g.roster == 1 && g.fatigue_count == 1 && g.members.size() == 1 && g.members[0] == 1 && g.slot_count == 1 && s.w.slot[1] == 0, "the formation counts it: roster, pool, member, slot");
+	CHECK(g.formal_cmd == 1, "a captain takes the formal command of a formation that has none");
+	CHECK(s.w.formations[a].roster == roster_left && s.w.formations[a].fatigue_count == pool_left, "the formation it left is unchanged");
+	CHECK(std::find(s.w.formations[a].members.begin(), s.w.formations[a].members.end(), 1) == s.w.formations[a].members.end(), "the formation it left does not list it");
+	(void)kept;
+	check_valid(s.w);
+	CHECK(!s.w.site_person_readmit(1, b, sword(), R_REGULAR, 0), "a readmitted soldier is not readmitted twice");
+	const std::vector<uint8_t> blob = s.w.save();
+	World loaded(1);
+	CHECK(!blob.empty() && loaded.load(blob) && loaded.state_hash() == s.w.state_hash() && loaded.alive(1) && loaded.form[1] == b, "the readmission survives save/load");
+	check_valid(loaded);
+	s.run(0.7);
+	check_valid(s.w);
+	CHECK(s.w.alive(1), "the readmitted soldier lives on through steps");
+	CHECK(s.w.site_person_release(1, rel) && !s.w.alive(1), "and can leave again");
+	check_valid(s.w);
+}
+
 // CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5, section 9 acceptance). Each block states the rule it checks.
 static Equip spear_steel() { Equip e; e.family = F_SPEAR; e.material = M_IRON; e.armor = A_STEEL; return e; }
 static void place_start(Scene &s, const std::vector<std::pair<float, float>> &xy) {
@@ -2480,6 +2555,8 @@ int main() {
 	test_site_person_release();
 	test_site_person_release_dead();
 	test_site_person_retag_released();
+	test_site_person_readmit();
+	test_site_formation_reuse();
 	test_cavalry();
 	test_cavalry_charge();
 	test_cavalry_speed();

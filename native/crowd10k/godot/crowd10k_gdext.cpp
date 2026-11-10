@@ -1205,6 +1205,26 @@ void m_site_person_retag_released(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, placeholder;
 	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],placeholder) && i>=0 && i<w.soldier_count() && w.site_person_retag_released((int)i,placeholder));
 }
+// A formation everyone left starts over in place: site_formation_reuse(formation, faction, cx, cy, facing, cols, spacing,
+// troop, training) -> bool, the arguments of add_formation after the formation index.
+void m_site_formation_reuse(CALL_ARGS) {
+	SELF; NEED(9); WORLD;
+	int64_t f, team, cols, troop; double cx, cy, facing, spacing, training;
+	if (!arg_int(a[0], f) || !arg_int(a[1], team) || !arg_num(a[2], cx) || !arg_num(a[3], cy) || !arg_num(a[4], facing) || !arg_int(a[5], cols) ||
+	    !arg_num(a[6], spacing) || !arg_int(a[7], troop) || !arg_num(a[8], training) || f < 0 || f >= (int64_t)w.formations.size() ||
+	    team < 0 || team > 255 || troop < 0 || troop > 2) { ret_bool(r, false); return; }
+	ret_bool(r, w.site_formation_reuse((int)f, (int)team, (float)cx, (float)cy, (float)facing, (int)std::max<int64_t>(1, cols), (float)spacing, (wg::Troop)troop, training));
+}
+// A person returning to a Site they left: site_person_readmit(soldier, formation, packed_equip, role, ammo) -> bool.
+// The released slot is a fresh soldier of the formation again; the slot index, person id and ability are kept.
+void m_site_person_readmit(CALL_ARGS) {
+	SELF; NEED(5); WORLD; int64_t i, f, code, role, am;
+	if (!arg_int(a[0],i) || !arg_int(a[1],f) || !arg_int(a[2],code) || !arg_int(a[3],role) || !arg_int(a[4],am)
+			|| i<0 || i>=w.soldier_count() || f<0 || f>=(int64_t)w.formations.size() || role<0 || role>2 || am<0 || am>65535) { ret_bool(r,false); return; }
+	wg::rules::Equip q;
+	q.family = (uint8_t)(code & 255); q.material = (uint8_t)((code >> 8) & 255); q.armor = (uint8_t)((code >> 16) & 255); q.shield = ((code >> 24) & 1) != 0;
+	ret_bool(r, w.site_person_readmit((int)i,(int)f,q,(wg::Role)role,(uint16_t)am));
+}
 // G1 S1 aboard. Refusals return false / an empty array and change nothing. site_person_aboard: [aboard, vehicle].
 void m_site_person_board(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, vehicle;
@@ -1571,6 +1591,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("site_person_release_aboard",m_site_person_release_aboard,{{INT,"soldier"},{INT,"vehicle"}},DOUBLES);
 	add_method("site_person_release_dead",m_site_person_release_dead,{{INT,"soldier"}},DOUBLES);
 	add_method("site_person_retag_released",m_site_person_retag_released,{{INT,"soldier"},{INT,"placeholder"}},BOOL);
+	add_method("site_person_readmit",m_site_person_readmit,{{INT,"soldier"},{INT,"formation"},{INT,"packed_equip"},{INT,"role"},{INT,"ammo"}},BOOL);
+	add_method("site_formation_reuse",m_site_formation_reuse,{{INT,"formation"},{INT,"faction"},{FLOAT,"cx"},{FLOAT,"cy"},{FLOAT,"facing"},{INT,"cols"},{FLOAT,"spacing"},{INT,"troop"},{FLOAT,"training"}},BOOL);
 	add_method("site_person_board",m_site_person_board,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
 	add_method("site_person_land",m_site_person_land,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("site_person_set_deck",m_site_person_set_deck,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);

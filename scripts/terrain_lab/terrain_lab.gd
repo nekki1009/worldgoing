@@ -2164,6 +2164,14 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 func _replay_completion_tolerance() -> float:
 	return maxf(ACTION_TIME_EPSILON, SiteRuntime.game_seconds(ACTION_TIME_EPSILON, float(terrain.site.get("combat_left", 0.0))) * simulation_speed)
 
+## The Site's own minute/phase clock and the world clock are separate float
+## accumulators. After hours of fixed steps they differ by far more than one
+## epsilon step (8e-10 s was measured at 15712 s), so a finished replay is
+## compared with its target at the fire-clock journal tolerance. This does not
+## decide whether time is left to step: _replay_pending_residue does that.
+func _replay_clock_agreement_tolerance() -> float:
+	return maxf(0.00000001, _replay_completion_tolerance())
+
 func _replay_pending_residue(pending: float) -> float:
 	# Clipped fixed steps can leave a float residue below one ACTION_TIME_EPSILON
 	# of action time; it cannot be stepped, so it counts as complete.
@@ -10179,16 +10187,16 @@ func _region_register_replayed_bind_source(input_source: TerrainData, accepted: 
 		and site_controller.region_slot == slot and _region_bound_data == terrain \
 		and slot._region_original_labs.get(str(terrain.site.id)) == self
 	if producer.get_parent() != self and not cached_original: return SiteRuntime.fail("INVALID_REGION_REPLAY_SOURCE")
-	if cached_original and _region_point_dispatching: return SiteRuntime.fail("REGION_REPLAY_PENDING")
+	if cached_original and _region_point_dispatching: return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：cached original still dispatching a point")
 	var selected := _region_selected_bind_source(input_source, slot)
 	if not selected.ok: return selected
 	var settlement := RegionSaveSlot.validate_settlement(accepted.site, slot.control.logical_game_seconds)
-	if not settlement.ok or bool(settlement.legacy) or float(settlement.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING")
+	if not settlement.ok or bool(settlement.legacy) or float(settlement.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：bind settlement ok=%s legacy=%s pending=%s" % [settlement.ok, settlement.get("legacy"), settlement.get("pending")])
 	var metadata := SiteStore.validate_region_snapshot(accepted, {})
 	if not metadata.ok: return metadata
 	var original_receipt: Dictionary = producer._region_owner_restore_receipt
 	if original_receipt.get("owners_restored") != true or producer._region_point_consuming or not producer._region_point_pending.is_empty():
-		return SiteRuntime.fail("REGION_REPLAY_PENDING")
+		return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：producer owners_restored=%s consuming=%s pending_points=%d" % [original_receipt.get("owners_restored"), producer._region_point_consuming, producer._region_point_pending.size()])
 	var graph := producer.validate_region_owner_bind_payload(accepted, metadata.owners, metadata.context)
 	if not graph.ok: return graph
 	# A crowd replay producer's section is the native capture written at its completion (_region_advance_original_cold_site).
@@ -10654,14 +10662,14 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
 	if slot == null and parent != null and parent.site_controller != null: slot = parent.site_controller.region_slot
 	if not restore_only or terrain == null or terrain != _region_bound_data or _replay_target != target_game_seconds \
-		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_completion_tolerance() \
-		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING")
+		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_clock_agreement_tolerance() \
+		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish restore_only=%s bound=%s target=%s replay_target=%s now=%s (now-target=%s) consuming=%s pending_points=%d" % [restore_only, terrain != null and terrain == _region_bound_data, target_game_seconds, _replay_target, SiteRuntime.now(terrain) * 60.0 if terrain != null else -1.0, SiteRuntime.now(terrain) * 60.0 - target_game_seconds if terrain != null else 0.0, _region_point_consuming, _region_point_pending.size()])
 	var settled := RegionSaveSlot.validate_settlement(terrain.site, target_game_seconds)
-	if not settled.ok or settled.legacy or float(settled.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING")
+	if not settled.ok or settled.legacy or float(settled.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish settlement ok=%s legacy=%s pending=%s" % [settled.ok, settled.get("legacy"), settled.get("pending")])
 	var context: Dictionary
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
 	if slot != null:
-		if absf(float(slot.control.logical_game_seconds) - target_game_seconds) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING")
+		if absf(float(slot.control.logical_game_seconds) - target_game_seconds) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish slot clock %s differs from target %s" % [slot.control.logical_game_seconds, target_game_seconds])
 		var registry: Dictionary = slot.region_registry()
 		context = {"purpose": "region_checkpoint", "mode": "cold_exact", "source_generation": int(slot._marker.get("generation", 0)),
 			"runtime_revision": int(registry.revision), "token": "region_replay_" + Crypto.new().generate_random_bytes(16).hex_encode(),

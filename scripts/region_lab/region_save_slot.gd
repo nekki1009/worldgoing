@@ -277,6 +277,43 @@ func site_path(site: Vector2i) -> String:
 ## starter=false: an unvisited Site opened as an arriving party's destination
 ## has no resident Actor or default worker (as _ground_destination). Every other
 ## caller keeps the standard starter.
+## A cold Site saved while another Site's endpoint was pending carries the common barrier of that instant, although none
+## of the pending events is its own. Its stored state is complete for that instant. Once the committed registry shows every
+## one of those events complete, the barrier is resolved and the Site settles forward like any checkpoint. (Found
+## 2026-11-10: the player arrived at a besieged Site; the Site just left was saved under the arrival's barrier by the
+## travelling Slot, the arrival completed in the reopened world's Slot, and the left Site's next evaluation was refused.)
+## A barrier with an endpoint payload, an event of this Site, or any event not yet complete stays a barrier.
+func _resolve_foreign_region_barrier(data: TerrainData, context: Dictionary) -> bool:
+	if str(context.get("mode", "")) != "cold_exact" or str(context.get("purpose", "")) != "region_barrier": return false
+	if bool(context.get("effects_complete", true)) or not context.get("endpoint_payload") is Dictionary or not context.endpoint_payload.is_empty(): return false
+	if float(context.game_seconds) > float(control.logical_game_seconds): return false
+	var events: Variant = context.get("events")
+	if not events is Array or events.is_empty(): return false
+	var owner := str(data.site.get("id", ""))
+	if owner.is_empty(): return false
+	var committed := {}
+	for event: Dictionary in region_registry().events: committed[str(event.id)] = event
+	for event: Variant in events:
+		if not event is Dictionary or str(event.get("owner", "")) == owner: return false
+		var now: Variant = committed.get(str(event.get("id", "")))
+		if not now is Dictionary or str(now.get("status", "")) != "complete" or str(now.get("owner", "")) != str(event.owner) 				or str(now.get("kind", "")) != str(event.get("kind", "")) or int(now.get("sequence", -1)) != int(event.get("sequence", -2)): return false
+	# The owner graph carries the same context beside the snapshot's own; both resolve together.
+	var snapshot: Dictionary = data.site.region_snapshot
+	var owners: Variant = RegionCheckpoint.unwire(snapshot.get("owners"))
+	if not owners is Dictionary: return false
+	var contexts: Array[Dictionary] = [snapshot.context]
+	for key: Variant in owners:
+		if owners[key] is Dictionary and owners[key].get("context") is Dictionary and owners[key].context.has("effects_complete"): contexts.append(owners[key].context)
+	for stored: Dictionary in contexts:
+		if stored.get("events") is Array:
+			for event: Variant in stored.events:
+				if event is Dictionary: event["status"] = "complete"
+		stored["purpose"] = "region_checkpoint"
+		stored["effects_complete"] = true
+	snapshot["owners"] = RegionCheckpoint.wire(owners)
+	return Store.validate_region_snapshot(data, {}).ok
+
+
 func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	if pin.is_empty() or source == null:
 		return fail("INVALID_SLOT", "存檔尚未開啟")
@@ -306,9 +343,11 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 			if not hot.ok: return hot
 			if not bool(hot.context.effects_complete) or str(hot.context.mode) in ["materializing", "dematerializing", "committed-unbound"]:
 				if absf(float(hot.context.game_seconds) - float(control.logical_game_seconds)) > 0.00000001:
-					return fail("REGION_RECOVERY_REQUIRED", "內部端點須先由已提交原 owner 接續")
-				loaded["region_commit"] = region_bind_proof(loaded.data)
-				return loaded
+					if not _resolve_foreign_region_barrier(loaded.data, hot.context):
+						return fail("REGION_RECOVERY_REQUIRED", "內部端點須先由已提交原 owner 接續")
+				else:
+					loaded["region_commit"] = region_bind_proof(loaded.data)
+					return loaded
 		var settled := _settle_cold_candidate(loaded.data, float(control.logical_game_seconds))
 		if not settled.ok: return settled
 		loaded.data = settled.data

@@ -752,6 +752,14 @@ public:
 	// takes `placeholder` instead, so the person can join again as a new soldier. Refuses (writes nothing) unless the slot is
 	// released and the placeholder is a non-negative id no soldier carries.
 	bool site_person_retag_released(int i, int64_t placeholder);
+	// A person returning to a Site they left (2026-11-10): their released slot becomes a fresh soldier of `formation`
+	// again, as add_soldier would create one (hp 100, no timers, no orders, at the formation centre), with the given kit,
+	// role and ammo. The slot index, the person id and the person's command ability are kept. Refuses (writes nothing)
+	// unless the World is finalized, no work point is open, the slot is released and the formation exists.
+	bool site_person_readmit(int i, int formation, const rules::Equip &e, Role r, uint16_t ammo_count);
+	// A formation whose people have all left the Site (every soldier of it released, roster 0) starts over in place as a
+	// fresh formation, as add_formation would make it, under the same formation index. Refuses otherwise, writing nothing.
+	bool site_formation_reuse(int formation, int team, float cx, float cy, float facing, int cols, float spacing, Troop troop, double training);
 	bool exit_ready_checks(int i, bool aboard_ok) const;
 	void release_ready(int i, SitePersonRelease &out); // the release body; callers have passed the exit gate
 	// G1 S1 aboard. Board: a ready soldier (the site_person_exit_ready guards) goes aboard vehicle >= 0; it keeps roster,
