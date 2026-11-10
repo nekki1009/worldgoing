@@ -13,7 +13,8 @@ var fleet_live_meals := 0.0
 var fleet_cold: Array[Dictionary] = []
 var fleet_exchanges: Array[Dictionary] = []
 var fleet_observation := "birth"
-var fleet_main_actor := 0
+var fleet_main_actor := 0 # The person the active Site controls now.
+var fleet_founder := 0 # The world's start person; it stands up both fleets, then stays at the remote Site as an NPC.
 var fleet_primary := ""
 var fleet_live_lab: TerrainLab
 var fleet_max_attempts := 48000
@@ -50,12 +51,20 @@ func _fleet_owner(index: int) -> TerrainLab:
 	var read: Dictionary = lab._region_gameplay_owner_lab(str(fleets[index].site), "cold_exact")
 	return read.lab if read.ok else null
 
-func _fleet_team(index: int) -> TerrainArmy:
+## The fleet team's live holder: its crowd owner on a crowd Site, else its GD army.
+func _fleet_team(index: int) -> Variant:
 	var original := _fleet_owner(index)
 	if original == null: return null
-	for team: TerrainArmy in original.combat_armies:
-		if team.team_id == int(fleets[index].team): return team
-	return null
+	return _team_owner(original, int(fleets[index].team))
+
+## Moves control between two crowd persons on the active Site (region_ship_finite_food_physical_test._ship_control).
+## The test's expected controlled person follows the move.
+func _fleet_control(from_id: int, to_id: int) -> bool:
+	var switched: Dictionary = lab.crowd_site.on_control_changed(from_id, to_id)
+	if not _check(switched.ok, "crowd control moves to the named person", {"from": from_id, "to": to_id, "result": switched}): return false
+	lab.terrain.site["controlled_person_id"] = to_id
+	fleet_main_actor = to_id
+	return _check(lab.controlled_person_id() == to_id and not lab.controlled_target().is_empty(), "the Site controls the named person", to_id)
 
 func _fleet_boat(index: int) -> Dictionary:
 	var original := _fleet_owner(index)
@@ -64,6 +73,9 @@ func _fleet_boat(index: int) -> Dictionary:
 func _setup_action_world() -> bool:
 	lab = _shell()
 	if not _check(lab != null, "original complete restore shell exists"): return false
+	# The shell enters the tree as a restore owner (no crowd startup). The live main Lab of the game starts as an
+	# ordinary scene, whose _ready requests the crowd unless --grid; this live owner does the same before its bind.
+	lab.crowd_startup_requested = not OS.get_cmdline_user_args().has("--grid")
 	controller = lab.site_controller
 	var archive := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345, {"size": Vector2i(32, 32)})
 	Env.initialize(archive, "c06-two-npc-sea:archive")
@@ -78,14 +90,26 @@ func _setup_action_world() -> bool:
 	action_owner = lab
 	lab.simulation_speed = 1.0
 	if not _check(lab._wire_region_gameplay_adapters(slot).ok, "original common Slot owns both true Site flows"): return false
+	# Neutral part 2 (11/03): the bind opens the Site as the player's live native one-person start team with its cadres.
+	var bound: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(bound.get("complete") == true and lab.crowd_site != null and lab.crowd_site.active, "a new world binds straight into the player's live native crowd team", bound): return false
 	fleet_main_actor = lab.controlled_person_id()
+	fleet_founder = fleet_main_actor
 	# Decision A (Nekki 2026-10-26): since P6 S1 a cold Site opened after world
 	# genesis has no people, so the remote fleet's Site is no longer born cold
 	# here. The same Actor stands it up hot later (_fleet_remote_decision_a).
 	if not _fleet_genesis(0, lab): return false
 	return _check(action_paid == 0.0 and lab.controlled_person_id() == fleet_main_actor and controller.checkpoint_region_internal("region_checkpoint", true).ok, "the main legal genesis graph publishes before paid work while main control stays with its original Actor")
 
-## One fleet's legal genesis on the hot Site its controlled Actor stands on.
+## One fleet's legal genesis on the hot Site the founder stands on.
+## Crowd port (2026-11-10): since 11/03 the founder is a row of its own neutral start team (with its cadres), so the
+## fleet is built from crowd teams as region_ship_finite_food_physical_test builds its ship team:
+## - a two-person fleet team (helm row 0, bow row 1) and a one-person headquarters team (the Nation head) are born
+##   through the GD roster constructor between a crowd release and re-admission (region_siege_center_original_test);
+## - control moves to the fleet captain for the public ship, food and bow work, as the old Actor Captain held it, and
+##   returns to the founder afterwards; the fleet team keeps its own captain, now an NPC.
+## The grid join_player / transfer_members_to / office-plan succession / leave_player_army checks have no crowd form (a
+## crowd person changes teams only through a cadre split); crowd cadre rules are covered by region_crowd_cadre_split_test.
 func _fleet_genesis(index: int, original: TerrainLab) -> bool:
 	var x := 30 if index == 0 else 70
 	var faction := 2 if index == 1 and fleet_case == "hostile" else 1
@@ -97,76 +121,121 @@ func _fleet_genesis(index: int, original: TerrainLab) -> bool:
 	original.terrain.site.inventory.grain = 8
 	original.terrain.site.depot_cell = original.terrain.index(Vector2i(x, 20))
 	if not _check(SiteRuntime.initialize_item_storage(original.terrain.site).ok, "finite initial Depot stock uses the original allocator", index): return false
-	# Explicit initial scenario faction belongs to this real Site founder.
-	original.character.faction_id = faction
-	if not _check(original.character.place(Vector2i(x, 21), true), "original founder begins on dry shore before intervals", index): return false
-	var actor: TerrainTestCharacter = original.controlled_target().owner
-	# Opening rule: the new World's main Site controls its own founder as person 1
-	# (INVALID_INITIAL_POPULATION). The remote Site is stood up by that same Actor
-	# after its own travel, so it controls it with the same world-unique person id.
-	var control_ok: bool = int(original.terrain.site.get("controlled_person_id", -1)) == 1 and actor.person_id == 1 if index == 0 else int(original.terrain.site.get("controlled_person_id", -1)) == actor.person_id and actor.person_id == fleet_main_actor
-	if not _check(actor == original.character and control_ok, "local existing Actor is the original founder under the opening control rule", index): return false
-	if not _check(FleetGarrison.set_military_role(original, actor.person_id, "officer").ok, "original Garrison qualifies the original local Actor", index): return false
-	var side := {"prefix": "friendly", "count": 3, "slot_count": 3, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
+	var founder: Dictionary = original.site_controller.person_actions._person(fleet_founder, false)
+	if not _check(original.controlled_person_id() == fleet_founder and not founder.is_empty() and founder.owner is CrowdPersonOwner,
+		"the founder is the controlled live crowd row on the hot fleet Site", index): return false
+	# The main founder starts on dry land east of the hull and its contacts, on the main side. On the remote Site the founder (main side) stays where it
+	# arrived: the remote fleet may be hostile to it, so it must not stand within melee reach of that fleet.
+	if index == 0 and not _check(_place_controlled(original, Vector2i(x + 6, 24), faction, true), "the founder and its cadres stand on the dry shore", index): return false
+	var founder_cell := Vector2i(original.site_controller.person_actions._person(fleet_founder, false).cell)
+	var free := _genesis_cells(Vector2i(x, 24), 3, original)
+	if not _check(free.size() == 3, "actual free dry cells hold the fleet and headquarters rows", free): return false
+	if index == 1 and not _check(Vector2(founder_cell).distance_to(Vector2(free[0])) >= 8.0, "the founder stands away from the remote fleet's rows", {"founder": founder_cell, "rows": free}): return false
+	var teams_before := {}
+	for owner: Variant in original.crowd_site.person_owners():
+		if owner is CrowdPersonOwner: teams_before[int(owner.team_id)] = true
+	var side := {"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
 	var other: Dictionary = side.duplicate(true)
 	other.prefix = "enemy"; other.count = 1; other.slot_count = 1
-	var source_cells: Array[Vector2i] = [Vector2i(x, 24), Vector2i(x, 20), Vector2i(x, 17)]
-	var headquarters_cells: Array[Vector2i] = [Vector2i(x + 1, 24)]
-	var born: Dictionary = original._deploy_trial_teams([side, other], [source_cells, headquarters_cells], 0)
-	if not _check(born.ok, "original typed genesis creates four finite real bodies and holders", born): return false
-	var source: TerrainArmy = original.combat_armies[0]
-	var headquarters: TerrainArmy = original.combat_armies[1]
-	if not _check(source.join_player(actor).ok and source.set_military_role(actor.person_id, "officer").ok, "original join retains the same role-only Actor Captain", index): return false
-	var old_captain := source.combat_identity(source.formal_commander)
-	var transferred: Dictionary = source.transfer_members_to(headquarters, [old_captain], source.current_commander, headquarters.current_commander)
-	if not _check(transferred.ok and source.current_commander == TerrainArmy.PLAYER_MEMBER and source.command_eligible(source.current_commander), "true pre-boat public transfer and settlement select the Actor Captain", transferred): return false
-	var people: Array[int] = []
-	for row: Dictionary in source.combat_units: people.append(int(row.person_id))
-	var offices: Dictionary = source.team_offices()
-	var seat := str(offices.duties.get("team.training", ""))
-	var position: Dictionary = SiteOffices.position(offices, seat)
-	if not _check(people.size() == 2 and not position.is_empty() and not bool(position.head) and str(position.office_class) == "military" and int(position.holder) <= 0, "existing military duty can seat the true future NPC captain", index): return false
-	var appointed: Dictionary = source.apply_office_plan(actor.person_id, int(offices.revision), [{"op": "set_role", "person_id": people[0], "role": "officer"}, {"op": "appoint", "position_id": seat, "person_id": people[0]}])
-	if not _check(appointed.ok and source.is_serving_military(0), "original transaction appoints a real serving NPC successor", appointed): return false
+	var source_cells: Array[Vector2i] = [free[0], free[1]]
+	var headquarters_cells: Array[Vector2i] = [free[2]]
+	var sides: Array[Dictionary] = [side, other]
+	var formations: Array = [source_cells, headquarters_cells]
+	# Decision A: the remote Site's heir (main side) is born with the remote fleet, before its rows board: a crowd release
+	# cannot hand a boarded row back to GD (NO_LEGAL_LAYOUT on its water cell), and nothing is paid in between.
+	var heir_cells: Array[Vector2i] = []
+	if index == 1:
+		for cell: Vector2i in _genesis_cells(founder_cell + Vector2i(0, 3), 6, original):
+			if not free.has(cell) and heir_cells.size() < 2: heir_cells.append(cell)
+		if not _check(heir_cells.size() == 2, "actual free cells beside the founder hold the heir's original team", heir_cells): return false
+		sides.append({"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": 1, "training": 0.0,
+			"role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false})
+		formations.append(heir_cells)
+	if not _crowd_release(original): return false
+	var born: Dictionary = original._deploy_trial_teams(sides, formations, 4)
+	if not _check(born.ok, "original typed genesis creates the finite real bodies and holders", born): return false
+	# The named genesis itself re-admits a released crowd (TerrainLab._deploy_trial_teams crowd branch).
+	if not original.crowd_site.active and not _crowd_admit(original): return false
+	var source: Variant = null
+	var headquarters: Variant = null
+	for owner: Variant in original.crowd_site.person_owners():
+		if not owner is CrowdPersonOwner or teams_before.has(int(owner.team_id)): continue
+		for row: int in owner.records:
+			var cell := Vector2i(owner.person(row, false).cell)
+			if cell == source_cells[0]: source = owner
+			if cell == headquarters_cells[0]: headquarters = owner
+			if not heir_cells.is_empty() and cell == heir_cells[0]: center_heir = owner.combat_identity(int(owner.current_commander))
+	if not _check(source != null and headquarters != null and source != headquarters, "the fleet and headquarters teams have their own crowd owners", index): return false
+	var captain: int = source.combat_identity(int(source.current_commander))
+	var people: Array[int] = [captain]
+	for row: int in source.records:
+		var identity: int = source.combat_identity(row)
+		if identity != captain: people.append(identity)
+	if not _check(people.size() == 2 and source.command_eligible(int(source.current_commander)) and not people.has(fleet_founder), "the fleet team is two real rows under its own eligible captain", people): return false
+	# The founder commands the public ship work only through the fleet captain, as the old Actor Captain did.
+	if not _fleet_control(fleet_founder, captain): return false
 	var anchor := Vector2i(x, 19 if index == 0 else 18)
 	var facing := Vector2i.LEFT if index == 0 else Vector2i.RIGHT
 	var deployed: Dictionary = original.site_controller.vehicles.deploy_ship(source, "ferry", anchor, facing, true)
+	if not deployed.ok:
+		# Failure evidence only: every living body's cell beside the hull footprint.
+		var hull: Array[Vector2i] = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd").footprint("ferry", anchor, facing)
+		var bodies := []
+		for owner: Variant in original.crowd_site.person_owners():
+			if not owner is CrowdPersonOwner: continue
+			for row: int in owner.records:
+				var person: Dictionary = owner.person(row, false)
+				if not person.is_empty(): bodies.append([owner.combat_identity(row), int(owner.team_id), person.cell, hull.has(Vector2i(person.cell))])
+		var transport: SiteVehicleTransport = original.site_controller.vehicles
+		deployed["evidence"] = {"hull": hull, "bodies": bodies, "water": original.terrain.can_place_water_vehicle(hull), "gd_block": hull.map(func(c: Vector2i) -> bool: return transport._people_block(c)), "crowd_block": hull.map(func(c: Vector2i) -> bool: return transport._crowd_people_block(c))}
 	if not _check(deployed.ok, "explicit TEST_ONLY hull genesis retains original complete fit and owner guards", deployed): return false
 	var boat := str(deployed.vehicle_id)
 	var contacts: Array[Vector2i] = original.site_controller.vehicles.ship_contacts(original.terrain.site.vehicles[boat])
-	if not _check(contacts.has(source.cells[0]) and contacts.has(source.cells[1]), "two genuine distinct body cells are both original shore boarding contacts", contacts): return false
+	if not _check(contacts.size() == 2 and contacts[0] != contacts[1], "the hull has two genuine distinct shore boarding contacts", contacts): return false
+	# The north contact is a pier cut off from the land by the hull's water, so the rows stand on their contacts at
+	# genesis (as the old fixture bore them there), placed natively before any paid interval.
+	for row: int in 2:
+		if not _check(_place_controlled_person(original, people[row], contacts[row]), "a fleet row stands on its own genuine boarding contact at genesis", {"person": people[row], "contact": contacts[row]}): return false
+	# A crowd formation regroups placed rows on its captain; the original siege step holds an arrived worker on its cell
+	# (region_ship_finite_food_physical_test walks its rows there through the same order).
+	for row: int in 2:
+		if not _check(original.crowd_site.siege_approach_step(people[row], contacts[row]), "the original siege step holds each fleet row on its contact", {"person": people[row], "contact": contacts[row]}): return false
 	var members: Array[int] = []
-	for team: TerrainArmy in original.combat_armies:
-		for row: int in team.combat_units.size(): members.append(team.combat_identity(row))
-	var head := headquarters.combat_identity(headquarters.current_commander)
+	for owner: Variant in [source, headquarters]:
+		for row: int in owner.records: members.append(owner.combat_identity(row))
+	var head: int = headquarters.combat_identity(int(headquarters.current_commander))
 	var nation := "c06_sea_nation_%d_%d" % [OS.get_process_id(), index]
 	if not original.terrain.site.has("equipment_nations"): original.terrain.site.equipment_nations = {}
 	original.terrain.site.equipment_nations[nation] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", head, true)}
 	var nation_offices: Dictionary = original.terrain.site.equipment_nations[nation].offices
 	var authorized: Dictionary = original.site_controller.equipment_orders.apply_nation_office_plan(head, nation, int(nation_offices.revision), [{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(nation_offices).id)}])
-	if not _check(authorized.ok and head != actor.person_id, "original Nation office transaction retains its resident actual NPC dispatch head", authorized): return false
-	fleets.append({"coordinate": Vector2i.ZERO if index == 0 else Vector2i(-1, 0), "site": str(original.terrain.site.id), "actor": actor.person_id, "team": source.team_id, "people": people, "boat": boat, "nation": nation, "head": head, "token": "c06_two_npc_%d_%d" % [OS.get_process_id(), index], "refs": {}, "delivered": 6.0})
+	if not _check(authorized.ok and head != fleet_founder and not people.has(head), "original Nation office transaction retains its resident actual NPC dispatch head", authorized): return false
+	fleets.append({"coordinate": Vector2i.ZERO if index == 0 else Vector2i(-1, 0), "site": str(original.terrain.site.id), "actor": captain, "team": int(source.team_id), "people": people, "boat": boat, "contacts": contacts, "nation": nation, "head": head, "token": "c06_two_npc_%d_%d" % [OS.get_process_id(), index], "refs": {}, "delivered": 6.0})
 	return true
 
 ## Decision A for the remote fleet Site (Nekki 2026-10-26, same pattern as the
 ## phase/center tests). Only the controlled person may issue the public ship
 ## actions (site_vehicle_transport.gd requester == controlled_person_id), and
-## the world has one Actor. So the main Actor, already free of its main crew,
-## travels to the remote Site, stands its fleet up there while that Site is hot,
-## and hands living control to a newly born family member, who departs for the
-## main Site so the remote Site goes cold. The Actor stays there as an NPC.
+## the world has one controlled person. So the founder, free of the main fleet,
+## travels with its start team to the remote Site, stands its fleet up there while
+## that Site is hot, and hands living control to a newly born family member, who
+## departs for the main Site so the remote Site goes cold. The founder stays there as an NPC.
 func _fleet_remote_decision_a() -> bool:
 	var remote_site := Grid.site_id(str(slot.pin.atlas_id), Vector2i(-1, 0))
 	if not await _fleet_travel_controlled(Vector2i(-1, 0)): return false
+	_fleet_phase("a_travel_to_remote")
 	action_owner = lab
 	lab.simulation_speed = 1.0
-	if not _check(lab.controlled_person_id() == fleet_main_actor and str(slot.control.active_site_id) == remote_site and str(lab.terrain.site.id) == remote_site,
-		"the same original Actor arrives at and controls the hot remote fleet Site"): return false
+	if not _check(lab.controlled_person_id() == fleet_founder and str(slot.control.active_site_id) == remote_site and str(lab.terrain.site.id) == remote_site,
+		"the same founder arrives at and controls the hot remote fleet Site"): return false
+	fleet_main_actor = fleet_founder
 	if not _fleet_genesis(1, lab): return false
-	if not _check(lab.controlled_person_id() == fleet_main_actor and controller.checkpoint_region_internal("region_checkpoint", true).ok,
-		"the remote legal genesis graph publishes before its own paid work while the same Actor controls the hot remote Site"): return false
+	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok,
+		"the remote legal genesis graph publishes before its own paid work"): return false
+	_fleet_phase("a_remote_genesis")
 	if not await _public_fit(1): return false
 	# The heir belongs to the main side's faction: it becomes main human control.
+	_fleet_phase("a_remote_fit")
 	if not _fleet_birth_heir(1): return false
 	if not await _hand_over_and_leave(Vector2i.ZERO): return false
 	action_owner = lab
@@ -175,22 +244,10 @@ func _fleet_remote_decision_a() -> bool:
 	return _check(fleet_main_actor == center_heir and str(slot.control.active_site_id) == str(fleets[0].site) and str(slot.control.active_site_id) != remote_site and not lab.controlled_target().is_empty(),
 		"the living heir controls the main Site and the remote fleet Site is cold", {"heir": center_heir, "controlled": fleet_main_actor, "active": slot.control.active_site_id})
 
-## The heir is a newly born family member with a world-unique id, away from the
-## remote fleet's bodies.
-func _fleet_birth_heir(faction: int) -> bool:
-	var cells := _genesis_cells(Vector2i(70, 60), 2, lab)
-	if not _check(cells.size() == 2, "actual free cells away from the remote fleet hold the heir's original team", cells): return false
-	var side: Dictionary = {"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": faction, "training": 0.0,
-		"role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
-	var sides: Array[Dictionary] = [side]
-	var born: Dictionary = lab._deploy_trial_teams(sides, [cells], 4)
-	if not _check(born.ok, "original named genesis births the heir's real team", born): return false
-	var team: TerrainArmy = null
-	for candidate: TerrainArmy in lab.combat_armies:
-		if candidate.combat_enabled and candidate.cells.has(cells[0]): team = candidate
-	if not _check(team != null, "the heir's original team is present"): return false
-	center_heir = team.combat_identity(team.formal_commander)
-	return _check(center_heir > 0 and center_heir != fleet_main_actor, "the heir is a newly born world-unique person", center_heir)
+## The heir is a newly born family member with a world-unique id, born beside the founder with the remote fleet.
+func _fleet_birth_heir(_faction: int) -> bool:
+	return _check(center_heir > 0 and center_heir != fleet_founder and lab.controlled_person_id() == fleet_founder and lab.crowd_site.person_owner(center_heir) != null,
+		"the heir is a newly born world-unique person beside the founder", center_heir)
 
 ## The controlled Actor's own original Region travel (the travel half of
 ## _hand_over_and_leave, without a handover): depart, route, paid map
@@ -237,6 +294,7 @@ func _fleet_travel_controlled(destination: Vector2i) -> bool:
 		if not _check(advanced.ok, "original map caller advances one common interval", advanced): return false
 		if bool(advanced.get("arrived", false)): break
 		if iteration % 60 == 0: await process_frame
+	_fleet_phase("t_route")
 	if not _check(bool(slot.region_travel_status().get("arrived", false)), "the Actor genuinely arrives at the remote fleet Site"): return false
 	var stored: Dictionary = slot.checkpoint_region_travel()
 	if not _check(stored.ok, "the original travel publisher stores the arrived party", stored): return false
@@ -248,6 +306,7 @@ func _fleet_travel_controlled(destination: Vector2i) -> bool:
 		visible_open = visible.site_controller.resume_region_operation()
 		if retry % 60 == 0: await process_frame
 	if not _check(visible_open.ok and bool(visible_open.get("arrived", false)), "production world-open binds the arrived remote fleet Site", visible_open): return false
+	_fleet_phase("t_world_open")
 	_freeze(visible)
 	lab = visible
 	controller = visible.site_controller
@@ -312,7 +371,12 @@ func _public_board(index: int, row: int, berth: int) -> bool:
 	var person := int(fleet.people[row])
 	var begun: Dictionary = original.site_controller.person_actions.begin_ship_board(person, str(fleet.boat), int(fleet.actor), berth, false)
 	if not _check(begun.ok and not original.site_controller.vehicles.is_embarked(person), "false-dispatch public boarding creates only the original pending job", begun): return false
-	if not await _fleet_until(func() -> bool: return _fleet_owner(index).site_controller.vehicles.is_embarked(person) and not _fleet_owner(index).site_controller.person_actions.is_busy(person), "original paid board completes for the same actual row"): return false
+	# The job ends either committed (embarked) or refused; a refusal is reported at once, not at the attempt bound.
+	if not await _fleet_until(func() -> bool: return not _fleet_owner(index).site_controller.person_actions.is_busy(person), "original paid boarding job ends for the same actual row"): return false
+	var owner_lab := _fleet_owner(index)
+	var body: Dictionary = owner_lab.site_controller.person_actions._person(person, false)
+	if not _check(owner_lab.site_controller.vehicles.is_embarked(person), "original paid board commits the same actual row",
+		{"refusal": owner_lab.get_meta(&"last_refused_result", {}), "cell": body.get("cell"), "moving": body.get("moving"), "contacts": fleet.contacts, "row": row}): return false
 	return _check(int(_fleet_owner(index).site_controller.vehicles.ship_person(person).row.berth_id) == berth, "actual body owns only its original requested berth")
 
 func _contact_bow_local(vehicle: Dictionary) -> Vector2:
@@ -377,7 +441,7 @@ func _public_fit(index: int) -> bool:
 	if not await _fleet_until(func() -> bool: return not _fleet_owner(index).site_controller.person_actions.is_busy(int(fleet.people[1])), "original paid deck path seats the same actual crew row"): return false
 	if not _check(_fleet_owner(index).site_controller.vehicles.ship_local_position(int(fleet.people[1])).distance_to(seat) <= EPS, "actual crew row sits exactly on its crew berth"): return false
 	original = _fleet_owner(index)
-	var team := _fleet_team(index)
+	var team: Variant = _fleet_team(index)
 	# A ferry's standard crew is its helm alone (standard_crew 1); the second
 	# real NPC rides aboard the same boat, able, on a legal seated position.
 	var second: Dictionary = original.site_controller.vehicles.ship_person(int(fleet.people[1]))
@@ -388,15 +452,26 @@ func _public_fit(index: int) -> bool:
 		"one real helm is the full standard crew and one separate real NPC rides seated aboard each ferry"): return false
 	var delivery: Dictionary = original.site_controller.begin_team_food(team, float(fleet.delivered), int(fleet.people[1]), {"kind": "depot"})
 	if not _check(delivery.ok, "public actual shore Depot fill starts finite original productive work", delivery): return false
-	if not await _fleet_until(func() -> bool: return _fleet_owner(index).site_controller._supply_entry(_fleet_team(index)).delivery.is_empty(), "original accepted delivery publishes its actual boat food pool"): return false
+	for attempt: int in range(6000):
+		if _fleet_owner(index).site_controller._supply_entry(_fleet_team(index)).delivery.is_empty(): break
+		if Time.get_ticks_msec() > deadline: break
+		if not _fleet_step(): return false
+		if attempt % 60 == 0: await process_frame
+	var fed: SiteController = _fleet_owner(index).site_controller
+	var job: Dictionary = fed._supply_entry(_fleet_team(index)).get("delivery", {})
+	if not _check(job.is_empty(), "original accepted delivery publishes its actual boat food pool",
+		{"left": job.get("left"), "quantity": job.get("quantity"), "pending": job.get("pending"), "representative": job.get("representative_id"), "target": job.get("target_location"),
+		"crowd_delivery_steps": fed.crowd_delivery_steps, "crowd_delivery_last": fed.crowd_delivery_last, "settle": fed.supply_settle_last,
+		"valid": fed.food_delivery.valid_breakdown(_fleet_team(index), fed._supply_entry(_fleet_team(index))) if not job.is_empty() else "done", "paid": action_paid}): return false
 	if not _check(int(_fleet_owner(index).terrain.site.inventory.grain) == 8 - int(fleet.delivered), "finite original Depot pays each delivered grain exactly once"): return false
-	original = _fleet_owner(index)
 	team = _fleet_team(index)
-	if not _check(team.current_commander == TerrainArmy.PLAYER_MEMBER and team.command_eligible(team.current_commander) and team.command_eligible(0), "real Actor Captain and serving future NPC are present before public leave"): return false
+	if not _check(team != null and team.combat_identity(int(team.current_commander)) == int(fleet.actor) and team.command_eligible(int(team.current_commander)) and lab.controlled_person_id() == int(fleet.actor), "the controlled fleet captain commands its real crew before control returns to the founder"): return false
 	if not await _public_contact_bow(index): return false
-	var left: Dictionary = original.leave_player_army()
+	# Control returns to the founder; the fleet team keeps its own captain, now an NPC (finite_food closure).
+	if not _fleet_control(int(fleet.actor), fleet_founder): return false
 	team = _fleet_team(index)
-	return _check(left.ok and team.player_member == null and team.combat_identity(team.current_commander) == int(fleet.people[0]) and team.command_eligible(team.current_commander) and not team.needs_attack_order, "original public leave selects the genuine eligible NPC captain without force-order or control flags", left)
+	return _check(team != null and team.combat_identity(int(team.current_commander)) == int(fleet.actor) and team.command_eligible(int(team.current_commander)) and not fleet.people.has(lab.controlled_person_id()),
+		"the fleet team keeps the same eligible captain, now an NPC, after control returns to the founder")
 
 ## Stable person/team/nation refs come from the original travel identity
 ## allocator, which a departure would run; nothing has travelled yet in this
@@ -411,6 +486,12 @@ func _fleet_identities() -> bool:
 		original.terrain.site.travel_identity = identified.state.travel_identity
 	return true
 
+func _sorted_ids(ids: Array) -> Array:
+	var sorted: Array = []
+	for identity: Variant in ids: sorted.append(int(identity))
+	sorted.sort()
+	return sorted
+
 func _fleet_dispatch(index: int) -> bool:
 	var original := _fleet_owner(index)
 	var fleet: Dictionary = fleets[index]
@@ -418,7 +499,7 @@ func _fleet_dispatch(index: int) -> bool:
 	var observed: Dictionary = slot.record_region_officer_geography_observation(original, int(fleet.head), destination)
 	if not _check(observed.ok, "actual resident Nation head observes only original public target geography", observed): return false
 	var prepared: Dictionary = slot.prepare_npc_region_dispatch(original, str(fleet.nation), int(fleet.team), destination, 0, [], str(fleet.token))
-	if not _check(prepared.ok and prepared.party.mode == "sea" and prepared.party.person_ids == fleet.people and prepared.party.vehicle_ids == [fleet.boat] and prepared.party.content.actors.is_empty() and prepared.plan.action_steps.size() > 0 and prepared.request.decider == int(fleet.head), "original Nation authority prepares a genuine full one-hull two-row sea route", prepared.get("code")): return false
+	if not _check(prepared.ok and prepared.party.mode == "sea" and _sorted_ids(prepared.party.person_ids) == _sorted_ids(fleet.people) and prepared.party.vehicle_ids == [fleet.boat] and prepared.party.content.actors.is_empty() and prepared.plan.action_steps.size() > 0 and prepared.request.decider == int(fleet.head), "original Nation authority prepares a genuine full one-hull two-row sea route", prepared.get("code")): return false
 	fleet.refs = prepared.party.content.travel_identity.refs.duplicate(true)
 	var before := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds]
 	var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
@@ -776,6 +857,23 @@ func _fleet_coarse_to_meal() -> bool:
 		"coarse accepted intervals stop inside the fine margin before the meal boundary and restore the 1x cadence",
 		{"world": slot.control.logical_game_seconds, "stop_at": stop_at, "boundary": boundary, "meals": fleet_live_meals})
 
+## Failure evidence only: both bow crews, their boats' moves and the contact guards in the NPC frame host.
+func _contact_facts(started: int, steps: int) -> Dictionary:
+	var facts := {"wall_ms_in_wait": Time.get_ticks_msec() - started, "steps": steps, "world": slot.control.logical_game_seconds, "paid": action_paid}
+	if not is_instance_valid(fleet_live_lab): return facts
+	var vehicles: SiteVehicleTransport = fleet_live_lab.site_controller.vehicles
+	for index: int in 2:
+		var person := _crew(index, 1)
+		if person.is_empty(): facts["crew_%d" % index] = "missing"; continue
+		var boat: Dictionary = vehicles.ship_for_person(int(person.id))
+		facts["crew_%d" % index] = {"id": person.id, "can_attack": vehicles.ship_can_attack(int(person.id)), "ground": vehicles.ship_person_ground(int(person.id)),
+			"boat": boat.get("id"), "cell": fleet_live_lab.terrain.cell_from_index(int(boat.get("cell", 0))) if not boat.is_empty() else null,
+			"move": boat.get("move", {}).keys(), "elapsed": boat.get("move", {}).get("elapsed"), "duration": boat.get("move", {}).get("duration"), "command": boat.get("command", {}).keys(), "job": vehicles.ship_job(str(boat.get("id", ""))).get("kind", "")}
+	var a := _crew(0, 1)
+	var b := _crew(1, 1)
+	if not a.is_empty() and not b.is_empty(): facts["contact"] = vehicles.ship_combat_contact(int(a.id), int(b.id))
+	return facts
+
 func _real_melee() -> bool:
 	var contact_a: Dictionary = _crew(0, 1)
 	var contact_b: Dictionary = _crew(1, 1)
@@ -784,7 +882,15 @@ func _real_melee() -> bool:
 		and contact_transport.ship_local_position(int(contact_a.id)).distance_to(_contact_bow_local(contact_transport.ship_for_person(int(contact_a.id)))) <= EPS
 		and contact_transport.ship_local_position(int(contact_b.id)).distance_to(_contact_bow_local(contact_transport.ship_for_person(int(contact_b.id)))) <= EPS,
 		"original full cold restore and NPC frame retain both publicly paid bow positions"): return false
-	if not await _fleet_until(_actual_contact_ready, "original completed boat moves release journey/moving guards and expose true crew contact"): return false
+	var contact_started := Time.get_ticks_msec()
+	var contact_steps := 0
+	while not _actual_contact_ready():
+		if Time.get_ticks_msec() > deadline or contact_steps >= fleet_max_attempts:
+			return _check(false, "original completed boat moves release journey/moving guards and expose true crew contact", _contact_facts(contact_started, contact_steps))
+		if not _fleet_step(): return false
+		contact_steps += 1
+		if contact_steps % 60 == 0: await process_frame
+	_check(true, "original completed boat moves release journey/moving guards and expose true crew contact")
 	var a := _crew(0, 1)
 	var b := _crew(1, 1)
 	var helm := _crew(0, 0)
@@ -808,27 +914,47 @@ func _real_melee() -> bool:
 		physical_effects = physical_effects and _melee_effect_applied(exchange)
 	return _check(not fleet_exchanges.is_empty() and physical_effects and fleet_live_lab._region_point_pending.is_empty(), "genuine accepted original exchange changes real life/fatigue/cooldown effects after its endpoint is consumed", {"exchanges": fleet_exchanges})
 
+## Wall-clock phase marks (evidence only): each phase's elapsed milliseconds since the previous mark.
+var fleet_phase_marks: Array = []
+var fleet_phase_last := 0
+func _fleet_phase(label: String) -> void:
+	var now := Time.get_ticks_msec()
+	fleet_phase_marks.append([label, now - fleet_phase_last, action_paid, slot.control.logical_game_seconds if slot != null else -1.0])
+	fleet_phase_last = now
+	print("FLEET_PHASE ", label, " ms=", fleet_phase_marks[-1][1], " paid=", action_paid)
+
 func _run() -> void:
+	fleet_phase_last = Time.get_ticks_msec()
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
 	if not _check(fleet_case in ["hostile", "friendly"], "one original hostile or friendly actual two-fleet case", fleet_case): _finish(); return
 	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	_fleet_phase("genesis")
 	fleet_observation = "public_work"
 	if not await _public_fit(0): _finish(); return
+	_fleet_phase("public_fit_0")
 	if not await _fleet_remote_decision_a(): _finish(); return
 	if not _fleet_identities(): _finish(); return
+	_fleet_phase("remote_decision_a")
 	if not await _fleet_reopen(): _finish(); return
+	_fleet_phase("first_reopen")
 	for index: int in 2:
 		if not _fleet_dispatch(index): _finish(); return
 	var far: Dictionary = slot._region_npc_sea_pair_boundary(str(fleets[0].token), str(fleets[1].token))
 	if not _check(far.ok and not far.get("contact", false), "same original ocean component with distant true hulls is not contact", far): _finish(); return
+	_fleet_phase("paid_partial_sea")
 	fleet_observation = "paid_partial_sea"
 	if not await _fleet_until(_has_partial, "actual original NPC cursors retain a real paid partial ship step") or not _original_partial_refusals() or not await _fleet_reopen() or not _original_partial_refusals(): _finish(); return
+	_fleet_phase("actual_npc_frame")
 	fleet_observation = "actual_npc_frame"
 	if not await _fleet_until(_has_actual_frame, "same original earliest-boundary consumer publishes the true two-NPC frame") or not _bind_live_observer(): _finish(); return
 	var incoming := str(fleets[0].token) if fleet_primary == str(fleets[1].token) else str(fleets[1].token)
 	if not _check(slot.region_registry().parties[incoming].phase == "joined" and slot.region_registry().parties[incoming].entered_party == fleet_primary and slot.region_registry().parties[fleet_primary].phase == "travelling", "one actual incoming closure joins the same primary NPC owner exactly once"): _finish(); return
-	if not await _fleet_reopen() or not await _real_melee() or not _food_results(): _finish(); return
+	_fleet_phase("frame_bound")
+	if not await _fleet_reopen(): _finish(); return
+	_fleet_phase("frame_reopen")
+	if not await _real_melee() or not _food_results(): _finish(); return
+	_fleet_phase("melee_or_meal")
 	var held := _live_food_held()
 	if not _check(held >= 0.0 and absf(held + fleet_meals - 12.0) <= EPS, "real mapped two-boat held plus actual accepted original consumption conserves all twelve delivered rations", {"held": held, "accepted_consumed": fleet_meals, "live_controller_consumed": fleet_live_meals}): _finish(); return
 	report["two_npc_sea"] = {"case": fleet_case, "fleets": fleets, "primary": fleet_primary, "paid_action": action_paid, "paid_game": action_game_paid, "cold": fleet_cold, "exchanges": fleet_exchanges, "actual_food_results": fleet_food, "all_six_cases": "OPEN_NOT_RUN"}
@@ -847,6 +973,7 @@ func _finish(ok: bool = true, message: String = "") -> void:
 			var restored := FileAccess.open(Entry.LAST_WORLD, FileAccess.WRITE); restored.store_buffer(last_world_bytes); restored.close()
 		else: DirAccess.remove_absolute(ProjectSettings.globalize_path(Entry.LAST_WORLD))
 	TerrainArmy.release_contact_source()
+	print("FLEET_PHASES ", fleet_phase_marks, " tail_ms=", Time.get_ticks_msec() - fleet_phase_last)
 	var receipt := {"failed": failed, "checks": checks, "case": fleet_case, "report": report, "checks_evidence": action_evidence, "scope": "Source-authored actual original public work, two NPC Nation sea dispatches, full cold owners, first conservative frame, paid original contact and real melee/food outcomes; GD/parser/runtime/all-six/native/performance OPEN until sole Root runner"}
 	var file := FileAccess.open(out.path_join("two_npc_sea_public_contact_receipt.json"), FileAccess.WRITE)
 	if file != null: file.store_string(JSON.stringify(receipt, "\t", true, true)); file.close()

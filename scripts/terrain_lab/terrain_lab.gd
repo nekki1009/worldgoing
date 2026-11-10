@@ -9,6 +9,11 @@ const MAX_ZOOM := 10.0
 const ZOOM_STEP := 1.20
 const ACTION_STEP := 1.0 / 120.0
 const ACTION_FRAME_BUDGET_USEC := 20000 # Leave rendering time while bounded catch-up repays slow frames.
+## A cold Site's catch-up that is already PENDING continues while the world waits on it (input is refused, the Lab is
+## frozen). A continuation from a world-open retry first reopens the whole world (about 3 s on a coast world), so a 20 ms
+## slice turned a 714-step catch-up into about 140 reopens (7 minutes). The first call keeps the frame budget, so a
+## catch-up still reports PENDING at once; each continuation runs a 250 ms slice.
+const COLD_REPLAY_CONTINUE_BUDGET_USEC := 250000
 const ACTION_TIME_EPSILON := 0.000000000001
 ## Accumulated minute-phase drift admitted at a step's end (action seconds); see _region_owner_action_limit.
 const PHASE_BOUNDARY_TOLERANCE := 0.00000001
@@ -2716,7 +2721,9 @@ func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionar
 
 func _fatigue_threat(cell: Vector2i, faction: int, rest_owner: Variant, unit_index: int, candidates: Dictionary) -> bool:
 	if SiteRuntime.fire_hazard_at(terrain, cell) > 0.0: return true
-	if rest_owner is TerrainArmy and unit_index >= 0 and _ship_embarked(rest_owner.combat_identity(unit_index)):
+	# A crowd row aboard a boat stands on a water cell like a grid row does; both read the boat's own rest guard,
+	# not the land walkability below (a crowd delivery representative aboard was always THREAT-paused, 2026-11-10).
+	if (rest_owner is TerrainArmy or rest_owner is CrowdPersonOwner) and unit_index >= 0 and _ship_embarked(rest_owner.combat_identity(unit_index)):
 		return _ship_fatigue_threat(rest_owner.combat_identity(unit_index), faction, candidates)
 	if not terrain.is_walkable(cell):
 		return true
@@ -5965,6 +5972,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	var identity := str(source.site_id)
 	var signature := str(source.source_sha256)
 	var fire_replay := {}
+	var continuing := is_instance_valid(_cold_replay_lab)
 	if is_instance_valid(_cold_replay_lab):
 		if _cold_replay_id != identity or _cold_replay_target != target_seconds or _cold_replay_signature != signature:
 			return SiteRuntime.fail("BUSY", "另一原地點／來源／固定目標補算尚未完成")
@@ -6025,9 +6033,10 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		_cold_replay_id = identity
 		_cold_replay_target = target_seconds
 		_cold_replay_signature = signature
-	var advanced: Dictionary = _cold_replay_lab.advance_region_cold_actual_fixed(data, target_seconds, ACTION_FRAME_BUDGET_USEC) \
+	var slice_usec := COLD_REPLAY_CONTINUE_BUDGET_USEC if continuing else ACTION_FRAME_BUDGET_USEC
+	var advanced: Dictionary = _cold_replay_lab.advance_region_cold_actual_fixed(data, target_seconds, slice_usec) \
 		if site_controller != null and site_controller.region_slot != null \
-		else _cold_replay_lab.replay_site_to(target_seconds, ACTION_FRAME_BUDGET_USEC)
+		else _cold_replay_lab.replay_site_to(target_seconds, slice_usec)
 	var cold_receipt := {"method": str(advanced.get("method", "original_shared_exact")),
 		"prefix_steps": int(advanced.get("prefix_steps", 0)), "exact_steps": int(advanced.get("exact_steps", advanced.get("steps", 0))),
 		"processing_usec": int(advanced.get("processing_usec", 0)), "source_sha256": signature, "target": target_seconds}
