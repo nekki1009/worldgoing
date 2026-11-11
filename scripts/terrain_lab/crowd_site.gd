@@ -1056,6 +1056,8 @@ func _packed_equip(appearance: Dictionary) -> int:
 	return maxi(0, family) | (maxi(0, material) << 8) | (armor_code << 16) | ((1 if str(appearance.parts.get("shield", "none")) != "none" else 0) << 24)
 
 
+var _appearance_cache: Dictionary = {} # person id -> {holder, original, data, stamp, projected}; never saved.
+
 func _appearance(identity: int) -> Dictionary:
 	var prof: int = Time.get_ticks_usec() if lab != null and lab.combat_profile_enabled else 0 # Optional counters only.
 	var projected := _appearance_now(identity)
@@ -1084,7 +1086,16 @@ func _appearance_now(identity: int) -> Dictionary:
 		# project an unarmed look no atlas kit covers (MISSING_ASSET at the arrival conversion).
 		if not data.site.get("ground_loot", {}).has(str(body.get("remains_id"))): return original.duplicate(true)
 		holder = data.site.ground_loot.get(str(body.get("remains_id")), SiteRuntime.new_item_state("empty-remains"))
+	# Perf (2026-11-12): a roster person's projected look only changes with its holder (versioned on every item change), its
+	# saved look or its remains; the same inputs return the cached projection (a copy) instead of re-deriving it each step.
+	var cacheable: bool = not _actors.has(identity)
+	var stamp: Array = [holder.get("version", -1), holder.get("item_ids", []).size(), holder.get("equipped", {}).hash(), original.hash(), hp <= 0.0]
+	if cacheable:
+		var cached: Dictionary = _appearance_cache.get(identity, {})
+		if not cached.is_empty() and is_same(cached.holder, holder) and is_same(cached.original, original) and is_same(cached.data, data) and cached.stamp == stamp:
+			return cached.projected.duplicate(true)
 	var projected := SiteRuntime.equipment_appearance(data, holder, original)
+	if cacheable: _appearance_cache[identity] = {"holder": holder, "original": original, "data": data, "stamp": stamp, "projected": projected.duplicate(true)}
 	# CAV-3: an ordinary person rides only by the mount slot. A controlled Actor also keeps its live-editor
 	# riding state (toggle_mount), which equipment_appearance alone would clear.
 	if _actors.has(identity) and not projected.is_empty() and bool(original.get("mounted", false)): projected["mounted"] = true
