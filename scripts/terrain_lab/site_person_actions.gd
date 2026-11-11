@@ -2869,6 +2869,15 @@ func _technology_operator_for_task(task: Dictionary, identity: int = 0) -> Dicti
 				if str(held.get("kind", "")) in ["technology_feature", "technology_vehicle"] and is_same(held.get("work_task"), task):
 					identity = int(held.executor_id)
 					break
+			# A WorkTeam-assigned crowd worker holds the task in its crowd row (found 2026-11-11, N02 crowd port: the
+			# zero-work completion endpoint of a named crowd worker's road found no operator and never completed).
+			var crowd_site: Variant = lab.get("crowd_site")
+			if identity <= 0 and crowd_site != null and crowd_site.active:
+				for owner: Variant in crowd_site.person_owners():
+					if not owner is CrowdOwner: continue
+					for key: Variant in owner.combat_units.keys():
+						if is_same(owner._cold_get(int(key), "work_task", {}), task): identity = owner.combat_identity(int(key)); break
+					if identity > 0: break
 	var person := _person(identity)
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or _person_walking(person): return {}
 	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return {}

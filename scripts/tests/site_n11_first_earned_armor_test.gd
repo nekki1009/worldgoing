@@ -85,6 +85,7 @@ func _run() -> void:
 		and order.receipts.size() == 1 and order.receipts[0].item_ids == [str(next_item)] and not Technology.scope_known(f.nation.technology, "N11"), "True900 effective armor output (grade-3 work at its building productivity) earns only the first Scope/public phase, never an invented ready-product receipt")
 	_earned_cold(f, "N11", false)
 	var paid_stock := var_to_bytes([reserve.cargo, reserve.holder, person.cargo, person.holder])
+	_earned_team_still(f) # Crowd: the released armorer walks back into formation; acceptance needs the team standing.
 	_check(f.controller._nation_ui_command("n1", "administration", {"order": order_id}).ok, "Actual public acceptance form begins the original300 job bound to this actual original armor item")
 	var job: Dictionary = f.actions._jobs[str(f.executor)]
 	_check(job.kind == "nation_administration" and job.duration == 300.0 and job.nation_items == [str(next_item)] and is_same(job.nation_order_ref, order),

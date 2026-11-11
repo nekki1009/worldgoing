@@ -9,7 +9,7 @@ var earned_last_bytes = PackedByteArray()
 var earned_labs: Array[TerrainLab] = []
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 240000
+	deadline = Time.get_ticks_msec() + 480000 # Crowd port: real whole-Lab points; 240 s → 480 s (outer 600), the over-budget rule.
 	earned_last_exists = FileAccess.file_exists(EarnedEntry.LAST_WORLD)
 	if earned_last_exists: earned_last_bytes = FileAccess.get_file_as_bytes(EarnedEntry.LAST_WORLD)
 	_run.call_deferred()
@@ -425,7 +425,9 @@ func _at_feature(lab: TerrainLab, team: TerrainArmy, executor: int, key: String)
 	var owner: Variant = lab.crowd_site.person_owner(executor)
 	var task: Dictionary = owner._cold_get(owner.index_for_identity(executor), "work_task", {}) if owner != null else {}
 	_check(task.get("version") == 3 and task.get("named") == true and task.get("target") == "feature:" + key, "Runtime published the true original named task in the same paid commit")
-	if owner != null and task.has("work_cell"):
+	# A large team (the forty-person N11 army) keeps its own ground clear of the workshop (_earned_team_aside); its captain
+	# decides there, and the worker alone walks to its slot.
+	if owner != null and task.has("work_cell") and owner.combat_units.size() <= 4:
 		var work: Vector2i = lab.terrain.cell_from_index(int(task.work_cell))
 		var centre := work + Vector2i(0, 3)
 		if not lab.terrain.contains(centre) or not lab.terrain.is_walkable(centre): centre = work
@@ -441,10 +443,20 @@ func _earned_team_aside(f: Dictionary, key: String) -> void:
 	var owner: Variant = lab.crowd_site.person_owner(int(f.executor))
 	if owner == null: return
 	var entrance: Vector2i = f.data.cell_from_index(int(f.data.site.features[key].entrance))
+	# An open 9x9 ground (no building, all walkable) 6-14 cells away holds a forty-person formation without pressing on walls.
 	var centre := entrance
-	for offset: Vector2i in [Vector2i(0, 7), Vector2i(7, 0), Vector2i(-7, 0), Vector2i(0, -7)]:
-		var spot := entrance + offset
-		if f.data.contains(spot) and f.data.is_walkable(spot) and int(f.data.feature_at[f.data.index(spot)]) == 0: centre = spot; break
+	var found := false
+	for radius: int in range(6, 15):
+		for dy: int in range(-radius, radius + 1):
+			for dx: int in range(-radius, radius + 1):
+				if found or maxi(absi(dx), absi(dy)) != radius: continue
+				var spot := entrance + Vector2i(dx, dy)
+				var open := true
+				for oy: int in range(-4, 5):
+					for ox: int in range(-4, 5):
+						var c := spot + Vector2i(ox, oy)
+						open = open and f.data.contains(c) and f.data.is_walkable(c) and int(f.data.feature_at[f.data.index(c)]) == 0
+				if open: centre = spot; found = true
 	lab.crowd_site.set_formation_fields(int(owner.formation_index), {"cx": centre.x + 0.5, "cy": centre.y + 0.5,
 		"origin_x": centre.x + 0.5, "origin_y": centre.y + 0.5, "goal_x": centre.x + 0.5, "goal_y": centre.y + 0.5})
 	for settle: int in 1200:
@@ -452,18 +464,23 @@ func _earned_team_aside(f: Dictionary, key: String) -> void:
 		if not lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP).ok: break
 	_check(owner.moving_member_count() == 0, "Crowd team stands aside of the workshop: %d walking" % owner.moving_member_count())
 
+## Crowd: wait with real points until the executor's team stands (the crowd settle rule named-work consent reads).
+func _earned_team_still(f: Dictionary) -> void:
+	var lab: TerrainLab = f.lab
+	if lab.crowd_site == null or not lab.crowd_site.active: return
+	var owner: Variant = lab.crowd_site.person_owner(int(f.executor))
+	if owner == null: return
+	for settle: int in 1200:
+		if owner.moving_member_count() == 0: break
+		if not lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP).ok: break
+	_check(owner.moving_member_count() == 0, "Crowd team stands before the next named work: %d walking" % owner.moving_member_count())
+
 func _earned_until_idle(f: Dictionary) -> void:
 	var count = 0
 	_earned_speed(f)
 	while f.actions.is_busy(int(f.executor)) or f.controller.work_team.is_assigned(int(f.executor)):
 		_earned_true_step(f)
 		count += 1
-		if count % 400 == 399 and f.lab.crowd_site != null and f.lab.crowd_site.active:
-			var who: Dictionary = f.lab.crowd_site.siege_original_person(int(f.executor))
-			var owner: Variant = who.get("owner")
-			var work: Dictionary = owner._cold_get(int(who.unit), "work_task", {}) if owner != null else {}
-			printerr("EARNED_IDLE_DIAG ", count, " cell=", who.get("cell"), " task=", JSON.stringify(work).left(400), " walking=", owner.is_walking(int(who.unit)) if owner != null else null,
-				" decider=", f.team.duty_resolve_readonly("team.work", owner).get("decider", -1) if owner != null else -1, " busy=", f.actions.is_busy(int(f.executor)), " assigned=", f.controller.work_team.is_assigned(int(f.executor)))
 		_check(count < 2000, "Original effective-work completion or REST recovery is finitely bounded")
 		if count >= 2000: break # Report the bound once instead of running into the timeout.
 	_check(not f.actions.is_busy(int(f.executor)) and not f.controller.work_team.is_assigned(int(f.executor)), "Original work owners release the real completed named task")
