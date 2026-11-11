@@ -471,7 +471,7 @@ func _earned_team_still(f: Dictionary) -> void:
 	var owner: Variant = lab.crowd_site.person_owner(int(f.executor))
 	if owner == null: return
 	for settle: int in 1200:
-		if owner.moving_member_count() == 0: break
+		if settle >= 4 and owner.moving_member_count() == 0: break # A fresh load starts at rest: run a few points first.
 		if not lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP).ok: break
 	_check(owner.moving_member_count() == 0, "Crowd team stands before the next named work: %d walking" % owner.moving_member_count())
 
