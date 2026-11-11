@@ -38,9 +38,9 @@ func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> 
 		if int(form.siege_builder.get_item_metadata(index)) == int(f.master): form.siege_builder.select(index)
 	var ready: Dictionary = controller._siege_build_person_context(form)
 	_require(ready.ok and ready.person_id == int(f.master) and is_same(ready.team, f.team), "Human-selected ID re-queries actual current original team/work authority")
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	controller._build_siege_ui(form, true)
-	_require(var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation")
+	_require(var_to_bytes([f.data.site, _combat_state(f)]) == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation")
 	var expected: int = int(f.data.site.get("next_vehicle", 1))
 	await controller._build_siege_ui(form, false)
 	# Atlas capture can resume this fixture inside its draw signal. Leave that
@@ -57,9 +57,9 @@ func _siege(f: Dictionary) -> void:
 	for material: String in supply: supply[material] = int(supply[material]) + 4
 	_finite_stock(f, supply)
 	var anchor: Vector2i = _siege_anchor(f, kind, Vector2i(66, 60))
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()])
 	var denied: Dictionary = Runtime.begin_siege_build(f.data, kind, anchor, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(f.lab.site_controller, "reserves_cell"), true, {}, {}, int(f.helper))
-	_require(not denied.ok and denied.code == "NO_TECHNOLOGY" and var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()]) == before, "Actual fixed policy refuses named unlearned construction atomically before materials")
+	_require(not denied.ok and denied.code == "NO_TECHNOLOGY" and var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()]) == before, "Actual fixed policy refuses named unlearned construction atomically before materials")
 	var inventory: Dictionary = f.data.site.inventory.duplicate(true)
 	var begun: Dictionary = await _begin_original_siege_ui(f, kind, anchor)
 	_require(begun.ok, "True independent fixed-world artisan admitted at original construction entrance", begun)

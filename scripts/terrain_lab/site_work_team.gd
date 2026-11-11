@@ -1834,10 +1834,8 @@ func prepare_assign_vehicle(team: Variant, identities: Array, requester_id: int,
 	if not duty.ok: return duty
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed() or original.get_active_move_plan() != null \
 		or original.has_ship_journey() or original._team_ship_activity() or bool(lab.terrain.site.get("team_supply", {}).get(str(team.team_id), {}).get("training_order", false)): return SiteRuntime.fail("BUSY")
-	if team is CrowdPersonOwner:
-		for index: int in team.combat_units:
-			if bool(team.person(index, false).get("moving", true)): return SiteRuntime.fail("BUSY")
-	elif team.moving_member_count() > 0 or is_instance_valid(team.player_member) and team.player_member.is_moving(): return SiteRuntime.fail("BUSY")
+	# The crowd settle rule (P1s): a crowd member is moving when it walks, not on residual drift (person().moving).
+	if team.moving_member_count() > 0 or team is TerrainArmy and is_instance_valid(team.player_member) and team.player_member.is_moving(): return SiteRuntime.fail("BUSY")
 	var actions: Variant = lab.site_controller.person_actions
 	var token: Dictionary = repair_candidate.get("tech_trial", {}) if spare else vehicle.get("tech_trial", {})
 	if not technology_token.is_empty():
@@ -2154,10 +2152,8 @@ func _targeted_feature_authority(team: Variant, identities: Array, requester_id:
 	if not duty.ok: return duty
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed() or original.get_active_move_plan() != null \
 		or original.has_ship_journey() or original._team_ship_activity() or bool(lab.terrain.site.get("team_supply", {}).get(str(team.team_id), {}).get("training_order", false)): return SiteRuntime.fail("BUSY")
-	if team is CrowdPersonOwner:
-		for index: int in team.combat_units:
-			if bool(team.person(index, false).get("moving", true)): return SiteRuntime.fail("BUSY")
-	elif team.moving_member_count() > 0 or is_instance_valid(team.player_member) and team.player_member.is_moving(): return SiteRuntime.fail("BUSY")
+	# The crowd settle rule (P1s): a crowd member is moving when it walks, not on residual drift (person().moving).
+	if team.moving_member_count() > 0 or team is TerrainArmy and is_instance_valid(team.player_member) and team.player_member.is_moving(): return SiteRuntime.fail("BUSY")
 	var actions: Variant = lab.site_controller.person_actions
 	var token: Variant = feature.get("tech_trial", {})
 	if not token is Dictionary: return SiteRuntime.fail("INVALID_TECHNOLOGY")

@@ -172,7 +172,22 @@ const ERRORS := {
 	"WAIT_OCCUPANCY": "通道或門扇範圍仍有原人物／已承諾步進",
 }
 
+## Debug aid: `-- --diag-fail=<CODE>[,<CODE>...]` prints where a failure with one of those codes is created, once per distinct
+## call site (top three frames; at most 60 sites), so a bare refusal code is located in one run instead of one print per run. Costs one string
+## compare per failure when unused.
+static var _diag_fail_code := "?"
+static var _diag_fail_seen := {}
 static func fail(code: String, detail: String = "") -> Dictionary:
+	if _diag_fail_code == "?":
+		_diag_fail_code = ""
+		for argument: String in OS.get_cmdline_user_args():
+			if argument.begins_with("--diag-fail="): _diag_fail_code = argument.trim_prefix("--diag-fail=")
+	if not _diag_fail_code.is_empty() and _diag_fail_seen.size() < 60 and code in _diag_fail_code.split(","):
+		var frames: Array = get_stack().slice(1, 9)
+		var site := str(frames.slice(0, 3))
+		if not _diag_fail_seen.has(site):
+			_diag_fail_seen[site] = true
+			print("DIAG_FAIL ", code, " ", detail, " ", frames)
 	return {"ok": false, "code": code, "message": str(ERRORS.get(code, code)) + ("：" + detail if not detail.is_empty() else "")}
 
 static func ok(message: String = "完成", values: Dictionary = {}) -> Dictionary:

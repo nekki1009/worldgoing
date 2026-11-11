@@ -2931,7 +2931,7 @@ func _technology_authority(requester_id: int, duty: String) -> Dictionary:
 
 func _technology_person_context(identity: int, busy_allowed: bool = false) -> Dictionary:
 	if not _technology_member(identity): return Runtime.fail("NO_AUTHORITY", "須為這個 Site 明確登錄的原族人")
-	var guard := crowd_action_guard([identity])
+	var guard := crowd_peace_guard([identity]) # Nekki 2026-10-31 (peacetime systems under crowd): technology work is refused only in combat.
 	if not guard.ok: return guard
 	if bool(lab.terrain.site.get("paused", false)) or (not busy_allowed and is_busy(identity)): return Runtime.fail("BUSY", "先完成或取消原人物作業")
 	return _ranged_craft_context(_person(identity))
@@ -3085,7 +3085,7 @@ func revoke_technology_consent(requester_id: int, person_id: int) -> Dictionary:
 
 func grant_technology_budget(requester_id: int, cap: Dictionary, operation: String = "grant") -> Dictionary:
 	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY", "核額須由目前受控的原人物親自操作")
-	var check := crowd_action_guard([requester_id])
+	var check := crowd_peace_guard([requester_id]) # Nekki 2026-10-31 (peacetime systems under crowd): technology work is refused only in combat.
 	if not check.ok: return check
 	if bool(lab.terrain.site.get("paused", false)) or is_busy(requester_id): return Runtime.fail("BUSY")
 	check = _ranged_craft_context(_person(requester_id))
@@ -3726,7 +3726,7 @@ func begin_technology_analysis(requester_id: int, executor_id: int, vehicle_id: 
 	return Runtime.ok("原研究者開始拆解分析；尚未消耗器械或取得證據", {"seconds": job.duration})
 
 func _technology_analysis_context(requester_id: int, executor_id: int, vehicle_id: String, job: Dictionary = {}) -> Dictionary:
-	var guarded := crowd_action_guard([executor_id])
+	var guarded := crowd_peace_guard([executor_id]) # Nekki 2026-10-31 (peacetime systems under crowd): technology work is refused only in combat.
 	if not guarded.ok: return guarded
 	if not has_method("_technology_analysis_research_candidate"): return Runtime.fail("UNIMPLEMENTED", "原器械研究與個人抵扣階段尚未接妥")
 	var person := _person(executor_id)
@@ -3983,7 +3983,7 @@ func _technology_scope_duty(scope: String, owner: Dictionary, read_only: bool = 
 # REPLACE _technology_phase_context
 
 func _technology_scope_person(scope: String, owner: Dictionary, identity: int, busy_allowed: bool = false, bound_token: Dictionary = {}) -> Dictionary:
-	var guarded := crowd_action_guard([identity])
+	var guarded := crowd_peace_guard([identity]) # Nekki 2026-10-31 (peacetime systems under crowd): technology work is refused only in combat.
 	if not guarded.ok: return guarded
 	var person := _person(identity)
 	if person.is_empty(): return Runtime.fail("BUSY")
@@ -7320,7 +7320,8 @@ func technology_build_admission(operation_selector: Dictionary) -> Dictionary:
 				if not admitted.ok or not admitted.person_ids.has(identity): continue
 				if not operation_ref.is_empty(): return Runtime.fail("AMBIGUOUS_SOURCE")
 				operation_ref = {"nation_id": str(token.scope_id), "order_id": order_id}
-		return Runtime.ok("", {"team": _technology_team(checked.person), "person_ids": [identity], "requester_id": _technology_controlled(), "operation_ref": operation_ref,
+		# A crowd person's work team is its crowd owner (as lines using `person.owner if person.owner is CrowdOwner` do).
+		return Runtime.ok("", {"team": checked.person.owner if checked.person.get("owner") is CrowdOwner and checked.person.owner.has_army() else _technology_team(checked.person), "person_ids": [identity], "requester_id": _technology_controlled(), "operation_ref": operation_ref,
 			"person": checked.person, "scope_context": checked})
 	if Technology.keys(operation_selector, ["settlement_id", "order_id"]) and operation_selector.settlement_id is String and operation_selector.order_id is String:
 		var order: Dictionary = lab.terrain.site.get("settlement", {}).get("technology_operations", {}).get("orders", {}).get(str(operation_selector.order_id), {})
@@ -8095,8 +8096,10 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 		or not physical.combat_can_act(int(person.unit)) or physical.combat_order != TerrainArmy.CombatOrder.HOLD or physical.is_sustain_routed() \
 		or original.get_active_move_plan() != null or original.has_ship_journey() or original._team_ship_activity() \
 		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return false
-	for index: int in physical.combat_units:
-		if bool(physical.person(index, false).get("moving", true)): return false
+	# The crowd settle rule (P1s, as _team_stopped and supply readiness): a member is moving when it walks (a move goal or
+	# native speed >= SETTLE_SPEED). person().moving counts any residual drift (> 1e-6), so a team standing in formation after
+	# a load or a regroup read as moving and its research consent as void (found 2026-11-11, F04 crowd port).
+	if physical.moving_member_count() > 0: return false
 	var supply: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(physical.team_id), {})
 	if bool(supply.get("training_order", false)): return false
 	var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))

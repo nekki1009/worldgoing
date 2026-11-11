@@ -76,7 +76,7 @@ func _cold_rule_guards(f: Dictionary) -> void:
 	_require(decoded.ok, "Original checksummed payload decoder")
 	var original_hash := FileAccess.get_sha256(path)
 	var pin_before: PackedByteArray = var_to_bytes(f.data.site.world_pin)
-	var scene_before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.parameters])
+	var scene_before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.data.parameters])
 	for attack: String in ["parameter_only", "erase_parameter", "downgrade", "erase_both", "mismatch_base"]:
 		var payload: Dictionary = decoded.payload.duplicate(true)
 		match attack:
@@ -92,7 +92,7 @@ func _cold_rule_guards(f: Dictionary) -> void:
 		_write_source(bad_path, {"checksum": body.sha256_text(), "payload": body})
 		var loader := func(base: Dictionary) -> Dictionary: return f.source.make_terrain_data(START.x, START.y)
 		var rejected: Dictionary = Store.load_site(bad_path, loader, 1, true)
-		_require(not rejected.ok and rejected.code == "SAVE_VERSION" and FileAccess.get_sha256(path) == original_hash and var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.parameters]) == scene_before, "Checksum-valid malicious rule packet rejects atomically: " + attack, rejected)
+		_require(not rejected.ok and rejected.code == "SAVE_VERSION" and FileAccess.get_sha256(path) == original_hash and var_to_bytes([f.data.site, _combat_state(f), f.data.parameters]) == scene_before, "Checksum-valid malicious rule packet rejects atomically: " + attack, rejected)
 	for invalid: Variant in ["unknown_potential_v1", false, StringName(LAND_RULE)]:
 		var loader := func(base: Dictionary) -> Dictionary: return f.source.make_terrain_data(START.x, START.y)
 		var original_copy: Dictionary = Store.load_site(path, loader, 1, true)
@@ -102,7 +102,7 @@ func _cold_rule_guards(f: Dictionary) -> void:
 		malformed_data.parameters.fixed_land_condition_rule = invalid
 		var target := root_path.path_join("save_invalid_rule_" + str(typeof(invalid)) + ".json")
 		var refused: Dictionary = Store.save(malformed_data, target)
-		_require(not refused.ok and refused.code == "SAVE_VERSION" and not FileAccess.file_exists(target) and FileAccess.get_sha256(path) == original_hash and var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.parameters]) == scene_before, "Matching malformed base/parameter values cannot create a save or change original scene", refused)
+		_require(not refused.ok and refused.code == "SAVE_VERSION" and not FileAccess.file_exists(target) and FileAccess.get_sha256(path) == original_hash and var_to_bytes([f.data.site, _combat_state(f), f.data.parameters]) == scene_before, "Matching malformed base/parameter values cannot create a save or change original scene", refused)
 	_require(var_to_bytes(f.data.site.world_pin) == pin_before and FileAccess.get_sha256(_legacy_manifest_path) == _legacy_source_sha, "No erased/minimal pin or rewritten old source in any negative")
 	_cold_resume(f, "source_rule_checked")
 	_require(f.data.parameters.fixed_base.land_condition_rule == LAND_RULE and f.data.parameters.fixed_land_condition_rule == LAND_RULE and f.data.site.world_pin.manifest_sha256 == f.source.manifest_hash, "True full-source cold rebind rederives the same named rule")
@@ -386,7 +386,8 @@ func _build(f: Dictionary, kind: String, anchor: Vector2i) -> String:
 	for tick: int in 2500:
 		if str(feature.stage) == "complete": break
 		_interval(f)
-	_require(str(feature.stage) == "complete" and _work_effective - effective >= initial_work - 0.0001, "Real full original construction work completes " + kind)
+	_require(str(feature.stage) == "complete" and _work_effective - effective >= initial_work - 0.0001, "Real full original construction work completes " + kind,
+		{"stage": feature.get("stage"), "progress": feature.get("progress"), "work": feature.get("work"), "effective": _work_effective - effective, "needed": initial_work})
 	_require(prior != f.data.site.inventory and f.data.fingerprint() == f.geography and f.data.parameters.fixed_base == f.fixed_base and f.data.site.world_pin == f.pin and f.data.parameters.fixed_base.land_condition_rule == LAND_RULE, "Construction spends actual stock while preserving true full fixed source/pin")
 	_idle_all(f)
 	return key

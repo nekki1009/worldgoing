@@ -98,7 +98,7 @@ func _birth(source: RegionData, category: String) -> Dictionary:
 func _fixed_policy_guard(f: Dictionary) -> void:
 	# Readonly POLICY gates only. The actual fixed geography has foundation
 	# and groundwater zero; no facility/product or construction PASS is claimed.
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()])
 	if str(f.category) in ["F04", "F06"]:
 		var definitions: Array = [["smelter", "steel"], ["smithy", "steel_tools"]] if f.category == "F04" else [["weaver", "wool_cloth"]]
 		for entry: Array in definitions:
@@ -116,7 +116,7 @@ func _fixed_policy_guard(f: Dictionary) -> void:
 		var denied: Dictionary = Runtime._technology_siege_begin_policy(f.data, kind, {}, {"admission": rejected_admission})
 		var allowed: Dictionary = Runtime._technology_siege_begin_policy(f.data, kind, {}, {"admission": eligible_admission})
 		_require(not denied.ok and denied.code == "NO_TECHNOLOGY" and allowed.ok, "Full fixed siege policy checks true selected master before costs", denied)
-	_require(var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()]) == before, "Policy-only queries preserve original person/state/geographic bytes")
+	_require(var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()]) == before, "Policy-only queries preserve original person/state/geographic bytes")
 
 func _generated_production(fixed: Dictionary) -> Dictionary:
 	var loaded: Dictionary = fixed.slot._load_checked(fixed.slot.site_path(START), START)
@@ -303,8 +303,8 @@ func _interval(f: Dictionary, seconds: float = 60.0) -> Dictionary:
 		actual += float(prefix.actual_seconds)
 	lab._commit_shared_work_pools()
 	var consumed := work.publish_shared_work_prefix(admitted)
-	var before := var_to_bytes([f.data.site, f.team.capture_combat_state()])
-	_require(work.publish_shared_work_prefix(admitted).handled_seconds.is_empty() and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "SAME allocation cannot pay/progress/charge fatigue twice")
+	var before := var_to_bytes([f.data.site, _combat_state(f)])
+	_require(work.publish_shared_work_prefix(admitted).handled_seconds.is_empty() and var_to_bytes([f.data.site, _combat_state(f)]) == before, "SAME allocation cannot pay/progress/charge fatigue twice")
 	work.finish_shared_work_prefix(admitted)
 	# Mirror the original Lab terminal ledger break after every endpoint finish.
 	var completed_priors: Array = admitted.runtime_priors
@@ -549,9 +549,9 @@ func _siege(f: Dictionary) -> void:
 	for material: String in supply: supply[material] = int(supply[material]) + 4
 	_finite_stock(f, supply)
 	var anchor := _siege_anchor(f, kind, Vector2i(66, 60))
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	var legacy: Dictionary = Runtime.begin_siege_build(f.data, kind, anchor, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(f.lab.site_controller, "reserves_cell"), true, {}, {}, int(f.helper))
-	_require(legacy.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated legacy construction remains available to unlearned member; preview spends nothing; NOT locked-policy proof", legacy)
+	_require(legacy.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Generated legacy construction remains available to unlearned member; preview spends nothing; NOT locked-policy proof", legacy)
 	var inventory: Dictionary = f.data.site.inventory.duplicate(true)
 	var begun: Dictionary = Runtime.begin_siege_build(f.data, kind, anchor, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(f.lab.site_controller, "reserves_cell"), false, {}, {}, int(f.master))
 	_require(begun.ok, "Original full-cost command admits actual independent learned master", begun)
@@ -838,21 +838,21 @@ func _no_reissue(f: Dictionary) -> void:
 	_require(left.ok and joined.ok, "Actual existing NPC leaves/joins same original faction roster", membership_result)
 	_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Actual membership join issues no skills/items/people")
 	_require(f.lab.site_controller._control_family_person(null, 1).ok, "Actual original Actor controls explicit army expansion")
-	var expansion_before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.lab.character.capture_state()])
+	var expansion_before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()])
 	var expanded: Dictionary = f.lab.join_player_army()
 	if expanded.ok:
 		_require(f.lab.character.technology.is_empty() and f.team.player_member == f.lab.character and int(f.data.site.next_person_id) == next_person and int(f.data.site.next_item) == next_item, "Real roster expansion preserves Actor and gives no background skills/products")
 		_require(f.lab.leave_player_army().ok, "Original Actor leaves original expanded army")
 	else:
-		_require(expanded.code == "MIXED_TROOP" and var_to_bytes([f.data.site, f.team.capture_combat_state(), f.lab.character.capture_state()]) == expansion_before, "Original troop equipment may refuse Actor expansion atomically; never fake gear to force positive", expanded)
+		_require(expanded.code == "MIXED_TROOP" and var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()]) == expansion_before, "Original troop equipment may refuse Actor expansion atomically; never fake gear to force positive", expanded)
 		_case["actor_expansion_" + str(f.kind)] = "MIXED_TROOP refusal; positive roster expansion NOT_VERIFIED"
 	_require(f.lab.site_controller._control_family_person(null, int(f.commander)).ok, "Original command control restored")
-	var before := var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before := var_to_bytes([f.data.site, _combat_state(f)])
 	var replay: Dictionary = f.lab.prepare_initial_artisan_birth(f.data, Artisans.PRIMARY, Artisans.CATEGORIES)
 	if f.kind == "fixed_birth":
-		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Actual historical birth cannot replay under later all-category release")
+		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Actual historical birth cannot replay under later all-category release")
 	else:
-		_require(not replay.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
+		_require(not replay.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
 	_cold_resume(f, "no_reissue")
 	if f.kind == "fixed_birth":
 		_completed_open_refuses(f)
@@ -930,3 +930,11 @@ func _artisan_cells_hold_person(f: Dictionary, cells: Array[int]) -> bool:
 	for actor: TerrainTestCharacter in f.lab.combat_actors:
 		if f.lab.actor_present(actor) and footprint.has(f.data.index(actor.terrain_cell)): return true
 	return false
+
+# Grid team snapshot, or the native crowd snapshot when the holder is a CrowdPersonOwner (no grid combat state there).
+func _combat_state(f: Dictionary) -> Variant:
+	if f.team is TerrainArmy: return f.team.capture_combat_state()
+	# A refused capture would make every before/after comparison pass on two equal refusals, so it must succeed.
+	var captured: Dictionary = f.lab.crowd_site.capture_save(true)
+	_require(captured.ok, "Crowd team snapshot for an unchanged-state comparison", captured)
+	return captured
