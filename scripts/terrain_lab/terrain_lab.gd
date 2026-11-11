@@ -15042,6 +15042,44 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 	_shared_work_game_seconds = game_seconds
 	return SiteRuntime.ok("", {"action_seconds": action_seconds, "game_seconds": game_seconds})
 
+## The upper plan's requests without the runner-only formation pools, and those pools' band boundary computed directly.
+## A pool qualifies when every participant naming it is a native runner (native_run_bound) that is not rest-limited, not
+## resting and active for the whole interval: the plan then gives it one first segment at the summed runner rate, and the
+## bound reads only that first segment's band boundary. Anything else keeps the full plan.
+func _native_begin_runner_only_pools(all_requests: Array, run_requests: Array, projection: Dictionary, seconds: float) -> Dictionary:
+	var shared := {} # formation -> true when a non-runner request or an unqualified runner names the pool
+	var rates := {}
+	var bodies := {}
+	for request: Dictionary in all_requests:
+		var is_runner: bool = str(request.get("provider", "")) == "native_run_bound"
+		for raw: Dictionary in request.participants:
+			var participant: Dictionary = projection.get(int(raw.person_id), raw)
+			var snapshot: Variant = participant.get("native_snapshot", raw.get("native_snapshot"))
+			if not snapshot is Dictionary: continue
+			var formation := int(snapshot.get("formation", -1))
+			if not is_runner or bool(participant.get("rest_limited", true)) or float(participant.get("active_until_game_seconds", seconds)) < seconds \
+				or bool(PersonFatigue._work_plan_body(participant.get("body")).get("work_resting", true)):
+				shared[formation] = true
+				continue
+			rates[formation] = float(rates.get(formation, 0.0)) + float(participant.effort_rate)
+			if not bodies.has(formation): bodies[formation] = participant.body
+	var kept: Array = []
+	for request: Dictionary in all_requests:
+		if str(request.get("provider", "")) != "native_run_bound": kept.append(request); continue
+		var participant: Dictionary = projection.get(int(request.participants[0].person_id), request.participants[0])
+		var snapshot: Variant = participant.get("native_snapshot", request.participants[0].get("native_snapshot"))
+		if not snapshot is Dictionary or shared.has(int(snapshot.get("formation", -1))): kept.append(request)
+	var band_limit := INF
+	for formation: Variant in rates:
+		if shared.has(formation): continue
+		var rate: float = float(rates[formation])
+		var start: float = PersonFatigue.read(bodies[formation])
+		var band_end := INF
+		if rate > 0.0 and start < 30.0: band_end = (30.0 - start) / rate
+		elif rate > 0.0 and start < 100.0: band_end = (100.0 - start) / rate
+		if band_end > PersonFatigue.WORK_PLAN_EPS: band_limit = minf(band_limit, band_end)
+	return {"kept": kept, "band_limit": band_limit}
+
 func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, preview: PackedFloat64Array) -> Dictionary:
 	var pb := Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var combat: float = combat_begin
@@ -15073,10 +15111,14 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	maximum_requests.append_array(run_bound.requests)
 	var projection: Dictionary = _native_begin_participant_projection(maximum_requests, preview)
 	pb = _combat_profile_stage("nbb_projection", pb)
+	# Perf (2026-11-12): a formation pool that only runners use (no held work, no envelope) has one first segment with the
+	# runners' summed effort rate; its band boundary is computed directly instead of planning every runner (the same bound).
+	var runner_split: Dictionary = _native_begin_runner_only_pools(maximum_requests, run_bound.requests, projection, seconds)
 	var lower: Dictionary = _plan_shared_vehicle_work_interval(interval_requests, seconds, projection)
 	if not lower.ok: return lower
-	var upper: Dictionary = _plan_shared_vehicle_work_interval(maximum_requests, seconds, projection)
+	var upper: Dictionary = _plan_shared_vehicle_work_interval(runner_split.kept, seconds, projection)
 	if not upper.ok: return upper
+	limit = minf(limit, float(runner_split.band_limit))
 	pb = _combat_profile_stage("nbb_plan", pb)
 	for planned: Dictionary in [lower, upper]:
 		for group: Dictionary in planned.pools:
