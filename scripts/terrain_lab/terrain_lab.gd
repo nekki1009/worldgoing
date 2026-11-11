@@ -15038,6 +15038,7 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 	return SiteRuntime.ok("", {"action_seconds": action_seconds, "game_seconds": game_seconds})
 
 func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, preview: PackedFloat64Array) -> Dictionary:
+	var pb := Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var combat: float = combat_begin
 	for offset: int in range(0, preview.size(), 10): combat = maxf(combat, float(preview[offset + 9]))
 	var action: float = minf(maximum, _region_owner_action_limit(maximum, combat))
@@ -15045,25 +15046,33 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	var seconds: float = SiteRuntime.game_seconds(action, combat) * simulation_speed
 	var supplies: Dictionary = site_controller.native_checked_supply_interval_limit(seconds)
 	if not supplies.ok: return supplies
+	pb = _combat_profile_stage("nbb_supply", pb)
 	var limit: float = minf(seconds, float(supplies.game_seconds))
 	var capture: Dictionary = site_controller.Settlement.capture_sample(self)
 	limit = minf(limit, site_controller.Settlement.capture_interval_limit(terrain, capture, seconds))
+	pb = _combat_profile_stage("nbb_capture", pb)
 	limit = minf(limit, _shared_production_event_limit(seconds))
+	pb = _combat_profile_stage("nbb_production", pb)
 	var retry: float = float(site_controller.work_team.prepared_retry_endpoint())
 	if is_finite(retry) and retry > 0.0: limit = minf(limit, retry)
 	var envelope: Dictionary = site_controller.person_actions.native_fire_point_envelope_requests(seconds)
 	if not envelope.ok: return envelope
+	pb = _combat_profile_stage("nbb_envelope", pb)
 	var interval_requests: Array = _native_begin_interval_requests(requests, action, seconds, combat)
+	pb = _combat_profile_stage("nbb_interval_requests", pb)
 	var maximum_requests: Array = interval_requests.duplicate(false)
 	maximum_requests.append_array(envelope.requests)
 	var run_bound: Dictionary = crowd_site.work_fatigue_run_bound_requests(seconds, maximum_requests)
 	if not run_bound.ok: return run_bound
+	pb = _combat_profile_stage("nbb_run_bound", pb)
 	maximum_requests.append_array(run_bound.requests)
 	var projection: Dictionary = _native_begin_participant_projection(maximum_requests, preview)
+	pb = _combat_profile_stage("nbb_projection", pb)
 	var lower: Dictionary = _plan_shared_vehicle_work_interval(interval_requests, seconds, projection)
 	if not lower.ok: return lower
 	var upper: Dictionary = _plan_shared_vehicle_work_interval(maximum_requests, seconds, projection)
 	if not upper.ok: return upper
+	pb = _combat_profile_stage("nbb_plan", pb)
 	for planned: Dictionary in [lower, upper]:
 		for group: Dictionary in planned.pools:
 			for segment: Dictionary in group.segments:
@@ -15082,6 +15091,7 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	# safe_fatigue_rest is therefore false for that pool in the actual next step.
 	# Other native pools keep their exact original no-pulse rest-limit query.
 	var pulsed: Dictionary = {}
+	pb = _combat_profile_stage("nbb_band", pb)
 	for offset: int in range(0, preview.size(), 10): pulsed[int(preview[offset + 1])] = true
 	for snapshot: Dictionary in crowd_site._work_fatigue_snapshots.values():
 		if pulsed.has(int(snapshot.formation)): continue
@@ -15106,6 +15116,7 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	# and never past that input. With the round trip, a residual quantum (0.00611 s after a cut step, crowd_c2_natural_ammo
 	# capture-death) was refused INVALID_NATIVE_BEGIN_WINDOW on every later step and the Site clock stopped.
 	var accepted_action: float = action if limit >= seconds else minf(action, RegionSaveSlot.GameplayClock.action_for_game(limit, simulation_speed, minf(action, combat)))
+	pb = _combat_profile_stage("nbb_rest", pb)
 	return SiteRuntime.ok("", {"action_seconds": accepted_action, "game_seconds": limit,
 		"combat_begin": combat, "lower": lower, "upper": upper, "projection": projection, "requests": interval_requests})
 
