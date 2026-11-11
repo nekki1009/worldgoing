@@ -1998,7 +1998,9 @@ func prepare_assign_feature(team: Variant, identities: Array, requester_id: int,
 		var identity := int(raw_id)
 		var person := _person(identity)
 		if person.is_empty() or person.owner != team: return SiteRuntime.fail("INVALID_MEMBER")
-		if team is CrowdPersonOwner and (not team.has_method("work_fatigue_work_start_ready") or not team.work_fatigue_work_start_ready(int(person.unit))): return SiteRuntime.fail("BUSY")
+		# The work start gate lives on the crowd site and takes the person id (as line ~1885); the owner never had it, so
+		# every crowd feature assignment was refused BUSY (found 2026-11-11, F04 crowd port).
+		if team is CrowdPersonOwner and not team.crowd_site.work_fatigue_work_start_ready(identity): return SiteRuntime.fail("BUSY")
 		var index := int(person.unit)
 		if not team.is_member(index) or team.member_gone(index) or identity == _controlled_id() or not team.combat_can_act(index) or _moving(person) \
 			or bool(team.combat_hot_get(index, &"site_exited", false)) or bool(team.combat_hot_get(index, &"logistics", false)) \
