@@ -1873,7 +1873,8 @@ func prepare_assign_vehicle(team: Variant, identities: Array, requester_id: int,
 		var person := _person(identity)
 		if person.is_empty() or not is_same(person.owner, team): return SiteRuntime.fail("INVALID_MEMBER")
 		var index := int(person.unit)
-		if not team.is_member(index) or team.member_gone(index) or identity == _controlled_id() or not team.combat_can_act(index) or _moving(person) \
+		if not team.is_member(index) or team.member_gone(index) or identity == _controlled_id() or not team.combat_can_act(index) \
+			or (team.is_walking(index) if team is CrowdPersonOwner else _moving(person)) \
 			or bool(team.combat_hot_get(index, &"site_exited", false)) or bool(team.combat_hot_get(index, &"logistics", false)) \
 			or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or bool(team.combat_hot_get(index, &"attack")) \
 			or str(team.combat_hot_get(index, &"pose")) != "idle" or unavailable.is_valid() and bool(unavailable.call(identity)): return SiteRuntime.fail("BUSY")
@@ -2000,7 +2001,8 @@ func prepare_assign_feature(team: Variant, identities: Array, requester_id: int,
 		# every crowd feature assignment was refused BUSY (found 2026-11-11, F04 crowd port).
 		if team is CrowdPersonOwner and not team.crowd_site.work_fatigue_work_start_ready(identity): return SiteRuntime.fail("BUSY")
 		var index := int(person.unit)
-		if not team.is_member(index) or team.member_gone(index) or identity == _controlled_id() or not team.combat_can_act(index) or _moving(person) \
+		if not team.is_member(index) or team.member_gone(index) or identity == _controlled_id() or not team.combat_can_act(index) \
+			or (team.is_walking(index) if team is CrowdPersonOwner else _moving(person)) \
 			or bool(team.combat_hot_get(index, &"site_exited", false)) or bool(team.combat_hot_get(index, &"logistics", false)) \
 			or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or bool(team.combat_hot_get(index, &"attack")) \
 			or str(team.combat_hot_get(index, &"pose")) != "idle" or unavailable.is_valid() and bool(unavailable.call(identity)): return SiteRuntime.fail("BUSY")

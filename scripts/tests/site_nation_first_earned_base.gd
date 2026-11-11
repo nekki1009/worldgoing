@@ -144,12 +144,31 @@ func _earned_place_controlled(lab: TerrainLab, cell: Vector2i) -> bool:
 		if own_team.has_army() and index >= 0 and index < own_team.cells.size():
 			own_team.faction_id = 1
 			own_team.cells[index] = cell
+	# Crowd port: on an active crowd the controlled head is the same native soldier; the fixture station moves it too, and
+	# real points run until it stands (a placement changes no velocity until the next step).
+	if placed and lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site.contains_person(control):
+		var native := int(lab.crowd_site.crowd.soldier_index(control))
+		placed = native >= 0 and lab.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5})
+		var head_team: Variant = lab.crowd_site.person_owner(control)
+		if placed and head_team != null and head_team.combat_units.size() == 1: # A lone head's team holds where it stands.
+			lab.crowd_site.set_formation_fields(int(head_team.formation_index), {"cx": cell.x + 0.5, "cy": cell.y + 0.5,
+				"origin_x": cell.x + 0.5, "origin_y": cell.y + 0.5, "goal_x": cell.x + 0.5, "goal_y": cell.y + 0.5})
+		# Few points: each fixture point is real World time, and a mandate or job deadline is running.
+		for settle: int in 200:
+			if settle >= 4 and head_team != null and head_team.moving_member_count() == 0: break
+			if settle < 3: lab.crowd_site.siege_approach_step(control, cell)
+			elif settle == 3 and head_team != null: head_team.siege_cancel_step(head_team.index_for_identity(control))
+			if not lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP).ok: break
+		if head_team != null: head_team.siege_cancel_step(head_team.index_for_identity(control))
+		placed = placed and lab.crowd_site.siege_original_person(control).cell == cell
 	return placed
 
 func _earned_pinned_lab() -> TerrainLab:
 	var path = _earned_pinned_manifest()
 	var lab = _earned_natural_lab(_earned_natural_data())
 	lab.site_controller.save_root = earned_out.path_join("archive")
+	# Crowd port: the fixed world binds without its crowd; the fixture converts after building its teams (_earned_fixture).
+	lab.crowd_startup_requested = false
 	var opened = lab.site_controller.open_fixed_world(path, "tech_earned_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()], "main", Vector2i.ZERO, true)
 	_check(opened.ok and lab.site_controller.region_slot != null and not lab.site_controller.region_slot.pin.is_empty(), "Original Controller creates, commits and live-binds a real original Slot; no clock/pin dictionary injection")
 	_earned_freeze_scene(lab)
@@ -308,6 +327,38 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 	data.site.equipment_nations = {"n1": nation}
 	if target == "N11": team.combat_units[1].technology = Technology.learned_candidate({}, "F04")
 	_check(bool(NationCatalog.get_node(target).get("enabled", false)) and not Technology.scope_known(nation.technology, target), "The isolated enabled target institution starts genuinely unknown; only stated prior inputs exist")
+	# Crowd port (2026-11-11): the scenario's hand-built teams enter the native crowd as any legacy grid Site does on bind
+	# (crowd_fixture_port_guide); --grid keeps the retired army.
+	if not OS.get_cmdline_user_args().has("--grid") and lab.crowd_site == null:
+		lab.crowd_site = TerrainLab.CrowdSiteScript.new()
+		lab.crowd_site.name = "CrowdSite"
+		lab.add_child(lab.crowd_site)
+		lab.crowd_site.setup(lab)
+	if not OS.get_cmdline_user_args().has("--grid") and lab.crowd_site != null and not lab.crowd_site.active:
+		var converted: Dictionary = lab.crowd_site.convert_existing()
+		if converted.ok: converted = lab._region_write_converted_crowd_section()
+		_check(converted.ok, "The original teams enter the native crowd: " + str(converted))
+		# Consent and named work need the whole team standing (the crowd settle rule): the converted members walk to their
+		# formation slots by the real rules first; the fixture waits with real points, as a player would.
+		# The controlled head's own team holds where the fixture stationed the head (its HOLD centre is its deployment cell).
+		var head: Dictionary = lab.crowd_site.siege_original_person(control)
+		var head_team: Variant = lab.crowd_site.person_owner(control)
+		if head_team != null and not head.is_empty():
+			lab.crowd_site.set_formation_fields(int(head_team.formation_index), {"cx": head.cell.x + 0.5, "cy": head.cell.y + 0.5,
+				"origin_x": head.cell.x + 0.5, "origin_y": head.cell.y + 0.5, "goal_x": head.cell.x + 0.5, "goal_y": head.cell.y + 0.5})
+		var owners: Array = []
+		for candidate: Variant in [lab.crowd_site.person_owner(int(team.combat_identity(0))), head_team]:
+			if candidate != null and not owners.has(candidate): owners.append(candidate)
+		var settle := 0
+		var walking := func() -> bool:
+			for owner: Variant in owners:
+				if owner.moving_member_count() > 0: return true
+			return false
+		while (settle < 30 or walking.call()) and settle < 3600:
+			var point: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP)
+			if not point.ok: break
+			settle += 1
+		_check(not owners.is_empty() and not walking.call(), "The converted original teams stand in formation")
 	return {"lab": lab, "data": data, "controller": controller, "actions": controller.person_actions, "orders": controller.equipment_orders,
 		"control": control, "executor": executor, "team": team, "row": team.combat_units[1], "nation": nation,
 		"warehouse": warehouse, "smithy": smithy, "tannery": tannery, "center": str(founded.feature)}
@@ -366,12 +417,53 @@ func _earned_road_preview(f: Dictionary, cell: Vector2i) -> Dictionary:
 	_check(false, "Original finite scan must find one unchanged legal road in the current real jurisdiction")
 	return {}
 
+## Crowd: the named worker walks to its work slot by the crowd work rules itself (no hot-position write). As in play the
+## team stays with its worker: its HOLD centre moves beside the work, so the captain stays within command presence (the
+## team.work decider; crowd_fixture_port_guide). The grid keeps the original fixture placement.
+func _at_feature(lab: TerrainLab, team: TerrainArmy, executor: int, key: String) -> Dictionary:
+	if lab.crowd_site == null or not lab.crowd_site.active: return super._at_feature(lab, team, executor, key)
+	var owner: Variant = lab.crowd_site.person_owner(executor)
+	var task: Dictionary = owner._cold_get(owner.index_for_identity(executor), "work_task", {}) if owner != null else {}
+	_check(task.get("version") == 3 and task.get("named") == true and task.get("target") == "feature:" + key, "Runtime published the true original named task in the same paid commit")
+	if owner != null and task.has("work_cell"):
+		var work: Vector2i = lab.terrain.cell_from_index(int(task.work_cell))
+		var centre := work + Vector2i(0, 3)
+		if not lab.terrain.contains(centre) or not lab.terrain.is_walkable(centre): centre = work
+		lab.crowd_site.set_formation_fields(int(owner.formation_index), {"cx": centre.x + 0.5, "cy": centre.y + 0.5,
+			"origin_x": centre.x + 0.5, "origin_y": centre.y + 0.5, "goal_x": centre.x + 0.5, "goal_y": centre.y + 0.5})
+	return task
+
+## Crowd: the team's HOLD centre moves a few cells off a workshop so its standing bodies leave the work slots and paths open
+## (a crowd body covers the cells beside it); the team walks there by the real rules and the fixture waits until it stands.
+func _earned_team_aside(f: Dictionary, key: String) -> void:
+	var lab: TerrainLab = f.lab
+	if lab.crowd_site == null or not lab.crowd_site.active: return
+	var owner: Variant = lab.crowd_site.person_owner(int(f.executor))
+	if owner == null: return
+	var entrance: Vector2i = f.data.cell_from_index(int(f.data.site.features[key].entrance))
+	var centre := entrance
+	for offset: Vector2i in [Vector2i(0, 7), Vector2i(7, 0), Vector2i(-7, 0), Vector2i(0, -7)]:
+		var spot := entrance + offset
+		if f.data.contains(spot) and f.data.is_walkable(spot) and int(f.data.feature_at[f.data.index(spot)]) == 0: centre = spot; break
+	lab.crowd_site.set_formation_fields(int(owner.formation_index), {"cx": centre.x + 0.5, "cy": centre.y + 0.5,
+		"origin_x": centre.x + 0.5, "origin_y": centre.y + 0.5, "goal_x": centre.x + 0.5, "goal_y": centre.y + 0.5})
+	for settle: int in 1200:
+		if settle >= 4 and owner.moving_member_count() == 0: break
+		if not lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP).ok: break
+	_check(owner.moving_member_count() == 0, "Crowd team stands aside of the workshop: %d walking" % owner.moving_member_count())
+
 func _earned_until_idle(f: Dictionary) -> void:
 	var count = 0
 	_earned_speed(f)
 	while f.actions.is_busy(int(f.executor)) or f.controller.work_team.is_assigned(int(f.executor)):
 		_earned_true_step(f)
 		count += 1
+		if count % 400 == 399 and f.lab.crowd_site != null and f.lab.crowd_site.active:
+			var who: Dictionary = f.lab.crowd_site.siege_original_person(int(f.executor))
+			var owner: Variant = who.get("owner")
+			var work: Dictionary = owner._cold_get(int(who.unit), "work_task", {}) if owner != null else {}
+			printerr("EARNED_IDLE_DIAG ", count, " cell=", who.get("cell"), " task=", JSON.stringify(work).left(400), " walking=", owner.is_walking(int(who.unit)) if owner != null else null,
+				" decider=", f.team.duty_resolve_readonly("team.work", owner).get("decider", -1) if owner != null else -1, " busy=", f.actions.is_busy(int(f.executor)), " assigned=", f.controller.work_team.is_assigned(int(f.executor)))
 		_check(count < 2000, "Original effective-work completion or REST recovery is finitely bounded")
 		if count >= 2000: break # Report the bound once instead of running into the timeout.
 	_check(not f.actions.is_busy(int(f.executor)) and not f.controller.work_team.is_assigned(int(f.executor)), "Original work owners release the real completed named task")

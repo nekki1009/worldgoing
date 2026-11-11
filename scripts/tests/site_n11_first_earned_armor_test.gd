@@ -40,7 +40,7 @@ func _run() -> void:
 	_check(Stocks.ensure_storage(f.data, f.warehouse, 1).ok, "Original Warehouse owns the actual finite physical endpoint")
 	var reserve := Stocks.storage(f.data, f.warehouse)
 	var person: Dictionary = f.actions._person(f.control)
-	_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[f.warehouse].entrance)), true), "The actual controlled donor reaches the actual original Warehouse contact")
+	_check(_earned_place_controlled(f.lab, f.data.cell_from_index(int(f.data.site.features[f.warehouse].entrance))), "The actual controlled donor reaches the actual original Warehouse contact")
 	for resource: String in cap: person.cargo[resource] = int(person.cargo.get(resource, 0)) + int(cap[resource]) # Explicit finite initial donor stock.
 	_check(f.controller._nation_ui_command("n1", "grant_source", {"order": order_id, "resources": cap}).ok, "Original donor explicitly authorizes exactly one finite armor purpose")
 	var donor_version := int(person.holder.version)
@@ -61,6 +61,7 @@ func _run() -> void:
 	var iron := int(f.data.site.inventory.iron)
 	var charcoal := int(f.data.site.inventory.charcoal)
 	var physical_version := int(reserve.holder.version)
+	_earned_team_aside(f, f.smithy) # Crowd: the forty-person team stands clear of the smithy work slots, as a player would order.
 	var started: Dictionary = f.controller._nation_ui_command("n1", "begin_arsenal", {"order": order_id})
 	_check(started.ok and is_same(f.data.site.features[f.smithy], host) and host.recipe_id == "iron_armor" and host.batch_paid,
 		"Actual original recipe, SAME host/zone, named worker, private debit and Scope accounting start atomically: " + str(started))

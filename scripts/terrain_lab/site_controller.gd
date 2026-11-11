@@ -4784,7 +4784,9 @@ func _native_siege_work_person_unavailable(identity: int) -> bool:
 	if person.is_empty() or person.get("row", {}).is_empty() or not person.owner.has_army(): return true
 	var index := int(person.unit)
 	if not person.owner.combat_can_act(index) or bool(person.row.get("site_exited", false)) or bool(person.row.get("departed", false)) or bool(person.row.get("logistics", false)): return true
-	if not lab.terrain.site.get("housing", {}).get(str(identity), {}).is_empty() or not lab.terrain.site.get("captivity", {}).get(str(identity), {}).is_empty(): return true
+	# A housed resident still works, as on the grid (found 2026-11-11 porting N02: every settlement resident was refused). A
+	# pending native housing step is refused by the step state below; a captive never works.
+	if not lab.terrain.site.get("captivity", {}).get(str(identity), {}).is_empty(): return true
 	var formation: Dictionary = site.formation_state(int(person.owner.formation_index))
 	if int(formation.get("order", -1)) != 0 or bool(formation.get("routed", false)) or bool(formation.get("garrisoned", false)): return true
 	var hot: Dictionary = site.soldier_state(index)
@@ -5945,8 +5947,8 @@ func _delivery_person_ready(person: Dictionary, ignored_job: Dictionary = {}) ->
 		return false
 	if int(person.unit) >= 0:
 		if vehicles.is_embarked(int(person.person_id)) and not person.owner.is_member(int(person.unit)):
-			return int(person.person_id) == lab.controlled_person_id() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
-		return person.owner.combat_can_act(int(person.unit)) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
+			return int(person.person_id) == lab.controlled_person_id() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and (person.body.get("work_task", {}) if person.body is Dictionary else {}).is_empty()
+		return person.owner.combat_can_act(int(person.unit)) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and (person.body.get("work_task", {}) if person.body is Dictionary else {}).is_empty()
 	if not _supply_actor_ready(person.owner):
 		return false
 	if person.owner == lab.npc and (int(lab.npc.command) != TerrainTestNPC.Command.STOP or not lab.npc._path.is_empty()):

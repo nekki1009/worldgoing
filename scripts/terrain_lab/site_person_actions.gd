@@ -957,6 +957,13 @@ func _begin_tent(identity: int, feature_key: String, cells: Array[int], quarter:
 	_jobs[str(identity)] = job
 	return Runtime.ok("開始搭設營帳；完成才使用本人營帳包" if feature_key.is_empty() else "開始收納營帳；完成才歸還本人行囊", {"seconds": TENT_SECONDS})
 
+## A person is moving for action readiness. A crowd person uses the crowd settle rule (a move goal, or native speed at or above
+## SETTLE_SPEED; P1s, as _team_stopped), not any residual drift: a member standing in formation drifts slightly for many
+## steps after its neighbours move (found 2026-11-11, nation first-earned crowd port). Others keep their moving flag.
+func _person_walking(person: Dictionary) -> bool:
+	if person.get("owner") is CrowdOwner and int(person.get("unit", -1)) >= 0: return person.owner.is_walking(int(person.unit))
+	return bool(person.get("moving", false))
+
 func _tent_occupied(cell: Vector2i) -> bool:
 	return lab.site_controller.reserves_cell(cell)
 
@@ -1915,7 +1922,7 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 	return person
 
 func _ready(person: Dictionary, allow_guard: bool = false) -> bool:
-	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving):
+	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or _person_walking(person):
 		return false
 	if lab.site_controller != null:
 		if lab.site_controller.has_method("region_operation_pending") and lab.site_controller.region_operation_pending(): return false
@@ -2863,7 +2870,7 @@ func _technology_operator_for_task(task: Dictionary, identity: int = 0) -> Dicti
 					identity = int(held.executor_id)
 					break
 	var person := _person(identity)
-	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving): return {}
+	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or _person_walking(person): return {}
 	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return {}
 	if lab.terrain.index(person.cell) != int(task.get("cell", -1)) or int(task.get("cell", -1)) != int(task.get("work_cell", task.get("cell", -1))): return {}
 	var genuine := false
@@ -8139,7 +8146,8 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 		view["body"] = actual.row if source_actor == null else source_actor
 		if source_actor != null: view["owner"] = source_actor # task selector only; all fitness below remains Native
 		if not _technology_matching_original_task(view, token) and not _technology_matching_public_task(person, order) and not _technology_matching_settlement_task(person, purpose): return false
-	if physical.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or float(physical.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 \
+	# The crowd settle rule (as moving_member_count above), not the person() drift threshold behind moving_to.
+	if physical.is_walking(int(person.unit)) or float(physical.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 \
 		or bool(physical.combat_hot_get(int(person.unit), &"attack")) or str(physical.combat_hot_get(int(person.unit), &"pose")) != "idle": return false
 	if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) \
 		or lab.site_controller.vehicles.is_operator(int(person.person_id)) and not n08_driver and not n12_fleet or lab.site_controller.ship_person_in_journey(int(person.person_id))): return false

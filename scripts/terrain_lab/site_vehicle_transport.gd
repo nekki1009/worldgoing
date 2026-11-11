@@ -3639,6 +3639,9 @@ func prepare_transfer(source_id: String, destination_id: String, resources: Dict
 		if int(stock.team_id) > 0:
 			# S5: the holder is the crowd owner while the crowd is active; grid armies never hold a crowd team's cargo.
 			var holder_team: Variant = _team_owner(int(stock.team_id))
+			# A crowd person's own cargo: its owner holds it even when that owner is an Actor-only team with no roster rows
+			# (the controlled head's one-person team; found 2026-11-11, N11 crowd port).
+			if holder_team == null and own_cargo and _native_siege(): holder_team = lab.crowd_site.person_owner(executor_id)
 			var holder_operator := executor_id if own_cargo or not operated.is_empty() and int(operated.team_id) == int(stock.team_id) else 0
 			if holder_team == null or not _nation_route_transfer_authorized(holder_team, requester_id, holder_operator, test_dispatch, nation_route_permit):
 				return Runtime.fail("NO_AUTHORITY", "車載庫存由原隊合格指揮者調度")

@@ -2546,6 +2546,13 @@ func _public_work_consents(identities: Array, purpose_id: String) -> Dictionary:
 	for identity: Variant in identities:
 		var person: Dictionary = actions._person(int(identity))
 		if person.is_empty() or not _ready(person).ok: return Runtime.fail("NO_WORKER")
+		# A crowd person asks its original team through the same named-work consent as research does (2026-11-11, nation
+		# first-earned crowd port): grid-only _technology_team found no team for it and the order carried no consent.
+		if person.get("owner") is CrowdOwner:
+			var native: Dictionary = actions._technology_scope_consent_candidate(person, purpose_id, int(lab.controlled_person_id()))
+			if not native.ok: return native
+			if not native.consent.is_empty(): consents.append(native.consent.duplicate(true))
+			continue
 		var team: Variant = actions._technology_team(person)
 		if team == null: continue
 		if not team.has_method("technology_work_consent"): return Runtime.fail("UNSUPPORTED")
