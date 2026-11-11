@@ -7472,6 +7472,7 @@ func publish_controlled_vehicle_work(prepared: Dictionary) -> void:
 func technology_vehicle_work_admission(operator_id: int, team_id: int) -> Dictionary:
 	if operator_id <= 0 or team_id <= 0 or bool(lab.terrain.site.get("paused", false)) or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY")
 	var person := _person(operator_id)
+	if person.get("owner") is CrowdOwner: return _crowd_vehicle_work_admission(person, operator_id, team_id)
 	var team: Variant = _technology_team(person)
 	if team == null or not team is TerrainArmy or int(team.team_id) != team_id or not lab.combat_armies.has(team) \
 		or not team.combat_enabled or team.combat_order != TerrainArmy.CombatOrder.HOLD: return Runtime.fail("NO_AUTHORITY")
@@ -7483,6 +7484,19 @@ func technology_vehicle_work_admission(operator_id: int, team_id: int) -> Dictio
 		or bool(lab.terrain.site.get("team_supply", {}).get(str(team_id), {}).get("training_order", false)): return Runtime.fail("BUSY")
 	return Runtime.ok("原工作首長明示本次普通器械工人", {"team": team, "person_ids": [operator_id], "requester_id": _technology_controlled(),
 		"operation_ref": {}, "controlled_worker": operator_id == _technology_controlled(), "person": person})
+
+## The crowd form of technology_vehicle_work_admission (2026-11-11, artisan F11/F12 crowd port): the same team.work
+## decider, HOLD and stopped-team rules read on the crowd owner (crowd settle rule); its original TerrainArmy owns the
+## offices. The admission carries the crowd owner as its team and the original army as original_team.
+func _crowd_vehicle_work_admission(person: Dictionary, operator_id: int, team_id: int) -> Dictionary:
+	var physical: CrowdOwner = person.owner
+	var original: Variant = physical._command_owner(int(person.unit))
+	if not original is TerrainArmy or int(physical.team_id) != team_id or int(original.team_id) != team_id or not physical.crowd_site.owns_original_team(original) 		or physical.combat_order != TerrainArmy.CombatOrder.HOLD: return Runtime.fail("NO_AUTHORITY")
+	var duty: Dictionary = original.duty_resolve_readonly("team.work", physical)
+	if not duty.ok or int(duty.get("decider", -1)) != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
+	if not _ready(person) or _threat(person, {}) or is_busy(operator_id) or physical.is_sustain_routed() or physical.moving_member_count() > 0 		or original.has_ship_journey() or original._team_ship_activity() 		or bool(lab.terrain.site.get("team_supply", {}).get(str(team_id), {}).get("training_order", false)): return Runtime.fail("BUSY")
+	return Runtime.ok("原工作首長明示本次普通器械工人", {"team": physical, "original_team": original, "person_ids": [operator_id],
+		"requester_id": _technology_controlled(), "operation_ref": {}, "controlled_worker": operator_id == _technology_controlled(), "person": person})
 
 # Re-query the named ORIGINAL person at an original construction station. This
 # is an occupancy query only; it does not approve a job or bypass a reservation.
