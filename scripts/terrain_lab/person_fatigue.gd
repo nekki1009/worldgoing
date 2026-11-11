@@ -120,13 +120,22 @@ static func _valid_work_interval(value: float, seconds: float, rate: float) -> b
 
 ## Synchronous calculation only: original providers own legality and consume this
 ## plan. No body, pool, request, job or clock is mutated, and no recovery is granted.
+## A bucket key that one body object always yields: an Object's instance id, or a row's own person_id field.
+static func _work_plan_body_key(body: Variant) -> Variant:
+	if body is Object: return "o%d" % (body as Object).get_instance_id()
+	if body is Dictionary: return "p" + str((body as Dictionary).get("person_id", ""))
+	return "x"
+
 static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 	if not is_finite(seconds) or seconds < 0.0: return _invalid_work_plan("Invalid interval")
 	var pools: Array[Dictionary] = []
 	var work: Array[Dictionary] = []
 	var jobs := {}
 	var identities := {}
-	var bodies: Array = []
+	# Bodies bucketed by a key the same body object always yields (its instance id, or its own person_id field), then
+	# compared by identity inside the bucket: the same identity rule as a flat scan, without the O(n^2) scan of every
+	# earlier body (2026-11-12: 5,000 crowd run-bound participants spent most of each shared window here).
+	var bodies := {}
 	for raw: Variant in requests:
 		if not raw is Dictionary: return _invalid_work_plan("Request must be a dictionary")
 		if not raw.get("provider") is String or str(raw.provider).is_empty() or not raw.get("key") is String or str(raw.key).is_empty(): return _invalid_work_plan("Invalid original work key")
@@ -149,9 +158,12 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			if identities.has(identity): return _invalid_work_plan("Original person has multiple activities")
 			var snapshot := _work_plan_body(person.get("body"))
 			if snapshot.is_empty(): return _invalid_work_plan("Invalid original fatigue body")
-			for body: Variant in bodies:
+			var body_key: Variant = _work_plan_body_key(snapshot.body)
+			var bucket: Array = bodies.get(body_key, [])
+			for body: Variant in bucket:
 				if is_same(body, snapshot.body): return _invalid_work_plan("Original body has multiple identities")
-			bodies.append(snapshot.body)
+			bucket.append(snapshot.body)
+			bodies[body_key] = bucket
 			identities[identity] = true
 			var pool_index := -1
 			for index: int in pools.size():
