@@ -310,6 +310,14 @@ var tactical_ai_enabled: bool:
 	get:
 		return bool(crowd_site.formation_state(formation_index).get("ai_enabled", false))
 
+## Nekki 2026-11-11 (A): leave = the person becomes the captain of its own one-person team in place; join = it returns to
+## the team it left. Both are CrowdSite native operations; the TerrainArmy roster forms are grid-only.
+func leave_row(person_id: int) -> Dictionary:
+	return crowd_site.leave_to_own_team(person_id)
+
+func join_row(person_id: int) -> Dictionary:
+	return crowd_site.rejoin_original_team(person_id)
+
 func has_army() -> bool:
 	return not records.is_empty() and not crowd_site.team_record(formation_index).is_empty()
 

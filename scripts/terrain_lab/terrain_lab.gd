@@ -4355,6 +4355,10 @@ func player_army() -> TerrainArmy:
 	return null
 
 func join_player_army() -> Dictionary:
+	# Crowd (Nekki 2026-11-11 A): the controlled person who left stands as its own one-person captain team; joining returns it.
+	if crowd_site != null and crowd_site.active and crowd_site.contains_person(controlled_person_id()) and not crowd_site._actors.has(controlled_person_id()) and not (is_inside_tree() and get_tree().paused):
+		var crowd_owner: Variant = crowd_site.person_owner(controlled_person_id())
+		if crowd_owner != null: return crowd_owner.join_row(controlled_person_id())
 	if player_army() != null:
 		return SiteRuntime.fail("BUSY", "已加入隊伍，不能重複入隊")
 	if is_inside_tree() and get_tree().paused:
@@ -4369,6 +4373,7 @@ func join_player_army() -> Dictionary:
 func leave_player_army() -> Dictionary:
 	var team := player_army()
 	var person := controlled_target()
+	if not person.is_empty() and person.get("owner") is CrowdPersonOwner: return person.owner.leave_row(controlled_person_id())
 	if team == null or person.is_empty():
 		return SiteRuntime.fail("NO_TARGET", "本人目前沒有隊伍")
 	if int(person.unit) >= 0:

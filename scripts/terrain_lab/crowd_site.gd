@@ -3396,7 +3396,7 @@ static func cadre_index(roster: Dictionary, index: int) -> bool:
 ## the spot and becomes the captain of his own one-person team of `faction` (normally neutral), in this Site. The person
 ## keeps his row (life, items, abilities); his posts in the old team are vacated. Supply follows the person first, so a
 ## refusal before the native move changes nothing. Returns {team_id, formation}.
-func detach_to_new_team(identity: int, faction: int) -> Dictionary:
+func detach_to_new_team(identity: int, faction: int, remember_origin: bool = false) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
 	if not crowd.has_method("leave_member"): return SiteRuntime.fail("UNSUPPORTED", "原生群眾未提供離隊轉投")
 	if _actors.has(identity) or not _index_by_id.has(identity) or not _owner_by_id.has(identity): return SiteRuntime.fail("UNSUPPORTED", "此人不在原生群眾名冊")
@@ -3411,8 +3411,8 @@ func detach_to_new_team(identity: int, faction: int) -> Dictionary:
 	if roster.units.size() < 2: return SiteRuntime.fail("WHOLE_TEAM", "一人隊不必離隊")
 	var owner: Variant = _owner_by_id[identity]
 	var native_index := int(_index_by_id[identity])
-	if native_index == player_index: return SiteRuntime.fail("UNSUPPORTED", "受控本人不能用此流程離隊")
-	if not bool(owner.site_exit_ready(native_index)): return SiteRuntime.fail("NOT_READY", "此人作業或動作尚未收束")
+	# The controlled person may leave too (Nekki 2026-11-11 A); the host-held soldier is queried as the split gate does.
+	if not _split_exit_ready(owner, native_index): return SiteRuntime.fail("NOT_READY", "此人作業或動作尚未收束")
 	var team_id := native_next_team_id()
 	var ids: Array[int] = [identity]
 	var supplied: Dictionary = lab.site_controller.captivity_supply._change_membership_supply(owner,
@@ -3425,7 +3425,9 @@ func detach_to_new_team(identity: int, faction: int) -> Dictionary:
 	var destination: Dictionary = created.roster
 	var formation := int(destination.crowd_formation)
 	# Native move_member keeps a soldier inside his team's slot; leaving for another team (and slot) is leave_member.
-	if not crowd.has_method("leave_member") or not bool(crowd.leave_member(native_index, formation)):
+	# Same native faction slot (an own-team leave, Nekki 11/11 A): move_member; another faction: leave_member.
+	var moved_native: bool = bool(crowd.move_member(native_index, formation)) if _native_faction(faction) == int(entry.get("native_faction", -1)) 		else crowd.has_method("leave_member") and bool(crowd.leave_member(native_index, formation))
+	if not moved_native:
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此人離隊；此人未移動")
 	var held_before: bool = roster_post_holders(int(roster.team_id)).has(identity)
 	# Unit indices of the old roster shift when the row leaves: commanders, officers and abilities are remapped as
@@ -3450,6 +3452,7 @@ func detach_to_new_team(identity: int, faction: int) -> Dictionary:
 	for row: Dictionary in destination.units: row["member"] = true
 	destination["formal_commander"] = 0
 	destination["offices"] = SiteOffices.default_offices("team", identity, false)
+	if remember_origin: destination["left_from_team_id"] = int(roster.team_id) # The team a rejoin returns to (Nekki 11/11 A).
 	if not set_formation_fields(formation, {"formal_person": identity}):
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定隊長；此人已移入新隊")
 	var holds := roster_post_holders(team_id).has(identity)
@@ -3459,6 +3462,45 @@ func detach_to_new_team(identity: int, faction: int) -> Dictionary:
 	var synced: Dictionary = sync_to_site()
 	if not synced.ok: return synced
 	return SiteRuntime.ok("", {"team_id": team_id, "formation": formation})
+
+
+## Nekki 2026-11-11 (A): a member who leaves its team stays on the Site as the captain of its own one-person team of the
+## same faction (detach_to_new_team; no leaderless solo, the 11/01 rule). The team it left is remembered for a rejoin.
+func leave_to_own_team(identity: int) -> Dictionary:
+	var owner: Variant = _owner_by_id.get(identity)
+	if owner == null: return SiteRuntime.fail("UNSUPPORTED", "此人不在原生群眾名冊")
+	return detach_to_new_team(identity, int(owner.faction_id), true)
+
+
+## Nekki 2026-11-11 (A): the captain of a one-person team made by leave_to_own_team rejoins the team it left: the native
+## soldier moves into that formation (leave_member), its row follows (native_transfer_records), its posts in the left
+## one-person team end with it. The emptied one-person team keeps its native formation (formations are never removed)
+## and an empty roster, as any team whose members are all gone. Refusals before the native move change nothing.
+func rejoin_original_team(identity: int) -> Dictionary:
+	if not active or crowd == null or not crowd.has_method("leave_member"): return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if _actors.has(identity) or not _index_by_id.has(identity) or not _owner_by_id.has(identity): return SiteRuntime.fail("UNSUPPORTED", "此人不在原生群眾名冊")
+	var solo: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if _roster_index_for_person(candidate, identity) >= 0: solo = candidate
+	if solo.is_empty() or solo.units.size() != 1 or not solo.has("left_from_team_id"): return SiteRuntime.fail("BUSY", "已在隊伍中，不能重複入隊")
+	var destination: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if int(candidate.get("team_id", -1)) == int(solo.left_from_team_id): destination = candidate
+	if destination.is_empty() or int(destination.get("faction_id", -1)) != int(solo.get("faction_id", -2)) or not str(destination.get("garrison_feature_id", "")).is_empty():
+		return SiteRuntime.fail("NO_TARGET", "原隊伍已不在此地或不同陣營")
+	var owner: Variant = _owner_by_id[identity]
+	var native_index := int(_index_by_id[identity])
+	if not _split_exit_ready(owner, native_index): return SiteRuntime.fail("NOT_READY", "此人作業或動作尚未收束")
+	if not bool(crowd.move_member(native_index, int(destination.crowd_formation))): # Same faction slot: a member move.
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此人歸隊；此人未移動")
+	native_transfer_records([identity], solo, destination)
+	for row: Dictionary in destination.units:
+		if int(row.person_id) == identity: row["member"] = true
+	solo.erase("left_from_team_id") # The emptied team keeps an empty roster: the Store pairs every native formation with one.
+	_refresh_bodies()
+	var synced: Dictionary = sync_to_site()
+	if not synced.ok: return synced
+	return SiteRuntime.ok("已回到原隊伍；原人物與持物不變", {"team_id": int(destination.team_id)})
 
 
 ## G6.5: the native exit gate for a split. It refuses a host-controlled soldier, and the controlled cadre leads the split,
