@@ -5854,7 +5854,12 @@ func team_carrier_contributes(team: Variant, index: int) -> bool:
 		and not bool(team.combat_hot_get(index, &"departed")) and not bool(team.combat_hot_get(index, &"surrender_pending", false))
 	return team.is_member(index) and (team.combat_can_act(index) or exited_carrier)
 
-func order_team_logistics(team: TerrainArmy, identities: Array[int], requester_id: int, enabled: bool) -> Dictionary:
+func order_team_logistics(team: Variant, identities: Array[int], requester_id: int, enabled: bool) -> Dictionary:
+	if team is CrowdPersonOwner: return _order_crowd_team_logistics(team, identities, requester_id, enabled)
+	if not team is TerrainArmy: return Runtime.fail("BUSY")
+	return _order_grid_team_logistics(team, identities, requester_id, enabled)
+
+func _order_grid_team_logistics(team: TerrainArmy, identities: Array[int], requester_id: int, enabled: bool) -> Dictionary:
 	if team == null or not team.combat_enabled or get_tree().paused or bool(lab.terrain.site.paused):
 		return Runtime.fail("BUSY")
 	team.settle_combat_command()
@@ -5882,6 +5887,36 @@ func order_team_logistics(team: TerrainArmy, identities: Array[int], requester_i
 			return Runtime.fail("STORAGE_FULL", "解除後勤會超載；請先實際交付共有口糧，不靜默丟物或帶超額出發")
 	for identity: int in identities:
 		team.combat_units[team.index_for_identity(identity)].logistics = enabled
+	return Runtime.ok("已指定原人物專職後勤，每名可搬運者6日份；不另生貨物" if enabled else "已解除原人物專職後勤，恢復3日份載量")
+
+## The crowd form of order_team_logistics (2026-11-11; a crowd team had no way to name a logistics carrier). Same rules:
+## the team.logistics decider orders it, the team stands (crowd settle rule), each named person is a free member, and a
+## release may not overload the shared rations. The flag is the roster row's cold `logistics` field, which
+## team_food_capacity and the supply readers already read for a crowd owner.
+func _order_crowd_team_logistics(team: CrowdPersonOwner, identities: Array[int], requester_id: int, enabled: bool) -> Dictionary:
+	if not team.has_army() or get_tree().paused or bool(lab.terrain.site.paused) or identities.is_empty(): return Runtime.fail("BUSY")
+	var original: Variant = team._command_owner(team.index_for_identity(int(identities[0])))
+	if not original is TerrainArmy or original.data != lab.terrain or int(original.team_id) != int(team.team_id): return Runtime.fail("INVALID_OWNER")
+	var resolved: Dictionary = original.duty_resolve_readonly("team.logistics", team)
+	if not bool(resolved.get("ok", false)) or int(resolved.get("decider", -1)) != requester_id or requester_id <= 0:
+		return SiteOffices.refusal(resolved, requester_id, original.offices)
+	if not _team_stopped(team): return Runtime.fail("BUSY", "先停止原隊伍並選取既有自由隊員")
+	var seen := {}
+	for identity: int in identities:
+		var index := team.index_for_identity(identity)
+		if index < 0 or not team.is_member(index) or team.actors.has(index) or seen.has(identity): return Runtime.fail("INVALID_MEMBER")
+		var person := person_actions._person(identity)
+		if not _delivery_person_ready(person) or _is_delivering_person(identity):
+			return Runtime.fail("BUSY", "原人物尚有作業；不替換其工作或身體")
+		seen[identity] = true
+	if not enabled:
+		var reduced_capacity := team_food_capacity(team)
+		for identity: int in identities:
+			if bool(team._cold_get(team.index_for_identity(identity), "logistics", false)): reduced_capacity -= 3.0
+		var entry := _supply_entry(team)
+		if not entry.is_empty() and Sustain.rations(entry.sustain, _supply_stock(entry)) > reduced_capacity + 0.000000001:
+			return Runtime.fail("STORAGE_FULL", "解除後勤會超載；請先實際交付共有口糧，不靜默丟物或帶超額出發")
+	for identity: int in identities: team._cold_set(team.index_for_identity(identity), "logistics", enabled)
 	return Runtime.ok("已指定原人物專職後勤，每名可搬運者6日份；不另生貨物" if enabled else "已解除原人物專職後勤，恢復3日份載量")
 
 ## P1o: a member counts as walking for supply readiness. A crowd member uses the crowd settle rule (CrowdPersonOwner.is_walking);

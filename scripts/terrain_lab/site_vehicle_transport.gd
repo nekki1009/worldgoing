@@ -1522,8 +1522,10 @@ func _stock(identity: String, allow_independent_person: bool = false) -> Diction
 		var person: Dictionary = controller.person_actions._person(int(value))
 		if person.is_empty(): return {}
 		if person.owner is CrowdPersonOwner:
-			# S5: a crowd person carries cargo only as the operator of a convoy (the crew of its vehicle record).
-			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not is_convoy(_operated(int(value))): return {}
+			# S5: a crowd person carries cargo as the operator of a convoy (the crew of its vehicle record); 2026-11-11: also as
+			# its team's named logistics carrier, or as the controlled person at a feature, the same two cases the grid row has.
+			var crowd_carrier: bool = is_convoy(_operated(int(value))) or bool(person.owner._cold_get(int(person.unit), "logistics", false)) or allow_independent_person and int(value) == int(lab.controlled_person_id())
+			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not crowd_carrier: return {}
 		elif not person.owner is TerrainArmy:
 			if not allow_independent_person or not person.owner is TerrainTestCharacter: return {}
 		elif int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not bool(person.body.get("logistics", false)) and not is_siege(_operated(int(value))) 			and not (allow_independent_person and int(value) == int(lab.controlled_person_id())): return {}
@@ -3548,7 +3550,8 @@ func prepare_transfer(source_id: String, destination_id: String, resources: Dict
 	elif not test_dispatch and requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
 	for identity: String in [source_id, destination_id]:
 		if identity.begins_with("person:") and identity.trim_prefix("person:").is_valid_int():
-			var guard: Dictionary = controller.person_actions.crowd_action_guard([int(identity.trim_prefix("person:"))])
+			# Nekki 2026-10-31 (peacetime systems under crowd): a crowd person loads and unloads in peace; refused only in combat.
+			var guard: Dictionary = controller.person_actions.crowd_peace_guard([int(identity.trim_prefix("person:"))])
 			if not guard.ok: return guard
 	var involves_feature := source_id.begins_with("feature:") or destination_id.begins_with("feature:")
 	# Trade plan §4.1: a family estate warehouse is loaded and unloaded only by family members (the requester and the
@@ -3569,12 +3572,14 @@ func prepare_transfer(source_id: String, destination_id: String, resources: Dict
 	if source.has("person_id") and destination.has("person_id"): return Runtime.fail("INVALID", "此入口只處理後勤本人與營地／車輛裝卸")
 	var executor_id := int(source.get("person_id", destination.get("person_id", requester_id)))
 	if involves_feature:
-		var native_guard: Dictionary = controller.person_actions.crowd_action_guard([executor_id])
+		var native_guard: Dictionary = controller.person_actions.crowd_peace_guard([executor_id])
 		if not native_guard.ok: return native_guard
 	var person: Dictionary = controller.person_actions._person(executor_id)
 	if source.has("person_id") or destination.has("person_id"):
 		if person.is_empty(): return Runtime.fail("NO_AUTHORITY")
-		if person.owner is TerrainArmy:
+		# A crowd team's member is authorized as a grid row is (2026-11-11): the controlled requester is the carrier itself or
+		# the team's present commander. _stock already limits which crowd persons are cargo endpoints at all.
+		if person.owner is TerrainArmy or person.owner is CrowdPersonOwner and person.owner.has_army():
 			if not _nation_route_transfer_authorized(person.owner, requester_id, executor_id, test_dispatch, nation_route_permit): return Runtime.fail("NO_AUTHORITY")
 		elif not involves_feature or requester_id != executor_id or requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
 	var operated := _operated(executor_id)

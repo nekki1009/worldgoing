@@ -481,6 +481,12 @@ func _commit_prison_release(job: Dictionary) -> Dictionary:
 	return Runtime.ok("已出監解綁；生命、昏迷、位置與實物維持原值")
 
 func _release_work_hold(job: Dictionary) -> void:
+	if str(job.get("kind", "")) == "technology_lesson":
+		for identity: Variant in [job.get("executor_id"), job.get("target_id")]:
+			var held := _person(int(identity), false)
+			if not held.is_empty() and held.owner is CrowdOwner and held.owner.crowd_site.siege_native_supported():
+				held.owner.crowd_site.crowd.cancel_siege_step(int(held.unit))
+		return
 	if str(job.get("kind", "")) == "fire_suppress":
 		if is_instance_valid(job.executor_owner): job.executor_owner.release_suppress_approach(int(job.executor_id), int(job.job_token))
 		if is_instance_valid(job.registry): job.registry.release_work_slot(job.lease)
@@ -3222,6 +3228,13 @@ func begin_technology_lesson(requester_id: int, teacher_id: int, student_id: int
 		"technology_id": tech_id,
 		"student_cell": lab.terrain.index(student.cell), "student_hit": int(student.hit), "teacher_body": teacher.body, "student_body": student.body})
 	_jobs[str(teacher_id)] = job
+	# A crowd teacher and student hold their camp contact cells for the lesson, as a crowd worker holds its station (the
+	# native siege-step hold); otherwise both walk back to their formation slots and the lesson breaks (2026-11-11).
+	for person: Dictionary in [teacher, student]:
+		if person.owner is CrowdOwner and not person.owner.crowd_site.siege_approach_step(int(person.person_id), person.cell):
+			_release_work_hold(job)
+			_jobs.erase(str(teacher_id))
+			return Runtime.fail("BUSY", "群眾師徒無法在營地原位就位")
 	return Runtime.ok("原師徒開始一課；無材料費、無弓獎品", {"seconds": Technology.LESSON_SECONDS})
 
 func _technology_lesson_context(job: Dictionary) -> Dictionary:
