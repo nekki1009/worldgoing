@@ -875,7 +875,8 @@ func _equipment_prepared(job: Dictionary, complete: bool) -> void:
 		job["elapsed"] = 0.0 # Only the original clock/post-contact commit can equip.
 
 func begin_ranged_craft(identity: int, recipe: String, technology_token: Dictionary = {}) -> Dictionary:
-	var crowd_guard := crowd_action_guard([identity])
+	# Peace craft (Nekki 10/31 peace systems; 2026-11-11 settlement crowd port): a crowd person crafts at the camp outside combat.
+	var crowd_guard := crowd_peace_guard([identity])
 	if not crowd_guard.ok:
 		return crowd_guard
 	if is_busy(identity) or bool(lab.terrain.site.get("paused", false)):
@@ -958,6 +959,11 @@ func _begin_tent(identity: int, feature_key: String, cells: Array[int], quarter:
 
 func _tent_occupied(cell: Vector2i) -> bool:
 	return lab.site_controller.reserves_cell(cell)
+
+## A named worker's footprint check: the worker's own body never blocks its own work cells (a crowd body's radius covers
+## the neighbouring cells it stands beside; found 2026-11-11 porting the settlement bases). Everyone else still does.
+func _work_occupied(identity: int) -> Callable:
+	return lab.site_controller.reserves_cell.bind([identity])
 
 func _tent_job_context(job: Dictionary) -> Dictionary:
 	if not is_instance_valid(lab) or not is_same(lab.terrain, job.terrain) or not is_same(lab.terrain.site, job.site_state):
@@ -1588,7 +1594,8 @@ func _job_context(job: Dictionary) -> Dictionary:
 	if str(job.get("source_kind", "")) == "person":
 		ids.append(int(job.get("source_id", -1)))
 	# Equipment jobs follow the peacetime equipment guard, so a peaceful timed order is not cancelled at its own tick.
-	var crowd_guard := crowd_equipment_guard(ids) if str(job.kind) == "equipment" else crowd_action_guard(ids)
+	# A ranged craft (camp handwork, F07 trials) is a peace job too (2026-11-11): it stops only when combat starts.
+	var crowd_guard := crowd_equipment_guard(ids) if str(job.kind) == "equipment" else (crowd_peace_guard(ids) if str(job.kind) == "ranged_craft" else crowd_action_guard(ids))
 	if not crowd_guard.ok:
 		return crowd_guard
 	if str(job.kind) == "equipment" and not is_instance_valid(lab):
@@ -5250,7 +5257,7 @@ func _controlled_feature_work_request(key: String, job: Dictionary, seconds: flo
 	if not context.ok: return {}
 	var person: Dictionary = context.person
 	var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
-	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _work_occupied(int(person.person_id)))
 	if not checked.ok: return {}
 	var remaining := float(checked.get("remaining", NAN))
 	var productivity := float(checked.get("productivity", NAN))
@@ -5419,7 +5426,7 @@ func cold_technology_checkpoint_guard() -> Dictionary:
 			var paid := Runtime.validate_technology_trial_project_storage(lab.terrain, target)
 			if not paid.ok: return paid
 			var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
-			var work := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+			var work := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _work_occupied(int(person.person_id)))
 			if not work.ok: return work
 			if not is_finite(float(work.get("remaining", -1.0))) or float(work.remaining) <= 0.00000001:
 				return Runtime.fail("BUSY", "原已完成物理工序必先沿同點交貨")
@@ -5433,7 +5440,7 @@ func _controlled_vehicle_work_request(key: String, job: Dictionary, seconds: flo
 	if not context.ok: return {}
 	var person: Dictionary = context.person
 	var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
-	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _work_occupied(int(person.person_id)))
 	if not checked.ok: return {}
 	var remaining := float(checked.get("remaining", NAN))
 	var factor := float(checked.get("progress_multiplier", NAN))
@@ -5477,7 +5484,7 @@ func prepare_checked_controlled_prefix_allocations(admitted: Dictionary, runtime
 		var start: Dictionary = held.people[identity].duplicate(false)
 		start["item_state"] = start.holder
 		start["cell"] = start.start_cell
-		start["occupied"] = _tent_occupied
+		start["occupied"] = _work_occupied(identity)
 		start["carry_limit"] = int(entry.carry_limit)
 		start["row"] = start.body
 		var target_ref: Dictionary = held.feature if held.kind == "technology_feature" else held.vehicle
@@ -8096,6 +8103,10 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 	var physical: CrowdOwner = person.owner
 	var original: Variant = physical._command_owner(int(person.unit))
 	if original is TerrainTestCharacter: original = _technology_team(person)
+	# The grid reader's research-work exemptions (2026-11-11, N08 crowd port): the named N08 driver's own wagon and logistics
+	# role, and the N12 executor's helm and fleet activity, are the research work itself.
+	var n08_driver: bool = _nation_n08_driver_context(int(person.person_id), purpose).get("ok", false) == true
+	var n12_fleet: bool = nation_n12_fleet_executor(int(person.person_id), purpose)
 	if not original is TerrainArmy:
 		if _technology_team(person) != null: return false
 		# G8a: a crowd-only team has no original army; its person still must be fit and still to consent.
@@ -8103,11 +8114,11 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 		var unit := int(person.unit)
 		if physical.member_gone(unit) or not physical.combat_can_act(unit) or physical.is_sustain_routed() or bool(physical.person(unit, false).get("moving", true)): return false
 		if float(physical.combat_hot_get(unit, &"exchange_stagger", 0.0)) > 0.0 or bool(physical.combat_hot_get(unit, &"attack")) or str(physical.combat_hot_get(unit, &"pose")) != "idle": return false
-		if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) or lab.site_controller.vehicles.is_operator(int(person.person_id))): return false
+		if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) or lab.site_controller.vehicles.is_operator(int(person.person_id)) and not n08_driver and not n12_fleet): return false
 		return true
 	if original.data != lab.terrain or int(physical.team_id) != int(original.team_id) or not physical.crowd_site.owns_original_team(original) or physical.member_gone(int(person.unit)) \
 		or not physical.combat_can_act(int(person.unit)) or physical.combat_order != TerrainArmy.CombatOrder.HOLD or physical.is_sustain_routed() \
-		or original.get_active_move_plan() != null or original.has_ship_journey() or original._team_ship_activity() \
+		or original.get_active_move_plan() != null or original.has_ship_journey() or original._team_ship_activity() and not n12_fleet \
 		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return false
 	# The crowd settle rule (P1s, as _team_stopped and supply readiness): a member is moving when it walks (a move goal or
 	# native speed >= SETTLE_SPEED). person().moving counts any residual drift (> 1e-6), so a team standing in formation after
@@ -8116,7 +8127,7 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 	var supply: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(physical.team_id), {})
 	if bool(supply.get("training_order", false)): return false
 	var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))
-	if actual.is_empty() or actual.owner != physical or int(actual.unit) != int(person.unit) or bool(actual.row.get("logistics", false)): return false
+	if actual.is_empty() or actual.owner != physical or int(actual.unit) != int(person.unit) or bool(actual.row.get("logistics", false)) and not n08_driver and not n12_fleet: return false
 	var current_task: Dictionary = actual.row.get("work_task", {})
 	var source_actor: Variant = physical.actors.get(int(person.unit))
 	if source_actor != null:
@@ -8131,7 +8142,7 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 	if physical.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or float(physical.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 \
 		or bool(physical.combat_hot_get(int(person.unit), &"attack")) or str(physical.combat_hot_get(int(person.unit), &"pose")) != "idle": return false
 	if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) \
-		or lab.site_controller.vehicles.is_operator(int(person.person_id)) or lab.site_controller.ship_person_in_journey(int(person.person_id))): return false
+		or lab.site_controller.vehicles.is_operator(int(person.person_id)) and not n08_driver and not n12_fleet or lab.site_controller.ship_person_in_journey(int(person.person_id))): return false
 	if int(original.duty_resolve_readonly("team.work", physical).get("decider", -1)) <= 0: return false
 	for receipt: Variant in consents:
 		if Technology.keys(receipt, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \

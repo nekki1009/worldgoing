@@ -11,8 +11,16 @@ func _earned_depot_contact(lab: TerrainLab) -> bool:
 	var camp := data.cell_from_index(int(data.site.depot_cell))
 	for direction: Vector2i in TerrainData.DIRECTIONS:
 		var cell := camp + direction
-		if data.contains(cell) and data.is_walkable(cell) and data.can_step(cell, camp) and lab.character.place(cell, true): return true
+		if data.contains(cell) and data.is_walkable(cell) and data.can_step(cell, camp) and lab.character.place(cell, true):
+			return _earned_crowd_place(lab, int(lab.controlled_person_id()), cell)
 	return false
+
+## Crowd port (2026-11-11): on an active crowd the controlled person is a native crowd soldier; the fixture places that same
+## native person on the station (set_soldier_fields only moves it; see crowd_fixture_port_guide). The grid keeps the Actor.
+func _earned_crowd_place(lab: TerrainLab, identity: int, cell: Vector2i) -> bool:
+	if lab.crowd_site == null or not lab.crowd_site.active or not lab.crowd_site.contains_person(identity): return true
+	var native := int(lab.crowd_site.crowd.soldier_index(identity))
+	return native >= 0 and lab.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5})
 
 func _earned_grant_failure(lab: TerrainLab, scope: String, prepared: Dictionary, consent: Dictionary, grant: Dictionary) -> void:
 	printerr("CC001_LEGAL_CONTACT_GRANT_FAIL: " + JSON.stringify({"prepare":prepared.get("code", "OK"), "consent":consent.get("code", "OK"), "grant":grant.get("code", "OK"),

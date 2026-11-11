@@ -252,6 +252,8 @@ func set_soldier_fields(index: int, changes: Dictionary) -> bool:
 	# Original counters remain int64 values outside the floating-point packed state.
 	if has_hit_revision and (typeof(changes.hit_revision) != TYPE_INT or int(changes.hit_revision) < 0 or not crowd.has_method("set_contact_revision")):
 		return false
+	# A position write moves a body: the cached occupancy no longer describes the ground.
+	if changes.has("px") or changes.has("py"): _occupancy_cache.clear()
 	var values: PackedFloat64Array = crowd.get_soldier_state(index)
 	var refs: PackedInt64Array = crowd.soldier_refs(index)
 	for key: String in changes:
@@ -702,6 +704,9 @@ func convert_existing() -> Dictionary:
 	var data: TerrainData = lab.terrain
 	if float(data.site.get("combat_left", 0.0)) > 0.0:
 		return SiteRuntime.fail("BATTLE_IN_PROGRESS", "戰鬥尚未脫離，不能轉為群眾；原存檔保持一般模式")
+	# A legacy grid Site may carry no person allocator (the grid Store scans on load); a crowd save requires it (found
+	# 2026-11-11, settlement crowd port). Record the same legacy scan the original allocator runs.
+	if not data.site.has("next_person_id"): data.site["next_person_id"] = lab._next_army_person_id_for(data, lab.combat_actors, lab.combat_armies)
 	# A travelling party's contact frame carries its hulls on their region route (kinematic poses), not a Site journey.
 	if not lab.terrain.has_meta(&"region_party_world_frame") and (lab.has_ship_journey() or lab.site_controller.ship_journey_active()):
 		return SiteRuntime.fail("SHIP_JOURNEY_PENDING", "船隊仍在跨區旅程中，不能轉為群眾；原存檔保持一般模式")
@@ -1193,7 +1198,8 @@ func _refresh_kits() -> bool:
 	var appearances: Array = []
 	var audio_mounts := PackedByteArray()
 	_no_atlas.clear()
-	for identity in crowd.person_ids():
+	var ids: PackedInt64Array = crowd.person_ids()
+	for identity in ids:
 		var appearance: Dictionary = _appearance(int(identity))
 		var drawn: Variant = null if _actors.has(int(identity)) else appearance
 		if drawn != null and atlas_cannot_draw(appearance):
@@ -1201,6 +1207,7 @@ func _refresh_kits() -> bool:
 			drawn = null
 		appearances.append(drawn)
 		audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
+	_headless_unadmitted_bodied(appearances, ids)
 	_kit_appearances = appearances
 	return _register_kits(appearances, audio_mounts)
 
@@ -3766,6 +3773,7 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 			else:
 				appearances.append(appearance)
 			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
+	_headless_unadmitted_bodied(appearances, crowd.person_ids())
 	if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
 	_host_fire_active = candidate_host_fire
 	return SiteRuntime.ok()
@@ -4023,6 +4031,27 @@ static func bodied_ids(site_rosters: Array, controlled_id: int, native: Variant 
 
 ## S2: a valid foot look the soldier atlas cannot draw (a created face, hair or civilian clothes). Such a person is bodied
 ## and native draws nothing at its index (kit -1), never a substitute atlas look. Riders keep the mounted atlas rules.
+## Nekki 2026-11-11 (A): a headless run treats a foot look the crowd atlas cannot admit (for example a person with no gear
+## at all, whose look is never published in a headless run's own appdata) as mechanics-only, as the 10/27 captive rule does:
+## the person keeps a body (kit -1, as an unatlased created look) and nothing is drawn. A visual run is unchanged: an
+## unadmitted look still refuses the kits. `appearances` is index-aligned with `ids`; refused entries become null.
+func _headless_unadmitted_bodied(appearances: Array, ids: PackedInt64Array) -> void:
+	if DisplayServer.get_name() != "headless": return
+	var required: Array = []
+	var at: Array[int] = []
+	for index: int in appearances.size():
+		var appearance: Variant = appearances[index]
+		if appearance == null or bool(appearance.get("mounted", false)): continue
+		required.append(appearance)
+		at.append(index)
+	if required.is_empty(): return
+	var admitted: Dictionary = Atlas.admit_crowd_appearances(required, [])
+	for failed: Variant in admitted.get("required_failed", []):
+		var index := at[int(failed)]
+		_no_atlas[int(ids[index])] = true
+		appearances[index] = null
+
+
 static func atlas_cannot_draw(appearance: Dictionary) -> bool:
 	return not appearance.is_empty() and not bool(appearance.get("mounted", false)) \
 		and HumanCharacter3DEditor.valid_appearance(appearance) and not Atlas.supports(appearance)
@@ -4492,7 +4521,9 @@ static func build_siege_navigation(data: TerrainData, ground_cells: PackedInt64A
 	var exits := PackedInt64Array()
 	if data == null or ground_cells.size() % 3 != 0: return SiteRuntime.fail("INVALID", "原人物格位投影不完整")
 	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
-		if SiteVehicleTransport.is_convoy(vehicle) and int(vehicle.get("convoy_id", 0)) > 0: continue # a convoy anchor steps inside its own cell; its body blocks through the native convoy body owner instead
+		# A driven wagon about to anchor its convoy (operator named, convoy not yet created) is not a static body either:
+		# its own anchor must be open ground for add_convoy (2026-11-11, N08 remount at a crowd destination).
+		if SiteVehicleTransport.is_convoy(vehicle) and (int(vehicle.get("convoy_id", 0)) > 0 or int(vehicle.get("operator_id", 0)) > 0): continue # a convoy anchor steps inside its own cell; its body blocks through the native convoy body owner instead
 		var physical: Array[Vector2i] = SiteVehicleTransport.footprint(data, vehicle)
 		var geometry: Dictionary = SiteRuntime.siege_tower_geometry(data, vehicle) if str(vehicle.get("kind", "")) == "siege_tower" else {}
 		if not geometry.is_empty(): physical.assign(geometry.physical)

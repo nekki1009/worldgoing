@@ -161,14 +161,20 @@ func _initialize() -> void:
 		fixture.actions.begin_loot(1, "person", "2", {}, []),
 		fixture.actions.begin_capture(1, 2, 1), fixture.actions.begin_unbind(1, 2),
 		fixture.actions.begin_escape(1),
-		fixture.actions.begin_ransom(1, 2, 1), fixture.actions.begin_ranged_craft(1, "irrelevant")]
+		fixture.actions.begin_ransom(1, 2, 1)]
 	for result: Dictionary in blocked:
 		assert(not result.ok and result.code == "CROWD_ACTIVE")
 	# Owner decision 2026-10-31 (NEKKI_DECISION_20261031_crowd_equipment_orders): under crowd an equipment order runs in
 	# peace, so this empty order reaches its ordinary validation and is refused there. In combat it is CROWD_ACTIVE.
 	var peace_equipment: Dictionary = fixture.actions.begin_equipment(1, {})
 	assert(not peace_equipment.ok and peace_equipment.code != "CROWD_ACTIVE")
+	# Camp handwork (F07 trials, settlement spares) is a peace job too since 2026-11-11: refused by its own validation in
+	# peace, CROWD_ACTIVE in combat.
+	var peace_craft: Dictionary = fixture.actions.begin_ranged_craft(1, "irrelevant")
+	assert(not peace_craft.ok and peace_craft.code != "CROWD_ACTIVE")
 	fixture.terrain.site["combat_left"] = 1.0
+	var combat_craft: Dictionary = fixture.actions.begin_ranged_craft(1, "irrelevant")
+	assert(not combat_craft.ok and combat_craft.code == "CROWD_ACTIVE")
 	var combat_equipment: Dictionary = fixture.actions.begin_equipment(1, {})
 	assert(not combat_equipment.ok and combat_equipment.code == "CROWD_ACTIVE")
 	fixture.terrain.site.erase("combat_left")

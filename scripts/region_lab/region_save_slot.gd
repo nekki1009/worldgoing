@@ -10337,12 +10337,12 @@ func _region_n08_actor_state(lab: TerrainLab) -> Dictionary:
 func _region_n08_wagon(lab: TerrainLab, vehicle_id: String, driver_id: int) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null or lab.site_controller.region_slot != self:
 		return fail("WRONG_SLOT")
-	if lab.site_controller._crowd_active(): return fail("REGION_BACKEND_UNADMITTED")
 	var transport: Variant = lab.site_controller.vehicles
 	var vehicle: Dictionary = transport.records().get(vehicle_id, {})
 	if vehicle.is_empty() or str(vehicle.kind) != "wagon" or int(vehicle.operator_id) != driver_id:
 		return fail("NO_DRIVER", "本原入口僅接目前真 NPC 馬車及其操作人")
 	var driver: Dictionary = transport._operator(driver_id)
+	if lab.site_controller._crowd_active(): return _region_n08_crowd_wagon(lab, transport, vehicle, driver, driver_id)
 	if driver.is_empty() or not driver.owner is TerrainArmy or not transport._available(driver): return fail("NO_DRIVER")
 	var team: TerrainArmy = driver.owner
 	if not team.combat_enabled or not lab.combat_armies.has(team) or not team.is_member(team.current_commander) \
@@ -10356,6 +10356,55 @@ func _region_n08_wagon(lab: TerrainLab, vehicle_id: String, driver_id: int) -> D
 			or lab.site_controller.person_actions.is_guarding(person) or lab.site_controller.work_team.is_assigned(person) \
 			or lab.site_controller._is_delivering_person(person): return fail("BUSY")
 	return {"ok": true, "transport": transport, "vehicle": vehicle, "driver": driver, "team": team}
+
+
+## N08 on a crowd Site (2026-11-11). The carrier is the crowd team whose roster captain drives the wagon; it departs as a
+## whole team (R11, as the NPC dispatch). Same eligibility as the grid carrier: the driver is the team's current
+## commander, the team holds no controlled person, stands (crowd settle rule) and has no busy member.
+## `original` is the source TerrainArmy that owns the team's offices.
+func _region_n08_crowd_wagon(lab: TerrainLab, transport: Variant, vehicle: Dictionary, driver: Dictionary, driver_id: int) -> Dictionary:
+	if driver.is_empty() or not driver.owner is CrowdPersonOwner or not transport._available(driver): return fail("NO_DRIVER")
+	var team: CrowdPersonOwner = driver.owner
+	var controlled := int(lab.controlled_person_id())
+	if not team.has_army() or not team.is_member(team.current_commander) or team.combat_identity(team.current_commander) != driver_id \
+		or team.index_for_identity(controlled) >= 0 or driver_id == controlled: return fail("NO_CIVIL_COHORT", "須保留原 NPC 指揮／車輛整閉包及當前玩家人物")
+	if not vehicle.move.is_empty() or team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() != 0:
+		return fail("BUSY")
+	for key: Variant in team.combat_units.keys():
+		var person := team.combat_identity(int(key))
+		if lab.site_controller.person_actions.is_busy(person) or lab.site_controller.person_actions.is_guarding(person) \
+			or lab.site_controller.work_team.is_assigned(person) or lab.site_controller._is_delivering_person(person): return fail("BUSY")
+	return {"ok": true, "transport": transport, "vehicle": vehicle, "driver": driver, "team": team,
+		"original": team._command_owner(int(driver.unit))}
+
+
+## The extract input of a crowd Site for a read-only N08 query: the Site copy with the crowd section and rosters of a
+## fresh crowd capture (as a save writes them). A grid Site keeps _region_n08_actor_state.
+func _region_n08_query_state(lab: TerrainLab) -> Dictionary:
+	if not lab.site_controller._crowd_active(): return {"ok": true, "state": _region_n08_actor_state(lab)}
+	var captured: Dictionary = lab.crowd_site.capture_save(true)
+	if not captured.ok: return captured
+	var state := lab.terrain.site.duplicate(true)
+	var armies: Array = []
+	for roster: Variant in state.get("armies", []):
+		if roster is Dictionary and not bool(roster.get("crowd", false)): armies.append(roster)
+	armies.append_array(captured.rosters.duplicate(true))
+	state["armies"] = armies
+	state["crowd"] = captured.section.duplicate(true)
+	return {"ok": true, "state": state}
+
+
+## RegionTravel.extract for the N08 carrier. On a crowd Site the whole carrier team is swapped into `state` (a copy) and
+## released there offline, as the NPC dispatch does (crowd_npc_dispatch_origin); its roster captain must be the driver.
+func _region_n08_extract(lab: TerrainLab, state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
+	if state.has("crowd"):
+		if not lab.site_controller._crowd_active(): return fail("REGION_BACKEND_UNADMITTED")
+		var adapted: Dictionary = lab.site_controller.crowd_npc_dispatch_origin(state, int(spec.team_id))
+		if not adapted.ok: return adapted
+		if int(adapted.captain) != int(spec.person_id): return fail("NO_CIVIL_COHORT", "群眾車隊須由隊長本人駕車")
+		spec = spec.duplicate(true)
+		spec.merge({"crowd_departure": true, "crowd_control_successor": {}}, true)
+	return RegionTravel.extract(state, spec, token)
 
 
 func _region_n08_known_destination(destination_site_id: String) -> Dictionary:
@@ -10390,12 +10439,14 @@ func _region_n08_route(lab: TerrainLab, destination_site_id: String, vehicle_id:
 		or int(stock.faction) != int(carrier.team.faction_id) \
 		or Runtime.carried_load(destination.data.site, stock.cargo, stock.holder) + 4 > int(stock.capacity):
 		return fail("NO_WAREHOUSE", "目的須是同管理方可進料且有真容量的原倉庫")
-	var state := _region_n08_actor_state(lab)
+	var query_state := _region_n08_query_state(lab)
+	if not query_state.ok: return query_state
+	var state: Dictionary = query_state.state
 	var spec := {"person_id": driver_id, "actor_key": "", "team_id": int(carrier.team.team_id), "mode": "land",
 		"controller": "npc", "game_seconds": float(control.logical_game_seconds),
 		"namespace": str(pin.world_instance_id) + ":" + str(lab.terrain.site.id), "family_transfer_guard": region_family_transfer_guard}
 	var preview_token := "civil_query_" + str(driver_id)
-	var extracted := RegionTravel.extract(state, spec, preview_token)
+	var extracted := _region_n08_extract(lab, state, spec, preview_token)
 	if not extracted.ok: return extracted
 	# A partial original Nation remains at its original Source holder. A public
 	# logistics query cannot move that institution or duplicate its research.
@@ -10653,7 +10704,7 @@ func _region_n08_prepare_departure(lab: TerrainLab, context: Dictionary, route: 
 		"actor_key": "", "mode": "land", "controller": "npc", "game_seconds": float(control.logical_game_seconds),
 		"namespace": str(pin.world_instance_id) + ":" + Crypto.new().generate_random_bytes(16).hex_encode(),
 		"family_transfer_guard": region_family_transfer_guard}
-	var extracted := RegionTravel.extract(original, spec, token)
+	var extracted := _region_n08_extract(lab, original, spec, token)
 	if not extracted.ok: return extracted
 	var nation_id := str(context.nation_id)
 	var order_id := str(context.order_id)
@@ -10802,7 +10853,7 @@ func _region_n08_resume_carrier(context: Dictionary) -> Dictionary:
 		"mode": "land", "controller": "npc", "game_seconds": float(control.logical_game_seconds),
 		"namespace": str(pin.world_instance_id) + ":" + Crypto.new().generate_random_bytes(16).hex_encode(),
 		"family_transfer_guard": region_family_transfer_guard}
-	var extracted := RegionTravel.extract(state, spec, str(context.token))
+	var extracted := _region_n08_extract(lab, state, spec, str(context.token))
 	if not extracted.ok: return extracted
 	var driver_ref: Dictionary = extracted.party.content.travel_identity.refs.person.get(str(int(context.driver_id)), {})
 	var vehicle_ref: Dictionary = extracted.party.content.travel_identity.refs.vehicle.get(str(context.vehicle_id), {})
@@ -10847,6 +10898,7 @@ func _region_n08_remount(lab: TerrainLab, vehicle_id: String, driver_id: int) ->
 	var vehicle: Dictionary = transport.records().get(vehicle_id, {})
 	if vehicle.is_empty() or str(vehicle.kind) != "wagon" or int(vehicle.operator_id) != 0: return fail("NO_DRIVER")
 	var driver: Dictionary = transport._operator(driver_id)
+	if not driver.is_empty() and driver.owner is CrowdPersonOwner: return _region_n08_crowd_remount(lab, transport, vehicle, vehicle_id, driver, driver_id)
 	if driver.is_empty() or not driver.owner is TerrainArmy or int(driver.owner.team_id) != int(vehicle.team_id): return fail("NO_DRIVER")
 	var team: TerrainArmy = driver.owner
 	if team.moving_member_count() != 0 or team.get_active_move_plan() != null: return {"ok": true, "mounted": false, "moving": true}
@@ -10861,6 +10913,29 @@ func _region_n08_remount(lab: TerrainLab, vehicle_id: String, driver_id: int) ->
 		var moved: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, beside)
 		if moved.ok: return {"ok": true, "mounted": false, "moving": true}
 	return fail("UNREACHABLE", "車伕無法走回馬格旁")
+
+## The crowd form of _region_n08_remount (2026-11-11). The named driver walks to a legal cell beside the horse by native
+## steps (the crowd worker station step, one per point), then remounts through region_route_reboard; the native convoy then
+## takes the driver as its rider. No cell is written.
+func _region_n08_crowd_remount(lab: TerrainLab, transport: Variant, vehicle: Dictionary, vehicle_id: String, driver: Dictionary, driver_id: int) -> Dictionary:
+	var team: CrowdPersonOwner = driver.owner
+	if int(team.team_id) != int(vehicle.team_id): return fail("NO_DRIVER")
+	var horse: Vector2i = transport.operator_cell(vehicle)
+	var cell: Vector2i = driver.cell
+	if absi(cell.x - horse.x) + absi(cell.y - horse.y) == 1 and lab.terrain.can_step(cell, horse):
+		var boarded: Dictionary = transport.region_route_reboard(vehicle_id, driver_id)
+		if boarded.ok: return {"ok": true, "mounted": true}
+		if boarded.get("code") == "BUSY": return {"ok": true, "mounted": false, "moving": true} # The boarding step runs.
+		if boarded.get("code") != "UNREACHABLE": return boarded
+	var best := Vector2i(-1, -1)
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var beside := horse + direction
+		if not lab.terrain.contains(beside) or not lab.terrain.can_step(beside, horse) or transport.blocks_cell(beside): continue # Not on the wagon's own body.
+		if best.x < 0 or beside.distance_squared_to(cell) < best.distance_squared_to(cell): best = beside
+	if best.x < 0: return fail("UNREACHABLE", "車伕無法走回馬格旁")
+	lab.crowd_site.siege_approach_step(driver_id, best) # A refused step (still settling, or blocked this point) retries next point.
+	return {"ok": true, "mounted": false, "moving": true}
+
 
 func _region_n08_last_mile(context: Dictionary) -> Dictionary:
 	var lab: TerrainLab = context.destination_lab
@@ -10885,8 +10960,10 @@ func _region_n08_last_mile(context: Dictionary) -> Dictionary:
 	if transfer.get("code") != "UNREACHABLE": return transfer
 	# The true original commander/formation/reservation/vehicle step consumes
 	# this movement. No distance counter, timer or direct cell write can finish it.
-	var moved: Dictionary = carrier.team.issue_combat_order(carrier.team.current_commander,
-		TerrainArmy.CombatOrder.MOVE, stock.cell)
+	# A crowd wagon is a native convoy: its own driver drives it to the contact (the convoy goal), as the grid team order does.
+	var facing: Array = carrier.vehicle.get("facing", [1, 0])
+	var moved: Dictionary = carrier.transport.region_route_convoy_goal(str(context.vehicle_id), int(context.driver_id), stock.cell, Vector2i(int(facing[0]), int(facing[1]))) \
+		if carrier.team is CrowdPersonOwner else carrier.team.issue_combat_order(carrier.team.current_commander, TerrainArmy.CombatOrder.MOVE, stock.cell)
 	if not moved.ok: return moved
 	return {"ok": true, "at_holder": false, "moving": true}
 

@@ -18,7 +18,7 @@ var n08_route: Dictionary = {}
 var n08_steps := 0
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 180000
+	deadline = Time.get_ticks_msec() + 480000 # Crowd port: 180 s → 480 s (outer 600), the over-budget rule.
 	out = "res://.godot-temp/region_n08_civil_original_ui/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
@@ -110,6 +110,17 @@ func _n08_genesis() -> bool:
 	var deployed: Dictionary = lab.deploy_trial_armies(setups)
 	if not _check(deployed.ok, "Original deployment births one true NPC driver and one real wagon", deployed): return false
 	_freeze(lab)
+	# Crowd port (2026-11-11): the scenario's teams are deployed on the inactive Site, then the Site converts to the native
+	# crowd, as a hand-built fixture does (crowd_fixture_port_guide). --grid keeps the retired army.
+	if not OS.get_cmdline_user_args().has("--grid"):
+		if lab.crowd_site == null: # The restore_only shell requested no crowd: attach one as a crowd bind does.
+			lab.crowd_site = TerrainLab.CrowdSiteScript.new()
+			lab.crowd_site.name = "CrowdSite"
+			lab.add_child(lab.crowd_site)
+			lab.crowd_site.setup(lab)
+		var converted: Dictionary = lab.crowd_site.convert_existing()
+		if converted.ok: converted = lab._region_write_converted_crowd_section()
+		if not _check(converted.ok, "Crowd port: the deployed Site converts to the native crowd", converted): return false
 	for key: String in controller.vehicles.records():
 		var vehicle: Dictionary = controller.vehicles.records()[key]
 		if vehicle.kind == "wagon" and int(vehicle.operator_id) > 0: n08_vehicle = key; n08_driver = int(vehicle.operator_id); break
@@ -118,7 +129,7 @@ func _n08_genesis() -> bool:
 	if not _check(carrier.ok, "Actual NPC captain/driver and complete wagon cohort are eligible", carrier): return false
 	# Scenario enables the real captain's autonomous team.work decisions. The
 	# eventual consent is obtained from that owner, never authored by this fixture.
-	carrier.team.team_offices().duty_ai = true
+	carrier.get("original", carrier.team).team_offices().duty_ai = true # Crowd: the source TerrainArmy owns the offices.
 	var supply: Dictionary = controller._enable_team_supply(carrier.team)
 	if not _check(not supply.is_empty(), "Original team sustenance holder exists"): return false
 	supply.inventory["grain"] = 2
@@ -221,9 +232,28 @@ func _n08_original_journey() -> void:
 		if not _check(advanced.ok, "One actual shared step advances live, cold and original NPC journey together", advanced): return
 		var consumed: Dictionary = slot.consume_due_region_events()
 		if not _check(consumed.ok, "Original Slot consumes true due arrival/contact/work events", consumed): return
+		if n08_steps % 256 == 0: report["last_consumed"] = JSON.stringify(consumed).left(800) # Failure context only.
 		for original: TerrainLab in slot._region_original_labs.values(): _freeze(original)
 		n08_steps += 1
 		if n08_steps % 64 == 0: await process_frame
+	# Failure context (read-only): the entered carrier's own refusal at its destination.
+	var entered: Dictionary = slot._region_n08_entered_context(n08_trip)
+	report["entered_context"] = str(entered.get("code", "ok"))
+	if entered.ok:
+		var dest: TerrainLab = entered.destination_lab
+		report["destination_crowd"] = dest.crowd_site != null and dest.crowd_site.active
+		report["destination_site"] = str(dest.terrain.site.id)
+		report["carrier"] = JSON.stringify(slot._region_n08_wagon(dest, str(entered.vehicle_id), int(entered.driver_id))).left(300)
+		var vehicle: Dictionary = dest.site_controller.vehicles.records().get(str(entered.vehicle_id), {})
+		report["vehicle"] = JSON.stringify({"operator": vehicle.get("operator_id"), "move": vehicle.get("move"), "team": vehicle.get("team_id")}).left(300)
+		var driver: Dictionary = dest.site_controller.vehicles._operator(int(entered.driver_id))
+		report["driver_owner"] = str(driver.get("owner")) if not driver.is_empty() else "none"
+		if not driver.is_empty():
+			report["driver_cell"] = str(driver.cell)
+			report["horse_cell"] = str(dest.site_controller.vehicles.operator_cell(vehicle))
+			report["driver_available"] = dest.site_controller.vehicles._available(driver)
+			report["driver_walking"] = driver.owner.is_walking(int(driver.unit)) if driver.owner is CrowdPersonOwner else false
+			report["driver_team"] = int(driver.owner.team_id)
 	_check(false, "Actual journey must reach original physical unloading within bounded original steps", slot.region_registry().parties.get(n08_trip, {}))
 
 func _n08_final_and_replay() -> bool:

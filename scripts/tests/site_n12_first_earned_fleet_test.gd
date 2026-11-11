@@ -229,6 +229,12 @@ func _run() -> void:
 	assert(Orders.validate_nation_operations(lab.terrain, lab.terrain.site, known_people).ok)
 	var nation: Dictionary = lab.terrain.site.equipment_nations.n1
 	assert(not Tech.scope_known(nation.technology,"N12"),"Both true stopped ships are evidence, never standalone knowledge")
+	if not OS.get_cmdline_user_args().has("--grid"):
+		# Crowd port (2026-11-11): the scenario is set up on the inactive Site (natural walk, boarding, helm, the fleet order
+		# and its two true stops); the Site converts to the native crowd before the first shared step, as a crowd bind does.
+		var converted: Dictionary = lab.crowd_site.convert_existing()
+		if converted.ok: converted = lab._region_write_converted_crowd_section()
+		assert(converted.ok, "Crowd port: the fleet Site converts to the native crowd: " + str(converted))
 	var admin: Dictionary = actions.begin_nation_administration(people[0],"n1",order_id,"fleet")
 	assert(admin.ok and is_equal_approx(float(admin.seconds),300.0),str(admin))
 	var actual_seconds: float = _earned_component_job(lab,people[0],"nation_administration")

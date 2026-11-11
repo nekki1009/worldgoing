@@ -1243,6 +1243,7 @@ func region_route_reboard(vehicle_id: String, person_id: int) -> Dictionary:
 	var vehicle: Dictionary = records().get(vehicle_id, {})
 	if vehicle.is_empty() or str(vehicle.get("kind", "")) != "wagon" or int(vehicle.operator_id) != 0 or not vehicle.move.is_empty(): return Runtime.fail("NO_TARGET")
 	var person := _operator(person_id)
+	if _available(person) and person.owner is CrowdPersonOwner: return _crowd_route_reboard(vehicle, person, person_id)
 	if not _available(person) or not person.owner is TerrainArmy or int(person.owner.team_id) != int(vehicle.team_id): return Runtime.fail("NO_DRIVER")
 	var team: TerrainArmy = person.owner
 	if is_operator(person_id) or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY")
@@ -1256,6 +1257,31 @@ func region_route_reboard(vehicle_id: String, person_id: int) -> Dictionary:
 	if not team._reserve_combat_step(int(person.unit), position):
 		vehicle["operator_id"] = 0
 		return Runtime.fail("UNREACHABLE", "上馬一步被阻擋")
+	return Runtime.ok("原車伕重新上馬")
+
+## The crowd form of region_route_reboard (2026-11-11, N08 on a crowd Site): the named driver stands on a legal cell beside
+## the horse; it becomes the operator and the native convoy takes it as its rider (_sync_convoys, convoy_set_crew).
+func _crowd_route_reboard(vehicle: Dictionary, person: Dictionary, person_id: int) -> Dictionary:
+	var team: CrowdPersonOwner = person.owner
+	if int(team.team_id) != int(vehicle.team_id): return Runtime.fail("NO_DRIVER")
+	if is_operator(person_id) or team.is_walking(int(person.unit)) and person.cell != operator_cell(vehicle): return Runtime.fail("BUSY")
+	if not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))) \
+		and DisplayServer.get_name() != "headless": return Runtime.fail("MISSING_ASSET") # Nekki 11/11 A: headless is mechanics-only.
+	var position := operator_cell(vehicle)
+	if absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position):
+		return Runtime.fail("UNREACHABLE", "車伕須先走到馬格相鄰合法格")
+	# The native convoy steers its crew onto the rider slot itself (convoy_steer); the walk's station hold ends here.
+	team.siege_cancel_step(int(person.unit))
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
+	_convoy_refused.erase(str(vehicle.get("id", "")))
+	# A parked wagon is a static siege body on the native ground; with its operator it becomes a convoy body instead, so
+	# the native ground is resynchronised before the convoy anchors on its own cells.
+	var synced: Dictionary = lab.crowd_site.sync_siege_inputs()
+	if synced.ok: _sync_convoys()
+	if int(vehicle.get("convoy_id", 0)) <= 0:
+		vehicle["operator_id"] = 0
+		return Runtime.fail("UNREACHABLE", "原生車隊未接受車伕；車輛與名額未移轉")
 	return Runtime.ok("原車伕重新上馬")
 
 func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
@@ -3123,6 +3149,16 @@ func order_convoy_goal(vehicle_id: String, cell: Vector2i, facing: Vector2i, req
 	var owner: Variant = _convoy_owner(vehicle)
 	if owner == null or int(vehicle.get("convoy_id", 0)) <= 0: return Runtime.fail("NO_TARGET", "此車沒有原生後勤車隊記錄")
 	if not _authorized(owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	return _order_convoy_goal(vehicle, cell, facing)
+
+## An NPC Region route's own driver drives its convoy to its unloading contact (N08 last mile on a crowd Site), as the grid
+## route orders the driver's team; the region route admitted that driver and wagon, so no player command authority applies.
+func region_route_convoy_goal(vehicle_id: String, driver_id: int, cell: Vector2i, facing: Vector2i) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if _convoy_owner(vehicle) == null or int(vehicle.get("convoy_id", 0)) <= 0 or int(vehicle.get("operator_id", 0)) != driver_id: return Runtime.fail("NO_TARGET")
+	return _order_convoy_goal(vehicle, cell, facing)
+
+func _order_convoy_goal(vehicle: Dictionary, cell: Vector2i, facing: Vector2i) -> Dictionary:
 	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
 	var angle := _convoy_angle([facing.x, facing.y])
 	var order := {"point": Vector2(cell) + Vector2.ONE * 0.5 - _rotate_offset(rider, angle), "facing": angle, "sent": false}

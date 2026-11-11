@@ -7776,7 +7776,9 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 		options["layout_version"] = BUILDING_LAYOUT_VERSION
 		var kind := str(TECHNOLOGY_BUILD_BINDINGS[binding])
 		var selected := {"token": token.duplicate(true)}
-		var checked := preview_build(data, kind, cells, actions.lab.site_controller.reserves_cell, options, {}, selected)
+		# The named builder's own body never blocks its own footprint: a crowd body's radius covers the neighbouring cells it
+		# stands beside (2026-11-11, settlement crowd port); the grid Actor holds only its own cell, which the same check ignores.
+		var checked := preview_build(data, kind, cells, actions.lab.site_controller.reserves_cell.bind([int(token.person.person_id)]), options, {}, selected)
 		if not checked.ok: return checked
 		if str(token.target_id) != "feature:" + str(int(data.site.next_feature)): return fail("STALE_SOURCE")
 		if kind == "survey_stakes":
@@ -7787,13 +7789,13 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 			for value: Variant in plan.cells:
 				if not Technology.integer(value, 0, data.size.x * data.size.y - 1): return fail("INVALID")
 				plan_cells.append(int(value))
-			var geometry := preview_build(data, str(plan.kind), plan_cells, actions.lab.site_controller.reserves_cell, plan.options)
+			var geometry := preview_build(data, str(plan.kind), plan_cells, actions.lab.site_controller.reserves_cell.bind([int(token.person.person_id)]), plan.options)
 			if not geometry.ok: return geometry
 		if kind == "irrigation_channel":
 			var connection := technology_irrigation_connection(data, cells, options.get("irrigation", {}))
 			if cells.size() != 4 or token.get("tech_id") != "S02" or token.get("scope") != "settlement" or token.get("scope_id") != options.irrigation.settlement_id: return fail("INVALID_TECHNOLOGY", "S02原試作固定四格渠道")
 			if not connection.ok: return connection
-		var prepared := prepare_build_request(data, kind, cells, actions.lab.site_controller.reserves_cell, options, {}, selected)
+		var prepared := prepare_build_request(data, kind, cells, actions.lab.site_controller.reserves_cell.bind([int(token.person.person_id)]), options, {}, selected)
 		if not prepared.ok: return prepared
 		if work_target.has("order_id") and str(work_target.order_id) != str(prepared.feature.get("technology_order", {}).get("order_id", "")): return fail("STALE_SOURCE")
 		if preview: return ok("可開始原幾何試作", {"target_id": token.target_id, "cost": checked.cost, "work_seconds": float(checked.work) * 60.0})
@@ -10177,7 +10179,9 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 	# repair does not borrow a previous manufacture operator or ledger.
 	var named_repair: bool = endpoint == "siege" and action == "repair" and target.has("technology_spare_repair") \
 		and not ledger.is_empty() and not ledger.get("token", {}).is_empty()
-	if named_repair and (not valid_settlement_spare_repair_storage(data, target) or not is_same(target.get("tech_trial"), ledger.get("token")) \
+	# The ledger holds the trial token by value (2026-11-11: a crowd Site's siege record sync keeps its own copy of the
+	# ledger, so the same validated token is no longer the same object); the strict storage validator owns the binding.
+	if named_repair and (not valid_settlement_spare_repair_storage(data, target) or target.get("tech_trial") != ledger.get("token") \
 		or ledger.get("recipe_id") != "repair:ballista_spares" or int(ledger.get("operator_id", -1)) != int(target.technology_spare_repair.operator.person_id)):
 		return fail("STALE_SOURCE")
 	var named := _checked_prefix_named_effort(data, task, target, prefix_ref) if productive_seconds > 0.0 and (action in ["construct", "operate"] or named_repair) else ok("修理或零端点不增加研究贡献", {"seconds": 0.0})
