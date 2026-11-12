@@ -58,16 +58,21 @@ func _military_earned_fixture() -> Dictionary:
 	workers.prepare_work_requests(30.0)
 	var task: Dictionary = row.work_task
 	_check(task.get("target") == "feature:" + smithy and task.get("action") == "operate", "Original WT selector chooses the genuine workshop task")
-	# The ordinary (version 2) WorkTeam task re-plans travel from the worker's real position on every
-	# prepare, so a direct hot-cell write does not hold. Let the worker walk on original shared steps.
-	var walk_step := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
-	var walk_calls := 0
-	while str(task.get("mode", "")) != "work" and walk_calls < 3000:
-		walk_calls += 1
-		var walked: Dictionary = lab._advance_original_shared_step(walk_step)
-		if not walked.get("ok", false): break
+	# The grid simulation is retired (Option C): this grid data-only fixture no longer walks the worker on whole-Lab
+	# steps. The ordinary (version 2) task re-plans travel from the worker's real position on every prepare, so the
+	# fixture stands the SAME person on its genuinely computed slot and the original selector re-plans from there
+	# (route/movement acceptance is excluded, as in the N04 workshop and nation material fixtures).
+	var exec_at: int = team.index_for_identity(executor)
+	_check(task.has("work_cell"), "Original WT selector names the genuine workshop slot: " + str(task))
+	if task.has("work_cell"):
+		# A committed step is cancelled through the original owner API before the explicit placement (artisan _place rule).
+		if team.moving_to[exec_at] != TerrainArmy.INVALID_CELL: team.cancel_committed_move_to_source(executor)
+		team.cells[exec_at] = data.cell_from_index(int(task.work_cell))
+		team.combat_slots[exec_at] = team.cells[exec_at]
+		team._rebuild_ground_cell_owners()
+		workers.prepare_work_requests(30.0)
 		task = row.work_task
-	_check(str(task.get("mode", "")) == "work" and str(task.get("target", "")) == "feature:" + smithy, "The real worker reaches the genuine workshop slot on original shared steps")
+	_check(str(task.get("mode", "")) == "work" and str(task.get("target", "")) == "feature:" + smithy, "The real worker stands on the genuine workshop slot and its original task works there: " + str(task) + " cell=" + str(team.cells[exec_at]) + " moving=" + str(team.moving_to[exec_at]))
 	var next_item := int(data.site.next_item)
 	var points := 0
 	while int(data.site.next_item) == next_item and points < 10:
@@ -87,20 +92,19 @@ func _military_earned_fixture() -> Dictionary:
 	# The sample walk left the executor outside the NPC captain's command radius; the team consent
 	# needs a present member, so it walks back to the captain's reference on real route edges.
 	var exec_index: int = team.index_for_identity(executor)
-	if not bool(team.combat_hot_get(exec_index, &"present", false)) and team.command_reference_valid:
+	# It also leaves the sole workshop station, which the donor's transfer below stands on (the grid walk used to do both).
+	var on_station: bool = team.cells[exec_index] == Stocks.stock_endpoint(data, smithy).cell
+	if (on_station or not bool(team.combat_hot_get(exec_index, &"present", false))) and team.command_reference_valid:
 		var back: Array[Vector2i] = []
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			back = team._find_local_route(team.cells[exec_index], Vector2i(team.command_reference) + direction * 2, 256, false, exec_index)
 			if not back.is_empty(): break
 		_check(not back.is_empty() and back[0] == team.cells[exec_index], "Original executor route back to the captain retains its source vertex")
-		for edge: int in range(1, back.size()):
-			var reserved: bool = team._reserve_combat_step(exec_index, back[edge])
-			_check(reserved, "Original Army admits each genuine executor movement edge")
-			if not reserved: break
-			var landing := 0
-			while team.moving_to[exec_index] != TerrainArmy.INVALID_CELL and landing < 600:
-				lab._advance_action_time(TerrainLab.ACTION_STEP)
-				landing += 1
+		# Grid simulation retired: the SAME person stands at the real route's end (fixture placement, no movement proof).
+		if team.moving_to[exec_index] != TerrainArmy.INVALID_CELL: team.cancel_committed_move_to_source(executor)
+		team.cells[exec_index] = back[back.size() - 1]
+		team.combat_slots[exec_index] = team.cells[exec_index]
+		team._rebuild_ground_cell_owners()
 		team._refresh_command_presence()
 	_check(bool(team.combat_hot_get(exec_index, &"present", false)), "The executor is present under the unchanged ordinary-member rule before the team consent")
 	_check(actions.prepare_scope_technology(control, executor, "N05", "n1").ok and actions.request_scope_technology_consent(control, "nation", "n1", executor).ok,
@@ -117,8 +121,9 @@ func _military_earned_fixture() -> Dictionary:
 	var donor = actions._person(control)
 	donor.cargo.wood = 4
 	donor.cargo.fiber = 2
-	_check(lab.character.place(stock.cell, true) and orders.authorize_military_materials(control, "n1", f.order_id, {"wood": 4, "fiber": 2}).ok,
-		"Actual original donor explicitly grants only this single batch")
+	_check(lab.character.place(stock.cell, true), "Actual original donor stands on the true localstock endpoint " + str(stock.cell))
+	var authorized: Dictionary = orders.authorize_military_materials(control, "n1", f.order_id, {"wood": 4, "fiber": 2})
+	_check(authorized.ok, "Actual original donor explicitly grants only this single batch: " + str(authorized))
 	before = var_to_bytes([data.site, row, donor.holder, donor.cargo])
 	_check(not orders.supply_military_production(control, "n1", f.order_id, {"wood": 4, "fiber": 2}, int(donor.holder.version) + 1, int(stock.holder.version)).ok
 		and var_to_bytes([data.site, row, donor.holder, donor.cargo]) == before, "Stale actual donor CAS refuses before source funding, manufacturing materials, original order or Scope changes")
