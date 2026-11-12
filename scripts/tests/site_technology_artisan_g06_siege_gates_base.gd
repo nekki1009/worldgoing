@@ -49,10 +49,28 @@ func _g06_rest_source(f: Dictionary) -> void:
 	_require(_fatigue_get(f, int(f.master)) == Fatigue.WORK_REST_AT, "Actual original pool receives named REST-boundary input")
 
 
+## Nekki 2026-11-12 (A), replacing the retired grid point-order tests: on the crowd the working master's shared pool
+## climbs to 80 through real work, the work stops there, and (see _g06_recover) it resumes after rest.
+func _g06_crowd_work_to_rest(f: Dictionary, vehicle: Dictionary) -> void:
+	# The working taught master (helper) is the pool that must reach 80; a member who left and rejoined may hold its own pool.
+	_fatigue_set(f, int(f.helper), "fatigue", Fatigue.WORK_REST_AT - 0.1) # Named input just below the boundary (about 90 s of work).
+	_fatigue_set(f, int(f.helper), "fatigue_rest", 0.0)
+	var progress: float = float(vehicle.build.progress)
+	# Short real intervals: the pool holds 80 through the 30 s rest delay before it recovers, so one lands on it.
+	for tick: int in 60:
+		if _fatigue_get(f, int(f.helper)) >= Fatigue.WORK_REST_AT - 0.000001: break
+		_interval(f, 5.0)
+	var fatigue: float = _fatigue_get(f, int(f.helper))
+	_require(absf(fatigue - Fatigue.WORK_REST_AT) <= 0.000001 and float(vehicle.build.progress) > progress, "Crowd: real work raises the working master's shared pool to the 80 REST boundary", {"fatigue": fatigue, "progress": [progress, vehicle.build.progress]})
+	_case.crowd_work_to_rest = {"fatigue": fatigue, "progress": float(vehicle.build.progress) - progress}
+
 func _g06_recover(f: Dictionary) -> void:
+	# About 1.5 game hours of real recovery: the crowd fixture's long-loop public 4x speed (as in the completion loops).
+	_crowd_fast_work = _crowd(f)
 	for tick: int in 1200:
 		if _fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0) # Original shared recovery/provider, no direct reset.
+	_crowd_fast_work = false
 	_require(_fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT, "Original provider genuinely recovers shared masters to resume boundary")
 
 func _no_reissue(f: Dictionary) -> void:
@@ -242,11 +260,26 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == paid_before, "Real taught master resumes original paid work after task replacement")
 	# Both masters must share original REST; nobody bypasses shared pool state.
-	_g06_rest_source(f)
+	if _crowd(f): _g06_crowd_work_to_rest(f, vehicle)
+	else: _g06_rest_source(f)
 	_gated_pause(f, key, "Original shared masters reach named REST source boundary")
 	_g06_recover(f)
+	var before_resume: float = float(vehicle.build.progress)
 	_interval(f)
 	_require(vehicle.build.paid_cost == paid_before, "Original recovery resumes with SAME paid materials")
+	if _crowd(f):
+		# A rested crowd worker may first walk back to its station; it resumes within a few real intervals.
+		var waited := 0
+		while float(vehicle.build.progress) <= before_resume and waited < 10:
+			_interval(f)
+			waited += 1
+		var helper_index: int = f.team.index_for_identity(int(f.helper))
+		var helper_task: Dictionary = _task_of(f, int(f.helper))
+		_require(float(vehicle.build.progress) > before_resume and vehicle.build.paid_cost == paid_before, "Crowd: the rested master resumes the same work after recovery (Nekki 11/12 A)",
+			{"waited": waited, "fatigue": _fatigue_get(f, int(f.helper)), "resting": f.team.combat_hot_get(helper_index, &"work_resting", null),
+			"cell": str(_cell_of(f, int(f.helper))), "task": str(helper_task.get("target", "")), "station": str(f.data.cell_from_index(int(helper_task.get("work_cell", -1)))) if helper_task.has("work_cell") else "",
+			"progress": [before_resume, vehicle.build.progress]})
+		_case.crowd_rest_resume_intervals = waited
 	_require(_release_task(f, int(f.helper)), "Student releases true slot for teacher KO/death exercise")
 	_require(_release_task(f, int(f.master)), "Teacher releases its old off-station task")
 	_siege_assign(f, key, [int(f.master)])

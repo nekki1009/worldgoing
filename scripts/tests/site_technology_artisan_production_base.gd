@@ -291,7 +291,9 @@ var _absent_tasks := {}
 func _park(f: Dictionary, identity: int, near: Vector2i) -> void:
 	if _crowd(f) and identity != int(f.commander):
 		var task: Dictionary = _task_of(f, identity)
-		if str(task.get("target", "")).begins_with("vehicle:"):
+		# Only a worker standing at its station leaves it; a pending worker that never reached its station keeps its task.
+		var at_station: bool = task.has("work_cell") and _cell_of(f, identity) == f.data.cell_from_index(int(task.work_cell))
+		if at_station and str(task.get("target", "")).begins_with("vehicle:"):
 			_require(f.lab.site_controller.work_team.cancel(identity).ok, "Crowd absent worker cancels its siege task as it leaves (Nekki 11/12 A)", task)
 			_absent_tasks[identity] = task.duplicate(true)
 	_park_cell(f, identity, near)

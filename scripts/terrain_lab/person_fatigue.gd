@@ -16,8 +16,13 @@ const WORK_REST_AT := 80.0
 const WORK_RESUME_AT := 50.0
 const WORK_PLAN_EPS := 0.00000001 # Original person-work completion tolerance.
 
+## A pool that ended its work segment within float residue below 80 (the native crowd's accumulated effort can stop a few
+## ULPs short, 2026-11-12: 79.999999999993918) has reached the REST boundary; otherwise every later begin window is
+## clipped to the ~1e-12 s left before 80, which the Region clock treats as zero and waits on forever. Same 1e-9 band as
+## the GD autonomous work snap (SiteController).
+const WORK_REST_RESIDUE := 0.000000001
 static func needs_work_rest(value: float, resting: bool) -> bool:
-	return value > WORK_RESUME_AT if resting else value >= WORK_REST_AT
+	return value > WORK_RESUME_AT if resting else value >= WORK_REST_AT - WORK_REST_RESIDUE
 
 static func slowdown(value: float) -> float:
 	return MAX_SLOWDOWN * clampf((value - THRESHOLD) / (LIMIT - THRESHOLD), 0.0, 1.0)
