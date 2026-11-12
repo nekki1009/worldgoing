@@ -14,6 +14,28 @@ func _p4_project(f: Dictionary) -> Dictionary:
 func _p4_body(f: Dictionary) -> Variant:
 	return f.actions._person(int(f.worker)).body
 
+## Fatigue and the REST flag of the cold worker through the original PA body accessor: a grid row's own pool, or the crowd
+## formation's shared pool (the native world has no per-person pool; crowd_fixture_port_guide).
+func _p4_fatigue(f: Dictionary) -> float:
+	return float(f.actions._body_get(f.actions._person(int(f.worker)), "fatigue"))
+
+func _p4_fatigue_set(f: Dictionary, value: float) -> void:
+	f.actions._body_set(f.actions._person(int(f.worker)), "fatigue", value)
+
+func _p4_resting(f: Dictionary) -> bool:
+	return bool(f.actions._body_get(f.actions._person(int(f.worker)), "work_resting"))
+
+func _p4_rest_set(f: Dictionary) -> void:
+	f.actions._body_set(f.actions._person(int(f.worker)), "work_resting", true)
+
+## The worker's effort spread over its fatigue pool: 1 for a grid row's own pool; on the crowd the formation's shared pool
+## averages the effort over its fatigue_count members.
+func _p4_pool_share(f: Dictionary) -> float:
+	var person: Dictionary = f.actions._person(int(f.worker))
+	if f.lab.crowd_site == null or not f.lab.crowd_site.active or not person.owner is CrowdPersonOwner: return 1.0
+	var state: Dictionary = f.lab.crowd_site.formation_state(int(person.owner.formation_index))
+	return 1.0 / maxf(1.0, float(state.get("fatigue_count", 1.0)))
+
 func _p4_body_snapshot(f: Dictionary) -> Dictionary:
 	var body: Variant = _p4_body(f)
 	return body.duplicate(true) if body is Dictionary else body.capture_state()
@@ -24,20 +46,29 @@ func _p4_context(f: Dictionary) -> Dictionary:
 		"source_generation": 0, "runtime_revision": 0, "token": "p4_original_" + str(Time.get_ticks_usec()),
 		"game_seconds": Runtime.now(f.data) * 60.0, "action_seconds": float(f.lab.fire_action_cursor),
 		"fire_epoch": str(fire.get("epoch", "")), "fire_sequence": int(fire.get("sequence", 0)),
-		"interval_complete": true, "effects_complete": true, "mode_revision": 0, "backend": "gd", "events": [], "endpoint_payload": {}}
+		"interval_complete": true, "effects_complete": true, "mode_revision": 0,
+		"backend": f.lab.region_backend_expected(), "events": [], "endpoint_payload": {}} # G6: "native" while the crowd is active.
 
 func _p4_checkpoint(f: Dictionary) -> String:
 	# Actual existing non-Fire Region codec, never export_fire_jobs or manually
 	# authored cold jobs. Zero revisions name the independent non-Slot fixture.
+	# A live crowd joins the checkpoint as the controller's capture_region_checkpoint does: the same synchronous native
+	# capture writes the Site's crowd section first, then the owner graph is captured as crowd-admitted.
+	var crowd_admitted: bool = f.lab.crowd_site != null and f.lab.crowd_site.active
+	var crowd_captured := {}
+	if crowd_admitted:
+		crowd_captured = f.lab.crowd_site.capture_save(true)
+		_check(crowd_captured.ok, "Actual native crowd capture for the checkpoint: " + str(crowd_captured).left(300))
 	f.controller._capture_positions()
+	if crowd_admitted and crowd_captured.get("ok", false): f.controller._apply_region_crowd_capture(crowd_captured)
 	var context := _p4_context(f)
 	var stamp: Dictionary = RegionSaveSlot.attach_settlement(f.data.site, context.game_seconds)
 	_check(stamp.ok, "Original legacy migration stamps the actual completed Site endpoint, without retrospective work")
-	var captured: Dictionary = f.lab.capture_region_owner_state(context)
+	var captured: Dictionary = f.lab.capture_region_owner_state(context, crowd_admitted)
 	_check(captured.ok, "Actual Scene captures SAME original full owner graph: " + str(captured))
 	var path := "user://p4_original_" + str(cold_serial) + "_" + str(Time.get_ticks_usec()) + ".json"
 	cold_serial += 1
-	var saved: Dictionary = Store.save_region_snapshot(f.data, path, context, captured.owner_states)
+	var saved: Dictionary = Store.save_region_snapshot(f.data, path, context, captured.get("owner_states", {}), crowd_admitted)
 	_check(saved.ok, "Original Store admits actual NPC research mid-work/REST without a Fire exception: " + str(saved))
 	return path
 
@@ -55,25 +86,44 @@ func _p4_open(f: Dictionary, path: String, retire: bool = true) -> Dictionary:
 	lab.character.set_process(false)
 	lab.npc.set_process(false)
 	lab.site_controller._auto_save_blocked = true
-	lab.bind_terrain(loaded.data)
-	_check(lab.region_bind_receipt(loaded.data).get("complete", false), "Original cold bind restores actual body/task/source aliases")
+	# A region snapshot binds only through a region bind ticket (REGION_BIND_TICKET_REQUIRED). The cold replay owner's own
+	# bootstrap bind issues it and stages the saved native crowd section, as a cold catch-up does.
+	var bootstrap: Dictionary = lab._region_bootstrap_bind_child(lab, loaded.data, loaded.data.site.has("crowd"))
+	_check(bootstrap.get("ok", false), "Original cold bootstrap bind of the region snapshot: " + str(bootstrap).left(400))
+	var bind_receipt: Dictionary = lab.region_bind_receipt(loaded.data)
+	_check(bind_receipt.get("complete", false), "Original cold bind restores actual body/task/source aliases: " + str(bind_receipt).left(200)
+		+ " refused=" + str(lab.get_meta(&"last_refused_result", {})).left(400))
+	if not bind_receipt.get("complete", false):
+		quit(1) # Fail fast (2026-11-12): nothing after an unbound cold owner can pass; do not spin to the 600 s deadline.
+		return f
 	while float(lab.simulation_speed) < 4.0: lab.change_simulation_speed(1)
 	var result := f.duplicate()
 	result.merge({"lab": lab, "data": lab.terrain, "controller": lab.site_controller, "actions": lab.site_controller.person_actions}, true)
 	result.team = result.actions._technology_team(result.actions._person(int(f.worker)))
+	# Crowd: the restored worker is a native crowd person; its original team is the crowd team's roster holder.
+	if lab.crowd_site != null and lab.crowd_site.active and not result.team is TerrainArmy:
+		result.team = lab.crowd_site.team_holder(int(f.team.team_id))
 	_check(result.team is TerrainArmy and int(result.team.team_id) == int(f.team.team_id)
 		and not is_same(result.data.site, f.data.site) and not is_same(_p4_body(result), _p4_body(f)),
-		"Original cold graph renews true references and preserves original person/team identity")
+		"Original cold graph renews true references and preserves original person/team identity: team=%s body_same=%s" % [str(result.team), str(is_same(_p4_body(result), _p4_body(f)))])
 	if retire:
 		var previous_teams: Array = f.lab.combat_armies.duplicate()
 		f.lab.free()
-		for team: TerrainArmy in previous_teams:
+		for team: Variant in previous_teams: # Untyped: a team the Lab already freed must not be assigned to a typed variable.
 			if is_instance_valid(team): team.free()
 	return result
 
 func _p4_advance(f: Dictionary, game_seconds: float) -> void:
 	var target := Runtime.now(f.data) * 60.0 + game_seconds
 	var result: Dictionary = f.lab.replay_site_to(target)
+	# Crowd: the cold owner's last native point stays pending until its endpoint is consumed (the slot-less cold replay
+	# leaves that to its caller, as advance_region_cold_actual_fixed does); then the same replay finishes at the target.
+	for attempt: int in 4:
+		if result.ok or str(result.get("code", "")) != "REGION_REPLAY_PENDING" or f.lab._region_point_pending.is_empty(): break
+		var consumed: Dictionary = f.lab.consume_region_point(false)
+		_check(consumed.ok, "Original cold owner consumes its pending replay endpoint: " + str(consumed).left(300))
+		if not consumed.ok: break
+		result = f.lab.replay_site_to(target)
 	_check(result.ok and result.get("status") == "COMPLETE" and absf(Runtime.now(f.data) * 60.0 - target) < 0.0000001,
 		"Original replay consumes the one fixed endpoint and produces a non-Fire cold checkpoint: " + str(result))
 	var prior := var_to_bytes([_p4_body_snapshot(f), f.data.site.inventory, f.data.site.family, f.data.site.settlement, f.actions._jobs])
@@ -98,6 +148,20 @@ func _p4_station(f: Dictionary, cell: Vector2i) -> void:
 	# subsequent work uses this SAME Army row and its original fixed work slot.
 	_check(f.data.is_walkable(cell), "Original generated physical work station")
 	f.team.cells[f.team.index_for_identity(int(f.worker))] = cell
+	# Crowd port: the same native person stands on the station (a placement only moves it); a few real points let it settle.
+	if f.lab.crowd_site != null and f.lab.crowd_site.active:
+		var native := int(f.lab.crowd_site.crowd.soldier_index(int(f.worker)))
+		_check(native >= 0 and f.lab.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5}), "Crowd fixture station of the same native worker")
+		for settle: int in 4:
+			f.lab.crowd_site.siege_approach_step(int(f.worker), cell)
+			f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+		var owner: Variant = f.lab.crowd_site.person_owner(int(f.worker))
+		# Named-work consent reads the whole team standing (the crowd settle rule): wait for the others with real points while
+		# the worker holds its station (a hold on its own cell is standing, not a move goal).
+		for settle: int in 600:
+			if owner == null or owner.moving_member_count() == 0: break
+			f.lab.crowd_site.siege_approach_step(int(f.worker), cell)
+			f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
 	var row: Variant = _p4_body(f)
 	if not row.get("work_task", {}).is_empty(): row.work_task.cell = f.data.index(cell)
 
@@ -110,13 +174,14 @@ func _p4_f07_ranged() -> Dictionary:
 	var contact := Vector2i(-1, -1)
 	for direction: Vector2i in TerrainData.DIRECTIONS:
 		var cell: Vector2i = depot + direction
-		if f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell): contact = cell; break
+		# Crowd bodies cover the cells beside them: the fixture's own two people never count as occupying.
+		if f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell, [int(f.worker), int(f.control)]): contact = cell; break
 	_check(contact.x >= 0, "Actual unoccupied original camp contact for the original NPC")
 	_p4_station(f, contact)
 	# The grant is a hand-craft action of the controlled person: he stands on another legal cell next to the camp.
 	for direction: Vector2i in TerrainData.DIRECTIONS:
 		var cell: Vector2i = depot + direction
-		if cell != contact and f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell) and f.lab.character.place(cell, true): break
+		if cell != contact and f.data.is_walkable(cell) and f.data.can_step(depot, cell) and not f.controller.reserves_cell(cell, [int(f.worker), int(f.control)]) and _settlement_place(f, cell): break
 	var f07_prepared: Dictionary = f.actions.prepare_technology(int(f.control), int(f.worker))
 	var f07_consent: Dictionary = f.actions.request_technology_consent(int(f.control), int(f.worker)) if f07_prepared.ok else {}
 	var f07_grant: Dictionary = f.actions.grant_technology_budget(int(f.control), {"wood": 12, "fiber": 6}) if f07_consent.get("ok", false) else {}
@@ -134,39 +199,43 @@ func _p4_f07_ranged() -> Dictionary:
 	var left := _p4_open(f, path, false)
 	var right := _p4_open(f, path, false)
 	var start := float(left.actions._jobs[str(left.worker)].elapsed)
-	var fatigue := ColdFatigue.read(_p4_body(left))
+	var fatigue := _p4_fatigue(left)
 	_p4_advance(left, 12.0)
 	_p4_advance(right, 6.0)
 	_p4_advance(right, 6.0)
 	_check(absf(float(left.actions._jobs[str(left.worker)].elapsed) - start - 6.0) < 0.000001
 		and absf(float(right.actions._jobs[str(right.worker)].elapsed) - float(left.actions._jobs[str(left.worker)].elapsed)) < 0.000001
-		and absf(ColdFatigue.read(_p4_body(left)) - ColdFatigue.read(_p4_body(right))) < 0.000001,
+		and absf(_p4_fatigue(left) - _p4_fatigue(right)) < 0.000001,
 		"Ranged research effective time is half; original long/split effort and fatigue agree")
-	_check(absf(ColdFatigue.read(_p4_body(left)) - fatigue - 12.0 * ColdFatigue.effort_rate(_p4_body(left))) < 0.000001,
-		"Half research never halves the original NPC's actual fatigue")
+	_check(absf(_p4_fatigue(left) - fatigue - 12.0 * ColdFatigue.effort_rate(_p4_body(left)) * _p4_pool_share(left)) < 0.000001,
+		"Half research never halves the original NPC's actual fatigue: before=%.9f after=%.9f expected_delta=%.9f rate=%.9f" % [fatigue, _p4_fatigue(left), 12.0 * ColdFatigue.effort_rate(_p4_body(left)), ColdFatigue.effort_rate(_p4_body(left))])
 	var inherited_jobs := var_to_bytes(left.actions._jobs)
 	var inherited_body := var_to_bytes(_p4_body(left))
 	_check(not left.lab.replay_site_to(Runtime.now(left.data) * 60.0 - 1.0).ok
 		and var_to_bytes(left.actions._jobs) == inherited_jobs and var_to_bytes(_p4_body(left)) == inherited_body,
 		"An earlier endpoint cannot erase paid job/body/clock history")
 	var rest := left
-	ColdFatigue.write(_p4_body(rest), "fatigue", ColdFatigue.WORK_REST_AT)
-	_p4_body(rest).work_resting = true # Explicit legal REST starting-state input, not invented work evidence.
+	_p4_fatigue_set(rest, ColdFatigue.WORK_REST_AT)
+	_p4_rest_set(rest) # Explicit legal REST starting-state input, not invented work evidence.
 	_p4_advance(rest, 2.0)
 	_check(rest.actions._jobs[str(rest.worker)].paused == "REST" and absf(float(rest.actions._jobs[str(rest.worker)].elapsed) - start - 6.0) < 0.000001,
 		"Original REST interval retains the job without productive work")
 	var rest_elapsed := float(rest.actions._jobs[str(rest.worker)].elapsed)
-	var rest_fatigue := ColdFatigue.read(_p4_body(rest))
+	var rest_fatigue := _p4_fatigue(rest)
 	var rest_budget: Dictionary = _p4_project(rest).budget.duplicate(true)
 	rest = _p4_open(rest, _p4_checkpoint(rest))
-	_check(float(rest.actions._jobs[str(rest.worker)].elapsed) == rest_elapsed and ColdFatigue.read(_p4_body(rest)) == rest_fatigue
-		and _p4_project(rest).budget == rest_budget and _p4_body(rest).work_resting,
+	_check(float(rest.actions._jobs[str(rest.worker)].elapsed) == rest_elapsed and _p4_fatigue(rest) == rest_fatigue
+		and _p4_project(rest).budget == rest_budget and _p4_resting(rest),
 		"Actual Store load/bind retains REST/body/finite grant and the SAME job attempt")
 	# Finish using only original replay and original PA completion. The large
 	# window includes original rest/cooldown; it never assigns elapsed/progress.
+	var rest_loops := 0
 	while rest.actions.is_busy(int(rest.worker)):
-		_check(Time.get_ticks_msec() < deadline, "Bounded true REST/resume fixture")
+		var in_time: bool = Time.get_ticks_msec() < deadline
+		_check(in_time, "Bounded true REST/resume fixture: loops=%d fatigue=%.4f resting=%s ms=%d" % [rest_loops, _p4_fatigue(rest), str(_p4_resting(rest)), Time.get_ticks_msec()])
+		if not in_time: break
 		_p4_advance(rest, 30.0)
+		rest_loops += 1
 	for stage: int in range(1, 3):
 		_check(rest.actions.begin_technology_trial(int(rest.control), int(rest.worker)).ok, "Same original NPC explicitly starts the next finite attempt")
 		while rest.actions.is_busy(int(rest.worker)):
@@ -218,13 +287,13 @@ func _p4_feature(f: Dictionary, identity: String, key: String) -> Dictionary:
 	_check(preflight.ok and float(preflight.progress_multiplier) == 0.5, "Cold research physical preflight scales effective progress only: " + str(preflight))
 	var production := float(f.data.site.features[key].production)
 	var effort := float(f.data.site.features[key].tech_batch.work_seconds)
-	var fatigue := ColdFatigue.read(row)
+	var fatigue := _p4_fatigue(f)
 	var spent: Dictionary = _p4_project(f).budget.spent.duplicate(true)
 	_p4_advance(f, 12.0)
 	var productive := ColdFatigue.work_seconds(fatigue, 12.0, ColdFatigue.effort_rate(row))
 	_check(absf((float(f.data.site.features[key].production) - production) * 60.0 - productive * 0.5 * float(preflight.productivity)) < 0.000001
 		and absf(float(f.data.site.features[key].tech_batch.work_seconds) - effort - productive) < 0.000001
-		and absf(ColdFatigue.read(row) - fatigue - 12.0 * ColdFatigue.effort_rate(row)) < 0.000001
+		and absf(_p4_fatigue(f) - fatigue - 12.0 * ColdFatigue.effort_rate(row) * _p4_pool_share(f)) < 0.000001
 		and _p4_project(f).budget.spent == spent, "Original feature retains unweighted canonical work/full effort fatigue, half output and one actual payment")
 	var progress := float(f.data.site.features[key].production)
 	var payment: Dictionary = f.data.site.features[key].tech_batch.duplicate(true)
@@ -241,13 +310,13 @@ func _p4_feature(f: Dictionary, identity: String, key: String) -> Dictionary:
 	_check(not corrupt.ok and not Store._validate_state(malformed, malformed.site).ok and not prior_file.is_empty() and FileAccess.get_sha256(retained_path) == prior_file,
 		"Malformed cold attempt is refused by original target/project/Store before bind")
 	var rest_progress := float(f.data.site.features[key].production)
-	ColdFatigue.write(_p4_body(f), "fatigue", ColdFatigue.WORK_REST_AT)
-	_p4_body(f).work_resting = true # Explicit REST state, never elapsed or progress.
+	_p4_fatigue_set(f, ColdFatigue.WORK_REST_AT)
+	_p4_rest_set(f) # Explicit REST state, never elapsed or progress.
 	_p4_advance(f, 2.0)
 	_check(_p4_body(f).work_task.mode == "rest" and float(f.data.site.features[key].production) == rest_progress,
 		"Original physical REST pauses output while retaining the actual paid target")
 	f = _p4_open(f, _p4_checkpoint(f))
-	_check(_p4_body(f).work_resting and _p4_body(f).work_task.mode == "rest"
+	_check(_p4_resting(f) and _p4_body(f).work_task.mode == "rest"
 		and float(f.data.site.features[key].production) == rest_progress and _p4_project(f).budget.spent == spent,
 		"Original Store and graph bind preserve physical REST without recharging source")
 	while f.data.site.features[key].has("tech_trial"):
@@ -311,22 +380,22 @@ func _p4_siege(f: Dictionary) -> Dictionary:
 	var vehicle: Dictionary = f.data.site.vehicles[key]
 	var before := float(vehicle.build.progress)
 	var effort := float(vehicle.tech_batch.work_seconds)
-	var fatigue := ColdFatigue.read(_p4_body(f))
+	var fatigue := _p4_fatigue(f)
 	var rate := ColdFatigue.effort_rate(_p4_body(f))
 	var budget: Dictionary = _p4_project(f).budget.duplicate(true)
 	_p4_advance(f, 12.0)
 	_check(absf(float(vehicle.build.progress) - before - ColdFatigue.work_seconds(fatigue, 12.0, rate) * 0.5) < 0.000001
 		and absf(float(vehicle.tech_batch.work_seconds) - effort - ColdFatigue.work_seconds(fatigue, 12.0, rate)) < 0.000001
-		and absf(ColdFatigue.read(_p4_body(f)) - fatigue - 12.0 * rate) < 0.000001,
+		and absf(_p4_fatigue(f) - fatigue - 12.0 * rate * _p4_pool_share(f)) < 0.000001,
 		"One actual vehicle prefix preserves canonical unweighted work/full fatigue with half physical construction")
 	var progress := float(vehicle.build.progress)
-	ColdFatigue.write(_p4_body(f), "fatigue", ColdFatigue.WORK_REST_AT)
-	_p4_body(f).work_resting = true
+	_p4_fatigue_set(f, ColdFatigue.WORK_REST_AT)
+	_p4_rest_set(f)
 	_p4_advance(f, 2.0)
 	_check(_p4_body(f).work_task.mode == "rest" and float(vehicle.build.progress) == progress, "Original siege REST has no productive progress")
 	f = _p4_open(f, _p4_checkpoint(f))
 	vehicle = f.data.site.vehicles[key]
-	_check(_p4_body(f).work_resting and _p4_body(f).work_task.mode == "rest" and float(vehicle.build.progress) == progress
+	_check(_p4_resting(f) and _p4_body(f).work_task.mode == "rest" and float(vehicle.build.progress) == progress
 		and _p4_project(f).budget == budget, "True Store/body/graph restore retains the original siege paid REST state")
 	_check(f.controller.work_team.cancel(int(f.worker)).ok, "Only the original worker job stops; paid vehicle/project remain")
 	_p4_advance(f, 2.0)
@@ -465,7 +534,7 @@ func _p4_controlled_lane(identity: String) -> void:
 	var progress := float(target.production) * 60.0 if identity == "F04" else float(target.build.progress)
 	var effort := float(target.tech_batch.work_seconds)
 	var person: Dictionary = f.actions._person(int(f.worker))
-	var fatigue := ColdFatigue.read(person.body)
+	var fatigue := float(f.actions._body_get(person, "fatigue"))
 	var rate := ColdFatigue.effort_rate(person.body)
 	var checked: Dictionary = Runtime.work_preflight(f.data, job.work_task, person.cargo, Runtime.CARRY_CAPACITY, int(person.faction), int(f.worker))
 	_check(checked.ok and float(checked.progress_multiplier) == 0.5, "Original Runtime independently proves this SAME NPC cold research factor")
@@ -473,16 +542,16 @@ func _p4_controlled_lane(identity: String) -> void:
 	var advanced := float(target.production) * 60.0 if identity == "F04" else float(target.build.progress)
 	_check(absf(advanced - progress - ColdFatigue.work_seconds(fatigue, 12.0, rate) * float(checked.productivity) * 0.5) < 0.000001
 		and absf(float(target.tech_batch.work_seconds) - effort - ColdFatigue.work_seconds(fatigue, 12.0, rate)) < 0.000001
-		and absf(ColdFatigue.read(person.body) - fatigue - 12.0 * rate) < 0.000001 and _p4_project(f).budget == paid,
+		and absf(float(f.actions._body_get(person, "fatigue")) - fatigue - 12.0 * rate * _p4_pool_share(f)) < 0.000001 and _p4_project(f).budget == paid,
 		"One real PA/Runtime shared point applies half progress, original unweighted work/full fatigue and one payment")
 	progress = advanced
-	ColdFatigue.write(person.body, "fatigue", ColdFatigue.WORK_REST_AT)
+	f.actions._body_set(person, "fatigue", ColdFatigue.WORK_REST_AT)
 	f.actions._body_set(person, "work_resting", true) # Explicit legal REST starting body, never forged elapsed/progress.
 	_p4_advance(f, 2.0)
 	var rest_request: Dictionary = f.actions._controlled_feature_work_request(str(f.worker), f.actions._jobs[str(f.worker)], 2.0)
 	_check((float(target.production) * 60.0 if identity == "F04" else float(target.build.progress)) == progress
 		and not rest_request.is_empty() and rest_request.paused == "REST" and bool(f.actions._body_get(person, "work_resting"))
-		and ColdFatigue.read(person.body) < ColdFatigue.WORK_REST_AT, "Original PA physical REST recovers real fatigue and produces no progress")
+		and float(f.actions._body_get(person, "fatigue")) < ColdFatigue.WORK_REST_AT, "Original PA physical REST recovers real fatigue and produces no progress")
 	var paused_before := str(f.actions._jobs[str(f.worker)].paused) # Original physical envelope may retain an empty presentation string; body owns REST.
 	f = _p4_open(f, _p4_checkpoint(f))
 	job = f.actions._jobs.get(str(f.worker), {})

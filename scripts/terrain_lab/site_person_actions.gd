@@ -481,6 +481,11 @@ func _commit_prison_release(job: Dictionary) -> Dictionary:
 	return Runtime.ok("已出監解綁；生命、昏迷、位置與實物維持原值")
 
 func _release_work_hold(job: Dictionary) -> void:
+	if str(job.get("kind", "")) == "ranged_craft":
+		var crafter := _person(int(job.get("executor_id", 0)), false)
+		if not crafter.is_empty() and crafter.owner is CrowdOwner and crafter.owner.crowd_site.siege_native_supported():
+			crafter.owner.crowd_site.crowd.cancel_siege_step(int(crafter.unit))
+		return
 	if str(job.get("kind", "")) == "technology_lesson":
 		for identity: Variant in [job.get("executor_id"), job.get("target_id")]:
 			var held := _person(int(identity), false)
@@ -895,6 +900,11 @@ func begin_ranged_craft(identity: int, recipe: String, technology_token: Diction
 		"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory})
 	job.duration = ranged_craft_seconds(identity, recipe)
 	_jobs[str(identity)] = job
+	# A crowd crafter holds its camp contact cell for the craft (the native station step, as a crowd worker or a lesson
+	# does); otherwise it walks back to its formation slot and the craft breaks (2026-11-11).
+	if executor.owner is CrowdOwner and int(identity) != int(lab.controlled_person_id()) and not executor.owner.crowd_site.siege_approach_step(identity, executor.cell):
+		_jobs.erase(str(identity))
+		return Runtime.fail("BUSY", "群眾工匠無法在營地原位就位")
 	return Runtime.ok("開始營地手作；完成才扣原材料並入庫", {"seconds": job.duration})
 
 func begin_escape(identity: int) -> Dictionary:
