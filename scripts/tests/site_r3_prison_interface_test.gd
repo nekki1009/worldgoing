@@ -235,16 +235,22 @@ func _r3_prison_fixture(initial_loyalty: int = 2500) -> Dictionary:
 	Social.relation(packet, relation.loyal_org).L = initial_loyalty
 	var escorted := controller.captive_escort.begin_prison(requester, requester, prison)
 	if not _r3_check(escorted.ok, str(escorted)): return {}
-	for step: int in range(3600):
-		if not _r3_check(true): return {}
-		if Time.get_ticks_msec() > deadline:
-			_r3_check(false, "Original prison escort exceeded 300-second deadline")
-			return {}
-		lab._advance_action_time(TerrainLab.ACTION_STEP)
-		if not _r3_check(true): return {}
-		if str(data.site.captivity[str(target)].get("prison_id", "")) == prison: break
+	# Grid simulation retired (Option C): the captive is a grid team row, and dragging it along the escort route needs the
+	# retired grid movement. The physical escort is covered on the native crowd (site_prison_crowd_corridor,
+	# region_captivity_payload_admission); this rules fixture stands the SAME guard and captive on the true prison slot and
+	# contact cell and admits through the original admission owner.
 	var cancelled := controller.captive_escort.cancel(requester)
-	if not _r3_check(str(data.site.captivity[str(target)].prison_id) == prison, str(cancelled)): return {}
+	var layout := Runtime.prison_layout(data, prison)
+	if not _r3_check(layout.ok and not layout.slots.is_empty(), "Original complete prison layout"): return {}
+	var slot: Dictionary = layout.slots[0]
+	var captive_index := enemy.index_for_identity(target)
+	enemy.cells[captive_index] = slot.cell
+	enemy.combat_slots[captive_index] = slot.cell
+	enemy.moving_to[captive_index] = TerrainArmy.INVALID_CELL
+	enemy._rebuild_ground_cell_owners()
+	if not _r3_check(player.place(slot.contact_cell, true), "Guard stands on the true prison contact cell"): return {}
+	var admitted := actions.admit_prison(requester, target, prison)
+	if not _r3_check(admitted.ok and str(data.site.captivity[str(target)].prison_id) == prison, str(admitted) + " " + str(cancelled)): return {}
 	return {"data": data, "lab": lab, "controller": controller, "actions": actions, "player": player, "requester": requester, "enemy": enemy, "home": home, "head": head, "keeper": keeper, "target": target, "prison": prison}
 
 func _run() -> void:
