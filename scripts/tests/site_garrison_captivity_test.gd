@@ -1,4 +1,6 @@
 extends "res://scripts/tests/site_garrison_test.gd"
+## Base of site_garrison_captivity_crowd_test (run that one: visual, --crowd-test/--crowd-atlas-root/--grid). Its grid mode
+## needs the retired grid simulation and is not run on its own (Nekki 2026-11-12, prison group B).
 
 const CaptivityCrowdHost = preload("res://scripts/terrain_lab/crowd_site.gd")
 
