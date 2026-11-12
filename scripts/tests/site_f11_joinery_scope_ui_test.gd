@@ -68,6 +68,9 @@ func _f11_cold(f: Dictionary, keys: Array[String]) -> void:
 	for key: String in keys: retained[key] = f.data.site.vehicles[key].duplicate(true)
 	await _earned_cold(f,true)
 	f.team = f.lab.player_army()
+	# Grid simulation retired (Option C): the cold bind restores this grid team as a roster container; the data-only
+	# fixture enables its original combat rows again exactly as its first deployment did.
+	if f.team != null and not f.team.combat_enabled: _check(f.team.enable_combat(false), "The restored original team re-enables its real rows for the data-only work points")
 	_check(f.team != null and f.team.index_for_identity(int(f.control)) == TerrainArmy.PLAYER_MEMBER, "Cold bind renews the SAME original Actor membership from the new owner graph")
 	for key: String in keys: _check(f.data.site.vehicles[key] == retained[key], "Original cold graph retains exact paid vehicle geometry, marker, effort and history")
 
@@ -79,6 +82,8 @@ func _f11_fixture() -> Dictionary:
 	var lab := _earned_natural_lab(data)
 	lab.restore_only = false
 	while float(lab.simulation_speed) < 4.0: lab.change_simulation_speed(1)
+	# Grid data-only fixture (Option C): its cold reloads keep the grid roster instead of converting the Site to the crowd.
+	lab.crowd_startup_requested = false
 	var team := _f11_team(lab)
 	var actions = lab.site_controller.person_actions
 	var control := int(lab.controlled_person_id())
@@ -132,7 +137,15 @@ func _f11_point(f: Dictionary, seconds: float) -> Dictionary:
 	return {"plan": plan, "checked": checked}
 
 func _f11_finish(f: Dictionary, key: String) -> void:
-	await _earned_points(f)
+	# Grid simulation retired (Option C): this fixture's team is a grid roster, so the whole-Lab step would run the retired
+	# grid exchange. The same original controlled work runs through the explicit original shared-prefix point (_f11_point,
+	# the PA/WT registry, Fatigue planner and Runtime prefix publication) until its true completed endpoint.
+	var points := 0
+	while f.actions.is_busy(int(f.control)) and points < 2000:
+		_check(Time.get_ticks_msec() < deadline, "True original work stays within the named deadline")
+		_f11_point(f, 90.0)
+		points += 1
+		if points % 64 == 0: await process_frame
 	_check(f.data.site.vehicles[key].phase == "idle" and f.data.site.vehicles[key].build.is_empty(), "Original complete body/REST/work/contact caller reaches the true completed vehicle endpoint")
 
 func _f11_bind_ordinary(f: Dictionary, key: String) -> void:
@@ -150,7 +163,9 @@ func _f11_unlearned_helper_point(f: Dictionary, key: String) -> void:
 	var row: Dictionary = f.team.combat_units[1]
 	_check(not Technology.learned(row.get("technology", {}), "F11"), "The original assisting NPC remains unlearned; no copied skill")
 	var assigned = workers.prepare_assign_vehicle(f.team, [identity], int(f.control), key, f.data.site.vehicles[key], {}, {}, f.data.site.vehicles)
-	_check(assigned.ok, "Original current work decider admits this genuine helper through the ordinary vehicle owner")
+	_check(assigned.ok, "Original current work decider admits this genuine helper through the ordinary vehicle owner: " + str(assigned).left(300) + " decider=" + str(f.team.duty_resolve_readonly("team.work", f.team)).left(200)
+		+ " enabled=%s order=%s combat_left=%s moving=%d player_moving=%s routed=%s plan=%s moving_to=%s" % [str(f.team.combat_enabled), str(f.team.combat_order), str(f.data.site.get("combat_left")),
+		f.team.moving_member_count(), str(f.team.player_member.is_moving() if is_instance_valid(f.team.player_member) else null), str(f.team.is_sustain_routed()), str(f.team.get_active_move_plan()), str(f.team.moving_to)])
 	workers.publish_assign_vehicle(assigned)
 	var task: Dictionary = row.work_task
 	f.team.cells[1] = f.data.cell_from_index(int(task.work_cell))
