@@ -141,6 +141,13 @@ func _f12_crowd_settle(f: Dictionary, label: String) -> void:
 	if f.lab.crowd_site == null or not f.lab.crowd_site.active: return
 	_settlement_team_with_actor(f, [])
 	await _settlement_stand_still(f, label)
+	# After a cold reopen the native HOLD formation keeps its goal one cell off its centre (11/12, open: the restored team
+	# then walks to it and voids the research consent). The fixture settles the team around that goal instead.
+	var owner: Variant = f.lab.crowd_site.person_owner(int(f.control))
+	var settled: Dictionary = f.lab.crowd_site.formation_state(int(owner.formation_index))
+	if absf(float(settled.goal_x) - float(settled.cx)) > 0.01 or absf(float(settled.goal_y) - float(settled.cy)) > 0.01:
+		_settlement_centre = Vector2i(floori(float(settled.goal_x)), floori(float(settled.goal_y)))
+		await _settlement_stand_still(f, label + " (around the restored formation goal)")
 
 func _f12_first_earned() -> void:
 	var f := _f12_fixture()
@@ -194,36 +201,7 @@ func _f12_first_earned() -> void:
 	_check(begun.ok and begun.resumed and _earned_project(f).budget == paid,
 		"Same cold purpose resumes real construction with no second materials, attempt or analysis allowance")
 	if f.lab.crowd_site != null and f.lab.crowd_site.active:
-		var me: Dictionary = f.lab.crowd_site.siege_original_person(int(f.control))
-		_check(f.actions.is_busy(int(f.control)), "Crowd: the resumed counterweight job is the controlled worker's live job: begun=%s job=%s cell=%s station=%s moving=%s" % [str(begun).left(300),
-			str(f.actions._jobs.get(f.actions._job_key_for(int(f.control)), {})).left(300), str(me.get("cell")), str(geometry.station), str(me.get("moving"))])
-		var watched := 0
-		var owner0: Variant = f.lab.crowd_site.person_owner(int(f.control))
-		var first: Array = []
-		for index: Variant in owner0.combat_units.keys():
-			var other := int(owner0.combat_identity(int(index)))
-			var body: Dictionary = f.lab.crowd_site.siege_original_person(other)
-			first.append("%d@%s pos=%s mv=%s walk=%s" % [other, str(body.get("cell")), str(body.get("position")), str(body.get("moving")), str(owner0.is_walking(int(index)))])
-		var state: Dictionary = f.lab.crowd_site.formation_state(int(owner0.formation_index))
-		printerr("F12_RESUME_DIAG after_begin moving=", owner0.moving_member_count(), " members=", first, " formation=", str(state).left(400))
-		while f.actions.is_busy(int(f.control)) and watched < 400:
-			var stepped: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
-			watched += 1
-			if not stepped.get("ok", false): break
-		if not f.actions.is_busy(int(f.control)):
-			me = f.lab.crowd_site.siege_original_person(int(f.control))
-			var owner: Variant = f.lab.crowd_site.person_owner(int(f.control))
-			var members: Array = []
-			if owner != null:
-				for index: Variant in owner.combat_units.keys():
-					var other := int(owner.combat_identity(int(index)))
-					var body: Dictionary = f.lab.crowd_site.siege_original_person(other)
-					members.append("%d@%s mv=%s walk=%s" % [other, str(body.get("cell")), str(body.get("moving")), str(owner.is_walking(int(index)))])
-			var project: Dictionary = _earned_project(f)
-			printerr("F12_RESUME_DIAG moving=", owner.moving_member_count() if owner != null else -1, " members=", members, " consents=", str(project.get("consents", [])).left(600),
-				" order=", owner.combat_order if owner != null else -1)
-			printerr("F12_RESUME_DIAG points=", watched, " progress=", f.data.site.vehicles[key].build.get("progress"), " cell=", me.get("cell"), " station=", geometry.station,
-				" notices=", str(f.data.site.get("notices", [])).right(500), " msg=", f.lab.site_controller.message.text if is_instance_valid(f.lab.site_controller.message) else "")
+		_check(f.actions.is_busy(int(f.control)), "Crowd: the resumed counterweight job is the controlled worker's live job: " + str(begun).left(300))
 	await _earned_points(f)
 	var vehicle: Dictionary = f.data.site.vehicles[key]
 	var project: Dictionary = f.data.site.family.technology.projects[0]
