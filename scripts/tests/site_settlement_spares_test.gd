@@ -91,10 +91,15 @@ func _run() -> void:
 	assert(f.actions.begin_ranged_craft(int(f.control), "ballista_spares").ok)
 	# The PA timer advances only inside the original main shared point (a bare advance() call is
 	# refused CLOCK_NOT_READY), so step real points until the 120 s craft completes.
+	# Grid simulation retired (Option C): this data-only fixture's grid team would run the retired grid exchange on a whole
+	# point. The controlled crafter works alone, so the team's combat rows stand down for the craft and come back unchanged.
+	var team_combat: bool = f.team.combat_enabled
+	f.team.combat_enabled = false
 	for tick: int in 4000:
 		if not f.actions.is_busy(int(f.control)): break
 		var point: Dictionary = f.lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if f.lab.exchange_enabled else TerrainLab.ACTION_STEP)
 		assert(point.ok, str(point))
+	f.team.combat_enabled = team_combat
 	assert(int(inventory.wood) == wood - 3 and int(inventory.iron) == iron - 1 and int(inventory.fiber) == fiber - 1)
 	assert(int(inventory.ballista_spares) == kits + 1 and not f.actions.is_busy(int(f.control)))
 	var npc = int(f.team.combat_identity(1))
