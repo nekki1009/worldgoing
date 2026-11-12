@@ -212,10 +212,22 @@ func _known_arsenal_armor(fixture: Dictionary) -> void:
 	var accepted: Dictionary = lab.site_controller._nation_ui_command("n1", "administration", {"order": str(issued.order_id)})
 	_check(accepted.ok, "Actual public acceptance form begins the original arsenal job: " + str(accepted))
 	_check(admin_actions._jobs.has(str(int(fixture.executor))) and not admin_actions._jobs.has(str(int(lab.controlled_person_id()))), "The arsenal acceptance job runs on the named operator, not on the requester")
+	# Grid simulation retired (Option C): whole-Lab points would run the retired grid exchange for this data-only fixture's
+	# grid team. The acceptance job advances through the original PA administration point instead (the N01/N05 helper:
+	# original Fatigue planner, PA advance and settlement), until its genuine endpoint.
 	var acceptance_steps := 0
-	while lab.site_controller.person_actions.is_busy(int(fixture.executor)) and acceptance_steps < 2000:
-		var point: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP)
-		if not point.ok: break
+	var acceptance_actions = lab.site_controller.person_actions
+	while acceptance_actions.is_busy(int(fixture.executor)) and acceptance_steps < 60:
+		var requests = acceptance_actions.work_requests(30.0)
+		var planned := PersonFatigue.plan_work_interval(requests, 30.0)
+		_check(planned.ok, "Original planner admits only the original PA acceptance job and body pools")
+		if not planned.ok: break
+		for pool: Dictionary in planned.pools:
+			if float(pool.effort_seconds) <= 0.0: continue
+			PersonFatigue.write(pool.body, "fatigue", float(pool.fatigue))
+			PersonFatigue.write(pool.body, "fatigue_rest", float(pool.fatigue_rest))
+		acceptance_actions.advance(30.0, {"jobs": planned.jobs.get("person_actions", {})})
+		acceptance_actions.settle_after_contacts()
 		acceptance_steps += 1
 	_check(order.receipts.size() == 2 and order.status == "complete" and int(data.site.next_item) == next_item + 1, "Actual original N11 acceptance adds the arsenal receipt and completes the order without a second item")
 	var before := var_to_bytes(data.site)
