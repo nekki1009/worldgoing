@@ -8346,8 +8346,9 @@ static func technology_siege_method_begin_guard(data: TerrainData, kind: String,
 	var actions: Variant = _technology_actions(data)
 	if actions == null or operator_id <= 0: return fail("NO_OPERATOR", "改良新工單須明示原F11工作者")
 	var person: Dictionary = actions._person(operator_id)
-	var team: Variant = actions._technology_team(person)
-	# A crowd Site's named person is held by its CrowdPersonOwner (the same team id and work authority).
+	# A crowd Site's named person is held by its CrowdPersonOwner (the same team id and work authority);
+	# the grid team lookup finds no TerrainArmy for it.
+	var team: Variant = person.get("owner") if person.get("owner") is CrowdPersonOwner else actions._technology_team(person)
 	if person.is_empty() or not (team is TerrainArmy or team is CrowdPersonOwner) or int(team.team_id) != team_id or not actions._ready(person) \
 		or not Technology.learned(actions._body_get(person, "technology"), "F11"): return fail("NO_TECHNOLOGY", "本次具名原人尚未學會F11；未扣材料")
 	return ok("新工單明選木接；實際本人工作倍率仍由原工位重查")
