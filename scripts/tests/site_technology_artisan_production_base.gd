@@ -512,7 +512,13 @@ func _occupied_by_other(f: Dictionary, identity: int, cell: Vector2i) -> bool:
 var _crowd_deadline := 0
 var _crowd_fast_work := false
 var _crowd_points := 0
+## Fail fast (2026-11-12, Nekki "faster"): a stuck point used to repeat the same failure to the 540 s deadline (14,000
+## errors, a full 10-minute run per diagnostic). After three failed points in a row the fixture ends the test: later points
+## return at once with a game width that closes every interval loop, and the tree quits at the end of this frame.
+var _crowd_failed_points := 0
+var _crowd_aborted := false
 func _crowd_point(f: Dictionary) -> Dictionary:
+	if _crowd_aborted: return {"ok": false, "completed": false, "aborted": true, "action_seconds": 0.0, "game_seconds": 1.0e9}
 	if _crowd_deadline <= 0:
 		_crowd_deadline = Time.get_ticks_msec() + 540000 # Real whole-Lab points (in-file 540, outer 600), the over-budget rule.
 		deadline = maxi(deadline, _crowd_deadline) # The frame watchdog follows the same bound.
@@ -530,7 +536,15 @@ func _crowd_point(f: Dictionary) -> Dictionary:
 		if int(_case.native_window_4x_fallbacks) <= 3: print("ARTISAN_NATIVE_WINDOW_4X ", str(result.get("message", "")))
 		while float(f.lab.simulation_speed) > 1.0: f.lab.change_simulation_speed(-1)
 		result = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
-	_require(result.ok and result.get("completed", false) and f.lab._region_point_pending.is_empty(), "Original whole Lab point settles actual work/fatigue/clock/contacts", result)
+	var settled: bool = result.ok and result.get("completed", false) and f.lab._region_point_pending.is_empty()
+	_crowd_failed_points = 0 if settled else _crowd_failed_points + 1
+	_require(settled, "Original whole Lab point settles actual work/fatigue/clock/contacts", result)
+	if _crowd_failed_points >= 3:
+		_crowd_aborted = true
+		var callers: Array = []
+		for frame: Dictionary in get_stack().slice(1, 7): callers.append("%s:%d" % [frame.function, frame.line])
+		printerr("ARTISAN_CROWD_ABORT three failed points in a row at point %d: %s | %s" % [_crowd_points, str(result).left(300), " < ".join(callers)])
+		quit(1)
 	return result
 
 func _crowd_team_still(f: Dictionary) -> bool:
