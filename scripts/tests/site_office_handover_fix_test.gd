@@ -54,10 +54,9 @@ func _run() -> void:
 	assert(int(entry.training_requester) == captain)
 	var offices := team.team_offices()
 	assert(team.apply_office_plan(captain, int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.training"]), "person_id": coach}]).ok)
-	var before := team.training
-	lab._process(0.1)
+	# Grid simulation retired (Option C): this grid data-only fixture no longer ticks the team; that the accepted order keeps
+	# training on the native crowd is covered by site_barracks_types_training_crowd_test. Here the handover keeps the order.
 	assert(entry.training_order, "Handing team.training over must not cancel the accepted order (3.6)")
-	assert(team.training > before, "Training keeps progressing after the handover")
 	var old_stop := controller.order_team_training(team, team.current_commander, false)
 	assert(str(old_stop.code) == "NO_AUTHORITY" and entry.training_order, "The previous issuer can no longer stop it: " + str(old_stop))
 	var new_stop := controller.order_team_training(team, team.index_for_identity(coach), false)
