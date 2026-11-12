@@ -82,9 +82,13 @@ func _run() -> void:
 	assert(started.ok, "Head (player) path still works while 典獄 is vacant: " + str(started))
 	var layout := Runtime.prison_layout(data, prison_key)
 	var slot: Dictionary = layout.slots[0]
+	# Grid simulation retired (Option C): the head's own Actor escort walks on whole points while the grid team's combat
+	# rows stand down (they would run the retired grid tick) and come back unchanged.
+	team.combat_enabled = false
 	for _frame: int in range(3600):
 		lab._advance_action_time(TerrainLab.ACTION_STEP)
 		if not str(data.site.captivity[str(captive.person_id)].get("prison_id", "")).is_empty(): break
+	team.combat_enabled = true
 	assert(str(data.site.captivity[str(captive.person_id)].get("prison_id", "")) == prison_key, "Escort admitted the captive")
 	controller.captive_escort.cancel(player_id)
 
@@ -122,13 +126,10 @@ func _run() -> void:
 	var walk := DutyAI.review_prison(lab, player_id)
 	assert(bool(walk.get("ok", false)) and controller.captive_escort.is_release_walking(warden), "仁厚 典獄 walks to release at 10 days: " + str(walk))
 	assert(int(DutyAI.settlement_traces[-1].decider_person_id) == warden and not bool(DutyAI.settlement_traces[-1].acting))
-	var released := false
-	for _frame: int in range(6000):
-		lab._advance_action_time(TerrainLab.ACTION_STEP)
-		if not data.site.captivity.has(str(captive.person_id)) or str(data.site.captivity[str(captive.person_id)].get("prison_id", "")).is_empty():
-			released = true
-			break
-	assert(released, "Walk then four-second release completed through the original job")
+	# The 典獄 is a grid team member: its walk to the contact cell needs the retired grid movement. The physical walk and
+	# four-second release are covered on the native crowd (region_captivity_payload_admission, site_prison_crowd_corridor);
+	# this data-only test keeps the decision rules above.
+	controller.captive_escort.cancel_release_walk(warden)
 
 	# Position page lists the settlement with an editable 典獄 seat.
 	var settlement_org := {}
@@ -137,5 +138,5 @@ func _run() -> void:
 	assert(not settlement_org.is_empty() and settlement_org.apply.is_valid() and settlement_org.candidates.has(warden))
 	lab.free()
 	TerrainArmy.release_contact_source()
-	print("SITE_SETTLEMENT_PRISON_PASS: old head-only record gains vacant 典獄, head acts, player head path, 典獄 owns escort/release, hold table, 10-day 仁厚 release via walk, position page")
+	print("SITE_SETTLEMENT_PRISON_PASS: old head-only record gains vacant 典獄, head acts, player head path, 典獄 owns escort/release, hold table, 10-day 仁厚 release decision (walk/release physical on the crowd tests), position page")
 	quit(0)
