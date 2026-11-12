@@ -7492,6 +7492,9 @@ func technology_vehicle_work_admission(operator_id: int, team_id: int) -> Dictio
 func _crowd_vehicle_work_admission(person: Dictionary, operator_id: int, team_id: int) -> Dictionary:
 	var physical: CrowdOwner = person.owner
 	var original: Variant = physical._command_owner(int(person.unit))
+	# A joined controlled Actor's command owner is the Actor itself; its team's offices live on the original army that holds
+	# this crowd team (found 2026-11-12, F12 counterweight crowd port).
+	if original is TerrainTestCharacter: original = _technology_team(person)
 	if not original is TerrainArmy or int(physical.team_id) != team_id or int(original.team_id) != team_id or not physical.crowd_site.owns_original_team(original) 		or physical.combat_order != TerrainArmy.CombatOrder.HOLD: return Runtime.fail("NO_AUTHORITY")
 	var duty: Dictionary = original.duty_resolve_readonly("team.work", physical)
 	if not duty.ok or int(duty.get("decider", -1)) != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")

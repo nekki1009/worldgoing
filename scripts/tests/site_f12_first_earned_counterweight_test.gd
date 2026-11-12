@@ -1,4 +1,5 @@
-extends "res://scripts/tests/site_family_first_earned_base.gd"
+extends "res://scripts/tests/site_settlement_first_earned_base.gd"
+## Crowd port (2026-11-12): extends the settlement base for its crowd team/stand-still fixture helpers only.
 ## Genuine ordinary traction completion precedes first counterweight research.
 ## Generated source parameters and sparse original state survive both cold loads.
 ## This local caller fixture excludes fixed World policy, UI, travel and Native.
@@ -64,6 +65,7 @@ func _f12_team(lab: TerrainLab) -> TerrainArmy:
 		and team.join_player(lab.character).ok, "Actual Actor legally joins the original duty-enabled team")
 	return team
 
+var _f12_last_named := ""
 func _f12_geometry(lab: TerrainLab, team: TerrainArmy, kind: String) -> Dictionary:
 	var data := lab.terrain
 	var control := lab.controlled_person_id()
@@ -80,13 +82,24 @@ func _f12_geometry(lab: TerrainLab, team: TerrainArmy, kind: String) -> Dictiona
 			"Original prospective geometry remains pure for each real generated site candidate")
 		if not preview.ok: continue
 		_check(_f12_place(lab, station), "Actual named Actor occupies this pure original station")
+		if lab.crowd_site != null and lab.crowd_site.active:
+			# Crowd: the controlled worker must stand ready on its station (a placement changes no velocity until real points).
+			await _settlement_stand_still({"lab": lab, "data": data, "control": control}, "on the candidate station")
 		before = var_to_bytes([data.site, lab.site_controller.person_actions._jobs, lab.character.technology])
 		preview = Runtime.begin_siege_build(data, kind, anchor, Vector2i.RIGHT, int(team.team_id), control,
 			lab.site_controller.reserves_cell, true, {}, {}, control)
 		_check(var_to_bytes([data.site, lab.site_controller.person_actions._jobs, lab.character.technology]) == before,
 			"Actual named-person construction preview performs no payment or job publication")
 		if preview.ok: return {"anchor": anchor, "facing": Vector2i.RIGHT, "team_id": int(team.team_id), "station": station}
-	_check(false, "Original generated source must contain a legal full vehicle, crew and worksite footprint")
+		_f12_last_named = str(preview).left(300) + " at " + str(station)
+	var authority := ""
+	if lab.crowd_site != null and lab.crowd_site.active:
+		var physical: Variant = lab.crowd_site.person_owner(control)
+		var original: Variant = physical._command_owner(physical.index_for_identity(control)) if physical != null else null
+		authority = " order=%s physical_team=%s original=%s owns=%s duty=%s" % [str(physical.combat_order) if physical != null else "-", str(physical.team_id) if physical != null else "-",
+			str(original.team_id) if original is TerrainArmy else str(original), str(lab.crowd_site.owns_original_team(original)) if original is TerrainArmy else "-",
+			str(original.duty_resolve_readonly("team.work", physical)).left(300) if original is TerrainArmy else "-"]
+	_check(false, "Original generated source must contain a legal full vehicle, crew and worksite footprint; last named preview: " + _f12_last_named + authority)
 	return {}
 
 func _f12_fixture() -> Dictionary:
@@ -115,17 +128,29 @@ func _f12_fixture() -> Dictionary:
 	var refused = actions.prepare_scope_technology(control, control, "F12")
 	_check(not refused.ok and refused.code == "PREREQUISITE"
 		and var_to_bytes([data.site, actions._jobs, lab.character.technology]) == before, "F11 archive alone cannot begin F12 or synthesize a traction receipt")
+	# Crowd port (2026-11-12): the hand-built team with the joined Actor enters the native crowd as a legacy grid Site does
+	# on bind (the settlement first-earned rule); --grid keeps the old path.
+	if not OS.get_cmdline_user_args().has("--grid") and lab.crowd_site != null and not lab.crowd_site.active:
+		var converted: Dictionary = lab.crowd_site.convert_existing()
+		_check(converted.ok, "The original team and its Actor enter the native crowd: " + str(converted))
 	return {"data": data, "lab": lab, "controller": lab.site_controller, "actions": actions, "team": team,
 		"control": control, "family_id": str(data.site.family.family_id), "tech_id": "F12", "cold_count": 0}
 
+## Crowd: before a named job the team stands beside the working head and settles by real points (settlement base rule).
+func _f12_crowd_settle(f: Dictionary, label: String) -> void:
+	if f.lab.crowd_site == null or not f.lab.crowd_site.active: return
+	_settlement_team_with_actor(f, [])
+	await _settlement_stand_still(f, label)
+
 func _f12_first_earned() -> void:
 	var f := _f12_fixture()
-	var ordinary := _f12_geometry(f.lab, f.team, "traction_trebuchet")
+	await _f12_crowd_settle(f, "before the ordinary geometry scan")
+	var ordinary: Dictionary = await _f12_geometry(f.lab, f.team, "traction_trebuchet")
 	var key := str(int(f.data.site.get("next_vehicle", 1)))
 	var inventory: Dictionary = f.data.site.inventory.duplicate(true)
 	var begun := Runtime.begin_siege_build(f.data, "traction_trebuchet", ordinary.anchor, ordinary.facing,
 		int(f.team.team_id), int(f.control), f.controller.reserves_cell, false, {}, {}, int(f.control))
-	_check(begun.ok and f.actions.is_busy(int(f.control)), "Original paid ordinary traction publishes the actual controlled construction job")
+	_check(begun.ok and f.actions.is_busy(int(f.control)), "Original paid ordinary traction publishes the actual controlled construction job: " + str(begun).left(300))
 	for resource: String in Runtime.SIEGE_DEFINITIONS.traction_trebuchet.cost:
 		_check(int(f.data.site.inventory[resource]) == int(inventory[resource]) - int(Runtime.SIEGE_DEFINITIONS.traction_trebuchet.cost[resource]),
 			"Actual ordinary traction pays its full original material once: " + resource)
@@ -138,22 +163,23 @@ func _f12_first_earned() -> void:
 	_check(not Technology.scope_known(f.data.site.family.technology, "F12") and not Technology.learned(f.lab.character.technology, "F12"),
 		"Ordinary traction completion earns neither target project nor F12 skill")
 	_check(_f12_camp_contact(f.lab), "Actual grantor returns to original generated camp contact")
+	await _f12_crowd_settle(f, "at the camp contact")
 	_check(f.actions.prepare_scope_technology(int(f.control), int(f.control), "F12").ok, "Actual traction witness now admits first F12 preparation")
 	var phase: Dictionary = EarnedCatalog.get_node("F12").research.routes[0].phases[0]
 	var cap: Dictionary = phase.materials.duplicate(true)
 	_check(f.actions.request_scope_technology_consent(int(f.control), "family", str(f.family_id), int(f.control)).ok
 		and f.actions.grant_scope_technology_budget(int(f.control), "family", str(f.family_id), cap).ok, "Original executor consents to one finite full counterweight budget")
-	var geometry := _f12_geometry(f.lab, f.team, "counterweight_trebuchet")
+	var geometry: Dictionary = await _f12_geometry(f.lab, f.team, "counterweight_trebuchet")
 	key = str(int(f.data.site.next_vehicle))
 	var target := "vehicle:" + key
 	var request := {"anchor": geometry.anchor, "facing": geometry.facing, "team_id": geometry.team_id}
 	var before := var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.technology])
 	var preview := Runtime.begin_technology_operation(f.data, _token(f.lab, int(f.control), target), true, request)
 	_check(preview.ok and var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.technology]) == before,
-		"Actual original first counterweight preview is pure and uses the full original geometry")
+		"Actual original first counterweight preview is pure and uses the full original geometry: " + str(preview).left(300))
 	begun = f.actions.begin_scope_technology_phase(int(f.control), "family", str(f.family_id), "counterweight_build", target, request)
 	_check(begun.ok and f.actions.is_busy(int(f.control)) and f.data.site.vehicles[key].build.total_work == 21600.0,
-		"First genuine counterweight phase pays and publishes actual unchanged full-duration construction")
+		"First genuine counterweight phase pays and publishes actual unchanged full-duration construction: " + str(begun).left(300))
 	await _earned_points(f, true)
 	_check(f.actions.is_busy(int(f.control)) and float(f.data.site.vehicles[key].build.progress) > 0.0
 		and not Technology.learned(f.lab.character.technology, "F12"), "Actual admitted positive prefix remains an incomplete original trial")
@@ -163,15 +189,48 @@ func _f12_first_earned() -> void:
 	await _earned_cold(f, false)
 	_check(f.data.site.vehicles[key] == parked and f.data.site.family.technology.siege_history == history,
 		"Cold original graph preserves the paid construction and genuine traction prerequisite history")
+	await _f12_crowd_settle(f, "before the resumed counterweight phase")
 	begun = f.actions.begin_scope_technology_phase(int(f.control), "family", str(f.family_id), "counterweight_build", target)
 	_check(begun.ok and begun.resumed and _earned_project(f).budget == paid,
 		"Same cold purpose resumes real construction with no second materials, attempt or analysis allowance")
+	if f.lab.crowd_site != null and f.lab.crowd_site.active:
+		var me: Dictionary = f.lab.crowd_site.siege_original_person(int(f.control))
+		_check(f.actions.is_busy(int(f.control)), "Crowd: the resumed counterweight job is the controlled worker's live job: begun=%s job=%s cell=%s station=%s moving=%s" % [str(begun).left(300),
+			str(f.actions._jobs.get(f.actions._job_key_for(int(f.control)), {})).left(300), str(me.get("cell")), str(geometry.station), str(me.get("moving"))])
+		var watched := 0
+		var owner0: Variant = f.lab.crowd_site.person_owner(int(f.control))
+		var first: Array = []
+		for index: Variant in owner0.combat_units.keys():
+			var other := int(owner0.combat_identity(int(index)))
+			var body: Dictionary = f.lab.crowd_site.siege_original_person(other)
+			first.append("%d@%s pos=%s mv=%s walk=%s" % [other, str(body.get("cell")), str(body.get("position")), str(body.get("moving")), str(owner0.is_walking(int(index)))])
+		var state: Dictionary = f.lab.crowd_site.formation_state(int(owner0.formation_index))
+		printerr("F12_RESUME_DIAG after_begin moving=", owner0.moving_member_count(), " members=", first, " formation=", str(state).left(400))
+		while f.actions.is_busy(int(f.control)) and watched < 400:
+			var stepped: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+			watched += 1
+			if not stepped.get("ok", false): break
+		if not f.actions.is_busy(int(f.control)):
+			me = f.lab.crowd_site.siege_original_person(int(f.control))
+			var owner: Variant = f.lab.crowd_site.person_owner(int(f.control))
+			var members: Array = []
+			if owner != null:
+				for index: Variant in owner.combat_units.keys():
+					var other := int(owner.combat_identity(int(index)))
+					var body: Dictionary = f.lab.crowd_site.siege_original_person(other)
+					members.append("%d@%s mv=%s walk=%s" % [other, str(body.get("cell")), str(body.get("moving")), str(owner.is_walking(int(index)))])
+			var project: Dictionary = _earned_project(f)
+			printerr("F12_RESUME_DIAG moving=", owner.moving_member_count() if owner != null else -1, " members=", members, " consents=", str(project.get("consents", [])).left(600),
+				" order=", owner.combat_order if owner != null else -1)
+			printerr("F12_RESUME_DIAG points=", watched, " progress=", f.data.site.vehicles[key].build.get("progress"), " cell=", me.get("cell"), " station=", geometry.station,
+				" notices=", str(f.data.site.get("notices", [])).right(500), " msg=", f.lab.site_controller.message.text if is_instance_valid(f.lab.site_controller.message) else "")
 	await _earned_points(f)
 	var vehicle: Dictionary = f.data.site.vehicles[key]
 	var project: Dictionary = f.data.site.family.technology.projects[0]
 	_check(vehicle.phase == "idle" and vehicle.build.is_empty() and not vehicle.has("tech_trial")
 		and project.receipts.size() == 1 and project.budget.payments.size() == 1 and project.budget.spent == cap,
-		"Full actual counterweight completion commits one physical vehicle and one balanced first-research payment")
+		"Full actual counterweight completion commits one physical vehicle and one balanced first-research payment: phase=%s build=%s receipts=%d payments=%d spent=%s busy=%s" % [str(vehicle.get("phase")),
+			str(vehicle.get("build", {})).left(200), project.receipts.size(), project.budget.payments.size(), str(project.budget.spent), str(f.actions.is_busy(int(f.control)))])
 	_check(float(project.receipts[0].work_seconds) + 0.00000001 >= 21600.0
 		and int(project.receipts[0].person_id) == int(f.control)
 		and f.data.site.family.technology.siege_history.size() == 2
@@ -200,6 +259,8 @@ func _run() -> void:
 ## The joined Actor is present (and keeps any delegated office) only within the
 ## formation's command radius; the fixture keeps the small team beside it.
 func _f12_place(lab: TerrainLab, cell: Vector2i) -> bool:
+	if lab.crowd_site != null and lab.crowd_site.active:
+		return lab.character.place(cell, true) and _earned_crowd_place(lab, int(lab.controlled_person_id()), cell)
 	# Move the team beside the target first, so none of it stands on the target cell.
 	for team: TerrainArmy in lab.combat_armies:
 		if int(team.team_id) != 301: continue

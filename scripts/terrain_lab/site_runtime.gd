@@ -955,7 +955,7 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 			or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND] \
 			or not technology_siege_ground_cell_allowed(data, candidate, cell): return fail("TERRAIN", "器具及工位需要原平整乾燥地面或具名原校場")
 		if _siege_vehicle_claims(data, cell): return fail("OCCUPIED")
-		if occupied.is_valid() and bool(occupied.call(cell)) and not _technology_siege_station_self(data, candidate, cell, cells, operation_selector, actual_operator_id, occupied): return fail("OCCUPIED")
+		if occupied.is_valid() and bool(occupied.call(cell)) and not _technology_siege_station_self(data, candidate, cell, cells, operation_selector, actual_operator_id, occupied) 			and not _technology_siege_operator_body_only(data, candidate, cell, cells, stations, operation_selector, actual_operator_id, occupied): return fail("OCCUPIED")
 	var yard_guard := _technology_siege_new_ground_guard(data, candidate, team_id, actual_operator_id)
 	if not yard_guard.ok: return yard_guard
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
@@ -11358,6 +11358,21 @@ static func _technology_siege_new_ground_guard(data: TerrainData, vehicle: Dicti
 		var person: Dictionary = actions._person(identity)
 		if not person.is_empty() and actions._ready(person) and Technology.learned(actions._body_get(person, "technology"), "F11"): return ok()
 	return fail("NO_TECHNOLOGY", "原器械場新施工需本隊具名真F11師傅")
+
+## A crowd body covers the cells beside it (a grid Actor holds one cell), so the named operator standing on its own station
+## would occupy this engine's footprint and neighbouring stations. A cell is free of everything but that operator only when
+## the operator truly stands on one of this candidate's stations (the station self rule) and nothing else reserves the cell.
+static func _technology_siege_operator_body_only(data: TerrainData, candidate: Dictionary, cell: Vector2i, cells: Array, stations: Array, selector: Dictionary, actual_operator_id: int, occupied: Callable) -> bool:
+	# A research phase names its executor in the operation token instead of an actual_operator_id.
+	var operator_id := actual_operator_id
+	if operator_id <= 0 and selector.get("token") is Dictionary and selector.token.get("person") is Dictionary:
+		operator_id = int(selector.token.person.get("person_id", 0))
+	if operator_id <= 0 or not occupied.is_valid() or occupied.get_method() != &"reserves_cell": return false
+	var controller: Variant = occupied.get_object()
+	if controller == null or not controller.has_method("reserves_cell") or bool(controller.reserves_cell(cell, [operator_id])): return false
+	for station: Dictionary in stations:
+		if _technology_siege_station_self(data, candidate, data.cell_from_index(int(station.cell)), cells, selector, actual_operator_id, occupied): return true
+	return false
 
 static func _technology_siege_station_self(data: TerrainData, candidate: Dictionary, cell: Vector2i, cells: Array, selector: Dictionary, actual_operator_id: int, occupied: Callable) -> bool:
 	if cells.has(cell) or not occupied.is_valid(): return false
