@@ -14821,7 +14821,12 @@ func _prepare_native_begin_shared_window_body(maximum: float, combat_begin: floa
 	if not accepted.ok: return accepted
 	nb = _combat_profile_stage("nb_bound", nb)
 	# No looping/reselection. A mismatch is rejected before the first shot cost.
-	if float(accepted.action_seconds) != float(window.action_seconds): return SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED")
+	# A re-bound over the chosen window can come back one ULP short of it at 4x (2026-11-12: 0.00153508770977289 vs
+	# ...290, no transition between): the same interval, not a changed one. Anything wider is still refused.
+	if absf(float(accepted.action_seconds) - float(window.action_seconds)) > ACTION_TIME_EPSILON:
+		return SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED", "bound %.17f window %.17f max %.17f without %.17f pulse %.17f transition %s at %s speed %s phase %.17f" % [float(accepted.action_seconds),
+			float(window.action_seconds), maximum, float(without.action_seconds), float(with_pulse.action_seconds), str(witness.get("transition", -1.0)),
+			str(witness.get("transition_at", NAN)), str(simulation_speed), _exchange_phase])
 	var validated: Dictionary = validate_native_begin_ranged(ranged.prepared)
 	if not validated.ok: return validated
 	var result: Dictionary = SiteRuntime.ok("原BEGIN与同held prefix已純預驗", {"owner": self, "site": terrain.site,
