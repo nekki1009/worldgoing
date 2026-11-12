@@ -19,9 +19,9 @@ func _point_prepare(f: Dictionary, reverse: bool) -> Dictionary:
 		_require(int(inventory[material]) - int(f.data.site.inventory[material]) == int(terms.cost[material]), "True product pays full original cost exactly once: " + material)
 	var work: SiteWorkTeam = f.lab.site_controller.work_team
 	_require(work.cancel(int(f.master)).ok, "Original decider releases initial pending master before explicit reordered assignment")
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	var duplicate: Dictionary = work.prepare_assign_vehicle(f.team, [int(f.master), int(f.master)], int(f.commander), key)
-	_require(not duplicate.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "One original person cannot occupy two engineering slots; pure rejection preserves every original byte", duplicate)
+	_require(not duplicate.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "One original person cannot occupy two engineering slots; pure rejection preserves every original byte", duplicate)
 	_park(f, int(f.commander), anchor + Vector2i(-4, 0))
 	var selected: Array = [int(f.helper), int(f.master)] if reverse else [int(f.master), int(f.helper)]
 	_siege_assign(f, key, selected) # Actual owner picks legal distinct slots.
@@ -29,11 +29,11 @@ func _point_prepare(f: Dictionary, reverse: bool) -> Dictionary:
 	for identity: int in [int(f.master), int(f.helper)]:
 		var row: Dictionary = f.team.combat_units[f.team.index_for_identity(identity)]
 		tasks.append(row.work_task)
-		_require(row.work_task.target == "vehicle:" + key and row.work_task.action == "construct" and f.team.cells[f.team.index_for_identity(identity)] == f.data.cell_from_index(int(row.work_task.work_cell)), "SAME true person holds and occupies its original fixed work station")
+		_require(row.work_task.target == "vehicle:" + key and row.work_task.action == "construct" and _cell_of(f, identity) == f.data.cell_from_index(int(row.work_task.work_cell)), "SAME true person holds and occupies its original fixed work station")
 	_require(int(tasks[0].work_slot) != int(tasks[1].work_slot), "No physical engineering slot is shared")
-	before = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	before = var_to_bytes([f.data.site, _combat_state(f)])
 	var second_order: Dictionary = Runtime.begin_siege_build(f.data, kind, second, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(f.lab.site_controller, "reserves_cell"), false, {}, {}, int(f.master))
-	_require(not second_order.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Current original master already holds actual work; a second independently affordable product refuses before cost or ID allocation", second_order)
+	_require(not second_order.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Current original master already holds actual work; a second independently affordable product refuses before cost or ID allocation", second_order)
 	return {"key": key, "vehicle": vehicle, "paid": vehicle.build.paid_cost, "terms": terms, "tasks": tasks, "inventory": f.data.site.inventory.duplicate(true)}
 
 func _point_original_delta(f: Dictionary, action_seconds: float) -> Dictionary:

@@ -46,7 +46,7 @@ func _contact_birth(source: RegionData) -> Dictionary:
 		"next_person": int(data.site.next_person_id), "next_item_birth": int(data.site.next_item)}
 
 func _contact_position(f: Dictionary, enemy_index: int) -> void:
-	var master_cell: Vector2i = f.team.cells[f.team.index_for_identity(int(f.master))]
+	var master_cell: Vector2i = _cell_of(f, int(f.master))
 	var foreign: Dictionary = f.duplicate(false)
 	foreign.team = f.enemy
 	# Only an adjacent station reaches the body (the stationary walk_slash sweep stops short from two

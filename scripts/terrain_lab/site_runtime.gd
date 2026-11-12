@@ -1350,10 +1350,15 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 		else: technology_record_work(vehicle, seconds / 60.0, int(technology_guard.get("operator_id", 0)))
 	job["progress"] = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
 	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = json_stable_seconds(minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds))
+	# A job within the completion tolerance is complete: it applies its whole amount (sub-second point sums leave float residue).
+	if float(job.progress) + 0.000000001 >= float(job.total_work): job["progress"] = float(job.total_work)
 	if field == "repair":
 		# JSON-stable: a parked repair keeps the same applied value through a cold save/load.
 		var applied := json_stable_seconds(float(job.amount) * float(job.progress) / float(job.total_work))
-		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
+		var max_hp := float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp)
+		vehicle.hp = minf(max_hp, float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
+		# Incremental point sums drift by float residue; a repair that ends within it of full hull is full.
+		if max_hp - float(vehicle.hp) < 0.000001: vehicle.hp = max_hp
 		job["applied"] = applied
 	var complete := float(job.progress) + 0.000000001 >= float(job.total_work)
 	if complete:

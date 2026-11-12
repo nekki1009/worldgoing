@@ -142,28 +142,32 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	# A realistic dispatch comes from the team's current work-duty decider.
 	# Fixture placements are not landed steps; refresh presence through a real
 	# command event (unchanged tactical-AI confirmation) before resolving duty.
-	f.team.set_tactical_ai_enabled(f.team.current_commander, f.team.tactical_ai_enabled)
-	if f.team.current_commander < 0:
+	if _crowd(f):
+		# Crowd: the team's current commander (the controlled person) is its work decider; it stands in command presence
+		# once the fixture parks it with the team's HOLD centre (production base _park).
+		_park(f, int(f.commander), _cell_of(f, int(f.commander)))
+	else: f.team.set_tactical_ai_enabled(f.team.current_commander, f.team.tactical_ai_enabled)
+	if not _crowd(f) and f.team.current_commander < 0:
 		# Presence is measured from the team's median member, not the station; a
 		# commander parked by the station can be out of command radius. Re-park the
 		# formal commander at that reference (explicit fixture input) and refresh.
 		_park(f, int(f.commander), Vector2i(f.team.command_reference.floor()))
 		f.team.set_tactical_ai_enabled(f.team.current_commander, f.team.tactical_ai_enabled)
-	var work_decider: int = int(f.team.duty_decider("team.work"))
-	_require(work_decider > 0, "The team work duty resolves to an actual present decider", f.team.duty_resolve("team.work", true))
+	var work_decider: int = (f.team.combat_identity(f.team.current_commander) if f.team.current_commander >= 0 else -1) if _crowd(f) else int(f.team.duty_decider("team.work"))
+	_require(work_decider > 0, "The team work duty resolves to an actual present decider", {} if _crowd(f) else f.team.duty_resolve("team.work", true))
 	var dispatcher: Dictionary = controller._control_family_person(null, work_decider)
 	_require(dispatcher.ok, "Original command control restored to the team work decider before selected-worker dispatch", dispatcher)
 	f.lab.selected_army_target = identity
 	controller.update_ui()
 	_require(controller._selected_worker_assignment().ok, "Actual current original decider admits named selected original NPC")
 	controller.assign_worker_button.pressed.emit()
-	var state_before_selection: PackedByteArray = var_to_bytes([feature.production, feature.batch_paid, f.data.site.inventory, f.team.combat_units.map(func(body: Dictionary) -> Dictionary: return body.cargo)])
+	var state_before_selection: PackedByteArray = var_to_bytes([feature.production, feature.batch_paid, f.data.site.inventory, _team_rows(f.team).map(func(body: Dictionary) -> Dictionary: return body.cargo)])
 	# Original prepare selects/settles the original idle task at this real cell.
 	# No participant allocation is committed here; no task mode is authored.
 	controller.work_team.prepare_work_requests(60.0, 1.0)
-	_require(var_to_bytes([feature.production, feature.batch_paid, f.data.site.inventory, f.team.combat_units.map(func(body: Dictionary) -> Dictionary: return body.cargo)]) == state_before_selection, "Original work selection has no material/work/output commit")
-	var row: Dictionary = f.team.combat_units[f.team.index_for_identity(identity)]
-	_require(row.get("work_task") is Dictionary and row.work_task.target == "feature:" + key and int(row.work_task.work_cell) == int(feature.entrance), "Original selected-worker UI actually assigns exactly this host/station")
+	_require(var_to_bytes([feature.production, feature.batch_paid, f.data.site.inventory, _team_rows(f.team).map(func(body: Dictionary) -> Dictionary: return body.cargo)]) == state_before_selection, "Original work selection has no material/work/output commit")
+	var selected_task: Dictionary = _task_of(f, identity)
+	_require(not selected_task.is_empty() and selected_task.target == "feature:" + key and int(selected_task.work_cell) == int(feature.entrance), "Original selected-worker UI actually assigns exactly this host/station", selected_task)
 
 func _operate(f: Dictionary, key: String, recipe: String, identity: int) -> void:
 	_idle_all(f)
@@ -171,19 +175,18 @@ func _operate(f: Dictionary, key: String, recipe: String, identity: int) -> void
 
 func _feature_paused(f: Dictionary, key: String, label: String) -> void:
 	var feature: Dictionary = f.data.site.features[key]
-	var before: PackedByteArray = var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, f.team.combat_units.map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})])
+	var before: PackedByteArray = var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, _team_rows(f.team).map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})])
 	var result: Dictionary = _interval(f)
-	_require(float(result.effective) == 0.0 and float(result.actual) == 0.0 and var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, f.team.combat_units.map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})]) == before, label + ": no work, cost, output or effort")
+	_require(float(result.effective) == 0.0 and float(result.actual) == 0.0 and var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, _team_rows(f.team).map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})]) == before, label + ": no work, cost, output or effort")
 
 func _unlearned_feature(f: Dictionary, key: String, recipe: String) -> void:
 	var feature: Dictionary = f.data.site.features[key]
 	_require(not Technology.learned(f.team.combat_units[f.team.index_for_identity(int(f.helper))].get("technology", {}), str(f.category)), "Selected original helper truly unlearned")
 	_operate(f, key, recipe, int(f.helper))
-	var row: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.helper))]
-	var task: Dictionary = row.work_task
+	var task: Dictionary = _task_of(f, int(f.helper))
 	# Selecting/assigning an ordinary stock recipe is legal; true manufacture
 	# admission comes from the actual current original person/task, not UI text.
-	_require(is_same(task, row.work_task) and int(task.work_cell) == int(feature.entrance) and f.team.cells[f.team.index_for_identity(int(f.helper))] == f.data.cell_from_index(int(task.work_cell)), "Same actual original worker/task is at legal station; fixture does not advance task mode")
+	_require((task == _task_of(f, int(f.helper)) if _crowd(f) else is_same(task, _task_of(f, int(f.helper)))) and int(task.work_cell) == int(feature.entrance) and _cell_of(f, int(f.helper)) == f.data.cell_from_index(int(task.work_cell)), "Same actual original worker/task is at legal station; fixture does not advance task mode")
 	var guard: Dictionary = Runtime.technology_recipe_guard(f.data, key, feature, int(f.helper))
 	_require(not guard.ok and guard.code == "NO_TECHNOLOGY", "True fixed-policy original manufacture rejects actual unlearned worker", guard)
 	_feature_paused(f, key, "True unlearned same-task original interval")
@@ -429,3 +432,7 @@ func _finish(reason: String = "") -> void:
 	print("TECH_AI_02_FIXED_PROCESSING_REPORT: " + JSON.stringify({"checks": checks, "failures": failures, "cases": report, "fixture": root_path}, "", true, true))
 	print("TECH_AI_02_FIXED_D10_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=true_fullpin_new_checksum_source_candidate_original_public_recipe_work_products_300s_taught_replacement_basicrepair_cold; legacy_source_unmodified; Eco_Fire_Taiwan_policy_resource_release_Native_GPU_autonomous_AI_FULL40_excluded")
 	quit(0 if failures.is_empty() else 1)
+
+## The processing artisan tests (F04/F06) do not step the whole Lab: they keep the grid shell (the siege base opts in).
+func _crowd_port() -> bool:
+	return false

@@ -62,7 +62,7 @@ func _no_reissue(f: Dictionary) -> void:
 	var next_item := int(f.data.site.next_item)
 	var next_person := int(f.data.site.next_person_id)
 	var skills := {}
-	for row: Dictionary in f.team.combat_units: skills[int(row.person_id)] = row.get("technology", {}).duplicate(true)
+	for row: Dictionary in _team_rows(f.team): skills[int(row.person_id)] = row.get("technology", {}).duplicate(true)
 	for identity: int in [1, int(f.master), int(f.helper), int(f.commander)]:
 		var person_index: int = f.team.index_for_identity(identity)
 		var dead: bool = person_index >= 0 and float(f.team.combat_hot_get(person_index, &"hp")) <= 0.0
@@ -70,24 +70,29 @@ func _no_reissue(f: Dictionary) -> void:
 		var selected: Dictionary = f.lab.site_controller._control_family_person(null, identity)
 		_require(not selected.ok and selected.code == "NO_TARGET" and int(f.lab.controlled_person_id()) == old_control if dead else selected.ok, "Actual dead control rejects; true surviving person control succeeds", selected)
 		_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Control switch issues no birth or free items")
-		for row: Dictionary in f.team.combat_units: _require(row.get("technology", {}) == skills[int(row.person_id)], "Control switch cannot teach a faction member")
+		for row: Dictionary in _team_rows(f.team): _require(row.get("technology", {}) == skills[int(row.person_id)], "Control switch cannot teach a faction member")
 	_require(f.lab.site_controller._control_family_person(null, int(f.helper)).ok, "Original member controls their own roster consent")
 	_require(f.lab.leave_player_army().ok and f.lab.join_player_army().ok, "Actual existing NPC leaves/joins same original faction roster")
 	_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Actual membership join issues no skills/items/people")
 	_require(f.lab.site_controller._control_family_person(null, 1).ok, "Actual original Actor controls explicit army expansion")
+	var expansion_before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()])
 	var expanded: Dictionary = f.lab.join_player_army()
-	_require(expanded.ok, "Original neutral unequipped Actor genuinely expands the original roster", expanded)
-	_require(f.lab.character.technology.is_empty() and f.team.player_member == f.lab.character and int(f.data.site.next_person_id) == next_person and int(f.data.site.next_item) == next_item, "Real expansion preserves SAME Actor and gives zero skills/products/people")
-	_require(f.lab.leave_player_army().ok, "Original Actor legally leaves expanded original army")
+	# Crowd: an Actor joining a native crowd army is not supported yet (S4); it is refused atomically (production base rule).
+	var crowd_unsupported: bool = _crowd(f) and not expanded.ok and expanded.code == "UNSUPPORTED"
+	_require(expanded.ok or crowd_unsupported and var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()]) == expansion_before, "Original neutral unequipped Actor genuinely expands the original roster", expanded)
+	if crowd_unsupported: _case["actor_expansion_" + str(f.kind)] = "crowd UNSUPPORTED atomic refusal; positive roster expansion NOT_VERIFIED"
+	else: _require(f.lab.character.technology.is_empty() and f.team.player_member == f.lab.character and int(f.data.site.next_person_id) == next_person and int(f.data.site.next_item) == next_item, "Real expansion preserves SAME Actor and gives zero skills/products/people")
+	if not crowd_unsupported:
+		_require(f.lab.leave_player_army().ok, "Original Actor legally leaves expanded original army")
+		_case["actor_expansion_" + str(f.kind)] = "true original unequip/join/leave; no skill or product allocation"
 	_require(var_to_bytes(f.data.site.technology_artisans) == receipt, "Positive roster expansion cannot replay original birth")
-	_case["actor_expansion_" + str(f.kind)] = "true original unequip/join/leave; no skill or product allocation"
 	_require(f.lab.site_controller._control_family_person(null, int(f.commander)).ok, "Original command control restored")
-	var before := var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before := var_to_bytes([f.data.site, _combat_state(f)])
 	var replay: Dictionary = f.lab.prepare_initial_artisan_birth(f.data, Artisans.PRIMARY, Artisans.CATEGORIES)
 	if f.kind == "fixed_birth":
-		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Actual historical birth cannot replay under later all-category release")
+		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Actual historical birth cannot replay under later all-category release")
 	else:
-		_require(not replay.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
+		_require(not replay.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
 	_cold_resume(f, "no_reissue")
 	if f.kind == "fixed_birth":
 		_completed_open_refuses(f)
@@ -103,9 +108,9 @@ func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> 
 	# Presentation is explicitly cleared in this repeat-use test; no authority/state.
 	form.siege_builder.select(0)
 	_require(int(form.siege_builder.get_item_metadata(0)) == 0, "Original UI has a real no-person placeholder")
-	var selection_before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var selection_before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	var empty_selection: Dictionary = controller._siege_build_person_context(form)
-	_require(not empty_selection.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == selection_before, "No human selection cannot auto-pick a master or mutate original owners")
+	_require(not empty_selection.ok and var_to_bytes([f.data.site, _combat_state(f)]) == selection_before, "No human selection cannot auto-pick a master or mutate original owners")
 	_require(form.has("siege_method"), "Real original SiegeJoinery selector exists")
 	var method: String = str(f.get("g06_method", "basic"))
 	var found_method := false
@@ -118,9 +123,11 @@ func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> 
 		if int(form.siege_builder.get_item_metadata(index)) == int(f.master): form.siege_builder.select(index)
 	var ready: Dictionary = controller._siege_build_person_context(form)
 	_require(ready.ok and ready.person_id == int(f.master) and is_same(ready.team, f.team), "Human-selected ID re-queries actual current original team/work authority")
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	controller._build_siege_ui(form, true)
-	_require(var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation")
+	var preview_after: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
+	_require(preview_after == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation",
+		{"unchanged": preview_after == before, "site_unchanged": var_to_bytes(f.data.site) == var_to_bytes(bytes_to_var(before)[0]), "selection": str(controller.view.selection)})
 	var expected: int = int(f.data.site.get("next_vehicle", 1))
 	await controller._build_siege_ui(form, false)
 	# Atlas capture can resume this fixture inside its draw signal. Leave that
@@ -149,12 +156,12 @@ func _g06_joinery_products(f: Dictionary) -> void:
 		var vehicle: Dictionary = f.data.site.vehicles[key]
 		_require(vehicle.get("technology_siege_method") == {"version": 1} and not vehicle.has("tech_trial") and float(vehicle.build.total_work) == float(terms.work_seconds), "Actual ordinary joinery marker preserves full immutable physical work terms")
 		for material: String in terms.cost: _require(int(prior[material]) - int(f.data.site.inventory[material]) == int(terms.cost[material]), "Joinery actual original cost paid once: " + material)
-		var task: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.master))].work_task
+		var task: Dictionary = _task_of(f, int(f.master))
 		_place(f, int(f.master), f.data.cell_from_index(int(task.work_cell)))
 		_siege_assign(f, key, [assistant])
 		_interval(f)
-		task = f.team.combat_units[f.team.index_for_identity(int(f.master))].work_task
-		var other: Dictionary = f.team.combat_units[2].work_task
+		task = _task_of(f, int(f.master))
+		var other: Dictionary = _task_of(f, f.team.combat_identity(2))
 		var master_factor: Dictionary = Runtime.technology_siege_method_work_facts(f.data, vehicle, task, int(f.master))
 		var helper_factor: Dictionary = Runtime.technology_siege_method_work_facts(f.data, vehicle, other, assistant)
 		_require(master_factor.ok and is_equal_approx(float(master_factor.factor), 10.0 / 9.0) and helper_factor.ok and helper_factor.factor == 1.0 and float(vehicle.build.progress) > 0.0, "Real SAME tasks apply 10/9 only to actually learned master; unlearned helper stays one")
@@ -180,9 +187,9 @@ func _g06_f12_first_research_refusal(f: Dictionary) -> void:
 	f.data.site.family.technology = Technology.empty_scope_record(str(f.data.site.id))
 	f.data.site.family.technology.known = ["F11"] # Explicit legitimate prior archive, NOT this test's earned knowledge.
 	_require(Family.validate_family(f.data.site.family, str(f.data.site.id)) and not Technology.family_traction_recorded(f.data.site.family.technology), "Strict named F11 archive has no invented traction completion")
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	var denied: Dictionary = actions.prepare_scope_technology(int(f.commander), third, "F12")
-	_require(not denied.ok and denied.code == "PREREQUISITE" and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "True unlearned F12 first research still requires actual traction history; background manufacture grants no trial shortcut", denied)
+	_require(not denied.ok and denied.code == "PREREQUISITE" and var_to_bytes([f.data.site, _combat_state(f)]) == before, "True unlearned F12 first research still requires actual traction history; background manufacture grants no trial shortcut", denied)
 	_case.f12_first_research = "actual PREREQUISITE refusal; no traction history fabrication; positive earned G05 remains separate"
 
 func _two_true_masters(f: Dictionary, kind: String) -> void:
@@ -200,7 +207,7 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_require(begun.ok, "Second actual fixed-world bounded full-cost engineering job", begun)
 	var key: String = str(begun.vehicle)
 	var vehicle: Dictionary = f.data.site.vehicles[key]
-	var teacher_task: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.master))].work_task
+	var teacher_task: Dictionary = _task_of(f, int(f.master))
 	_place(f, int(f.master), f.data.cell_from_index(int(teacher_task.work_cell)))
 	_park(f, int(f.commander), anchor + Vector2i(-4, 0))
 	_siege_assign(f, key, [int(f.helper)])
@@ -212,9 +219,9 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == cost, "Another TRUE taught master still actually participates at its distinct legal original station")
-	var student_task: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.helper))].work_task
+	var student_task: Dictionary = _task_of(f, int(f.helper))
 	_park(f, int(f.helper), anchor + Vector2i(-6, 2))
-	_require(f.team.cells[f.team.index_for_identity(int(f.helper))] != f.data.cell_from_index(int(student_task.work_cell)), "Last true taught master physically leaves station")
+	_require(_cell_of(f, int(f.helper)) != f.data.cell_from_index(int(student_task.work_cell)), "Last true taught master physically leaves station")
 	_gated_pause(f, key, "Both actual learned masters absent; original unlearned assistant remains")
 	# Legally resume the true taught student, not an authored substitute.
 	_require(f.lab.site_controller.work_team.cancel(int(f.helper)).ok, "Original taught person releases its former task")
@@ -268,9 +275,9 @@ func _siege(f: Dictionary) -> void:
 	for material: String in supply: supply[material] = int(supply[material]) + 4
 	_finite_stock(f, supply)
 	var anchor: Vector2i = _siege_anchor(f, kind, Vector2i(66, 60))
-	var before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()])
+	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()])
 	var denied: Dictionary = Runtime.begin_siege_build(f.data, kind, anchor, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(f.lab.site_controller, "reserves_cell"), true, {}, {}, int(f.helper))
-	_require(not denied.ok and denied.code == "NO_TECHNOLOGY" and var_to_bytes([f.data.site, f.team.capture_combat_state(), f.data.fingerprint()]) == before, "Actual fixed policy refuses named unlearned construction atomically before materials")
+	_require(not denied.ok and denied.code == "NO_TECHNOLOGY" and var_to_bytes([f.data.site, _combat_state(f), f.data.fingerprint()]) == before, "Actual fixed policy refuses named unlearned construction atomically before materials")
 	var inventory: Dictionary = f.data.site.inventory.duplicate(true)
 	var begun: Dictionary = await _begin_original_siege_ui(f, kind, anchor)
 	_require(begun.ok, "True independent fixed-world artisan admitted at original construction entrance", begun)
@@ -278,19 +285,20 @@ func _siege(f: Dictionary) -> void:
 	var vehicle: Dictionary = f.data.site.vehicles[key]
 	for material: String in terms.cost: _require(int(inventory[material]) - int(f.data.site.inventory[material]) == int(terms.cost[material]), "Fixed original full construction cost once: " + material)
 	_require(float(vehicle.build.total_work) == float(terms.work_seconds) and float(vehicle.build.progress) == 0.0, "Original full siege work is never shortened")
-	var master_task: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.master))].work_task
+	var master_task: Dictionary = _task_of(f, int(f.master))
 	# A pending master is not a working master. No auto-move/station shortcut.
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
 	_park(f, int(f.commander), anchor + Vector2i(-4, 0))
 	_siege_assign(f, key, [int(f.helper)])
 	_gated_pause(f, key, "Master holds a true task but has not reached its station")
 	_place(f, int(f.master), f.data.cell_from_index(int(master_task.work_cell)))
+	_hold_station(f, int(f.master))
 	var effective: float = _work_effective
 	_interval(f)
 	_require(float(vehicle.build.progress) > 0.0, "Fixed learned master and original unlearned assistant perform one real shared interval")
 	var progress: float = float(vehicle.build.progress)
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
-	_require(f.team.cells[f.team.index_for_identity(int(f.master))] != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
+	_require(_cell_of(f, int(f.master)) != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
 	_gated_pause(f, key, "Final qualified master absent")
 	_require(f.lab.site_controller.work_team.cancel(int(f.master)).ok, "True master cancels old named task through original owner")
 	_siege_assign(f, key, [int(f.master)])

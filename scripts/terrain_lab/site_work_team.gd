@@ -213,7 +213,7 @@ func assign(team: Variant, identities: Array[int], requester_id: int) -> Diction
 		var person := _person(identity)
 		if person.is_empty() or person.owner != team: return SiteRuntime.fail("INVALID_MEMBER")
 		var row: Dictionary = person.row
-		if identity == _controlled_id() or not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or _moving(person) or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
+		if identity == _controlled_id() or not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or (team.is_walking(index) if team is CrowdPersonOwner else _moving(person)) or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
 			return SiteRuntime.fail("BUSY", "成员正移动、交战、失能或执行其他行动")
 		if not row.get("cargo") is Dictionary or not row.get("item_state") is Dictionary:
 			return SiteRuntime.fail("INVALID_OWNER", "尚未初始化原人物携带物权")

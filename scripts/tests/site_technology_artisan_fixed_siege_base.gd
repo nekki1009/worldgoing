@@ -79,7 +79,7 @@ func _siege(f: Dictionary) -> void:
 	_require(float(vehicle.build.progress) > 0.0, "Fixed learned master and original unlearned assistant perform one real shared interval")
 	var progress: float = float(vehicle.build.progress)
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
-	_require(f.team.cells[f.team.index_for_identity(int(f.master))] != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
+	_require(_cell_of(f, int(f.master)) != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
 	_gated_pause(f, key, "Final qualified master absent")
 	_require(f.lab.site_controller.work_team.cancel(int(f.master)).ok, "True master cancels old named task through original owner")
 	_siege_assign(f, key, [int(f.master)])
@@ -123,7 +123,7 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == cost, "Another TRUE taught master still actually participates at its distinct legal original station")
 	var student_task: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.helper))].work_task
 	_park(f, int(f.helper), anchor + Vector2i(-6, 2))
-	_require(f.team.cells[f.team.index_for_identity(int(f.helper))] != f.data.cell_from_index(int(student_task.work_cell)), "Last true taught master physically leaves station")
+	_require(_cell_of(f, int(f.helper)) != f.data.cell_from_index(int(student_task.work_cell)), "Last true taught master physically leaves station")
 	_gated_pause(f, key, "Both actual learned masters absent; original unlearned assistant remains")
 	# Legally resume the true taught student, not an authored substitute.
 	_require(f.lab.site_controller.work_team.cancel(int(f.helper)).ok, "Original taught person releases its former task")
@@ -165,3 +165,7 @@ func _finish(reason: String = "") -> void:
 	print("TECH_AI_02_FIXED_D10_REPORT: " + JSON.stringify({"checks": checks, "failures": failures, "cases": report, "fixture": root_path}, "", true, true))
 	print("TECH_AI_02_FIXED_D10_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=truefullpin_birth_product_cold_master_station_teacher_student_repair; hypothetical_single_category_admission; F04_F06_allG03_edges_Native_GPU_autonomous_AI_FULL40_release_excluded")
 	quit(0 if failures.is_empty() else 1)
+
+## Crowd port (2026-11-12): the siege artisan tests step the whole Lab, so they run on the native crowd.
+func _crowd_port() -> bool:
+	return not OS.get_cmdline_user_args().has("--grid")

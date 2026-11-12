@@ -4,6 +4,7 @@ extends "res://scripts/tests/site_technology_artisan_g06_siege_gates_base.gd"
 # Fixture placement does not refresh command presence; the original presence owner does (CC-124).
 func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	super._place(f, identity, cell)
+	if _crowd(f): return # Crowd: presence follows the formation HOLD centre the fixture moves with the commander.
 	var commander: int = f.team.current_commander
 	f.team._refresh_command_presence()
 	_require(f.team.current_commander == commander, "Fixture geometry refresh uses the original presence owner without reselecting command")
@@ -11,6 +12,7 @@ func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 # An absent idle helper walks to the commander's reference on real movement edges before assignment.
 func _siege_assign(f: Dictionary, key: String, identities: Array) -> void:
 	for identity: Variant in identities:
+		if _crowd(f): break # Crowd: the base assignment lands and stands the team itself.
 		_land_committed_step(f, int(identity))
 		var member: int = f.team.index_for_identity(int(identity))
 		if not bool(f.team.combat_hot_get(member, &"present", false)):
@@ -41,6 +43,10 @@ func _walk_siege_helper_to_reference(f: Dictionary, identity: int) -> void:
 # The named operator (master) must also stand within the commander's radius before the original
 # siege preview names it; walk an absent idle master the same real way.
 func _siege_anchor(f: Dictionary, kind: String, near: Vector2i) -> Vector2i:
+	if _crowd(f):
+		# Crowd: the commander walks the team's HOLD centre to the job, so the named master stands in command presence.
+		_park(f, int(f.commander), near + Vector2i(0, 8))
+		return super._siege_anchor(f, kind, near)
 	var master: int = f.team.index_for_identity(int(f.master))
 	if master >= 0 and not bool(f.team.combat_hot_get(master, &"present", false)) and f.team.combat_units[master].get("work_task", {}).is_empty():
 		_walk_siege_helper_to_reference(f, int(f.master))

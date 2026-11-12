@@ -61,7 +61,7 @@ func _no_reissue(f: Dictionary) -> void:
 	var next_item := int(f.data.site.next_item)
 	var next_person := int(f.data.site.next_person_id)
 	var skills := {}
-	for row: Dictionary in f.team.combat_units: skills[int(row.person_id)] = row.get("technology", {}).duplicate(true)
+	for row: Dictionary in _team_rows(f.team): skills[int(row.person_id)] = row.get("technology", {}).duplicate(true)
 	for identity: int in [1, int(f.master), int(f.helper), int(f.commander)]:
 		var person_index: int = f.team.index_for_identity(identity)
 		var dead: bool = person_index >= 0 and float(f.team.combat_hot_get(person_index, &"hp")) <= 0.0
@@ -69,24 +69,29 @@ func _no_reissue(f: Dictionary) -> void:
 		var selected: Dictionary = f.lab.site_controller._control_family_person(null, identity)
 		_require(not selected.ok and selected.code == "NO_TARGET" and int(f.lab.controlled_person_id()) == old_control if dead else selected.ok, "Actual dead control rejects; true surviving person control succeeds", selected)
 		_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Control switch issues no birth or free items")
-		for row: Dictionary in f.team.combat_units: _require(row.get("technology", {}) == skills[int(row.person_id)], "Control switch cannot teach a faction member")
+		for row: Dictionary in _team_rows(f.team): _require(row.get("technology", {}) == skills[int(row.person_id)], "Control switch cannot teach a faction member")
 	_require(f.lab.site_controller._control_family_person(null, int(f.helper)).ok, "Original member controls their own roster consent")
 	_require(f.lab.leave_player_army().ok and f.lab.join_player_army().ok, "Actual existing NPC leaves/joins same original faction roster")
 	_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Actual membership join issues no skills/items/people")
 	_require(f.lab.site_controller._control_family_person(null, 1).ok, "Actual original Actor controls explicit army expansion")
+	var expansion_before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()])
 	var expanded: Dictionary = f.lab.join_player_army()
-	_require(expanded.ok, "Original neutral unequipped Actor genuinely expands the original roster", expanded)
-	_require(f.lab.character.technology.is_empty() and f.team.player_member == f.lab.character and int(f.data.site.next_person_id) == next_person and int(f.data.site.next_item) == next_item, "Real expansion preserves SAME Actor and gives zero skills/products/people")
-	_require(f.lab.leave_player_army().ok, "Original Actor legally leaves expanded original army")
+	# Crowd: an Actor joining a native crowd army is not supported yet (S4); it is refused atomically (production base rule).
+	var crowd_unsupported: bool = _crowd(f) and not expanded.ok and expanded.code == "UNSUPPORTED"
+	_require(expanded.ok or crowd_unsupported and var_to_bytes([f.data.site, _combat_state(f), f.lab.character.capture_state()]) == expansion_before, "Original neutral unequipped Actor genuinely expands the original roster", expanded)
+	if crowd_unsupported: _case["actor_expansion_" + str(f.kind)] = "crowd UNSUPPORTED atomic refusal; positive roster expansion NOT_VERIFIED"
+	else: _require(f.lab.character.technology.is_empty() and f.team.player_member == f.lab.character and int(f.data.site.next_person_id) == next_person and int(f.data.site.next_item) == next_item, "Real expansion preserves SAME Actor and gives zero skills/products/people")
+	if not crowd_unsupported:
+		_require(f.lab.leave_player_army().ok, "Original Actor legally leaves expanded original army")
+		_case["actor_expansion_" + str(f.kind)] = "true original unequip/join/leave; no skill or product allocation"
 	_require(var_to_bytes(f.data.site.technology_artisans) == receipt, "Positive roster expansion cannot replay original birth")
-	_case["actor_expansion_" + str(f.kind)] = "true original unequip/join/leave; no skill or product allocation"
 	_require(f.lab.site_controller._control_family_person(null, int(f.commander)).ok, "Original command control restored")
-	var before := var_to_bytes([f.data.site, f.team.capture_combat_state()])
+	var before := var_to_bytes([f.data.site, _combat_state(f)])
 	var replay: Dictionary = f.lab.prepare_initial_artisan_birth(f.data, Artisans.PRIMARY, Artisans.CATEGORIES)
 	if f.kind == "fixed_birth":
-		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Actual historical birth cannot replay under later all-category release")
+		_require(replay.ok and not replay.changed and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Actual historical birth cannot replay under later all-category release")
 	else:
-		_require(not replay.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
+		_require(not replay.ok and var_to_bytes([f.data.site, _combat_state(f)]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
 	_cold_resume(f, "no_reissue")
 	if f.kind == "fixed_birth":
 		_completed_open_refuses(f)
@@ -227,3 +232,7 @@ func _finish(reason: String = "") -> void:
 		"source_epochs": {"runtime": FileAccess.get_sha256("res://scripts/terrain_lab/site_runtime.gd"), "lab": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_lab.gd"), "controller": FileAccess.get_sha256("res://scripts/terrain_lab/site_controller.gd"), "slot": FileAccess.get_sha256("res://scripts/region_lab/region_save_slot.gd"), "env": FileAccess.get_sha256("res://scripts/terrain_lab/site_environment.gd"), "catalog": FileAccess.get_sha256("res://scripts/terrain_lab/site_technology_catalog.gd")}}, "", true, true))
 	print("TECH_AI_02_G06_INCREMENT_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=named_increment_only_not_FULL_G06_default_Taiwan_midframe_Native_GPU_or_release")
 	quit(0 if failures.is_empty() else 1)
+
+## Crowd port (2026-11-12): the G06 processing gates step the whole Lab, so they run on the native crowd.
+func _crowd_port() -> bool:
+	return not OS.get_cmdline_user_args().has("--grid")

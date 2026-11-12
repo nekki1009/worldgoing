@@ -7472,6 +7472,7 @@ func publish_controlled_vehicle_work(prepared: Dictionary) -> void:
 func technology_vehicle_work_admission(operator_id: int, team_id: int) -> Dictionary:
 	if operator_id <= 0 or team_id <= 0 or bool(lab.terrain.site.get("paused", false)) or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY")
 	var person := _person(operator_id)
+	if person.is_empty(): return Runtime.fail("NO_TARGET") # A missing person is refused, never read (found 2026-11-12).
 	if person.get("owner") is CrowdOwner: return _crowd_vehicle_work_admission(person, operator_id, team_id)
 	var team: Variant = _technology_team(person)
 	if team == null or not team is TerrainArmy or int(team.team_id) != team_id or not lab.combat_armies.has(team) \

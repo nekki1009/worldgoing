@@ -130,7 +130,7 @@ func assign_crew(vehicle_id: String, person_id: int, slot: String, requester_id:
 	if not _available(person) or int(person.owner.team_id) != int(vehicle.team_id): return Runtime.fail("NO_AUTHORITY", "須由原隊可行動成員操作")
 	if not _authorized(person.owner, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
 	var index := int(person.unit)
-	if is_operator(person_id) or vehicle.crew_slots.has(slot) or not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or person.owner.moving_to[index] != TerrainArmy.INVALID_CELL or str(person.owner.combat_hot_get(index, &"pose")) != "idle" or bool(person.owner.combat_hot_get(index, &"attack")) or float(person.owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0: return Runtime.fail("BUSY")
+	if is_operator(person_id) or vehicle.crew_slots.has(slot) or not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or (person.owner.is_walking(index) if person.owner is CrowdPersonOwner else person.owner.moving_to[index] != TerrainArmy.INVALID_CELL) or str(person.owner.combat_hot_get(index, &"pose")) != "idle" or bool(person.owner.combat_hot_get(index, &"attack")) or float(person.owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0: return Runtime.fail("BUSY")
 	var destination := crew_cell(vehicle, slot)
 	if not _crew_ground_station(vehicle, destination) or blocks_cell(destination): return Runtime.fail("UNREACHABLE")
 	var work_assets := _siege_work_assets_guard(person_id)
