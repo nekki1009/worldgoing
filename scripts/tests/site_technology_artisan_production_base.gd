@@ -148,7 +148,7 @@ func _generated_production(fixed: Dictionary) -> Dictionary:
 	_require(Store._validate_actors(data, data.site).ok and Store._validate_armies(data, data.site, true).ok and Store._validate_items(data, data.site).ok and Store._validate_person_allocator(data.site).ok, "Original validators admit all real cold input person/item records")
 	var lab: TerrainLab = _source_lab("generated_" + str(fixed.category))
 	_require(lab != null, "Production uses original formal TerrainLab scene")
-	lab.crowd_startup_requested = _crowd_port()
+	# A cold bind with a crowd section restores the crowd itself (crowd_startup_requested is a NEW game's startup).
 	lab.bind_terrain(data) # Calls actual Actor.restore_state / Army.restore_combat_state.
 	_freeze(lab)
 	_require(is_same(lab.terrain, data) and lab.region_bind_receipt(data).get("complete", false) and int(birth_counts[lab.get_instance_id()]) == 0, "Actual generated owner bind restores inputs without Artisans/first birth")
@@ -257,6 +257,14 @@ func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 		var native: int = int(f.lab.crowd_site.crowd.soldier_index(identity))
 		_require(native >= 0 and f.data.is_walkable(cell) and not _occupied_by_other(f, identity, cell), "Actual crowd person can occupy an unoccupied fixture station")
 		_require(f.lab.crowd_site.set_soldier_fields(native, {"px": cell.x + 0.5, "py": cell.y + 0.5}), "Crowd fixture placement of the same native person")
+		var absent: Dictionary = _absent_tasks.get(identity, {})
+		if not absent.is_empty() and f.data.index(cell) == int(absent.get("work_cell", -1)):
+			# The returning worker takes the same siege work again through the original assignment owner.
+			_absent_tasks.erase(identity)
+			var key := str(absent.target).trim_prefix("vehicle:")
+			var people: Array = [identity]
+			var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_vehicle(f.team, people, int(f.commander), key)
+			_require(prepared.ok and f.lab.site_controller.work_team.publish_assign_vehicle(prepared).ok, "Crowd returning worker re-takes its siege work", prepared)
 		return
 	# Explicit station fixture placement of SAME original GD hot rows; travel,
 	# Reservation Grid navigation and Native movement are separate named tests.
@@ -277,7 +285,15 @@ func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	team._rebuild_ground_cell_owners()
 	team.settle_combat_command()
 
+## Nekki 2026-11-12 (A): a crowd worker that holds a task walks back to its station by itself, so the fixture's absent
+## siege worker cancels its task as it leaves; placing it on that task's station again re-assigns the same work.
+var _absent_tasks := {}
 func _park(f: Dictionary, identity: int, near: Vector2i) -> void:
+	if _crowd(f) and identity != int(f.commander):
+		var task: Dictionary = _task_of(f, identity)
+		if str(task.get("target", "")).begins_with("vehicle:"):
+			_require(f.lab.site_controller.work_team.cancel(identity).ok, "Crowd absent worker cancels its siege task as it leaves (Nekki 11/12 A)", task)
+			_absent_tasks[identity] = task.duplicate(true)
 	_park_cell(f, identity, near)
 	# Crowd: a commander is present only within the command radius of its team's reference member (about 8 cells). In play
 	# the idle members stand in formation with their commander, so the fixture moves the HOLD centre and the idle members
@@ -451,6 +467,13 @@ func _stand_at(f: Dictionary, identity: int, cell: Vector2i) -> void:
 		_clear_station(f, identity, cell)
 		_place(f, identity, cell)
 	_hold_station(f, identity)
+
+## The original owner releases a worker's task; a crowd absent worker already released it as it left (Nekki 11/12 A).
+func _release_task(f: Dictionary, identity: int) -> bool:
+	if _crowd(f) and _absent_tasks.has(identity) and _task_of(f, identity).is_empty():
+		_absent_tasks.erase(identity)
+		return true
+	return f.lab.site_controller.work_team.cancel(identity).ok
 
 var _station_held := {}
 func _hold_station(f: Dictionary, identity: int) -> void:
@@ -758,6 +781,7 @@ func _station_named_member(f: Dictionary, identity: int, near: Vector2i) -> void
 	_require(bool(team.combat_hot_get(team.index_for_identity(identity), &"present", false)), "Named member stands within the team's command radius at its job")
 
 func _siege_assign(f: Dictionary, key: String, identities: Array) -> void:
+	for identity: Variant in identities: _absent_tasks.erase(int(identity))
 	for identity: Variant in identities: _land_committed_step(f, int(identity))
 	# The original assignment refuses while ANY member (or the joined player) is mid-step; let the
 	# other members' committed steps land through real movement time as well.
@@ -824,7 +848,7 @@ func _siege(f: Dictionary) -> void:
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == terms.cost, "Legacy helper may continue without manufacturing master; no repeat payment; D10 master-gated interruption still OPEN")
 	progress = float(vehicle.build.progress)
-	_require(f.lab.site_controller.work_team.cancel(int(f.master)).ok, "Actual original master cancels old task")
+	_require(_release_task(f, int(f.master)), "Actual original master cancels old task")
 	_siege_assign(f, key, [int(f.master)])
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress, "SAME genuine learned master legally resumes at an original free slot")

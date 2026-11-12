@@ -1857,7 +1857,8 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		region_interval = fire_replay_interval.duplicate(true)
 		if absf(completed_game_seconds - (float(region_interval.game_end) - float(region_interval.game_begin))) > 0.00000001: return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_FORMULA_CLOCK"))
 	if not native_begin.is_empty() and (elapsed != float(native_begin.action_seconds) or absf(completed_game_seconds - float(native_begin.game_seconds)) > maxf(0.00000001, float(native_begin.game_seconds) * 0.000000001)):
-		return _region_preflight_failure(region_originals, SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED"))
+		return _region_preflight_failure(region_originals, SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED", "action %.17g/%.17g game %.17g/%.17g speed %s" % [elapsed,
+			float(native_begin.action_seconds), completed_game_seconds, float(native_begin.game_seconds), str(simulation_speed)]))
 	if gd_original and not formula_interval and _gd_mesh_work_needed():
 		var mesh_work: Dictionary = _prepare_gd_mesh_work_point(completed_game_seconds)
 		if not mesh_work.ok: return _region_preflight_failure(region_originals, mesh_work)

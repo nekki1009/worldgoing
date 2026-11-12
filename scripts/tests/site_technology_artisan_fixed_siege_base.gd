@@ -84,7 +84,7 @@ func _siege(f: Dictionary) -> void:
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
 	_require(_cell_of(f, int(f.master)) != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
 	_gated_pause(f, key, "Final qualified master absent")
-	_require(f.lab.site_controller.work_team.cancel(int(f.master)).ok, "True master cancels old named task through original owner")
+	_require(_release_task(f, int(f.master)), "True master cancels old named task through original owner")
 	_siege_assign(f, key, [int(f.master)])
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == terms.cost, "SAME genuine master legally reassigns/resumes without repaying")
@@ -129,7 +129,7 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_require(_cell_of(f, int(f.helper)) != f.data.cell_from_index(int(student_task.work_cell)), "Last true taught master physically leaves station")
 	_gated_pause(f, key, "Both actual learned masters absent; original unlearned assistant remains")
 	# Legally resume the true taught student, not an authored substitute.
-	_require(f.lab.site_controller.work_team.cancel(int(f.helper)).ok, "Original taught person releases its former task")
+	_require(_release_task(f, int(f.helper)), "Original taught person releases its former task")
 	_siege_assign(f, key, [int(f.helper)])
 	_interval(f)
 	_require(float(vehicle.build.progress) > progress and vehicle.build.paid_cost == cost, "Genuine taught replacement resumes same paid original work")
