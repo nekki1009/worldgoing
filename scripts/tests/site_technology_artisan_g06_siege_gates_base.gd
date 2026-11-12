@@ -33,7 +33,9 @@ func _g06_original_hazard(f: Dictionary, identity: int, lethal: bool) -> void:
 	var index: int = f.team.index_for_identity(identity)
 	var learned: Dictionary = f.team.combat_units[index].get("technology", {}).duplicate(true)
 	var hp: float = float(f.team.combat_hot_get(index, &"hp"))
-	f.team.apply_unit_contact(index, {"environmental": true, "shield": false,
+	# Crowd: the native World takes this named contact input through its melee-contact writer (it refuses an
+	# environmental flag); the same hp/stun result reaches the same native life owner.
+	f.team.apply_unit_contact(index, {"environmental": not _crowd(f), "shield": false,
 		"result": {"hp": hp + 1.0 if lethal else 0.0, "stun": 0.0 if lethal else SiteCombatRules.STUN_LIMIT, "guard_break": false}})
 	_require(float(f.team.combat_hot_get(index, &"hp")) == 0.0 if lethal else float(f.team.combat_hot_get(index, &"ko")) > 0.0, "Original lethal/KO source applied by existing contact owner")
 	_require(f.team.combat_units[index].get("technology", {}) == learned, "Life change never issues/erases individual learned history")
@@ -42,18 +44,16 @@ func _g06_original_hazard(f: Dictionary, identity: int, lethal: bool) -> void:
 func _g06_rest_source(f: Dictionary) -> void:
 	# Explicit existing shared-pool state input; NOT proof of work-to-80.
 	# All SAME-team masters share this pool. We never make one master immune.
-	var body: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.master))]
-	Fatigue.write(body, "fatigue", Fatigue.WORK_REST_AT)
-	Fatigue.write(body, "fatigue_rest", 0.0)
-	_require(Fatigue.read(body) == Fatigue.WORK_REST_AT, "Actual original pool receives named REST-boundary input")
+	_fatigue_set(f, int(f.master), "fatigue", Fatigue.WORK_REST_AT)
+	_fatigue_set(f, int(f.master), "fatigue_rest", 0.0)
+	_require(_fatigue_get(f, int(f.master)) == Fatigue.WORK_REST_AT, "Actual original pool receives named REST-boundary input")
 
 
 func _g06_recover(f: Dictionary) -> void:
 	for tick: int in 1200:
-		var body: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.helper))]
-		if Fatigue.read(body) <= Fatigue.WORK_RESUME_AT: break
+		if _fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0) # Original shared recovery/provider, no direct reset.
-	_require(Fatigue.read(f.team.combat_units[f.team.index_for_identity(int(f.helper))]) <= Fatigue.WORK_RESUME_AT, "Original provider genuinely recovers shared masters to resume boundary")
+	_require(_fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT, "Original provider genuinely recovers shared masters to resume boundary")
 
 func _no_reissue(f: Dictionary) -> void:
 	await _g06_ensure_actor_expansion(f)
@@ -121,13 +121,18 @@ func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> 
 	_require(found_method, "Explicit original visible basic/joinery choice")
 	for index: int in form.siege_builder.item_count:
 		if int(form.siege_builder.get_item_metadata(index)) == int(f.master): form.siege_builder.select(index)
+	# Crowd: the named master is admitted only standing (the crowd settle rule); the team settles by real points first.
+	_crowd_stand_still(f, "before the original siege preview")
 	var ready: Dictionary = controller._siege_build_person_context(form)
 	_require(ready.ok and ready.person_id == int(f.master) and is_same(ready.team, f.team), "Human-selected ID re-queries actual current original team/work authority")
 	var before: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	controller._build_siege_ui(form, true)
 	var preview_after: PackedByteArray = var_to_bytes([f.data.site, _combat_state(f)])
 	_require(preview_after == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation",
-		{"unchanged": preview_after == before, "site_unchanged": var_to_bytes(f.data.site) == var_to_bytes(bytes_to_var(before)[0]), "selection": str(controller.view.selection)})
+		{"unchanged": preview_after == before, "site_unchanged": var_to_bytes(f.data.site) == var_to_bytes(bytes_to_var(before)[0]), "selection": str(controller.view.selection),
+		"context": _detail_text(controller._siege_build_person_context(form)), "anchor": str(anchor), "selected": str(controller.selected),
+		"guard": _joinery_guard_facts(f),
+		"direct": Runtime.begin_siege_build(f.data, kind, anchor, Vector2i.RIGHT, int(f.team.team_id), int(f.commander), Callable(controller, "reserves_cell"), true, {}, {}, int(f.master), method)})
 	var expected: int = int(f.data.site.get("next_vehicle", 1))
 	await controller._build_siege_ui(form, false)
 	# Atlas capture can resume this fixture inside its draw signal. Leave that
@@ -291,11 +296,24 @@ func _siege(f: Dictionary) -> void:
 	_park(f, int(f.commander), anchor + Vector2i(-4, 0))
 	_siege_assign(f, key, [int(f.helper)])
 	_gated_pause(f, key, "Master holds a true task but has not reached its station")
+	if _crowd(f):
+		# Crowd bodies block their neighbouring cells: the idle formation stands back from the engineering approach
+		# (west of its commander) so the named master can reach its station.
+		var head := _cell_of(f, int(f.commander))
+		f.lab.crowd_site.set_formation_fields(int(f.team.formation_index), {"cx": head.x - 2.5, "cy": head.y + 1.5,
+			"origin_x": head.x - 2.5, "origin_y": head.y + 1.5, "goal_x": head.x - 2.5, "goal_y": head.y + 1.5})
+		_crowd_stand_still(f, "with the idle formation back from the engineering approach")
 	_place(f, int(f.master), f.data.cell_from_index(int(master_task.work_cell)))
-	_hold_station(f, int(f.master))
 	var effective: float = _work_effective
+	if _crowd(f):
+		# Crowd: the named master finishes its own travel to the station by real points (their work counts) before the interval.
+		for point: int in 900:
+			if str(_task_of(f, int(f.master)).get("mode", "")) == "work": break
+			_crowd_interval(f, 0.000001)
 	_interval(f)
-	_require(float(vehicle.build.progress) > 0.0, "Fixed learned master and original unlearned assistant perform one real shared interval")
+	_require(float(vehicle.build.progress) > 0.0, "Fixed learned master and original unlearned assistant perform one real shared interval",
+		{"master_task": _task_of(f, int(f.master)), "master_cell": str(_cell_of(f, int(f.master))), "helper_task": _task_of(f, int(f.helper)), "helper_cell": str(_cell_of(f, int(f.helper))),
+			"team": " ".join(_team_units(f.team).map(func(index: Variant) -> String: return "%d@%s" % [f.team.combat_identity(index), str(_cell_of(f, f.team.combat_identity(index)))]))})
 	var progress: float = float(vehicle.build.progress)
 	_park(f, int(f.master), anchor + Vector2i(-6, 0))
 	_require(_cell_of(f, int(f.master)) != f.data.cell_from_index(int(master_task.work_cell)), "Actual final master leaves the original held station")
@@ -344,3 +362,11 @@ func _finish(reason: String = "") -> void:
 		"source_epochs": {"runtime": FileAccess.get_sha256("res://scripts/terrain_lab/site_runtime.gd"), "lab": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_lab.gd"), "controller": FileAccess.get_sha256("res://scripts/terrain_lab/site_controller.gd"), "slot": FileAccess.get_sha256("res://scripts/region_lab/region_save_slot.gd"), "env": FileAccess.get_sha256("res://scripts/terrain_lab/site_environment.gd"), "catalog": FileAccess.get_sha256("res://scripts/terrain_lab/site_technology_catalog.gd")}}, "", true, true))
 	print("TECH_AI_02_G06_INCREMENT_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=named_increment_only_not_FULL_G06_default_Taiwan_midframe_Native_GPU_or_release")
 	quit(0 if failures.is_empty() else 1)
+
+func _joinery_guard_facts(f: Dictionary) -> String:
+	var actions: SitePersonActions = f.lab.site_controller.person_actions
+	var person: Dictionary = actions._person(int(f.master))
+	var team: Variant = actions._technology_team(person)
+	return "empty=%s team=%s team_id=%s want=%d ready=%s learned=%s tech=%s" % [person.is_empty(), str(team), str(team.team_id) if team != null else "-", int(f.team.team_id),
+		str(actions._ready(person)) if not person.is_empty() else "-", str(Technology.learned(actions._body_get(person, "technology"), "F11")) if not person.is_empty() else "-",
+		str(actions._body_get(person, "technology")) if not person.is_empty() else "-"]

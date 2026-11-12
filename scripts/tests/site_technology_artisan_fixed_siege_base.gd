@@ -20,7 +20,10 @@ func _gated_pause(f: Dictionary, key: String, label: String) -> void:
 	var effective: float = _work_effective
 	var actual: float = _work_actual
 	var result: Dictionary = _interval(f)
-	_require(float(vehicle.build.progress) == progress and vehicle.build.paid_cost == paid, label + ": full paid original engineering identity/progress retained")
+	_require(float(vehicle.build.progress) == progress and vehicle.build.paid_cost == paid, label + ": full paid original engineering identity/progress retained",
+		{"progress": [progress, vehicle.build.progress], "team": " ".join(_team_units(f.team).map(func(index: Variant) -> String:
+			var task: Dictionary = _task_of(f, f.team.combat_identity(index))
+			return "%d@%s:%s/%s/%s" % [f.team.combat_identity(index), str(_cell_of(f, f.team.combat_identity(index))), str(task.get("action", "")), str(task.get("mode", "")), str(task.get("work_cell", ""))]))})
 	_require(_work_effective == effective and _work_actual == actual and float(result.effective) == 0.0 and float(result.actual) == 0.0, label + ": helpers gain zero work or effort without an actual master")
 	_case.gated_pauses = int(_case.get("gated_pauses", 0)) + 1
 

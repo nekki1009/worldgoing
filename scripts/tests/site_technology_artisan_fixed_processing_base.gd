@@ -113,14 +113,15 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	var station: Vector2i = f.data.cell_from_index(int(feature.entrance))
 	var selected_body: Dictionary = f.team.combat_units[f.team.index_for_identity(identity)]
 	# Real original REST bookkeeping, no fatigue/pool reset or work shortcut.
-	if Fatigue.read(selected_body) > Fatigue.WORK_RESUME_AT: _settle_team_for_rest(f, identity)
+	if _fatigue_get(f, identity) > Fatigue.WORK_RESUME_AT and not _crowd(f): _settle_team_for_rest(f, identity)
 	for tick: int in 1000:
-		if Fatigue.read(selected_body) <= Fatigue.WORK_RESUME_AT: break
+		if _fatigue_get(f, identity) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0)
-	_require(Fatigue.read(selected_body) <= Fatigue.WORK_RESUME_AT, "True original selected worker recovers before public dispatch")
+	_require(_fatigue_get(f, identity) <= Fatigue.WORK_RESUME_AT, "True original selected worker recovers before public dispatch")
 	_clear_station(f, identity, station)
 	_place(f, identity, station)
 	_park(f, int(f.commander), station + Vector2i(0, 3))
+	_stand_at(f, identity, station)
 	controller.select_cell(f.data.cell_from_index(int(feature.cells[0])))
 	_require(controller.feature_key == key, "Original formal building selection points to true host")
 	if not resume:
@@ -177,7 +178,7 @@ func _feature_paused(f: Dictionary, key: String, label: String) -> void:
 	var feature: Dictionary = f.data.site.features[key]
 	var before: PackedByteArray = var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, _team_rows(f.team).map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})])
 	var result: Dictionary = _interval(f)
-	_require(float(result.effective) == 0.0 and float(result.actual) == 0.0 and var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, _team_rows(f.team).map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})]) == before, label + ": no work, cost, output or effort")
+	_require(float(result.effective) == 0.0 and float(result.actual) == 0.0 and var_to_bytes([feature.production, feature.batch_paid, feature.get("tech_batch", {}), f.data.site.inventory, _team_rows(f.team).map(func(row: Dictionary) -> Dictionary: return row.cargo), feature.get("technology_output", {})]) == before, label + ": no work, cost, output or effort", {"result": result, "production": feature.production, "batch_paid": feature.batch_paid})
 
 func _unlearned_feature(f: Dictionary, key: String, recipe: String) -> void:
 	var feature: Dictionary = f.data.site.features[key]
@@ -213,9 +214,11 @@ func _finish_recipe(f: Dictionary, key: String, recipe: String, output: Dictiona
 	var prior_cargo: Dictionary = body.cargo.duplicate(true)
 	var prior_stock: Dictionary = f.data.site.inventory.duplicate(true)
 	var effective := _work_effective
+	_crowd_fast_work = true
 	for tick: int in 2500:
 		if output.keys().all(func(name: Variant) -> bool: return int(body.cargo.get(name, 0)) == int(prior_cargo.get(name, 0)) + int(output[name])): break
 		_interval(f)
+	_crowd_fast_work = false
 	for name: String in output: _require(int(body.cargo.get(name, 0)) == int(prior_cargo.get(name, 0)) + int(output[name]), "Exactly one actual ordinary recipe product")
 	for name: String in definition.input: _require(int(prior_stock.get(name, 0)) - int(f.data.site.inventory.get(name, 0)) == int(definition.input[name]), "Whole original recipe paid exactly once")
 	_require(_work_effective - effective >= float(expected.seconds) - 0.0001 and not feature.batch_paid and float(feature.production) == 0.0, "Full original work, no production-clock shortcut")
@@ -310,10 +313,16 @@ func _basic_feature_repair(f: Dictionary, key: String) -> void:
 	_require(not Technology.learned(f.team.combat_units[f.team.index_for_identity(user)].get("technology", {}), str(f.category)), "Basic original repairer truly unlearned before lesson")
 	_require(Runtime.damage_structure_part(f.data, key, "body", 1.0).ok and Runtime.request_repair(f.data, key, "body", int(f.team.faction_id), Callable(f.lab.site_controller, "reserves_cell")).ok, "Existing basic repair command has no manufacturing gate")
 	_feature_assign(f, key, user, "repair")
+	var stalled := 0
 	for tick: int in 1000:
 		if not feature.has("repair"): break
+		var hp_before: float = float(feature.parts.body.hp)
 		_interval(f)
-	_require(not feature.has("repair") and float(feature.parts.body.hp) == Runtime.civil_max_hp(feature), "Actual unlearned worker finishes original basic repair")
+		# A repair that applies nothing for 20 whole intervals is stuck; report it instead of spending the deadline.
+		stalled = stalled + 1 if feature.has("repair") and float(feature.parts.body.hp) == hp_before else 0
+		if stalled >= 20: break
+	_require(not feature.has("repair") and float(feature.parts.body.hp) == Runtime.civil_max_hp(feature), "Actual unlearned worker finishes original basic repair",
+		{"repair": feature.get("repair", {}), "hp": feature.parts.body.hp, "max": Runtime.civil_max_hp(feature), "task": _task_of(f, user), "cell": str(_cell_of(f, user))})
 	_idle_all(f)
 
 func _processing(f: Dictionary) -> void:

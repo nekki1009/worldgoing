@@ -1791,6 +1791,15 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	# A travelling party's native contact frame (Nekki 2026-11-10 A) consumes its formula interval through the same native
 	# begin window as any crowd step; other formula intervals are GD hosts.
 	if not gd_original and (not formula_interval or party_consuming):
+		# A live (non-Region) step clips at P0's capture completion BEFORE the native begin window is prepared: a window
+		# prepared for the unclipped width is refused below (NATIVE_BEGIN_WINDOW_CHANGED), which failed a whole point when
+		# a capture timer ended inside a long (4x speed) step.
+		if not region_callers and not formula_interval:
+			var early_sample: Dictionary = site_controller.Settlement.capture_sample(self)
+			var early_window := SiteRuntime.game_seconds(elapsed, pre_step_combat_left) * simulation_speed
+			var early_limit: float = site_controller.Settlement.capture_interval_limit(terrain, early_sample, early_window)
+			if early_limit > ACTION_TIME_EPSILON and early_limit < early_window - ACTION_TIME_EPSILON:
+				elapsed = RegionSaveSlot.GameplayClock.action_for_game(early_limit, simulation_speed, minf(elapsed, pre_step_combat_left))
 		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)

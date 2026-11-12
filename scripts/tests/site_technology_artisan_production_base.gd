@@ -141,12 +141,14 @@ func _generated_production(fixed: Dictionary) -> Dictionary:
 	_require(data != null, "Original generated initializer supplies lawful engineering ground without terrain editing")
 	# Explicit original cold INPUT records, not a world transfer command or a
 	# second birth. Full bodies/items remain originals; no learned field writes.
-	for key: String in ["actors", "armies", "actor_presence_version", "controlled_person_id", "next_person_id", "army_next_team", "player_cell", "worker_enabled"] + Runtime.ITEM_FIELDS:
+	# Crowd port: a crowd cold save keeps its live bodies in the crowd section (its army rows are roster containers).
+	for key: String in ["actors", "armies", "actor_presence_version", "controlled_person_id", "next_person_id", "army_next_team", "player_cell", "worker_enabled"] + (["crowd"] if _crowd_port() else []) + Runtime.ITEM_FIELDS:
 		if cold.has(key): data.site[key] = cold[key].duplicate(true) if cold[key] is Dictionary or cold[key] is Array else cold[key]
 	_require(not data.site.has("world_pin") and not data.parameters.has("fixed_base") and not data.site.has("technology_artisans") and not data.site.has("initial_scenario"), "Generated input makes no fixed-world, birth or scenario receipt claim")
 	_require(Store._validate_actors(data, data.site).ok and Store._validate_armies(data, data.site, true).ok and Store._validate_items(data, data.site).ok and Store._validate_person_allocator(data.site).ok, "Original validators admit all real cold input person/item records")
 	var lab: TerrainLab = _source_lab("generated_" + str(fixed.category))
 	_require(lab != null, "Production uses original formal TerrainLab scene")
+	lab.crowd_startup_requested = _crowd_port()
 	lab.bind_terrain(data) # Calls actual Actor.restore_state / Army.restore_combat_state.
 	_freeze(lab)
 	_require(is_same(lab.terrain, data) and lab.region_bind_receipt(data).get("complete", false) and int(birth_counts[lab.get_instance_id()]) == 0, "Actual generated owner bind restores inputs without Artisans/first birth")
@@ -282,8 +284,9 @@ func _park(f: Dictionary, identity: int, near: Vector2i) -> void:
 	# with it (the F04 first-earned rule) and the team settles by real points.
 	if _crowd(f) and identity == int(f.commander):
 		var head_cell := _cell_of(f, identity)
-		f.lab.crowd_site.set_formation_fields(int(f.team.formation_index), {"cx": head_cell.x + 0.5, "cy": head_cell.y + 1.5,
-			"origin_x": head_cell.x + 0.5, "origin_y": head_cell.y + 1.5, "goal_x": head_cell.x + 0.5, "goal_y": head_cell.y + 1.5})
+		var centre := Vector2(head_cell.x + 0.5, head_cell.y + 1.5)
+		f.lab.crowd_site.set_formation_fields(int(f.team.formation_index), {"cx": centre.x, "cy": centre.y,
+			"origin_x": centre.x, "origin_y": centre.y, "goal_x": centre.x, "goal_y": centre.y})
 		for index in _team_units(f.team):
 			var other: int = f.team.combat_identity(index)
 			if other == identity or not f.team._cold_get(int(index), "work_task", {}).is_empty(): continue
@@ -299,7 +302,8 @@ func _park_cell(f: Dictionary, identity: int, near: Vector2i) -> void:
 				if absi(x) + absi(y) != radius: continue
 				var cell := near + Vector2i(x, y)
 				if not f.data.is_walkable(cell) or int(f.data.feature_at[f.data.index(cell)]) != 0: continue
-				var occupied := _occupied_by_other(f, identity, cell)
+				# Crowd: a parked body never stands on another member's work approach or station (crowd bodies block them).
+				var occupied := _occupied_by_other(f, identity, cell) or _crowd(f) and _task_cell_of_other(f, identity, cell)
 				if not occupied:
 					_place(f, identity, cell)
 					return
@@ -407,11 +411,66 @@ func _task_of(f: Dictionary, identity: int) -> Dictionary:
 
 ## Crowd: a person the fixture put on its station holds it with the native station hold, and the team settles by real
 ## points before the next interval (grid placement needs neither).
+## Fatigue of a person: the grid row's pool, or the crowd formation's shared pool (the native world has no per-person pool).
+func _fatigue_get(f: Dictionary, identity: int, key: String = "fatigue") -> float:
+	var index: int = f.team.index_for_identity(identity)
+	if _crowd(f): return float(f.team.combat_hot_get(index, StringName(key), 0.0))
+	return Fatigue.read(f.team.combat_units[index], key)
+
+func _fatigue_set(f: Dictionary, identity: int, key: String, value: float) -> void:
+	var index: int = f.team.index_for_identity(identity)
+	if _crowd(f): f.team.combat_hot_set(index, StringName(key), value)
+	else: Fatigue.write(f.team.combat_units[index], key, value)
+
+func _nearest_other_task_cell(f: Dictionary, identity: int, from: Vector2) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	for index in _team_units(f.team):
+		var other: int = f.team.combat_identity(index)
+		if other == identity: continue
+		var task: Dictionary = _task_of(f, other)
+		if task.is_empty(): continue
+		for field: String in ["cell", "work_cell"]:
+			if int(task.get(field, -1)) < 0: continue
+			var cell: Vector2i = f.data.cell_from_index(int(task[field]))
+			if best.x < 0 or Vector2(cell.x + 0.5, cell.y + 0.5).distance_to(from) < Vector2(best.x + 0.5, best.y + 0.5).distance_to(from): best = cell
+	return best
+
+func _task_cell_of_other(f: Dictionary, identity: int, cell: Vector2i) -> bool:
+	var at: int = f.data.index(cell)
+	for index in _team_units(f.team):
+		var other: int = f.team.combat_identity(index)
+		if other == identity: continue
+		var task: Dictionary = _task_of(f, other)
+		if not task.is_empty() and (int(task.get("cell", -1)) == at or int(task.get("work_cell", -1)) == at): return true
+	return false
+
+## Crowd: the team's settle may walk an idle person off its fixture cell; it stands there again and holds it.
+func _stand_at(f: Dictionary, identity: int, cell: Vector2i) -> void:
+	if not _crowd(f): return
+	if _cell_of(f, identity) != cell:
+		_clear_station(f, identity, cell)
+		_place(f, identity, cell)
+	_hold_station(f, identity)
+
 var _station_held := {}
 func _hold_station(f: Dictionary, identity: int) -> void:
 	if not _crowd(f): return
-	_require(f.lab.crowd_site.siege_approach_step(identity, _cell_of(f, identity)), "Crowd fixture holds a work station", identity)
-	_station_held[identity] = true
+	# A person whose own work task already holds its station is not held again (the native hold refuses it).
+	if _task_of(f, identity).is_empty():
+		# A just-placed body still finishes its native return to the cell centre; the hold takes it once it stands.
+		var cell := _cell_of(f, identity)
+		var person: Dictionary = f.lab.crowd_site.siege_original_person(identity)
+		for point: int in 120:
+			person = f.lab.crowd_site.siege_original_person(identity)
+			if not bool(person.get("moving", false)): break
+			_crowd_point(f)
+		if _cell_of(f, identity) != cell:
+			_clear_station(f, identity, cell)
+			_place(f, identity, cell)
+		var held: bool = f.lab.crowd_site.siege_approach_step(identity, _cell_of(f, identity))
+		_require(held, "Crowd fixture holds a work station", {"identity": identity, "moving": person.get("moving"), "can_act": f.team.combat_can_act(f.team.index_for_identity(identity)),
+			"ko": f.team.combat_hot_get(f.team.index_for_identity(identity), &"ko"), "hp": f.team.combat_hot_get(f.team.index_for_identity(identity), &"hp")})
+		if held: _station_held[identity] = true
 	_crowd_stand_still(f, "with a held work station")
 
 func _crowd(f: Dictionary) -> bool:
@@ -426,11 +485,18 @@ func _occupied_by_other(f: Dictionary, identity: int, cell: Vector2i) -> bool:
 	return false
 
 var _crowd_deadline := 0
+var _crowd_fast_work := false
+var _crowd_points := 0
 func _crowd_point(f: Dictionary) -> Dictionary:
 	if _crowd_deadline <= 0:
 		_crowd_deadline = Time.get_ticks_msec() + 540000 # Real whole-Lab points (in-file 540, outer 600), the over-budget rule.
 		deadline = maxi(deadline, _crowd_deadline) # The frame watchdog follows the same bound.
-	_require(Time.get_ticks_msec() < _crowd_deadline, "Bounded real point fixture deadline")
+	_crowd_points += 1
+	if _crowd_points % 2000 == 0:
+		var callers: Array = []
+		for frame: Dictionary in get_stack().slice(1, 6): callers.append("%s:%d" % [frame.function, frame.line])
+		print("ARTISAN_CROWD_POINTS %d ms=%d %s" % [_crowd_points, Time.get_ticks_msec(), " < ".join(callers)])
+	_require(Time.get_ticks_msec() < _crowd_deadline, "Bounded real point fixture deadline", {"points": _crowd_points})
 	var result: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
 	_require(result.ok and result.get("completed", false) and f.lab._region_point_pending.is_empty(), "Original whole Lab point settles actual work/fatigue/clock/contacts", result)
 	return result
@@ -453,7 +519,8 @@ func _crowd_feature_work_state(f: Dictionary) -> Dictionary:
 	var state := {}
 	for key: String in f.data.site.features:
 		var feature: Dictionary = f.data.site.features[key]
-		state[key] = [str(feature.get("stage", "")), float(feature.get("progress", 0.0)), float(feature.get("work", 0.0)), float(feature.get("production", 0.0))]
+		state[key] = [str(feature.get("stage", "")), float(feature.get("progress", 0.0)), float(feature.get("work", 0.0)), float(feature.get("production", 0.0)),
+			float(Runtime.feature_recipe(feature).get("cycle", 0.0)) if feature.has("recipe_id") else 0.0]
 	# Siege vehicles under construction keep their work in seconds (build.progress / build.total_work).
 	for key: String in f.data.site.get("vehicles", {}):
 		var build: Dictionary = f.data.site.vehicles[key].get("build", {})
@@ -466,6 +533,12 @@ func _crowd_feature_work_state(f: Dictionary) -> Dictionary:
 func _crowd_interval(f: Dictionary, seconds: float) -> Dictionary:
 	var effective := 0.0
 	var advanced := 0.0
+	# Long completion loops (workers already on their stations) run at the public 4x speed control, as
+	# _recover_pooled_knockouts does: the same game time in a quarter of the real points. Measured single intervals,
+	# where people still walk to their stations, keep the normal speed.
+	var speed_before: float = float(f.lab.simulation_speed)
+	if _crowd_fast_work and seconds >= 30.0:
+		while float(f.lab.simulation_speed) < 4.0: f.lab.change_simulation_speed(1)
 	while advanced < seconds - 0.000001:
 		var before := _crowd_feature_work_state(f)
 		var point := _crowd_point(f)
@@ -477,7 +550,11 @@ func _crowd_interval(f: Dictionary, seconds: float) -> Dictionary:
 				if key.begins_with("vehicle:") and before[key][0] != "complete": effective += maxf(0.0, float(before[key][2]) - float(before[key][1])) * 60.0
 				continue
 			if before[key][0] != "complete" and after[key][0] == "complete": effective += maxf(0.0, float(before[key][2]) - float(before[key][1])) * 60.0
+			elif before[key].size() > 4 and float(after[key][3]) < float(before[key][3]) and float(before[key][4]) > 0.0:
+				# A finished recipe cycle restarts its production: the rest of the cycle, then the new cycle's prefix.
+				effective += maxf(0.0, float(before[key][4]) - float(before[key][3])) * 60.0 + float(after[key][3]) * 60.0
 			else: effective += maxf(0.0, float(after[key][1]) - float(before[key][1])) * 60.0 + maxf(0.0, float(after[key][3]) - float(before[key][3])) * 60.0
+	while float(f.lab.simulation_speed) > speed_before: f.lab.change_simulation_speed(-1)
 	_work_effective += effective
 	_work_actual += effective
 	_work_intervals += 1
@@ -494,6 +571,7 @@ func _feature_assign(f: Dictionary, key: String, identity: int, action: String) 
 	_clear_station(f, identity, cell)
 	_place(f, identity, cell)
 	_park(f, int(f.commander), cell + Vector2i(0, 3))
+	_stand_at(f, identity, cell)
 	if action == "construct":
 		# A generated map can leave natural resources in the footprint; the original clearing owner handles them first
 		# (WorkTeam refuses CLEARING_REQUIRED). The fixture stands in for that clearing.
@@ -578,6 +656,7 @@ func _transfer(f: Dictionary, identity: int, source_id: String, destination_id: 
 		if other != identity and _cell_of(f, other) == cell: _park(f, other, cell + Vector2i(0, 4))
 	_place(f, identity, cell)
 	_park(f, int(f.commander), cell + Vector2i(0, 3))
+	_stand_at(f, identity, cell)
 	var logistics_people: Array[int] = [identity] # The controller API takes a typed array.
 	_require(f.lab.site_controller.order_team_logistics(f.team, logistics_people, int(f.commander), true).ok, "Actual current logistics decider names original person")
 	var vehicles: SiteVehicleTransport = f.lab.site_controller.vehicles
@@ -689,9 +768,11 @@ func _siege_assign(f: Dictionary, key: String, identities: Array) -> void:
 
 func _finish_siege_real(f: Dictionary, key: String) -> void:
 	var vehicle: Dictionary = f.data.site.vehicles[key]
+	_crowd_fast_work = true
 	for tick: int in 6000:
 		if vehicle.build.is_empty(): break
 		_interval(f)
+	_crowd_fast_work = false
 	_require(vehicle.build.is_empty() and str(vehicle.phase) == "idle" and float(vehicle.hp) == float(Runtime.SIEGE_DEFINITIONS[vehicle.kind].max_hp), "Actual full-work original siege product finished")
 	_idle_all(f)
 

@@ -8347,7 +8347,8 @@ static func technology_siege_method_begin_guard(data: TerrainData, kind: String,
 	if actions == null or operator_id <= 0: return fail("NO_OPERATOR", "改良新工單須明示原F11工作者")
 	var person: Dictionary = actions._person(operator_id)
 	var team: Variant = actions._technology_team(person)
-	if person.is_empty() or not team is TerrainArmy or int(team.team_id) != team_id or not actions._ready(person) \
+	# A crowd Site's named person is held by its CrowdPersonOwner (the same team id and work authority).
+	if person.is_empty() or not (team is TerrainArmy or team is CrowdPersonOwner) or int(team.team_id) != team_id or not actions._ready(person) \
 		or not Technology.learned(actions._body_get(person, "technology"), "F11"): return fail("NO_TECHNOLOGY", "本次具名原人尚未學會F11；未扣材料")
 	return ok("新工單明選木接；實際本人工作倍率仍由原工位重查")
 
@@ -9704,7 +9705,9 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 			result.repair.consumed = consumed
 			result.repair.holder_version = int(envelope.ship_holder_begin) + int(usage.commits)
 			result.repair.revision = revision
-	result["deferred_endpoint"] = float(result.progress) + 0.000000001 >= float(envelope.threshold)
+	# The completion endpoints admit within 1e-8 (feature cycle, build, job): a prefix that ends inside that tolerance is
+	# the endpoint, or a residue below it (1.5e-9 after sub-second crowd points) is never worked nor completed.
+	result["deferred_endpoint"] = float(result.progress) + 0.00000001 >= float(envelope.threshold)
 	result["published"] = false
 	return result
 
@@ -10206,6 +10209,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 			ledger_seconds += float(prefix_ref.productive_seconds)
 			ledger_counted = true
 	var progress := minf(threshold, previous + productive_seconds * scale)
+	if progress + 0.00000001 >= threshold: progress = threshold # The endpoint tolerance, as below.
 	# Workshop batches: the production this step adds, in seconds, is its effective work.
 	var ledger_effective_tracked: bool = endpoint == "feature" and action == "operate" and not target.has("ship_build") and not ledger.is_empty() \
 		and str(target.get("kind", "")) not in FARM_KINDS + PASTURE_KINDS
@@ -10241,7 +10245,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 	return ok("原合法工作前缀全部纯预验，完成端点留到Native发布后", {"prefix_ref": prefix_ref, "owner": owner, "identity": identity,
 		"data": data, "site": data.site, "task": task, "target_id": target_id, "target": target, "unit": unit, "field": field,
 		"prior_progress": previous, "progress": progress, "ledger": ledger, "ledger_seconds": ledger_seconds, "ledger_effective": ledger_effective, "ledger_effective_tracked": ledger_effective_tracked, "ledger_operator_id": ledger_operator_id, "payment": payment, "repair": repair,
-		"start": start, "endpoint": endpoint, "deferred_endpoint": progress + 0.000000001 >= threshold, "published": false})
+		"start": start, "endpoint": endpoint, "deferred_endpoint": progress + 0.00000001 >= threshold, "published": false})
 
 static func _checked_prefix_source_usage(priors: Array, holder: Dictionary, cargo: Dictionary) -> Dictionary:
 	# Callers have already proved SAME original upper/segment registry. Both

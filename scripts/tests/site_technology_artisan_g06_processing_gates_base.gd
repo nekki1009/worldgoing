@@ -32,7 +32,9 @@ func _g06_original_hazard(f: Dictionary, identity: int, lethal: bool) -> void:
 	var index: int = f.team.index_for_identity(identity)
 	var learned: Dictionary = f.team.combat_units[index].get("technology", {}).duplicate(true)
 	var hp: float = float(f.team.combat_hot_get(index, &"hp"))
-	f.team.apply_unit_contact(index, {"environmental": true, "shield": false,
+	# Crowd: the native World takes this named contact input through its melee-contact writer (it refuses an
+	# environmental flag); the same hp/stun result reaches the same native life owner.
+	f.team.apply_unit_contact(index, {"environmental": not _crowd(f), "shield": false,
 		"result": {"hp": hp + 1.0 if lethal else 0.0, "stun": 0.0 if lethal else SiteCombatRules.STUN_LIMIT, "guard_break": false}})
 	_require(float(f.team.combat_hot_get(index, &"hp")) == 0.0 if lethal else float(f.team.combat_hot_get(index, &"ko")) > 0.0, "Original lethal/KO source applied by existing contact owner")
 	_require(f.team.combat_units[index].get("technology", {}) == learned, "Life change never issues/erases individual learned history")
@@ -41,18 +43,16 @@ func _g06_original_hazard(f: Dictionary, identity: int, lethal: bool) -> void:
 func _g06_rest_source(f: Dictionary) -> void:
 	# Explicit existing shared-pool state input; NOT proof of work-to-80.
 	# All SAME-team masters share this pool. We never make one master immune.
-	var body: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.master))]
-	Fatigue.write(body, "fatigue", Fatigue.WORK_REST_AT)
-	Fatigue.write(body, "fatigue_rest", 0.0)
-	_require(Fatigue.read(body) == Fatigue.WORK_REST_AT, "Actual original pool receives named REST-boundary input")
+	_fatigue_set(f, int(f.master), "fatigue", Fatigue.WORK_REST_AT)
+	_fatigue_set(f, int(f.master), "fatigue_rest", 0.0)
+	_require(_fatigue_get(f, int(f.master)) == Fatigue.WORK_REST_AT, "Actual original pool receives named REST-boundary input")
 
 
 func _g06_recover(f: Dictionary) -> void:
 	for tick: int in 1200:
-		var body: Dictionary = f.team.combat_units[f.team.index_for_identity(int(f.helper))]
-		if Fatigue.read(body) <= Fatigue.WORK_RESUME_AT: break
+		if _fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0) # Original shared recovery/provider, no direct reset.
-	_require(Fatigue.read(f.team.combat_units[f.team.index_for_identity(int(f.helper))]) <= Fatigue.WORK_RESUME_AT, "Original provider genuinely recovers shared masters to resume boundary")
+	_require(_fatigue_get(f, int(f.helper)) <= Fatigue.WORK_RESUME_AT, "Original provider genuinely recovers shared masters to resume boundary")
 
 func _no_reissue(f: Dictionary) -> void:
 	await _g06_ensure_actor_expansion(f)
@@ -169,10 +169,18 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	_park(f, int(f.helper), station + Vector2i(-3, 2))
 	_feature_paused(f, key, "Last taught original master leaves actual station")
 	_original_feature_ui(f, key, recipe, int(f.helper), true)
+	var stalled := 0
 	for tick: int in 2500:
 		if output.keys().all(func(name: Variant) -> bool: return int(student.cargo.get(name, 0)) == int(prior_cargo.get(name, 0)) + int(output[name])): break
+		var produced: float = float(feature.production)
 		_interval(f)
-	for name: String in output: _require(int(student.cargo.get(name, 0)) == int(prior_cargo.get(name, 0)) + int(output[name]), "True taught replacement produces exactly original bounded output")
+		# Twenty whole intervals without production are a stuck replacement; report it instead of spending the deadline.
+		stalled = stalled + 1 if float(feature.production) == produced else 0
+		if stalled >= 20: break
+	for name: String in output: _require(int(student.cargo.get(name, 0)) == int(prior_cargo.get(name, 0)) + int(output[name]), "True taught replacement produces exactly original bounded output",
+		{"cargo": student.cargo, "prior": prior_cargo, "production": feature.production, "batch_paid": feature.batch_paid, "task": _task_of(f, int(f.helper)), "cell": str(_cell_of(f, int(f.helper))), "station": str(station),
+		"worker_status_hex": str(_task_of(f, int(f.helper)).get("status", "")).to_utf8_buffer().hex_encode(), "feature_status_hex": str(feature.get("status", "")).to_utf8_buffer().hex_encode(),
+		"cycle": Runtime.feature_recipe(feature).get("cycle", -1.0)})
 	for name: String in definition.input: _require(int(prior_stock.get(name, 0)) - int(f.data.site.inventory.get(name, 0)) == int(definition.input[name]), "Teacher/student reuse one original paid material charge")
 	_require(_work_effective - effective >= float(expected.seconds) - 0.0001 and not feature.batch_paid, "Combined true work reaches full duration without a second clock")
 	var receipt: Dictionary = feature.technology_output.receipts[0]
