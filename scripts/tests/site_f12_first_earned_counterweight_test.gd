@@ -141,8 +141,9 @@ func _f12_crowd_settle(f: Dictionary, label: String) -> void:
 	if f.lab.crowd_site == null or not f.lab.crowd_site.active: return
 	_settlement_team_with_actor(f, [])
 	await _settlement_stand_still(f, label)
-	# After a cold reopen the native HOLD formation keeps its goal one cell off its centre (11/12, open: the restored team
-	# then walks to it and voids the research consent). The fixture settles the team around that goal instead.
+	# The settle centre beside the head can fall on the built engine; native set_goal snaps the HOLD goal to the nearest
+	# walkable route cell while the centre stays, so the team would later walk there and void the research consent. The
+	# fixture settles the team around the snapped goal instead.
 	var owner: Variant = f.lab.crowd_site.person_owner(int(f.control))
 	var settled: Dictionary = f.lab.crowd_site.formation_state(int(owner.formation_index))
 	if absf(float(settled.goal_x) - float(settled.cx)) > 0.01 or absf(float(settled.goal_y) - float(settled.cy)) > 0.01:
