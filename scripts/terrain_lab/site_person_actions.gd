@@ -480,6 +480,11 @@ func _commit_prison_release(job: Dictionary) -> Dictionary:
 	captivity_changed.call(int(job.target_id), captor_id, false)
 	return Runtime.ok("已出監解綁；生命、昏迷、位置與實物維持原值")
 
+## A camp crafter rests where it works: its arrived station hold stays through a work rest (found 2026-11-13 porting P4:
+## the released hold walked the crowd crafter back to its formation slot, so the resumed craft was refused BUSY).
+func _rests_at_station(identity: int) -> bool:
+	return str(_jobs.get(str(identity), {}).get("kind", "")) == "ranged_craft"
+
 func _release_work_hold(job: Dictionary) -> void:
 	if str(job.get("kind", "")) == "ranged_craft":
 		var crafter := _person(int(job.get("executor_id", 0)), false)
@@ -1237,7 +1242,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 					var person := _person(int(participant))
 					if not person.is_empty() and not bool(person.player):
 						_body_set(person, "work_resting", true)
-						if person.owner is CrowdOwner and _shared_work_prefix_consumption.is_empty(): person.owner.work_fatigue_rest(int(participant))
+						if person.owner is CrowdOwner and _shared_work_prefix_consumption.is_empty(): person.owner.work_fatigue_rest(int(participant), _rests_at_station(int(participant)))
 				if float(job.elapsed) >= float(job.duration) - 0.00000001: job["paused"] = "" # Legal completion at the REST boundary.
 			continue # The original shared collector charged each original pool once.
 		if not work_plan.is_empty():
@@ -7806,7 +7811,7 @@ func finish_shared_job_prefix_timers(admitted: Dictionary) -> void:
 			var paused: String = str(allocation.get("participant_paused", {}).get(identity, allocation.get("paused", "")))
 			if paused == "REST":
 				_body_set(person, "work_resting", true)
-				if person.owner is CrowdOwner: person.owner.work_fatigue_rest(identity)
+				if person.owner is CrowdOwner: person.owner.work_fatigue_rest(identity, _rests_at_station(identity))
 
 func publish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 	assert(prepared.get("owner") == self and is_same(prepared.get("checked"), _checked_controlled_prefixes))
@@ -8348,7 +8353,7 @@ func finish_native_fire_point(prepared: Dictionary) -> void:
 				_body_set(person, "work_resting", resting)
 				if resting:
 					job["phase"] = "REST"; job["paused"] = "REST"
-					person.owner.work_fatigue_rest(int(job.executor_id))
+					person.owner.work_fatigue_rest(int(job.executor_id), _rests_at_station(int(job.executor_id)))
 			if int(job.supply_q) <= 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY", "本人有限補給已用盡"))
 		if bool(job.cancelled): _settle_cancelled_fire_suppress(str(row.key), job)
 
@@ -8390,7 +8395,7 @@ func _advance_controlled_feature_work(key: String, job: Dictionary, seconds: flo
 		if effort > 0.0: _body_set(context.person, "work_resting", false)
 		if job.paused == "REST" or interval.get("participant_paused", {}).get(identity) == "REST":
 			_body_set(context.person, "work_resting", true)
-			if context.person.owner is CrowdOwner: context.person.owner.work_fatigue_rest(identity)
+			if context.person.owner is CrowdOwner: context.person.owner.work_fatigue_rest(identity, _rests_at_station(identity))
 	if base <= 0.0 and float(held.remaining) > 0.0: return
 	_controlled_feature_allocation = {"key": key, "held": held, "interval": interval}
 	var consumed := {"used": false}
@@ -8568,7 +8573,7 @@ func finish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 		if actual > 0.0: _body_set(person, "work_resting", false)
 		if str(allocation.get("paused", "")) == "REST" or str(allocation.get("participant_paused", {}).get(int(person.person_id), "")) == "REST":
 			_body_set(person, "work_resting", true)
-			if person.owner is CrowdOwner: person.owner.work_fatigue_rest(int(person.person_id))
+			if person.owner is CrowdOwner: person.owner.work_fatigue_rest(int(person.person_id), _rests_at_station(int(person.person_id)))
 	for candidate: Dictionary in prepared.checked.runtime: Runtime.settle_checked_work_prefix(candidate)
 	discard_checked_controlled_prefixes()
 
@@ -8592,7 +8597,7 @@ func finish_shared_work_prefix(admitted: Dictionary) -> void:
 			var paused: String = str(item.allocation.get("participant_paused", {}).get(identity, item.allocation.get("paused", "")))
 			if paused == "REST" or Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))):
 				_body_set(person, "work_resting", true)
-				person.owner.work_fatigue_rest(identity)
+				person.owner.work_fatigue_rest(identity, _rests_at_station(identity))
 
 func _advance_controlled_vehicle_work(key: String, job: Dictionary, seconds: float, work_plan: Dictionary, handled: Dictionary) -> void:
 	if _controlled_feature_consumed.has(key) or not is_equal_approx(seconds, _controlled_feature_seconds): return

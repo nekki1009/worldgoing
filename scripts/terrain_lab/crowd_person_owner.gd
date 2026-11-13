@@ -1288,14 +1288,17 @@ func work_fatigue_packet(snapshot: Dictionary, pool_result: Dictionary, work_sec
 		return PackedFloat64Array()
 	return PackedFloat64Array([float(formation_index), float(snapshot.pool.fatigue), float(snapshot.pool.fatigue_rest), float(snapshot.pool.count), work_seconds, run_seconds, float(pool_result.fatigue), float(pool_result.fatigue_rest)])
 
-func work_fatigue_rest(identity: int) -> Dictionary:
+func work_fatigue_rest(identity: int, keep_station: bool = false) -> Dictionary:
 	var unit := index_for_identity(identity)
 	if unit < 0 or not combat_units.has(unit): return SiteRuntime.fail("INVALID_MEMBER")
 	var task: Variant = _cold_get(unit, "work_task", {})
 	if not task is Dictionary: return SiteRuntime.fail("STALE_SOURCE")
 	# Actual original cancel-to-idle releases mode5 immediately when arrived,
 	# or mode6 finishes a committed edge. Keep task identity/target/progress.
-	siege_cancel_step(unit)
+	# A camp crafter (keep_station) rests on its arrived station hold; everyone else returns to the stop/rest rules.
+	var movement := native_siege_state(unit)
+	var held_station: bool = movement.size() == 8 and int(movement[1]) == 5 and int(movement[2]) < 0
+	if not (keep_station and held_station): siege_cancel_step(unit)
 	# This caller has already admitted the original REST endpoint. Native hot
 	# fatigue is published later in the same World step; do not reread its prefix.
 	_cold_set(unit, "work_resting", true)

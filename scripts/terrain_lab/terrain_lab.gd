@@ -2133,6 +2133,9 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		# A completed body is consumed even if its AFTER publisher reports a fault.
 		if retained_quantum and bool(result.get("completed", false)):
 			_replay_action_step_remaining -= float(result.get("action_seconds", action_step))
+			# The same residue rule as the live quantum (found 2026-11-13: an epsilon tail made a zero-width replay step that
+			# re-settled the capture endpoint forever, CLOCK_CONTRACT REGION_EVENT_PENDING).
+			if _replay_action_step_remaining <= ACTION_TIME_EPSILON: _replay_action_step_remaining = 0.0
 		if not bool(result.get("ok", false)): return result
 		if not result.has("pending"):
 			return SiteRuntime.fail("CLOCK_CONTRACT", "補算步進未完成且無欠秒：" + str(result.get("status", "")))
@@ -10703,7 +10706,9 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_clock_agreement_tolerance() \
 		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish restore_only=%s bound=%s target=%s replay_target=%s now=%s (now-target=%s) consuming=%s pending_points=%d" % [restore_only, terrain != null and terrain == _region_bound_data, target_game_seconds, _replay_target, SiteRuntime.now(terrain) * 60.0 if terrain != null else -1.0, SiteRuntime.now(terrain) * 60.0 - target_game_seconds if terrain != null else 0.0, _region_point_consuming, _region_point_pending.size()])
 	var settled := RegionSaveSlot.validate_settlement(terrain.site, target_game_seconds)
-	if not settled.ok or settled.legacy or float(settled.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish settlement ok=%s legacy=%s pending=%s" % [settled.ok, settled.get("legacy"), settled.get("pending")])
+	# The settlement's pending is GAME seconds: the replay loop finished it at its game-second residue tolerance (found
+	# 2026-11-13: a 7e-12 game-second residue, below the loop's 6e-11, was refused against the 1e-12 action epsilon).
+	if not settled.ok or settled.legacy or float(settled.pending) > _replay_completion_tolerance(): return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish settlement ok=%s legacy=%s pending=%s" % [settled.ok, settled.get("legacy"), settled.get("pending")])
 	var context: Dictionary
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
 	if slot != null:

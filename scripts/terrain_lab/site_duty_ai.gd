@@ -1082,6 +1082,10 @@ static func _technology_native_work_consent(team: TerrainArmy, physical: Variant
 	if team == null or team.data == null or purpose.is_empty() or not physical is CrowdPersonOwner \
 		or not is_same(physical.data, team.data) or int(physical.team_id) != int(team.team_id) or physical.crowd_site == null \
 		or not physical.crowd_site.owns_original_team(team) or not physical.has_army(): return SiteRuntime.fail("INVALID_OWNER")
+	# A holder rebuilt by a crowd cold load has no offices yet: project them from the roster (the crowd team's truth) before
+	# resolving team.work, as the duty review does (found 2026-11-13: the delegated work post read as vacant and the NPC
+	# acting head decided). A live holder keeps its own current offices (n02 closes its duty flag there).
+	if team.offices.is_empty(): physical.crowd_site.project_team_holder(team)
 	if not team.controlled_person_query.is_valid(): return SiteRuntime.fail("NO_CONTROL_AUTHORITY")
 	if controlled_id != int(team.controlled_person_query.call()): return SiteRuntime.fail("STALE_CONTROL")
 	var unit: int = physical.index_for_identity(person_id)
