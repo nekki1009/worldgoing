@@ -6794,6 +6794,16 @@ func _refresh_siege_teams(form: Dictionary) -> void:
 		form.siege_team.set_item_metadata(index, team.team_id)
 		if team.team_id == selected_id: form.siege_team.select(index)
 
+var _siege_work_preparing := false
+
+func _ensure_siege_work_appearance(appearance: Dictionary) -> bool:
+	# UI, saved appearances and non-UI commands share one capture owner.
+	while _siege_work_preparing: await get_tree().process_frame
+	_siege_work_preparing = true
+	var prepared: bool = await SiegeWorkAppend.ensure(self, appearance)
+	_siege_work_preparing = false
+	return prepared
+
 func _prepare_siege_work_people(identities: Array) -> bool:
 	# Existing explicit command preparation, before any original crew/job commit.
 	if _crowd_active():
@@ -6801,11 +6811,12 @@ func _prepare_siege_work_people(identities: Array) -> bool:
 			if not lab.crowd_site._live_contact_actor_ids.has(identity): continue
 			var actor: TerrainTestCharacter = lab.crowd_site._actors.get(identity)
 			if actor == null or actor.editor == null or not TerrainArmy.SiegeWorkClips.install(actor.editor): return false
-	# Explicit UI/load/equipment boundary only; no AI/frame capture path.
+	# Explicit command/load boundary; never prepare from a frame update.
 	if DisplayServer.get_name() == "headless": return true
 	var original_data: TerrainData = lab.terrain
 	for identity: int in identities:
-		if not await SiegeWorkAppend.ensure(self, person_appearance(identity)): return false
+		equipment_changed(identity)
+		if not await _ensure_siege_work_appearance(person_appearance(identity)): return false
 		if not is_same(lab.terrain, original_data): return false
 	return true
 
@@ -6844,7 +6855,7 @@ func prepare_existing_siege_work_assets(data: TerrainData = null) -> bool:
 	if DisplayServer.get_name() == "headless": return true
 	if data == null: return await _prepare_siege_work_people(_siege_work_saved_appearances(lab.terrain).keys())
 	for appearance: Dictionary in _siege_work_saved_appearances(data).values():
-		if not await SiegeWorkAppend.ensure(self, appearance): return false
+		if not await _ensure_siege_work_appearance(appearance): return false
 	return true
 
 func _build_siege_ui(form: Dictionary, preview: bool) -> void:

@@ -14,6 +14,38 @@ const CAPACITY := {"cart": 100, "wagon": 300}
 const LENGTH := {"cart": 1, "wagon": 3}
 var controller: Variant
 var lab: Variant
+signal crew_assignment_finished(request: Dictionary, result: Dictionary)
+var _crew_asset_queue: Array[Dictionary] = []
+var _crew_asset_running := false
+
+func _queue_crew_assets(vehicle: Dictionary, person: Dictionary, person_id: int, slot: String, requester: int, dispatch: bool) -> Dictionary:
+	for request: Dictionary in _crew_asset_queue:
+		if int(request.person) != person_id: continue
+		if request.vehicle != vehicle.id or request.slot != slot or int(request.requester) != requester or bool(request.dispatch) != dispatch: return Runtime.fail("BUSY")
+		return Runtime.fail("SIEGE_ASSET_PENDING", "正準備原人員外觀與工作圖集；完成後重新驗證派工").merged({"pending": true})
+	_crew_asset_queue.append({"vehicle": str(vehicle.id), "person": person_id, "slot": slot,
+		"requester": requester, "dispatch": dispatch, "terrain": lab.terrain, "record": vehicle, "owner": person.owner})
+	if not _crew_asset_running:
+		_crew_asset_running = true
+		_prepare_crew_queue.call_deferred()
+	return Runtime.fail("SIEGE_ASSET_PENDING", "正準備原人員外觀與工作圖集；完成後重新驗證派工").merged({"pending": true})
+
+func _prepare_crew_queue() -> void:
+	while not _crew_asset_queue.is_empty():
+		var request: Dictionary = _crew_asset_queue[0]
+		var result := Runtime.fail("STALE_SOURCE")
+		if not bool(request.get("cancelled", false)) and is_same(lab.terrain, request.terrain) and is_same(records().get(request.vehicle), request.record):
+			var prepared: bool = await controller._prepare_siege_work_people([int(request.person)])
+			if is_same(lab.terrain, request.terrain) and is_same(records().get(request.vehicle), request.record) and is_same(_operator(int(request.person)).get("owner"), request.owner):
+				result = Runtime.fail("SIEGE_ASSET_FAILED", "原人員外觀或工作圖集準備失敗；未指派操作班")
+				if prepared and not bool(request.get("cancelled", false)) and _siege_work_assets_guard(int(request.person)).ok:
+					result = assign_crew(str(request.vehicle), int(request.person), str(request.slot), int(request.requester), bool(request.dispatch))
+		if bool(request.get("cancelled", false)): result = Runtime.fail("CANCELLED")
+		_crew_asset_queue.pop_front()
+		crew_assignment_finished.emit({"vehicle": request.vehicle, "person": request.person, "slot": request.slot}, result)
+
+	_crew_asset_running = false
+
 # Ship id -> the last refused route step of a live NPC ship (code, action, destination,
 # facing). Observation only: never saved, never part of the owner graph, never read
 # by movement. Cleared when that ship next commits a step.
@@ -69,7 +101,7 @@ func crew_multiplier(vehicle: Dictionary) -> float:
 
 func _siege_work_assets_guard(identity: int) -> Dictionary:
 	# Headless verifies mechanics only. GPU commands require real work assets
-	# prepared at the original Controller/load boundary, never an idle stand-in.
+	# prepared at the shared command/load boundary, never an idle stand-in.
 	if DisplayServer.get_name() == "headless": return Runtime.ok()
 	return Runtime.ok() if SiegeWorkAppend.ready(controller.person_appearance(identity)) else Runtime.fail("MISSING_ASSET", "原人員推運／裝填／拉繩動作尚未完整備妥")
 
@@ -134,7 +166,7 @@ func assign_crew(vehicle_id: String, person_id: int, slot: String, requester_id:
 	var destination := crew_cell(vehicle, slot)
 	if not _crew_ground_station(vehicle, destination) or blocks_cell(destination): return Runtime.fail("UNREACHABLE")
 	var work_assets := _siege_work_assets_guard(person_id)
-	if not work_assets.ok: return work_assets
+	if not work_assets.ok: return _queue_crew_assets(vehicle, person, person_id, slot, requester_id, test_dispatch)
 	if person.owner is CrowdPersonOwner and not person.owner.siege_crew_assigned(person_id): return Runtime.fail("BUSY", "原人物的群眾承諾步尚未收束")
 	vehicle.crew_slots[slot] = person_id
 	vehicle["operator_id"] = int(vehicle.crew_slots.get("0", 0))
@@ -183,7 +215,12 @@ func unassign_crew(vehicle_id: String, person_id: int, requester_id: int, test_d
 	var vehicle: Dictionary = records().get(vehicle_id, {})
 	var team: Variant = _siege_team(vehicle) if is_siege(vehicle) else null
 	if team == null or not _authorized(team, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
-	if person_id != 0 and not vehicle.crew_slots.values().has(person_id): return Runtime.fail("NO_TARGET")
+	var cancelled := false
+	for request: Dictionary in _crew_asset_queue:
+		if is_same(request.terrain, lab.terrain) and is_same(request.record, vehicle) and (person_id == 0 or int(request.person) == person_id):
+			request["cancelled"] = true
+			cancelled = true
+	if person_id != 0 and not vehicle.crew_slots.values().has(person_id): return Runtime.ok("已取消等待中的操作班派工") if cancelled else Runtime.fail("NO_TARGET")
 	_queue_crew_release(vehicle, vehicle.crew_slots.values() if person_id == 0 else [person_id], "released")
 	_settle_crew_release(vehicle)
 	return Runtime.ok("原 crew 安全收束後解除；器具與貨物留現場")
