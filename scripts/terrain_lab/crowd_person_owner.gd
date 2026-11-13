@@ -356,11 +356,20 @@ func drift_speed(index: int) -> float:
 ## True when the member has a committed move goal, as person().moving derives it (siege plan or controlled step).
 func has_move_goal(index: int) -> bool:
 	var movement := native_siege_state(index)
-	if movement.size() == 8 and (int(movement[2]) >= 0 or int(movement[3]) > 0): return true
+	if movement.size() == 8 and int(movement[3]) <= 0 and int(movement[2]) >= 0 and _holds_own_cell(index, int(movement[2])): pass
+	elif movement.size() == 8 and (int(movement[2]) >= 0 or int(movement[3]) > 0): return true
 	if crowd_site.crowd.has_method("controlled_step_state"):
 		var commitment: PackedInt64Array = crowd_site.crowd.controlled_step_state(index)
-		if commitment.size() == 2 and int(commitment[0]) >= 3 and int(commitment[1]) >= 0: return true
+		if commitment.size() == 2 and int(commitment[0]) >= 3 and int(commitment[1]) >= 0 			and not (int(commitment[0]) == 5 and _holds_own_cell(index, int(commitment[1]))): return true
 	return false
+## A station hold (the worker/lesson/craft step held on the member's own cell) is not a move goal: the member stands
+## (found 2026-11-11: a held crafter or teacher made its whole team read as walking and voided named-work consent).
+func _holds_own_cell(index: int, goal: int) -> bool:
+	var values := _soldier_values(index)
+	if values.size() <= 23 or crowd_site == null or crowd_site.lab == null or crowd_site.lab.terrain == null: return false
+	var cell := Vector2i(floori(values[14]), floori(values[15]))
+	return crowd_site.lab.terrain.contains(cell) and int(crowd_site.lab.terrain.index(cell)) == goal
+
 ## P1o: the crowd settle rule in one place: walking when the member has a move goal or its speed is at least SETTLE_SPEED.
 ## Used by _team_stopped's crowd branch and by the supply person readiness (controller _supply_walking).
 func is_walking(index: int) -> bool:

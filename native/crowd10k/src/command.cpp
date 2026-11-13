@@ -1003,7 +1003,7 @@ double World::work_fatigue_rest_limit(int fi, double target, double maximum, dou
 	for (int i : f.members) {
 		if (can_act(i)) {
 			if (running[i]) return maximum;
-			busy |= vx[i] * vx[i] + vy[i] * vy[i] > 0.09f || rescue_of[i] >= 0 || capture_of[i] >= 0 || escort_mode[i] != 0 || stagger[i] > 0.0 || knock_t[i] > 0.0 ||
+			busy |= vx[i] * vx[i] + vy[i] * vy[i] > 0.09f || rescue_of[i] >= 0 || capture_of[i] >= 0 || (escort_mode[i] != 0 && !siege_step_holding(i)) || stagger[i] > 0.0 || knock_t[i] > 0.0 ||
 				state[i] == S_FIGHT || state[i] == S_ENGAGE || state[i] == S_ENCIRCLE || state[i] == S_RANGED;
 			threat |= near_enemy[i] != 0;
 		}
@@ -1026,7 +1026,7 @@ void World::fatigue_stage(double gdt, const std::vector<WorkFatigueState> *work_
 		if (!can_act(i)) continue;
 		int fi = form[i];
 		runners[fi] += running[i];
-		if (vx[i] * vx[i] + vy[i] * vy[i] > 0.09f || rescue_of[i] >= 0 || capture_of[i] >= 0 || escort_mode[i] != 0 || stagger[i] > 0.0 || knock_t[i] > 0.0 ||
+		if (vx[i] * vx[i] + vy[i] * vy[i] > 0.09f || rescue_of[i] >= 0 || capture_of[i] >= 0 || (escort_mode[i] != 0 && !siege_step_holding(i)) || stagger[i] > 0.0 || knock_t[i] > 0.0 ||
 		    state[i] == S_FIGHT || state[i] == S_ENGAGE || state[i] == S_ENCIRCLE || state[i] == S_RANGED)
 			busy[fi] = 1;
 		threat[fi] |= near_enemy[i];

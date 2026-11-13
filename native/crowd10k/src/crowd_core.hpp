@@ -554,6 +554,9 @@ public:
 	void cancel_controlled_step(int person, ControlledStepKind kind);
 	bool order_housing_step(int person, int destination_cell) { return order_controlled_step(person, destination_cell, ControlledStepKind::Housing); }
 	bool order_siege_step(int person, int destination_cell) { return order_controlled_step(person, destination_cell, ControlledStepKind::Siege); }
+	// A worker's arrived siege station hold (mode 5, no goal left) is standing, not walking or escorting: it does not keep
+	// its formation's shared fatigue pool from resting (2026-11-13, a held camp crafter's team never recovered).
+	bool siege_step_holding(int i) const { return escort_mode[i] == 5 && escort_goal[i] < 0; }
 	void cancel_housing_step(int person) { cancel_controlled_step(person, ControlledStepKind::Housing); }
 	void cancel_siege_step(int person) { cancel_controlled_step(person, ControlledStepKind::Siege); }
 	bool controlled_step_pending(int person) const { return person >= 0 && person < soldier_count() && escort_mode[person] >= 3 && escort_mode[person] <= 6 && escort_goal[person] >= 0; }
