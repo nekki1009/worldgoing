@@ -38,6 +38,7 @@ func discard_prepared_interval() -> void:
 
 func init(context: Variant) -> void:
 	discard_checked_work_prefix()
+	_published_admission = {}
 	lab = context
 	lab.terrain.set_meta(&"site_work_team", weakref(self))
 	_active_ids.clear()
@@ -2286,6 +2287,10 @@ var _checked_work_prefix_capture: Dictionary = {}
 var _preparing_shared_prefix: Dictionary = {}
 
 var _checked_work_prefix_admission: Dictionary = {}
+# A published WorkTeam prefix whose endpoint the region point consumes later. A native begin window prepared inside the
+# same step (prepare_work_requests) replaces the current admission first, so its finish is matched here (found 2026-11-13,
+# P4 crowd port: a paid completed bow batch never settled; its endpoint was skipped as not the current admission).
+var _published_admission: Dictionary = {}
 
 var _publishing_shared_prefix := false
 
@@ -2378,6 +2383,7 @@ func publish_shared_work_prefix(admitted: Dictionary) -> Dictionary:
 	_publishing_shared_prefix = false
 	_consuming_work_plan = {}
 	admitted["published"] = true
+	_published_admission = admitted
 	admitted["handled_seconds"] = handled
 	return {"handled_seconds": handled}
 
@@ -2465,8 +2471,9 @@ func finish_shared_ladder_prefix(admitted: Dictionary) -> void:
 func finish_shared_work_prefix(admitted: Dictionary) -> void:
 	# AFTER Native publisher. Original REST release/cancel and current endpoint
 	# checks may now run; never consume this interval's effort or progress twice.
-	if not is_same(admitted, _checked_work_prefix_admission) or not bool(admitted.get("published", false)) or bool(admitted.get("finished", false)): return
+	if not (is_same(admitted, _checked_work_prefix_admission) or is_same(admitted, _published_admission)) or not bool(admitted.get("published", false)) or bool(admitted.get("finished", false)): return
 	admitted["finished"] = true
+	if is_same(admitted, _published_admission): _published_admission = {}
 	var handled := {}
 	for held: Dictionary in admitted.prepared.held:
 		var entry: Dictionary = held.entry
