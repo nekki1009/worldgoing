@@ -10,7 +10,12 @@ func _ui_cold_equal(left: Variant, right: Variant) -> bool:
 	return JSON.stringify(JSON.parse_string(JSON.stringify(left, "", true, true)), "", true, true) == JSON.stringify(JSON.parse_string(JSON.stringify(right, "", true, true)), "", true, true)
 
 func _original_ui_step(context: Dictionary) -> void:
+	# Grid simulation retired (Option C): before the crowd conversion the grid crew team stands down for the inherited
+	# disengagement window (flight/Fire/grace on the original owners), then comes back unchanged.
+	var stand_down: bool = (context.lab.crowd_site == null or not context.lab.crowd_site.active) and context.team.combat_enabled
+	if stand_down: context.team.combat_enabled = false
 	var step: Dictionary = context.lab._advance_original_shared_step(0.02)
+	if stand_down: context.team.combat_enabled = true
 	_check(step.ok and bool(step.get("completed", false)) and float(step.action_seconds) > 0.0, "Original main caller accepts one actual shared work/body/Fire/clock prefix: " + str(step))
 
 func _ui_pick(choice: OptionButton, identity: Variant) -> void:
@@ -43,7 +48,8 @@ func _ui_button(form: Dictionary, name: String) -> Button:
 func _ordinary_facts(context: Dictionary, vehicle: Dictionary) -> PackedByteArray:
 	# Control changes are legitimate; compare all material/action/history owners
 	# after the actual change and before a refused command, without undoing it.
-	return var_to_bytes([vehicle, context.team.combat_units.map(func(row: Dictionary) -> Dictionary: return {"cargo": row.cargo, "holder": row.item_state, "technology": row.get("technology", {})}), context.data.site.inventory, context.data.site.family.technology, context.lab.siege_projectiles])
+	var rows: Array = context.team.combat_units.values() if context.team.combat_units is Dictionary else context.team.combat_units
+	return var_to_bytes([vehicle, rows.map(func(row: Dictionary) -> Dictionary: return {"cargo": row.cargo, "holder": row.item_state, "technology": row.get("technology", {})}), context.data.site.inventory, context.data.site.family.technology, context.lab.siege_projectiles])
 
 func _settle_original_siege(context: Dictionary, vehicle: Dictionary, inherited_owner_history: bool = false) -> void:
 	_check(context.lab.site_controller.vehicles.order_siege(str(vehicle.id), "stop", {}, int(context.control)).ok, "Actual current captain stops new releases through original owner")
@@ -73,7 +79,13 @@ func _cold_ordinary_ui(context: Dictionary, vehicle: Dictionary, old_form: Dicti
 	_check(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(folder)) == OK, "Unique original cold fixture directory")
 	controller.save_root = folder
 	var path := folder.path_join("earned_original_ui.json")
+	# On the crowd, the fixture's permanently gone NPC captain (hp 0 since the succession setup) takes its real fall and
+	# relic hand-off on its own clock; the save waits for that, as any crowd save does.
+	for tick: int in 1000:
+		if controller._pending_deaths.is_empty(): break
+		_original_ui_step(context)
 	var saved: Dictionary = controller.save_to(path)
+	if not saved.ok: print("FIREPOT_SAVE_DIAG pending_deaths=", str(controller._pending_deaths).left(800))
 	_check(saved.ok, "Original public Controller/Store saves at the true settled endpoint: " + str(saved))
 	var original_hash := FileAccess.get_sha256(path)
 	var loaded: Dictionary = Store.load_site(path)
@@ -96,12 +108,15 @@ func _cold_ordinary_ui(context: Dictionary, vehicle: Dictionary, old_form: Dicti
 	var restored: Dictionary = fresh.site_controller.load_from(path)
 	_check(restored.ok, "Original Controller cold load rebinds actual existing people/vehicle: " + str(restored))
 	fresh.restore_only = false # Original fully bound scene is now the active fixture, not a cold replay owner.
-	var team: TerrainArmy = null
-	for candidate: TerrainArmy in fresh.combat_armies:
-		candidate.set_process(false)
-		if int(candidate.team_id) == int(context.team.team_id):
-			_check(team == null, "One exact original restored team identity")
-			team = candidate
+	var team: Variant = null
+	if fresh.crowd_site != null and fresh.crowd_site.active:
+		team = fresh.site_controller.person_actions._technology_team(fresh.site_controller.person_actions._person(int(context.control)))
+	else:
+		for candidate: TerrainArmy in fresh.combat_armies:
+			candidate.set_process(false)
+			if int(candidate.team_id) == int(context.team.team_id):
+				_check(team == null, "One exact original restored team identity")
+				team = candidate
 	for actor: TerrainTestCharacter in fresh.combat_actors: actor.set_process(false)
 	_check(team != null, "Original cold team is present")
 	context.lab = fresh
@@ -113,23 +128,69 @@ func _cold_ordinary_ui(context: Dictionary, vehicle: Dictionary, old_form: Dicti
 	_check(_ui_cold_equal(context.data.site.family.technology, history) and _ui_cold_equal(actual.tech_fire_pot_shot, shot) and FileAccess.get_sha256(path) == original_hash, "Full cold/bind keeps original finite historical facts and saved file")
 	# A SAME-ID old presentation selector is a real stale source after cold load.
 	# The new original owner resolves its own actual record; no fake target is made.
-	var before: PackedByteArray = _ordinary_facts(context, actual)
-	var stale: Dictionary = fresh.site_controller._siege_ammo_choice(old_form, actual)
-	_check(not stale.ok and stale.code == "STALE_SOURCE", "Old original form cannot carry ammunition authority across a real source replacement")
-	fresh.site_controller._siege_person_ammo_ui(old_form, true)
-	_check(_ordinary_facts(context, actual) == before and FileAccess.get_sha256(path) == original_hash, "Actual stale original UI submit has zero stock/holder/action/history mutation")
+	if not old_form.is_empty():
+		var before: PackedByteArray = _ordinary_facts(context, actual)
+		var stale: Dictionary = fresh.site_controller._siege_ammo_choice(old_form, actual)
+		_check(not stale.ok and stale.code == "STALE_SOURCE", "Old original form cannot carry ammunition authority across a real source replacement")
+		fresh.site_controller._siege_person_ammo_ui(old_form, true)
+		_check(_ordinary_facts(context, actual) == before and FileAccess.get_sha256(path) == original_hash, "Actual stale original UI submit has zero stock/holder/action/history mutation")
 	old_lab.free()
 	return actual
+
+func _restore_crew(context: Dictionary, vehicle: Dictionary, crew_before: Dictionary) -> void:
+	# The settled stop (and a crowd conversion) leaves the engine without its crew; the captain names the same crew slots
+	# again through the public order and they walk in.
+	var controller: SiteController = context.lab.site_controller
+	for slot: Variant in crew_before:
+		if vehicle.get("crew_slots", {}).get(slot) != crew_before[slot]:
+			var assigned: Dictionary = controller.vehicles.assign_crew(str(vehicle.id), int(crew_before[slot]), str(slot), int(context.control))
+			_check(assigned.ok, "Original captain names the same crew slot again: " + str(slot) + " " + str(assigned))
+	for tick: int in 6000:
+		if controller.vehicles.crew_ready(vehicle) and context.lab.siege_save_guard().ok: break
+		_original_ui_step(context)
+	_check(controller.vehicles.crew_ready(vehicle) and vehicle.get("crew_slots", {}) == crew_before, "The same crew stands ready at the engine: " + str(vehicle.get("crew_slots", {})))
+
+func _enter_crowd(context: Dictionary, vehicle: Dictionary, crew_before: Dictionary, unlearned: int) -> void:
+	# Crowd port (2026-11-13): the cold-bound quiet Site (its terrain exactly as a save reproduces it) enters the native
+	# crowd for the ordinary public shot, as a crowd bind does; --grid keeps the retired grid team. The conversion releases
+	# the engine's crew, so the captain names the same crew slots again on the crowd and they walk in.
+	var controller: SiteController = context.lab.site_controller
+	if not OS.get_cmdline_user_args().has("--grid") and context.lab.crowd_site == null:
+		context.lab.crowd_site = context.lab.CrowdSiteScript.new()
+		context.lab.crowd_site.name = "CrowdSite"
+		context.lab.add_child(context.lab.crowd_site)
+		context.lab.crowd_site.setup(context.lab)
+	if not OS.get_cmdline_user_args().has("--grid") and not context.lab.crowd_site.active:
+		for tick: int in 5000:
+			if context.lab.siege_save_guard().ok: break
+			_original_ui_step(context)
+		if not context.lab.siege_save_guard().ok:
+			print("FIREPOT_QUIET_DIAG command=", vehicle.get("command", {}), " move=", vehicle.get("move", {}).keys(), " action=", vehicle.get("action", {}).keys(), " fire=", Runtime.fire_active(context.data), " convoy=", context.lab.site_controller.vehicles.convoy_save_guard())
+		# A crowd bind enters from a formally saved Site: the settled Fire history is saved first, as the region bind does.
+		var quiet_save: Dictionary = controller.save_to(controller.save_path) if bool(context.lab._fire_unsaved) else {"ok": true}
+		_check(quiet_save.ok, "Settled original Site saves before entering the native crowd: " + str(quiet_save).left(300))
+		var converted: Dictionary = context.lab.crowd_site.convert_existing()
+		if converted.ok: converted = context.lab._region_write_converted_crowd_section()
+		_check(converted.ok, "The original crew team and engine enter the native crowd: " + str(converted).left(300))
+		# The crowd owner now holds the same people's rows (cargo, holder, personal technology) by its own indices.
+		context.team = context.actions._technology_team(context.actions._person(int(context.control)))
+		_check(context.team != null and context.team.index_for_identity(unlearned) >= 0 and context.team.index_for_identity(int(context.executor)) >= 0, "The crowd owner holds the same captain, learned and unlearned crew")
+		_restore_crew(context, vehicle, crew_before)
 
 func _ordinary_public_ui(context: Dictionary, vehicle: Dictionary) -> void:
 	_check(Technology.learned(context.team.combat_units[context.team.index_for_identity(int(context.executor))].get("technology", {}), "F15") and vehicle.tech_fire_pot_shot.phase == "complete", "Ordinary UI starts only after true original completed research, never a fixture skill assignment")
 	var history: Dictionary = context.data.site.family.technology.duplicate(true)
 	var shot: Dictionary = vehicle.tech_fire_pot_shot.duplicate(true)
+	var crew_before: Dictionary = vehicle.get("crew_slots", {}).duplicate(true)
+	var unlearned: int = context.team.combat_identity(2)
 	_settle_original_siege(context, vehicle, true)
+	# Crowd port (2026-11-13): the settled Site is first saved and cold-bound (the fixture's in-memory flattened ground
+	# becomes the terrain a save reproduces), then enters the native crowd with the same crew for the public UI.
+	vehicle = _cold_ordinary_ui(context, vehicle, {}, history, shot)
+	_enter_crowd(context, vehicle, crew_before, unlearned)
 	var controller: SiteController = context.lab.site_controller
 	var form: Dictionary = _ordinary_form(context, vehicle)
-	var unlearned: int = context.team.combat_identity(2)
-	_check(not Technology.learned(context.team.combat_units[2].get("technology", {}), "F15"), "Actual second original ready crew remains unlearned")
+	_check(not Technology.learned(context.team.combat_units[context.team.index_for_identity(unlearned)].get("technology", {}), "F15"), "Actual second original ready crew remains unlearned")
 	_ui_pick(form.operator, unlearned)
 	var before: PackedByteArray = _ordinary_facts(context, vehicle)
 	var denied: Dictionary = context.actions.fire_pot_ammo_guard(vehicle, unlearned)
@@ -141,16 +202,19 @@ func _ordinary_public_ui(context: Dictionary, vehicle: Dictionary) -> void:
 	# closed historical project. The original personal skill remains its owner.
 	var refs: Array = [{"site_id": str(context.data.site.id), "person_id": int(context.control), "path": "", "label": "原仍留族家主", "age_years": -1}]
 	_check(controller.family_continuity.register_members(refs, true, int(context.control)).ok, "Actual original roster owner legally removes the completed researcher from current family")
-	_check(not context.actions._technology_member(int(context.executor)) and context.data.site.family.technology == history and Technology.learned(context.team.combat_units[1].get("technology", {}), "F15"), "Leaving family preserves actual learned skill and immutable earned historical scope")
+	_check(not context.actions._technology_member(int(context.executor)) and context.data.site.family.technology == history and Technology.learned(context.team.combat_units[context.team.index_for_identity(int(context.executor))].get("technology", {}), "F15"), "Leaving family preserves actual learned skill and immutable earned historical scope")
 	_check(context.actions.fire_pot_craft_guard(int(context.executor)).ok and context.actions.fire_pot_ammo_guard(vehicle, int(context.executor)).ok, "True learned former family member retains ordinary personal craft/ammo eligibility under original authority")
 	# The remaining actual crafted pot is unloaded/reloaded by visible controls;
 	# no fresh cargo/knowledge or a simulated load receipt is supplied.
 	_check(int(vehicle.cargo.get("fire_pot", 0)) == 1, "Exactly one actual crafted original pot remains after the research shot")
 	_ui_button(form, "TakeSiegeAmmo").pressed.emit()
-	var row: Dictionary = context.team.combat_units[1]
+	var row: Dictionary = context.team.combat_units[context.team.index_for_identity(int(context.executor))]
+	if int(row.cargo.get("fire_pot", 0)) != 1:
+		var stock: Dictionary = controller.vehicles._stock("person:%d" % int(context.executor))
+		print("FIREPOT_TAKE_DIAG refused=", context.lab.get_meta(&"last_refused_result", {}), " vehicle_cargo=", vehicle.cargo, " row_cargo=", row.cargo, " stock=", str(stock).left(300), " executor_form=", controller._siege_executor(form))
 	_check(int(row.cargo.get("fire_pot", 0)) == 1 and int(vehicle.cargo.get("fire_pot", 0)) == 0, "Actual visible unload transfers the real one original pot to the named original person")
 	_ui_button(form, "SupplySiegeAmmo").pressed.emit()
-	_check(int(row.cargo.get("fire_pot", 0)) == 0 and int(vehicle.cargo.get("fire_pot", 0)) == 1 and vehicle.tech_fire_pot_shot == shot and context.data.site.family.technology == history, "Actual visible load transfers once; no research history or payment is invented")
+	_check(int(row.cargo.get("fire_pot", 0)) == 0 and int(vehicle.cargo.get("fire_pot", 0)) == 1 and _ui_cold_equal(vehicle.tech_fire_pot_shot, shot) and _ui_cold_equal(context.data.site.family.technology, history), "Actual visible load transfers once; no research history or payment is invented")
 	_check(controller._control_family_person(null, unlearned).ok and context.lab.controlled_person_id() == unlearned, "Actual control owner switches to existing unprivileged original crew")
 	before = _ordinary_facts(context, vehicle)
 	await controller._siege_order_ui(form, "attack")
@@ -158,9 +222,11 @@ func _ordinary_public_ui(context: Dictionary, vehicle: Dictionary) -> void:
 	_check(controller._control_family_person(null, int(context.control)).ok, "Actual control owner returns to same existing captain")
 	vehicle = _cold_ordinary_ui(context, vehicle, form, history, shot)
 	controller = context.lab.site_controller
+	if context.lab.crowd_site == null or not context.lab.crowd_site.active: _enter_crowd(context, vehicle, crew_before, unlearned)
 	form = _ordinary_form(context, vehicle)
 	var prior_shots: int = int(context.lab.siege_shots)
 	await controller._siege_order_ui(form, "attack")
+	if vehicle.command.get("ammo") != "fire_pot": print("FIREPOT_ATTACK_DIAG refused=", context.lab.get_meta(&"last_refused_result", {}), " command=", vehicle.command, " cargo=", vehicle.cargo, " ready=", controller.vehicles.crew_ready(vehicle), " crowd=", context.lab.crowd_site != null and context.lab.crowd_site.active)
 	_check(vehicle.command.get("ammo") == "fire_pot" and int(vehicle.command.get("operator_id", 0)) == int(context.executor) and not vehicle.command.has("tech_trial"), "Actual ordinary UI command names selected learned crew/ammunition without a research token")
 	for tick: int in 1000:
 		if int(context.lab.siege_shots) > prior_shots: break

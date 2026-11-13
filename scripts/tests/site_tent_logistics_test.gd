@@ -7,6 +7,8 @@ class CrowdFixture extends RefCounted:
 	func contains_person(identity: int) -> bool: return identity == 3
 	func person_owner(_identity: int) -> Variant: return null # No crowd owner registered in this fixture; real lookup misses too.
 	func reserves_cell(_cell: Vector2i) -> bool: return false
+	func person_fighting(_identity: int) -> bool: return false # 11/08 tent/hire callers ask; nobody fights in this fixture.
+	func siege_team_owner(_team_id: int) -> Variant: return null # No crowd team is registered here, as person_owner.
 
 class Fixture extends Node2D:
 	var source := PersonTest.Fixture.new()
@@ -212,7 +214,7 @@ func _vehicle_transfers() -> void:
 	assert(not v.transfer("1", "person:3", {"camp_tent": 1}, [], int(car.holder.version), int(f.holder().version), 3).ok and f.goods() == before)
 	f.army.combat_units[0].ko = 0.0
 	f.crowd_site = CrowdFixture.new()
-	assert(v.transfer("1", "person:3", {"camp_tent": 1}, [], int(car.holder.version), int(f.holder().version), 3).code == "CROWD_ACTIVE" and f.goods() == before)
+	assert(not v.transfer("1", "person:3", {"camp_tent": 1}, [], int(car.holder.version), int(f.holder().version), 3).ok and f.goods() == before) # Crowd convoys are served since S5; this crowd holds no such team, so it refuses.
 	f.crowd_site = null
 	f.cargo().wood = 20
 	before = f.goods()

@@ -1550,7 +1550,8 @@ func _stock(identity: String, allow_independent_person: bool = false) -> Diction
 		if person.owner is CrowdPersonOwner:
 			# S5: a crowd person carries cargo as the operator of a convoy (the crew of its vehicle record); 2026-11-11: also as
 			# its team's named logistics carrier, or as the controlled person at a feature, the same two cases the grid row has.
-			var crowd_carrier: bool = is_convoy(_operated(int(value))) or bool(person.owner._cold_get(int(person.unit), "logistics", false)) or allow_independent_person and int(value) == int(lab.controlled_person_id())
+			# 2026-11-13: also as the crew of a siege engine (its ammunition), as the grid row does.
+			var crowd_carrier: bool = is_convoy(_operated(int(value))) or is_siege(_operated(int(value))) or bool(person.owner._cold_get(int(person.unit), "logistics", false)) or allow_independent_person and int(value) == int(lab.controlled_person_id())
 			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not crowd_carrier: return {}
 		elif not person.owner is TerrainArmy:
 			if not allow_independent_person or not person.owner is TerrainTestCharacter: return {}
