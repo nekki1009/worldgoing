@@ -359,6 +359,48 @@ func _mixed_clock(source: TerrainData) -> bool:
 	print("SHARED_STEP_CROWD_MIXED_CLOCK_OK")
 	return true
 
+## Cross-Site Fire clock: an authored remote Fire journal keeps this peaceful Site on tactical time for one step; the cold
+## journal replay equals the live step (2026-11-14: the one-ulp combat residue is clamped, terrain_lab shared step).
+func _cross_site_clock(source: TerrainData) -> bool:
+	var seed: TerrainLab = _restore(source)
+	if failed: return false
+	var at: float = SiteRuntime.now(seed.terrain) * 60.0
+	var action: float = float(seed.fire_action_cursor)
+	var sequence: int = roundi(action * 30.0)
+	var epoch: String = "shared-step-cross-site-native-clock"
+	# Authored remote-Site journal clock, as the original clock fixture; no local projectile or fabricated damage.
+	seed.terrain.site.fire_settlement = {"version": 1, "epoch": epoch, "sequence": sequence, "action_seconds": action, "game_seconds": at}
+	if not _checkpoint(seed, SAVE + ".fire"): return false
+	var saved: Dictionary = SiteStore.load_site(SAVE + ".fire")
+	if not _require(saved.ok, "remote Fire clock checkpoint", saved): return false
+	_close(seed)
+	var live: TerrainLab = _restore(saved.data)
+	var cold: TerrainLab = _restore(saved.data)
+	if failed: return false
+	live.restore_only = false
+	live.movement_input_enabled = false
+	while live.simulation_speed < 4.0: live.change_simulation_speed(1)
+	SiteRuntime.start_combat(live.terrain.site, DT)
+	if not _live_frame(live): return false
+	var target: float = SiteRuntime.now(live.terrain) * 60.0
+	var segment: Dictionary = {"first_sequence": sequence + 1, "last_sequence": sequence + 1, "action_begin": action, "action_end": action + DT,
+		"game_begin": at, "game_end": target, "scale": 4.0, "tactical_seconds": DT, "steps": 1}
+	cold._fire_replay_tracking = true
+	cold._fire_replay_epoch = epoch
+	cold._fire_replay_segments = [segment]
+	cold._fire_replay_end_sequence = sequence + 1
+	cold._fire_replay_end_action = action + DT
+	cold._fire_replay_end_game = target
+	var replayed: Dictionary = _replay(cold, target)
+	if failed or not _require(replayed.ok, "original cross-Site journal clock replay", replayed): return false
+	RegionSaveSlot.record_completed_fire_replay(live.terrain.site, {"epoch": epoch, "sequence": sequence + 1, "action_end": action + DT, "game_end": target})
+	if not _require(absf(target - at - DT * 4.0) < 0.000001, "remote Fire keeps this peaceful Site tactical at scale4"): return false
+	if not _same_original(_capture(cold), _capture(live), "cross_site_fire_clock"): return false
+	_close(live)
+	_close(cold)
+	print("SHARED_STEP_CROWD_CROSS_SITE_CLOCK_OK")
+	return true
+
 ## One retained slot-less cold owner (advance_cold_site) accepts retries of the SAME untouched input and fixed target and
 ## publishes one completed detached result equal to the live run (2026-11-14: the adapter now consumes its native
 ## endpoints, terrain_lab._slotless_cold_replay). The region_snapshot envelope (mode/token/context) is the published
@@ -468,12 +510,13 @@ func _run() -> void:
 	for original: TerrainLab in [live, cold, revisit, blocked]: _close(original)
 	if not _mixed_clock(source): return
 	if not _require(_source_bytes(source) == source_before, "mixed-clock branch also leaves original source untouched"): return
+	if not _cross_site_clock(source): return
 	if not _retained_adapter(source, target, expected): return
 	if not _require(_source_bytes(source) == source_before, "retained adapter leaves original source untouched"): return
 	for lab: Variant in labs:
 		if is_instance_valid(lab): lab.free()
 	TerrainArmy.release_contact_source()
 	finished = true
-	print("SHARED_STEP_CROWD_OPTIONAL_NOT_PORTED fire=unresolved_native_parity death=not_ported; see CC193 report/probes")
+	print("SHARED_STEP_CROWD_OPTIONAL_NOT_PORTED death=not_ported (crowd_site Actor fix 9de0129; see CC193 report/probes)")
 	print("SITE_SHARED_STEP_REPLAY_CROWD_PASS checks=", checks, " all_other_native_bytes_exact=true numeric_tolerance=1e-6 native_game_dt=product_relative_1e-9 legacy_grid_removed=true")
 	quit(0)

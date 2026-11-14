@@ -2250,6 +2250,11 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 		var game_seconds := SiteRuntime.game_seconds(elapsed, combat_clock) * simulation_speed
 		var stage_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 		combat_clock = maxf(0.0, combat_clock - elapsed)
+		# A Fire journal interval's action width is a difference of absolute clocks, one ulp short of the tactical width
+		# it ends; that residue is the same finished combat (as SiteRuntime.advance clamps combat_left), not combat the
+		# native fatigue rest gate (combat_now <= 0) must see (found 2026-11-14, CC-20261114-193: a cold cross-Site Fire
+		# step left 1.1e-16 s, so cold fatigue_rest dropped to 0 while live kept 30).
+		if combat_clock <= ACTION_TIME_EPSILON: combat_clock = 0.0
 		var crowd_host_started := 0
 		var crowd_step_us := 0
 		var crowd_events_us := 0
