@@ -4816,15 +4816,25 @@ func is_work_fatigue_pool(pool: Dictionary) -> bool:
 		if is_same(snapshot.pool, pool): return true
 	return false
 
+## True when the native World lists this person as a runner in the current shared work interval.
+func work_fatigue_runner(identity: int) -> bool:
+	for snapshot: Dictionary in _work_fatigue_snapshots.values():
+		for source: Dictionary in snapshot.runners:
+			if int(source.person_id) == identity: return true
+	return false
+
 func work_fatigue_run_requests(seconds: float, held_requests: Array) -> Dictionary:
 	var assigned := {}
 	for request: Dictionary in held_requests:
-		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = true
+		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = str(request.get("provider", "")) + ":" + str(request.get("key", ""))
 	var requests: Array[Dictionary] = []
 	for snapshot: Dictionary in _work_fatigue_snapshots.values():
 		for source: Dictionary in snapshot.runners:
 			var identity := int(source.person_id)
-			if assigned.has(identity): return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "原 RUN 人物不能同段再列工作／授課")
+			if assigned.has(identity):
+				var refused := SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "原 RUN 人物不能同段再列工作／授課")
+				refused.merge({"person_id": identity, "held_request": assigned[identity]})
+				return refused
 			var participant := work_fatigue_participant(identity, false, PersonFatigue.RUN_RATE)
 			if participant.is_empty(): return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
 			requests.append({"provider": "native_run", "key": str(identity), "participants": [participant], "remaining": seconds,
@@ -5174,18 +5184,20 @@ func _work_fatigue_point_run_ref_requests(refs: PackedInt64Array, seconds: float
 	if refs.size() % 3 != 0 or not is_finite(seconds) or seconds <= 0.0: return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
 	var assigned := {}
 	for request: Dictionary in held_requests:
-		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = true
+		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = str(request.get("provider", "")) + ":" + str(request.get("key", ""))
 	var seen := {}
 	var requests: Array[Dictionary] = []
 	for offset: int in range(0, refs.size(), 3):
 		var formation: int = int(refs[offset])
 		var unit: int = int(refs[offset + 1])
 		var identity: int = int(refs[offset + 2])
-		if seen.has(identity): return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY")
+		if seen.has(identity): return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "native run refs repeat person %d" % identity)
 		seen[identity] = true
 		if assigned.has(identity):
 			if upper: continue # Bound excludes existing held activity; never new permission.
-			return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "同原人不能既RUN又本段工作")
+			var refused := SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "同原人不能既RUN又本段工作")
+			refused.merge({"person_id": identity, "held_request": assigned[identity], "upper": upper})
+			return refused
 		var owner_ref: Variant = person_owner(identity)
 		if not owner_ref is CrowdPersonOwner or owner_ref.formation_index != formation or owner_ref.index_for_identity(identity) != unit:
 			return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")

@@ -44,7 +44,8 @@ func _write_result() -> void:
 		file.close()
 
 func _run() -> void:
-	create_timer(600.0 if not fixture.is_empty() or suite == "normal" else 180.0).timeout.connect(func() -> void:
+	# 11/15: the 5,000-person B/D fixtures run about 1-2 s per melee step (outer 1860 s); the normal suite keeps 600 s.
+	create_timer(1800.0 if not fixture.is_empty() else (600.0 if suite == "normal" else 180.0)).timeout.connect(func() -> void:
 		failed = true
 		_write_result()
 		printerr("GATE FAIL: script deadline")
@@ -508,7 +509,13 @@ func _large_fixture() -> void:
 		for identity: int in lab.site_controller._pending_deaths:
 			if not pending_since.has(identity): pending_since[identity] = elapsed
 			if elapsed - float(pending_since[identity]) > float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"]) + 1.0:
-				_check(false, "new death settles within down pose plus one action second", {"person_id": identity, "pending_seconds": elapsed - float(pending_since[identity])})
+				var stuck: Dictionary = lab.site_controller.person_actions._person(identity)
+				_check(false, "new death settles within down pose plus one action second", {"person_id": identity, "pending_seconds": elapsed - float(pending_since[identity]),
+					"timer": lab.site_controller._pending_deaths[identity], "pending_capture": site.has_pending_capture(identity),
+					"hp": stuck.get("hp"), "moving": stuck.get("moving"), "cell": stuck.get("cell"),
+					"loot_settled": lab.site_controller.person_actions._body_get(stuck, "loot_settled") if not stuck.is_empty() else null,
+					"native": site.soldier_state(int(site.crowd.soldier_index(identity))) if site.contains_person(identity) else {},
+					"last_refused_step": lab.get_meta(&"last_refused_result", {})})
 				return
 		for identity: int in pending_since.keys():
 			if not lab.site_controller._pending_deaths.has(identity): pending_since.erase(identity)

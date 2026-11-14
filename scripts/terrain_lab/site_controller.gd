@@ -11867,6 +11867,10 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 	for identity: int in guards:
 		var person := person_actions._person(identity)
 		if not person_actions._ready(person, true) or person_actions.is_busy(identity): continue
+		# A crowd guard the native World lists as a runner in this interval pays its RUN effort there, not guard effort as
+		# well; both together were refused as DUPLICATE_NATIVE_ACTIVITY on every step, which stopped the Site clock
+		# (crowd_c2_c3 D, 2026-11-15).
+		if _crowd_active() and lab.crowd_site.work_fatigue_runner(identity): continue
 		var request := _shared_person_request("guard", str(identity), [person], seconds, seconds, "raw")
 		if not request.is_empty(): requests.append(request)
 	return requests
