@@ -733,6 +733,11 @@ func incoming_geometry(index: int) -> Dictionary:
 		for polygon: PackedVector2Array in shifted: points.append_array(polygon)
 		return {"body": shifted, "shield": TerrainArmy.CombatGeometry.shifted(shields, inputs.shift),
 			"parry": TerrainArmy.CombatGeometry.shifted(parry, inputs.shift), "bounds": TerrainArmy.CombatGeometry.polygon_bounds(points)}
+	return source_contact_geometry(inputs)
+
+## Exact incoming geometry of one source-sampled (non-Actor) contact input set. Fire motion capture keeps a body's
+## start-of-step inputs and samples them only when an arrow's broad phase reaches that body; the inputs alone fix the pose.
+func source_contact_geometry(inputs: Dictionary) -> Dictionary:
 	var sample: Array = inputs.sample
 	var pose: Dictionary = inputs.source.sample(sample[0], sample[1], sample[2], Vector2.ZERO, 0.0, inputs.appearance, false)
 	if pose.is_empty():

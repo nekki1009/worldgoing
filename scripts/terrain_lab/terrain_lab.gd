@@ -2262,12 +2262,14 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			site_controller.person_actions.advance_fire_jobs(fire_action_begin, completed_fire_end, game_seconds)
 			site_controller.person_actions.advance_housing_jobs(elapsed)
 			site_controller.person_actions.advance_structure_attacks(elapsed)
+		stage_started = _combat_profile_stage("person_fire_housing_structure_jobs", stage_started)
 		if crowd_site != null and crowd_site.active:
 			crowd_host_started = Time.get_ticks_usec()
 			if not bool(_native_begin_shared_window_prepared.get("published", false)):
 				site_controller.latch_original_step_fault(SiteRuntime.fail("CLOCK_NOT_READY", "原Native共同區間未接受；不走legacy charge"))
 				return
 			_capture_fire_motion()
+			stage_started = _combat_profile_stage("crowd_capture_fire_motion", stage_started)
 			var crowd_step_started := Time.get_ticks_usec()
 			var prior_step_error: Dictionary = crowd_site.last_event_error
 			if not crowd_site.step(elapsed, game_seconds, combat_clock):
@@ -2279,13 +2281,17 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 				return
 			crowd_step_us = Time.get_ticks_usec() - crowd_step_started
 			crowd_events_us = int(crowd_site.event_cost_last_us)
+			stage_started = _combat_profile_stage("crowd_site_step", stage_started)
 			for actor: TerrainTestCharacter in combat_actors:
 				if not is_instance_valid(actor) or crowd_site.contains_person(actor.person_id): continue
 				if actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id(): actor.advance_navigation()
 				actor.advance_combat(elapsed, true, game_seconds)
+			stage_started = _combat_profile_stage("crowd_host_actors", stage_started)
 			siege_begin_contact_batch()
 			_advance_siege(elapsed)
+			stage_started = _combat_profile_stage("crowd_siege", stage_started)
 			if crowd_site.fire_host_active(): _advance_ranged(elapsed)
+			stage_started = _combat_profile_stage("crowd_fire_host_ranged", stage_started)
 			# Ships stay GD-owned under the crowd (G1 S2): the hulls advance on this same tick, after the native step (the
 			# site_ship_crowd_test tick order). Without this a live crowd Site never moved a ship (found 2026-11-08). The ship
 			# jobs advance after this tick's native sustain point (below): a boarding job's supply check reads the team's
@@ -2364,28 +2370,37 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			stage_started = _combat_profile_stage("resolve", stage_started)
 		if (crowd_site == null or not crowd_site.active or crowd_site.fire_host_active()) \
 			and not _settle_fire_exposure(fire_action_begin, completed_fire_end): return
+		var life_stage := _combat_profile_stage("life_fire_exposure", stage_started) # Optional counters only.
 		if crowd_site != null and crowd_site.active:
 			if not _finish_native_checked_body_prefixes(fire_action_begin, completed_fire_end, game_seconds): return
 			if site_controller != null:
 				site_controller.person_actions.advance_ship_jobs(elapsed)
 				site_controller.vehicles.sync_ship_decks()
+		life_stage = _combat_profile_stage("life_body_prefixes", life_stage)
 		if site_controller != null and not _region_deferring_endpoint():
 			for result: Dictionary in site_controller.person_actions.settle_after_contacts():
 				site_controller.collect_ground_boundary_result(result)
 				site_controller.show_result(result)
+		life_stage = _combat_profile_stage("life_settle_after_contacts", life_stage)
 		if not _finish_fire_boundary(fire_action_begin, completed_fire_end): return
+		life_stage = _combat_profile_stage("life_fire_boundary", life_stage)
 		siege_flush_contact_batch()
 		if site_controller != null:
 			if crowd_site != null and crowd_site.active: crowd_site.settle_external_contacts()
+			life_stage = _combat_profile_stage("life_external_contacts", life_stage)
 			if _region_deferring_endpoint(): site_controller.advance_person_death_timers(elapsed)
 			else: site_controller.settle_person_deaths(elapsed)
+			life_stage = _combat_profile_stage("life_person_deaths", life_stage)
 			if not _region_deferring_endpoint(): site_controller.settle_supply_deliveries()
 			var capture_done: Dictionary = SiteRuntime.ok() if _region_deferring_endpoint() else site_controller.settle_settlement_endpoint()
 			if not capture_done.ok: site_controller.latch_original_step_fault(capture_done)
 			SiteRuntime.advance_gate_operations(terrain, elapsed, site_controller._building_person_query, site_controller.reserves_cell)
+		life_stage = _combat_profile_stage("life_supply_settlement_gates", life_stage)
 		if not _region_deferring_endpoint():
 			for team: TerrainArmy in combat_armies: team.settle_combat_command()
+			life_stage = _combat_profile_stage("life_team_commands", life_stage)
 			if site_controller != null: site_controller.check_family_death()
+			life_stage = _combat_profile_stage("life_family_death", life_stage)
 		if crowd_host_started > 0:
 			crowd_host_cost_last_us = maxi(0, Time.get_ticks_usec() - crowd_host_started - crowd_step_us + crowd_events_us)
 			crowd_host_cost_count += 1
@@ -6150,6 +6165,9 @@ var _fire_advancing := false
 var fire_scheduler_result: Dictionary = {} # Last finite admission window; observable without a second queue.
 const FIRE_RELEASE_WINDOW_SECONDS := 0.25
 var _fire_motion: Dictionary = {}
+# The established conservative body broad phase (TerrainArmySourceBounds.FALLBACK): a deferred crowd body's exact pose is
+# sampled only inside it. A sampled body reaching farther latches FIRE_BODY_REACH instead of a narrower guess.
+const FIRE_DEFERRED_BODY_REACH := 256.0
 var _fire_motion_delta := 0.0
 var _fire_body_buckets: Dictionary = {}
 var _fire_static_buckets: Dictionary = {}
@@ -6844,6 +6862,20 @@ func _fire_motion_ground(person: Dictionary, fraction: float) -> Vector2:
 		weight = TerrainTestCharacter.riding_weight(progress, float(motion.start_speed), float(motion.end_speed), float(motion.duration), (motion.from as Vector2).distance_to(motion.to) / TerrainRenderer.CELL_PIXELS)
 	return (motion.from as Vector2).lerp(motion.to, weight)
 
+func _fire_person_geometry(person: Dictionary) -> Dictionary:
+	if person.has("geometry"): return person.geometry
+	var geometry: Dictionary = person.owner.source_contact_geometry(person.contact_inputs)
+	var anchor: Vector2 = person.anchor
+	for kind: String in ["body", "shield"]:
+		for polygon: PackedVector2Array in geometry[kind]:
+			for vertex: Vector2 in polygon:
+				if vertex.distance_to(anchor) > FIRE_DEFERRED_BODY_REACH:
+					_latch_fire_boundary_error(SiteRuntime.fail("FIRE_BODY_REACH", "原身體形體超出 256 像素延後粗篩；不以較小範圍猜測命中"))
+					person["geometry"] = {"body": [], "shield": [], "parry": [], "bounds": Rect2()}
+					return person.geometry
+	person["geometry"] = geometry
+	return geometry
+
 func _capture_fire_motion() -> void:
 	_fire_motion.clear()
 	_fire_body_buckets.clear()
@@ -6851,6 +6883,20 @@ func _capture_fire_motion() -> void:
 	_capture_fire_exposure_candidates()
 	if fire_projectiles.is_empty(): return
 	for person: Dictionary in _siege_people():
+		if person.owner is CrowdPersonOwner and int(person.unit) >= 0:
+			# A crowd body's exact pose sample is most of a large battle's step (2026-11-14: 3.4 s of 3.5 s per step with
+			# 5,000 people and arrows in flight). Keep its start-of-step inputs instead; the pose is sampled only when an
+			# arrow's broad phase reaches it, inside the established 256-pixel body broad phase (SourceBounds.FALLBACK).
+			var inputs: Dictionary = person.owner._siege_contact_inputs(int(person.unit))
+			if inputs.is_empty(): continue
+			if inputs.has("source") and not inputs.has("actor"):
+				person["contact_inputs"] = inputs
+				person["anchor"] = person.ground
+				person["radius"] = FIRE_DEFERRED_BODY_REACH
+				person["motion"] = _fire_owner_motion(person)
+				person["exposure"] = _fire_motion.has(int(person.id))
+				_fire_motion[int(person.id)] = person
+				continue
 		var geometry: Dictionary = person.owner.incoming_geometry(int(person.unit)) if int(person.unit) >= 0 else person.owner.incoming_geometry(true)
 		var radius := 0.0
 		# Army incoming geometry uses its original navigation origin; the Actor's
@@ -7001,7 +7047,7 @@ func _fire_first_contact(flight: Dictionary, from: Vector3, to: Vector3, interva
 			var prepared := FatigueGeometry.prepare_sweeps(previous, current)
 			for kind: String in ["shield", "body"]:
 				var shapes: Array[PackedVector2Array] = []
-				shapes.assign(person.geometry[kind])
+				shapes.assign(_fire_person_geometry(person)[kind])
 				var hit := FatigueGeometry.contact(previous, current, shapes, prepared)
 				if hit.is_empty(): continue
 				var fraction := lerpf(span.x, span.y, float(hit.fraction))
