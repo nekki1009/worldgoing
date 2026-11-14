@@ -1,4 +1,4 @@
-extends "res://scripts/tests/site_shared_step_replay_test.gd"
+extends "res://scripts/tests/site_shared_step_replay_base.gd"
 ## Independent scope: an exact saved real NPC, not the empty-ground test.
 var npc_output: String = ""
 

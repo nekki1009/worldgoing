@@ -1,4 +1,4 @@
-extends "res://scripts/tests/site_shared_step_replay_test.gd"
+extends "res://scripts/tests/site_shared_step_replay_base.gd"
 ## Synthetic refusal at existing original owners; no Native admission claim.
 ## Root installs only after the guarded original Lab patch and runs the verifier.
 

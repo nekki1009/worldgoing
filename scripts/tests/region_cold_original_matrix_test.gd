@@ -1,4 +1,4 @@
-extends "res://scripts/tests/site_shared_step_replay_test.gd"
+extends "res://scripts/tests/site_shared_step_replay_base.gd"
 ## R2 S01/S02 calibration. Every consumer is the actual original PackedScene.
 ## No fake original-step callback, progress bool, clock or saved people mirror.
 const R2_TARGETS := [7200.0, 86400.0, 604800.0, 2592000.0]
