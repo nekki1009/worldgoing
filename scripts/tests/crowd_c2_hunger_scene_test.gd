@@ -215,7 +215,9 @@ func _run() -> void:
 	var death_stats_before: PackedFloat64Array = site.crowd.stats()
 	started_game = _time()
 	_step()
-	if not _check(int(guard_entry.life_checkpoint[str(captive_id)]) == 1 and float(cold_captive.hp) > HUNGER_DEATH_HP and float(cold_captive.ko) == 0.0, "real crowd sustain checkpoint reads foreign native low HP and KO through original cold row", {"checkpoint": guard_entry.get("life_checkpoint", {}), "cold_hp": cold_captive.hp, "cold_ko": cold_captive.ko, "native": _hot(captive_id)}): return
+	var stale_entry := guard_entry
+	guard_entry = lab.terrain.site.team_supply[str(guard_owner.team_id)] # The step may rebuild the supply entry; read the live one.
+	if not _check(int(guard_entry.life_checkpoint[str(captive_id)]) == 1 and float(cold_captive.hp) > HUNGER_DEATH_HP and float(cold_captive.ko) == 0.0, "real crowd sustain checkpoint reads foreign native low HP and KO through original cold row", {"captive": captive_id, "entry_rebuilt": not is_same(stale_entry, guard_entry), "checkpoint": guard_entry.get("life_checkpoint", {}), "cold_hp": cold_captive.hp, "cold_ko": cold_captive.ko, "native": _hot(captive_id)}): return
 	for entry: Dictionary in cases:
 		var hp := float(_hot(int(entry.person)).hp)
 		if not _check(hp > 0.0 and hp < HUNGER_DEATH_HP and not controller._pending_deaths.has(int(entry.person)), "first common step crosses 48 hours with injury before death", {"case": entry.kind, "hp": hp, "game_seconds": _time() - started_game}): return
@@ -230,6 +232,7 @@ func _run() -> void:
 		if not _check(person.holder.item_ids == entry.item_ids and person.cargo == entry.cargo and deaths[0].item_ids == entry.item_ids, "down-pose delay keeps original items at the original person", entry.kind): return
 		if entry.kind == "captive":
 			if not _check(int(deaths[0].other) == guard_id and bool(deaths[0].relation_present) and lab.terrain.site.captivity.has(str(identity)) and not bool(_hot(identity).captive), "captive death clears native flag while original relation awaits remains settlement"): return
+	guard_entry = lab.terrain.site.team_supply[str(guard_owner.team_id)]
 	if not _check(int(guard_entry.life_checkpoint[str(captive_id)]) == 2 and float(cold_captive.hp) > HUNGER_DEATH_HP, "real pending-HP death checkpoint overrides stale foreign cold HP"): return
 	var down_seconds := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
 	for tick in range(ceili((down_seconds + 0.5) / DT)):

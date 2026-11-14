@@ -14064,7 +14064,9 @@ func publish_native_sustain_point(checked: Dictionary) -> void:
 		for identity: int in held.members:
 			if held.kind != "team": break
 			var hp: float = lab.crowd_site.work_fatigue_forecast_hp(identity) if lab.crowd_site.contains_person(identity) else float(held.members[identity].hp)
-			var ko: float = float(held.owner.combat_hot_get(held.owner.index_for_identity(identity), &"ko", 0.0)) if lab.crowd_site.contains_person(identity) else float(held.members[identity].ko)
+			# A fed foreign captive belongs to its own native owner, not the feeding team's.
+			var life_owner: RefCounted = lab.crowd_site.person_owner(identity) if lab.crowd_site.contains_person(identity) else null
+			var ko: float = float(life_owner.combat_hot_get(life_owner.index_for_identity(identity), &"ko", 0.0)) if life_owner != null else float(held.members[identity].ko)
 			held.entry.life_checkpoint[str(identity)] = 2 if hp <= 0.0 else 1 if ko > 0.0 else 0
 	checked.prepared.published = true
 
@@ -14219,6 +14221,11 @@ func _native_sustain_point_projection(held: Dictionary, payments: Array) -> Dict
 		for identity: int in outcome.damage:
 			damage[identity] = float(damage.get(identity, 0.0)) + float(outcome.damage[identity])
 		left = maxf(0.0, left - seconds)
+	# Sustain zeroes a remainder below its EPS but reports only the interval's damage. As in the GD paths, a person it
+	# zeroed is charged the whole starting HP; publishing the partial damage left a sub-EPS native HP that never died
+	# and pinned every following shared step to that residue's own hunger boundary.
+	for identity: int in damage:
+		if pending_hp.has(identity) and float(pending_hp[identity]) == 0.0: damage[identity] = float(reader.call(identity, &"hp"))
 	state["morale"] = float(held.state_values.morale)
 	state["routed"] = bool(held.state_values.routed)
 	state["regroup_seconds"] = float(held.state_values.regroup_seconds)

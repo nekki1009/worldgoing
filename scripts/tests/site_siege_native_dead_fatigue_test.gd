@@ -200,14 +200,24 @@ func _persistence_chain(context: Dictionary) -> bool:
 	if not _check(gd_saved.ok, "returned original GD owners save through the same full Store", gd_saved): return false
 	var gd_loaded: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
 	after = _canonical()
-	if not _check(gd_loaded.ok and not lab.crowd_site.active and _same_gameplay(before, after),
-		"true GD reload preserves complete canonical fields including dead personal fatigue", {"load": gd_loaded.get("code", ""), "difference": _first_gameplay_difference(before, after)}): return false
+	# Grid retirement stage 1 (Nekki 11/02): crowd is the default, so the reload of the cleared Site comes back on the crowd.
+	if not _check(gd_loaded.ok and lab.crowd_site.active and _same_gameplay(before, after),
+		"reload after the clear returns on the crowd and preserves complete canonical fields including dead personal fatigue",
+		{"load": gd_loaded.get("code", ""), "active": lab.crowd_site.active, "difference": _first_gameplay_difference(before, after)}): return false
 	if not _assert_dead_fields(true, "ordinary Store reload retains both original corpse values"): return false
 	if not _check(_vehicle(context).crew_slots.size() == int(context.count), "same original live crew occupation survives both stores", _vehicle(context).crew_slots): return false
 	_completed_phases.append("gd_reload")
 	return true
 
 func _d5_reentry() -> bool:
+	if lab.crowd_site.active:
+		# Crowd default (Nekki 11/02): the reload above already re-imported every corpse into the crowd, and a public
+		# deploy into an active crowd is refused, so the reentry checks run on that import.
+		if not _assert_dead_fields(true, "crowd-default reload import of HP0 corpses still preserves personal fields"): return false
+		if not _check(lab.crowd_site.crowd.peek_events().is_empty() and lab.crowd_site.crowd.event_fatigue().is_empty(),
+			"crowd-default reload import does not manufacture a second death to reconstruct old corpse fields"): return false
+		_completed_phases.append("d5_reentry")
+		return true
 	var before: Dictionary = _canonical()
 	var aliases: Dictionary = _current_aliases()
 	if failed: return false

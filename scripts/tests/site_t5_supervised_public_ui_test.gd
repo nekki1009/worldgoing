@@ -15,9 +15,11 @@ func _run() -> void:
 	create_timer(120.0).timeout.connect(func() -> void: quit(1))
 	var data = _building_fixture()
 	var lab = _building_lab(data)
-	lab.restore_only = true
+	# Learn and capture on the live Lab: a cold (restore_only) Lab runs NPC technology work at half rate
+	# (_technology_work_multiplier), which would leave each 120 s F07 trial half done.
 	_learn_original_npc(lab)
 	_capture_original(lab)
+	lab.restore_only = true
 	var controller = lab.site_controller
 	var actions = controller.person_actions
 	# T5 is a true original custody operation; it must remain visible without
