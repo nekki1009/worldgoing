@@ -9018,6 +9018,21 @@ func _open_settlement(host: Window = null) -> void:
 ## Position page (OFFICE_POSITIONS_AND_DUTIES_PLAN 8). Every org the controlled
 ## v2 plan 3.4 募兵 sources with a real transfer path: this team's retired rows
 ## and free same-faction original Actors (join_player). Others are not offered.
+## The team duty-AI switch. A crowd team's roster is its truth (project_team_holder refreshes the holder's offices from it
+## before every crowd-side team call), so the switch is written to the roster too; on the holder alone it was lost at the
+## next projection and never saved (found 2026-11-13: n02 read the holder's live value).
+func _set_team_duty_ai(team: TerrainArmy, requester_id: int, enabled: bool) -> Dictionary:
+	if not is_instance_valid(team): return Runtime.fail("NO_TARGET")
+	var result: Dictionary = team.set_duty_ai_enabled(requester_id, enabled)
+	if not result.ok: return result
+	var crowd: Variant = lab.get("crowd_site")
+	if crowd != null and crowd.active and crowd.team_holder(int(team.team_id)) == team:
+		var roster: Dictionary = crowd.native_roster(int(team.team_id))
+		if not roster.is_empty():
+			if not roster.get("offices") is Dictionary or roster.offices.is_empty(): roster["offices"] = team.offices.duplicate(true)
+			else: roster.offices["duty_ai"] = enabled
+	return result
+
 func _recruit_candidates(team: TerrainArmy) -> Array[int]:
 	if not is_instance_valid(team): return [] as Array[int]
 	var result := team.recruit_candidates()
@@ -9095,7 +9110,7 @@ func _office_orgs() -> Array[Dictionary]:
 			"head": func() -> int: return team.combat_identity(team.formal_commander) if team.formal_commander >= 0 else -1,
 			"resolve": func(duty_id: String) -> Dictionary: return team.duty_resolve(duty_id),
 			"apply": func(revision: int, ops: Array) -> Dictionary: return team.apply_office_plan(controlled, revision, ops),
-			"ai": func(enabled: bool) -> Dictionary: return team.set_duty_ai_enabled(controlled, enabled),
+			"ai": func(enabled: bool) -> Dictionary: return _set_team_duty_ai(team, controlled, enabled),
 			"note": "武官職位與負責訓練的職位須由具軍官資格者擔任；其他文官職位任何隊員皆可。擔任任一職位（文官或武官）且具軍官資格者都能帶兵：隊長昏迷或陣亡時可代理、接任，並計入指揮能力。隊長由原接任規則產生，此處只能改「隊長」名稱。需停止、脫戰。"})
 	var nations: Dictionary = lab.terrain.site.get("equipment_nations", {})
 	var keys := nations.keys()
