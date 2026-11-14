@@ -2063,6 +2063,20 @@ func _next_fire_replay_interval() -> Dictionary:
 			"segment_index": _fire_replay_segment_index, "segment_offset": offset}
 	return {}
 
+## The slot-less cold replay a retained adapter owner continues: a crowd cold owner's last native point stays pending
+## until its endpoint is consumed (replay_site_to leaves that to its caller, as advance_region_cold_actual_fixed does).
+## Found 2026-11-14 (CC-20261114-193): the adapter's retry met REGION_EFFECTS_PENDING and freed its retained owner.
+func _slotless_cold_replay(target_game_seconds: float, budget_usec: int = 0) -> Dictionary:
+	if not _region_point_pending.is_empty():
+		var consumed: Dictionary = consume_region_point(false)
+		if not consumed.ok: return consumed
+	var result: Dictionary = replay_site_to(target_game_seconds, budget_usec)
+	if not result.ok and str(result.get("code", "")) == "REGION_REPLAY_PENDING" and not _region_point_pending.is_empty():
+		var finished: Dictionary = consume_region_point(false)
+		if not finished.ok: return finished
+		result = replay_site_to(target_game_seconds, budget_usec)
+	return result
+
 func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps: int = 0) -> Dictionary:
 	if not restore_only or terrain == null or not is_inside_tree():
 		return SiteRuntime.fail("INVALID_MODE", "補算只接受已還原的原 TerrainLab")
@@ -6061,7 +6075,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	var slice_usec := COLD_REPLAY_CONTINUE_BUDGET_USEC if continuing else ACTION_FRAME_BUDGET_USEC
 	var advanced: Dictionary = _cold_replay_lab.advance_region_cold_actual_fixed(data, target_seconds, slice_usec) \
 		if site_controller != null and site_controller.region_slot != null \
-		else _cold_replay_lab.replay_site_to(target_seconds, slice_usec)
+		else _cold_replay_lab._slotless_cold_replay(target_seconds, slice_usec)
 	var cold_receipt := {"method": str(advanced.get("method", "original_shared_exact")),
 		"prefix_steps": int(advanced.get("prefix_steps", 0)), "exact_steps": int(advanced.get("exact_steps", advanced.get("steps", 0))),
 		"processing_usec": int(advanced.get("processing_usec", 0)), "source_sha256": signature, "target": target_seconds}

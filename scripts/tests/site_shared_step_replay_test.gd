@@ -173,7 +173,18 @@ func _capture(lab: TerrainLab) -> Dictionary:
 	if not _require(captured.ok, "original native checkpoint capture", captured): return {}
 	lab.site_controller._capture_positions()
 	lab.site_controller._apply_region_crowd_capture(captured)
-	return lab.terrain.site.duplicate(true)
+	# The Lab's current Fire transport and owners, not the copy the last save left in the Site dictionary (as the GD base
+	# _capture does; found 2026-11-14: the stale copy hid that both sides' real action cursors were never compared).
+	var state: Dictionary = lab.terrain.site.duplicate(true)
+	var transport: Dictionary = lab.capture_fire_transport()
+	if not _require(transport.ok, "original Fire transport capture", transport): return {}
+	if transport.state.is_empty(): state.erase("fire_transport")
+	else: state.fire_transport = transport.state
+	var owners: Dictionary = lab.capture_fire_owner_state()
+	if not _require(owners.ok, "original Fire owner capture", owners): return {}
+	if owners.state.is_empty(): state.erase("fire_owners")
+	else: state.fire_owners = owners.state
+	return state
 
 func _checkpoint(lab: TerrainLab, path: String) -> bool:
 	_capture(lab)
@@ -348,6 +359,42 @@ func _mixed_clock(source: TerrainData) -> bool:
 	print("SHARED_STEP_CROWD_MIXED_CLOCK_OK")
 	return true
 
+## One retained slot-less cold owner (advance_cold_site) accepts retries of the SAME untouched input and fixed target and
+## publishes one completed detached result equal to the live run (2026-11-14: the adapter now consumes its native
+## endpoints, terrain_lab._slotless_cold_replay). The region_snapshot envelope (mode/token/context) is the published
+## result's own checkpoint metadata, not simulated state, and is not compared.
+func _retained_adapter(source: TerrainData, target: float, expected: Dictionary) -> bool:
+	var host: TerrainLab = _scene(true)
+	if failed: return false
+	var result: Dictionary = host.advance_cold_site(source, target)
+	var retried := false
+	for attempt: int in 10000:
+		if result.ok: break
+		if not _require(str(result.get("code", "")) == "PENDING", "original retained cold adapter retry", result): return false
+		var retained: TerrainLab = host._cold_replay_lab
+		if not _require(is_instance_valid(retained), "same retained original cold owner exists"): return false
+		if not retried:
+			var replaced: Dictionary = host.advance_cold_site(source, target + 1.0)
+			if not _require(not replaced.ok and replaced.code == "BUSY" and is_same(host._cold_replay_lab, retained), "adapter also pins source and target", replaced): return false
+			retried = true
+		if not _require(Time.get_ticks_msec() <= deadline, "bounded original adapter retry deadline"): return false
+		result = host.advance_cold_site(source, target)
+	if not _require(result.ok and retried and result.data != source, "retained cold adapter publishes one completed detached result", result): return false
+	var restored: TerrainLab = _restore(result.data)
+	if failed: return false
+	var actual: Dictionary = _capture(restored)
+	var reference: Dictionary = expected.duplicate(true)
+	# The loader rebuilds water links/status and notices from the restored state (derived caches, as the GD base's
+	# _persistent_original_projection treats them); they are not saved simulation state.
+	for derived: String in ["region_snapshot", "water_links", "water_status", "notices"]:
+		actual.erase(derived)
+		reference.erase(derived)
+	if not _same_original(actual, reference, "retained_adapter"): return false
+	_close(restored)
+	_close(host)
+	print("SHARED_STEP_CROWD_RETAINED_ADAPTER_OK")
+	return true
+
 func _run() -> void:
 	started = true
 	if not _require(OS.get_cmdline_user_args().has("--crowd") and OS.get_cmdline_user_args().has("--crowd-test"), "explicit isolated crowd startup"): return
@@ -421,10 +468,12 @@ func _run() -> void:
 	for original: TerrainLab in [live, cold, revisit, blocked]: _close(original)
 	if not _mixed_clock(source): return
 	if not _require(_source_bytes(source) == source_before, "mixed-clock branch also leaves original source untouched"): return
+	if not _retained_adapter(source, target, expected): return
+	if not _require(_source_bytes(source) == source_before, "retained adapter leaves original source untouched"): return
 	for lab: Variant in labs:
 		if is_instance_valid(lab): lab.free()
 	TerrainArmy.release_contact_source()
 	finished = true
-	print("SHARED_STEP_CROWD_OPTIONAL_NOT_PORTED fire=unresolved_native_parity death=actor_property_script_error adapter=REGION_EFFECTS_PENDING; see CC193 report/probes")
+	print("SHARED_STEP_CROWD_OPTIONAL_NOT_PORTED fire=unresolved_native_parity death=not_ported; see CC193 report/probes")
 	print("SITE_SHARED_STEP_REPLAY_CROWD_PASS checks=", checks, " all_other_native_bytes_exact=true numeric_tolerance=1e-6 native_game_dt=product_relative_1e-9 legacy_grid_removed=true")
 	quit(0)
