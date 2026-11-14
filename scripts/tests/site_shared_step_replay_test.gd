@@ -401,6 +401,44 @@ func _cross_site_clock(source: TerrainData) -> bool:
 	print("SHARED_STEP_CROWD_CROSS_SITE_CLOCK_OK")
 	return true
 
+## Real death: live settles the original remains then pauses for the family choice; the same death in a cold replay keeps
+## its remains and continues quietly (2026-11-14: crowd_site Actor loot_settled fix 9de0129).
+## On the crowd the controlled person's body is native: its hp is the native soldier's (the Lab's presenter Actor is not
+## the authority after the death settles).
+func _dead(lab: TerrainLab, identity: int) -> bool:
+	var index := int(lab.crowd_site.crowd.soldier_index(identity))
+	return index < 0 or float(lab.crowd_site.soldier_state(index).get("hp", 0.0)) <= 0.0
+
+func _has_remains(lab: TerrainLab, identity: int) -> bool:
+	for holder: Dictionary in lab.terrain.site.ground_loot.values():
+		if str(holder.get("kind", "")) == "remains" and int(holder.get("original_owner", -1)) == identity: return true
+	return false
+
+func _deaths(source: TerrainData) -> bool:
+	var live: TerrainLab = _restore(source)
+	if failed: return false
+	var identity: int = live.controlled_person_id()
+	live.restore_only = false
+	live.movement_input_enabled = false
+	live.site_controller._apply_supply_damage(identity, 1000.0)
+	for tick: int in 600:
+		if paused: break
+		if not _live_frame(live): return false
+	if not _require(_dead(live, identity) and _has_remains(live, identity) and paused and bool(live.terrain.site.paused), "real Native controlled death settles original remains before live family pause", {"native_dead": _dead(live, identity), "remains": _has_remains(live, identity), "tree_paused": paused, "site_paused": live.terrain.site.paused, "loot_settled": live.character.loot_settled, "remains_id": live.character.remains_id, "ground_loot": live.terrain.site.ground_loot.keys()}): return false
+	_close(live)
+	paused = false # Test SceneTree cleanup after the original paused owner is closed.
+	var cold: TerrainLab = _restore(source)
+	if failed: return false
+	var target: float = SiteRuntime.now(cold.terrain) * 60.0 + 600.0
+	cold.site_controller._apply_supply_damage(identity, 1000.0)
+	var replayed: Dictionary = _replay(cold, target)
+	if failed or not _require(replayed.ok, "quiet original cold death replay", replayed): return false
+	if not _require(_dead(cold, identity) and _has_remains(cold, identity) and not paused and not bool(cold.terrain.site.paused) and not is_instance_valid(cold.site_controller._family_dialog), "cold original remains continue without global UI pause"): return false
+	_close(cold)
+	print("SHARED_STEP_CROWD_DEATH_REMAINS_OK")
+	return true
+
+
 ## One retained slot-less cold owner (advance_cold_site) accepts retries of the SAME untouched input and fixed target and
 ## publishes one completed detached result equal to the live run (2026-11-14: the adapter now consumes its native
 ## endpoints, terrain_lab._slotless_cold_replay). The region_snapshot envelope (mode/token/context) is the published
@@ -511,12 +549,12 @@ func _run() -> void:
 	if not _mixed_clock(source): return
 	if not _require(_source_bytes(source) == source_before, "mixed-clock branch also leaves original source untouched"): return
 	if not _cross_site_clock(source): return
+	if not _deaths(source): return
 	if not _retained_adapter(source, target, expected): return
 	if not _require(_source_bytes(source) == source_before, "retained adapter leaves original source untouched"): return
 	for lab: Variant in labs:
 		if is_instance_valid(lab): lab.free()
 	TerrainArmy.release_contact_source()
 	finished = true
-	print("SHARED_STEP_CROWD_OPTIONAL_NOT_PORTED death=not_ported (crowd_site Actor fix 9de0129; see CC193 report/probes)")
 	print("SITE_SHARED_STEP_REPLAY_CROWD_PASS checks=", checks, " all_other_native_bytes_exact=true numeric_tolerance=1e-6 native_game_dt=product_relative_1e-9 legacy_grid_removed=true")
 	quit(0)
