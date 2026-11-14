@@ -7809,11 +7809,17 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 	if TECHNOLOGY_SIEGE_BINDINGS.has(binding):
 		if not (Technology.keys(work_target, ["anchor", "facing", "team_id"]) or Technology.keys(work_target, ["anchor", "facing", "team_id", "order_id"])) or not work_target.anchor is Vector2i or not work_target.facing is Vector2i or not Technology.integer(work_target.team_id, 1): return fail("INVALID")
 		var team: Variant = actions._technology_team(person)
+		# A crowd person's original team is its native owner (team_id), not a GD Army roster row (found 2026-11-14:
+		# every P4 crowd ballista preview was refused NO_AUTHORITY here).
+		if team == null and person.get("owner") is CrowdPersonOwner: team = person.owner
 		if team == null or int(team.team_id) != int(work_target.team_id): return fail("NO_AUTHORITY", "試作者須屬本原施工隊")
 		if str(token.target_id) != "vehicle:" + str(int(data.site.get("next_vehicle", 1))): return fail("STALE_SOURCE")
 		var kind := str(TECHNOLOGY_SIEGE_BINDINGS[binding])
 		var selected := {"token": token.duplicate(true)}
-		var checked := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell, true, {}, selected)
+		# The named builder stands on its own work slot beside the footprint; a crowd body covers the cells beside it, so the
+		# builder itself never occupies its own footprint (the same exclusion as the building geometry branch above).
+		var builder_free: Callable = actions.lab.site_controller.reserves_cell.bind([int(token.person.person_id)])
+		var checked := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), builder_free, true, {}, selected)
 		if not checked.ok: return checked
 		if work_target.has("order_id"):
 			var local := token.duplicate(true)
@@ -7822,7 +7828,7 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 			if not source.ok: return source
 			if str(work_target.order_id) != str(source.operation_ref.get("order_id", "")): return fail("STALE_SOURCE")
 		if preview: return ok("可開始原器械試作", {"target_id": token.target_id, "cost": checked.cost, "work_seconds": checked.work_seconds})
-		var result := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell, false, {}, selected)
+		var result := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), builder_free, false, {}, selected)
 		if not result.ok: return result
 		var vehicle: Dictionary = data.site.vehicles[str(result.vehicle)]
 		return ok(str(result.message), {"target_id": str(token.target_id), "token": vehicle.tech_trial.duplicate(true), "resumed": false})

@@ -12716,7 +12716,10 @@ func checked_work_prefix_for_task(task: Dictionary, identity: int) -> Dictionary
 
 func prepare_shared_runtime_work_prefix(requests: Array, seconds: float) -> Dictionary:
 	if not is_finite(seconds) or seconds <= 0.0 or not _checked_runtime_work_capture.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
-	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
+	# Runtime.advance closes a minute once its phase is within 1e-8 minute of the end (phase >= 0.99999999) and drops a
+	# remainder below 1e-8 minute, so the Site clock and the shared step clock may sit up to that snap apart (found
+	# 2026-11-14: a crowd P4 cold owner's next window ran 6.4e-8 s past the snapped minute end). The same snap admits it.
+	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS + 0.00000001 * 60.0: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
 	bind_checked_runtime_work_prefix()
 	var clock := {"owner": self, "site": lab.terrain.site, "seconds": seconds, "minute": int(lab.terrain.site.minute),
 		"phase": float(lab.terrain.site.phase), "combat_left": float(lab.terrain.site.combat_left),

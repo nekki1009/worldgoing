@@ -2192,7 +2192,10 @@ func _replay_completion_tolerance() -> float:
 ## compared with its target at the fire-clock journal tolerance. This does not
 ## decide whether time is left to step: _replay_pending_residue does that.
 func _replay_clock_agreement_tolerance() -> float:
-	return maxf(0.00000001, _replay_completion_tolerance())
+	# The journal tolerance is relative as well (maxf(1e-8, t * 1e-9), RegionCheckpoint/validate_settlement): found 2026-11-14,
+	# a crowd cold owner at 50364 s finished 6.4e-8 s past a target the test had derived from the drifted Site clock.
+	var clock := absf(SiteRuntime.now(terrain) * 60.0) if terrain != null else 0.0
+	return maxf(maxf(0.00000001, clock * 0.000000001), _replay_completion_tolerance())
 
 func _replay_pending_residue(pending: float) -> float:
 	# Clipped fixed steps can leave a float residue below one ACTION_TIME_EPSILON
@@ -10732,6 +10735,14 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 		var checked := RegionCheckpoint.validate_context(snapshot.get("context"))
 		if not checked.ok: return checked
 		for field: String in RegionCheckpoint.FIELDS:
+			# The two clock fields use the checkpoint's own ulp tolerance (validate_context): the snapshot context is read back
+			# from the saved JSON while the restore receipt keeps the bind's copy (found 2026-11-14 on a crowd P4 cold owner:
+			# game_seconds 48426.99999996 differed in the last ulp and every later replay finish was refused).
+			if field in ["game_seconds", "action_seconds"] and RegionCheckpoint.time(checked.context[field]) and RegionCheckpoint.time(_region_owner_restore_receipt.get(field)):
+				var expected := float(_region_owner_restore_receipt.get(field))
+				if absf(float(checked.context[field]) - expected) > maxf(0.00000001, absf(expected) * 0.000000001):
+					return SiteRuntime.fail("STALE_REGION_CONTEXT", "%s snapshot %.12f receipt %.12f" % [field, float(checked.context[field]), expected])
+				continue
 			if checked.context[field] != _region_owner_restore_receipt.get(field): return SiteRuntime.fail("STALE_REGION_CONTEXT", field)
 		context = checked.context.duplicate(true)
 		# Source generations/revisions remain the original selected values. Only

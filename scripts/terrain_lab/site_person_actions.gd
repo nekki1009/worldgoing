@@ -483,7 +483,9 @@ func _commit_prison_release(job: Dictionary) -> Dictionary:
 ## A camp crafter rests where it works: its arrived station hold stays through a work rest (found 2026-11-13 porting P4:
 ## the released hold walked the crowd crafter back to its formation slot, so the resumed craft was refused BUSY).
 func _rests_at_station(identity: int) -> bool:
-	return str(_jobs.get(str(identity), {}).get("kind", "")) == "ranged_craft"
+	# A named physical research executor rests at its own work station too (found 2026-11-14: a crowd PA smelter executor
+	# walked to its formation slot on REST and its paid research job was dropped while away).
+	return str(_jobs.get(str(identity), {}).get("kind", "")) in ["ranged_craft", "technology_feature", "technology_vehicle"]
 
 func _release_work_hold(job: Dictionary) -> void:
 	if str(job.get("kind", "")) == "ranged_craft":
@@ -7823,7 +7825,7 @@ func publish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 		var held: Dictionary = _checked_controlled_prefixes.admitted.prepared.held[key]
 		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
 		_controlled_feature_consumed[key] = true # Also zero/REST jobs: never legacy fallback in point tail.
-		held.job.paused = str(_checked_controlled_prefixes.plan.jobs.get("person_actions", {}).get(key, {}).get("paused", ""))
+		held.job.paused = str(_checked_controlled_prefixes.plan.get("jobs", {}).get("person_actions", {}).get(key, {}).get("paused", ""))
 	_publishing_checked_controlled = false
 	prepared["published"] = true
 
@@ -8568,7 +8570,9 @@ func finish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
 		var person: Dictionary = _person(int(held.job.executor_id))
 		if person.is_empty() or bool(person.player): continue
-		var allocation: Dictionary = prepared.checked.plan.jobs.get("person_actions", {}).get(key, {})
+		# The validated admission carries this key's own allocation; a native point plan may carry no GD jobs table (found
+		# 2026-11-14 on a crowd P4 controlled lane: the finish crashed, so no paid prefix settled and REST never cleared).
+		var allocation: Dictionary = prepared.checked.admitted.get("admitted", {}).get(key, {}).get("allocation", prepared.checked.plan.get("jobs", {}).get("person_actions", {}).get(key, {}))
 		var actual: float = float(allocation.get("participant_seconds", {}).get(int(person.person_id), 0.0))
 		if actual > 0.0: _body_set(person, "work_resting", false)
 		if str(allocation.get("paused", "")) == "REST" or str(allocation.get("participant_paused", {}).get(int(person.person_id), "")) == "REST":
