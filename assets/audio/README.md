@@ -14,7 +14,7 @@ P1 另加 6 檔：地面／木／金屬投射接觸各 1、小火／大火 loop 
 
 ## 來源、授權與限制
 
-原始檔與完整來源記錄仍在 `output/audio_preview_20261008`，沒有覆寫預覽。catalog 的 sources 列出來源頁、作者、原標題、CC0 授權、取得品質、原檔 SHA-256 與選用秒數；製作修改、每檔 SHA-256、實測格式與峰值另見 `output/audio_implementation_20261008/material_receipt.json`。`licenses/` 保存 Kenney 原 License.txt，以及本批使用的 Freesound 授權頁快照。全部選用來源均按保存的 **CC0 1.0** 記錄製作。
+原始檔與完整來源記錄仍在 `output/audio_preview_20261008`，沒有覆寫預覽。catalog 的 sources 列出來源頁、作者、原標題、CC0 授權、取得品質、原檔 SHA-256 與選用秒數；製作修改、每檔 SHA-256、實測格式與峰值另見 `output/audio_implementation_20261008/material_receipt.json`。`licenses/` 保存 Kenney 原 License.txt，以及本批使用的 Freesound 授權紀錄：純文字 `freesound_<編號>.txt`，記音效名稱、作者、來源網址與 CC0。原本存的 Freesound 網頁 HTML 快照內嵌 Freesound 的公開 Mapbox 金鑰，觸發 GitHub 金鑰警告，2026-11-14 改存文字。全部選用來源均按保存的 **CC0 1.0** 記錄製作。
 
 - Kenney：[Impact Sounds](https://kenney.nl/assets/impact-sounds)、[RPG Audio](https://kenney.nl/assets/rpg-audio)，使用官方原 Ogg。步伐剪取攻擊段並排列兩次；contact 是通用金屬撞擊，沒有驗證特定武器材質。
 - 淺水步伐與熄滅聲來自 el_boss 的 [Fishing Lure Plop Water](https://freesound.org/people/el_boss/sounds/853279/)；它是釣具水花，**並非真實淺水腳步或滅火錄音**。
