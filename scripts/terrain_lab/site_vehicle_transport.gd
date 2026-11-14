@@ -1210,10 +1210,16 @@ func deploy_crowd_plans(plans: Array, first_team: int) -> Dictionary:
 		if plan.is_empty(): continue
 		var owner: Variant = lab.crowd_site.siege_team_owner(first_team + slot)
 		if owner == null: return Runtime.fail("INVALID", "群眾隊未建立，車輛未生成")
+		# plan_team numbers operators by formation position; the crowd owner keys its members by native soldier index,
+		# deployed in formation order (found 2026-11-14: every side after the first was refused INVALID).
+		var members: Array = owner.combat_units.keys()
+		members.sort()
 		for planned: Dictionary in plan:
 			var vehicle: Dictionary = planned.duplicate(true)
 			var index := int(vehicle.operator_index)
-			if index >= 0 and not owner.combat_units.has(index): return Runtime.fail("INVALID", "車輛操作人不屬本隊，未生成")
+			if index >= members.size(): index = -2 # Not a member of this side: refused below.
+			elif index >= 0: index = int(members[index])
+			if index == -2 or index >= 0 and not owner.combat_units.has(index): return Runtime.fail("INVALID", "車輛操作人不屬本隊，未生成")
 			vehicle.erase("operator_index")
 			vehicle["id"] = str(next + created.size())
 			vehicle["operator_id"] = 0
