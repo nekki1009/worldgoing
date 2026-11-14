@@ -94,7 +94,8 @@ func _same_original(actual: Variant, expected: Variant, path: String = "state") 
 			_same_original(actual[index], expected[index], path + "[%d]" % index)
 			if not _npc_ok(): return
 	else:
-		if not _npc_check(actual == expected, "%s actual=%s expected=%s" % [path, str(actual), str(expected)]): return
+		# Mismatched container types report their path instead of a script error on ==.
+		if not _npc_check(typeof(actual) == typeof(expected) and actual == expected, "%s actual=%s expected=%s" % [path, str(actual).left(300), str(expected).left(300)]): return
 
 func _capture(lab: TerrainLab) -> Dictionary:
 	var _npc_operation_1: Dictionary = lab.site_controller._capture_for_save()
@@ -137,6 +138,13 @@ func _persistent_original_projection(data: TerrainData) -> Dictionary:
 		if not _npc_check(transport.ok, str(transport)): return {}
 		if transport.state.is_empty(): projected.site.erase("fire_transport")
 		else: projected.site.fire_transport = transport.state
+	# SiteStore keeps the normalized owner maps in live Site state while a capture/JSON uses the wire arrays; it accepts
+	# both at the save/load boundary. Compare the one wire shape SiteStore itself produces.
+	var transport_state: Variant = projected.site.get("fire_transport")
+	if transport_state is Dictionary and not transport_state.is_empty():
+		var wired: Dictionary = SiteStore._validate_fire_transport_snapshot(projected, projected.site.get("fire", {}), transport_state)
+		if not _npc_check(wired.ok, "fire transport wire projection: " + str(wired).left(300)): return {}
+		projected.site.fire_transport = wired.wire
 	var capture_owners: Variant = data.get_meta(&"fire_owner_snapshot") if data.has_meta(&"fire_owner_snapshot") else null
 	if not _npc_ok(): return {}
 	if capture_owners is Callable and capture_owners.is_valid():
@@ -378,6 +386,9 @@ func _run() -> void:
 	live.movement_input_enabled = false
 	live._advance_action_time(8.0)
 	if not _npc_ok(): return
+	# This synthetic slot has no fixed geography or formal Fire journal (the same rule as site_shared_step_replay_test):
+	# the live step's Fire settlement watermark belongs to no journal, so the capture compares without it.
+	live.terrain.site.erase("fire_settlement")
 	var target: float = float(slot.control.logical_game_seconds)
 	if not _npc_ok(): return
 	var expected: Dictionary = _capture(live)
