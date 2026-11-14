@@ -1339,7 +1339,10 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 	if vehicle.is_empty() or not _available(person): return Runtime.fail("NO_TARGET")
 	var team: Variant = person.owner
 	if not _authorized(team, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
-	if is_operator(person_id) or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty() or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
+	# A crowd body standing on its arrived station hold reports moving_to == its own cell; walking is what makes it busy
+	# (the same reading as _crowd_route_reboard and the arrived-hold rule, a7a8a85).
+	var walking: bool = team.is_walking(int(person.unit)) if team is CrowdPersonOwner else team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL
+	if is_operator(person_id) or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty() or walking:
 		return Runtime.fail("BUSY", "同隊清醒原人物一次只能操作一車；先完成原動作")
 	if not can_offer_operator_team(vehicle, team): return Runtime.fail("NO_AUTHORITY", "僅未滿額同陣營後勤隊可接手停止無人的車；不能奪取敵車")
 	if str(vehicle.kind) == "wagon" and not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))): return Runtime.fail("MISSING_ASSET", "原人物資料或固定布裝騎姿未就緒，未上馬或改動原裝備")
@@ -1348,8 +1351,10 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 	if boarding and (absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position)) or not boarding and person.cell != position:
 		return Runtime.fail("UNREACHABLE", "手推車須到車後；馬車須到馬格相鄰合法格後上馬")
 	if str(vehicle.kind) == "cart" and not lab.terrain.can_step(person.cell, lab.terrain.cell_from_index(int(vehicle.cell))): return Runtime.fail("UNREACHABLE")
-	# Crowd wagon boarding needs a native walk to the horse cell, which G4 S3 does not drive yet.
-	if boarding and team is CrowdPersonOwner: return Runtime.fail("UNREACHABLE", "群眾模式的馬車上馬步行尚未接入原生車隊")
+	# Crowd wagon take-over (Nekki 2026-11-14 「要做換人上馬」): a person of the wagon's own crowd team standing on a legal cell
+	# beside the horse becomes its operator and the native convoy steers it onto the rider slot, as an N08 driver reboards
+	# (_crowd_route_reboard). All authority/team/asset checks above have already passed.
+	if boarding and team is CrowdPersonOwner: return _crowd_route_reboard(vehicle, person, person_id)
 	var old_team := int(vehicle.team_id)
 	vehicle["team_id"] = team.team_id
 	vehicle["operator_id"] = person_id
@@ -1411,10 +1416,21 @@ func _stop_operator(vehicle: Dictionary, person: Dictionary) -> Dictionary:
 		return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
 	if not person.owner is CrowdPersonOwner and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
 	if person.owner is CrowdPersonOwner:
-		# The native convoy owns its crew; releasing it returns the person to ordinary behaviour where they stand.
+		# The native convoy owns its crew; releasing it returns the person to ordinary behaviour. A wagon rider first steps
+		# off the vehicle's cells as the grid rider does (one legal step beside the horse; Nekki 2026-11-14 take-over: a
+		# rider left standing on the horse is a living body inside the parked wagon and no other person can board it).
+		var cells: Array = footprint(lab.terrain, vehicle) if str(vehicle.kind) == "wagon" else []
 		_convoy_release(vehicle)
 		vehicle["operator_id"] = 0
 		vehicle["stop_pending"] = false
+		if cells.has(person.cell):
+			var identity := int(person.owner.combat_identity(int(person.unit)))
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var off: Vector2i = person.cell + direction
+				if cells.has(off) or not lab.terrain.is_walkable(off) or not lab.terrain.can_step(person.cell, off) or lab.crowd_site.siege_people_block(off, [identity]): continue
+				if lab.crowd_site.siege_approach_step(identity, off):
+					_crowd_dismount_steps[identity] = off
+					return Runtime.ok("原人物正走下馬匹；車輛停泊，車上貨物保留")
 		return Runtime.ok("車輛停泊，車上貨物保留")
 	if str(vehicle.kind) == "wagon":
 		var previous_stop := bool(vehicle.stop_pending)
@@ -3152,7 +3168,22 @@ func _native_body_cells(vehicle: Dictionary) -> Array:
 func sync_convoy_records() -> void:
 	_sync_convoys()
 
+## Crowd riders stepping off a parked wagon: identity -> the legal cell beside it. Their one-step hold ends on arrival and
+## they return to ordinary behaviour (transient command state, not saved; a load finds them standing wherever they are).
+var _crowd_dismount_steps := {}
+
+func _finish_crowd_dismount_steps() -> void:
+	for identity: Variant in _crowd_dismount_steps.keys():
+		var person := _operator(int(identity))
+		if person.is_empty() or not person.owner is CrowdPersonOwner:
+			_crowd_dismount_steps.erase(identity)
+			continue
+		if person.cell == _crowd_dismount_steps[identity] and not person.owner.is_walking(int(person.unit)):
+			person.owner.siege_cancel_step(int(person.unit))
+			_crowd_dismount_steps.erase(identity)
+
 func _sync_convoys() -> void:
+	if not _crowd_dismount_steps.is_empty(): _finish_crowd_dismount_steps()
 	for vehicle: Dictionary in records().values():
 		if not is_convoy(vehicle): continue
 		var owner: Variant = _convoy_owner(vehicle)

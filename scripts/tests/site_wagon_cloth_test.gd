@@ -2,7 +2,7 @@ extends "res://scripts/tests/site_vehicle_route_review_test.gd"
 ## Fixed cloth is a mounted-only presentation, never an equipment transaction.
 ## Crowd port (Nekki 2026-11-14 "都照建議"): the data rules only. Two crowd sides with wagons keep their real
 ## standard gear; the fixed rider cloth frame is a pure presentation of every real kit; a failed late append rolls back;
-## Store/bind keeps every rider and item; dismount never issues, removes or recolours an item.
+## Store/bind keeps every rider and item; dismount and a different person's take-over never issue, remove or recolour an item.
 ## The retired grid Sprite rider-frame checks are not ported. Run: --crowd --crowd-test <run_id>.
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const Recipe = preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd")
@@ -142,13 +142,53 @@ func _run() -> void:
 	var site: Dictionary = loaded.data.site
 	if not _check(site.item_records == equipment_before.items and site.item_definitions == equipment_before.definitions, "Store keeps every item and definition"): return
 	if not _check(int(site.vehicles[vehicle_id].operator_id) == rider_id and site.vehicles.size() == cars.size(), "Store keeps every rider and wagon"): return
-	# Dismount is never an equipment transaction. (A different person's take-over is not ported: crowd wagon boarding by a
-	# native walk is not wired yet, assign_operator refuses it UNREACHABLE, and a placed body walks back to its slot.)
+	# Dismount is never an equipment transaction.
+	var owner: CrowdPersonOwner = transport._convoy_owner(wagon)
+	var horse: Vector2i = transport.operator_cell(wagon)
 	var released: Dictionary = transport.unassign_operator(vehicle_id, rider_id, true)
 	if not _check(released.get("ok", false) == true, "the rider dismounts", released): return
 	_tick(lab, 30)
 	if not _check(int(wagon.operator_id) == 0 and _gear(lab) == equipment_before, "dismount issues, removes or recolours nothing"): return
+	# A different real person of the same crowd team takes the wagon over (Nekki 2026-11-14 「要做換人上馬」): standing on a
+	# legal cell beside the horse (a placement), the original command makes it the operator and
+	# the native convoy steers it onto the rider slot. Boarding is never an equipment transaction either.
+	# The dismounted rider walks back to its formation slot; a living non-crew body on the wagon's cells rightly blocks the
+	# native convoy body, so the take-over waits until the wagon stands clear.
+	var rider_index := owner.index_for_identity(rider_id)
+	var cells: Array = SiteVehicleTransport.footprint(lab.terrain, wagon)
+	for tick in range(900):
+		if not cells.has(owner.person(rider_index, false).get("cell")) and not owner.is_walking(rider_index): break
+		_tick(lab, 1)
+	if not _check(not cells.has(owner.person(rider_index, false).get("cell")), "the dismounted rider stands clear of the wagon", owner.person(rider_index, false).get("cell")): return
+	var replacement_id := -1
+	for index: int in owner.combat_units.keys():
+		var id := owner.combat_identity(index)
+		if id != rider_id and id > 0 and not transport.is_operator(id): replacement_id = id; break
+	if not _check(replacement_id > 0, "a different person of the same crowd team exists"): return
+	var replacement_index := owner.index_for_identity(replacement_id)
+	var beside := TerrainArmy.INVALID_CELL
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var cell := horse + direction
+		if lab.terrain.is_walkable(cell) and lab.terrain.can_step(cell, horse) and not SiteVehicleTransport.footprint(lab.terrain, wagon).has(cell) and cell != owner.person(rider_index, false).get("cell"): beside = cell; break
+	var native := int(lab.crowd_site.crowd.soldier_index(replacement_id))
+	if not _check(beside != TerrainArmy.INVALID_CELL and lab.crowd_site.set_soldier_fields(native, {"px": beside.x + 0.5, "py": beside.y + 0.5}), "the replacement is placed beside the horse", {"horse": horse, "beside": beside}): return
+	# Placement only, then the command at once: no siege station hold (a siege group cannot join a convoy crew natively).
+	_tick(lab, 1)
+	var commander := int(lab.crowd_site.formation_state(int(owner.formation_index)).get("current_person", replacement_id))
+	var boarded: Dictionary = transport.assign_operator(vehicle_id, replacement_id, commander, true)
+	if not _check(boarded.get("ok", false) == true and int(wagon.operator_id) == replacement_id, "the different real person takes the wagon over",
+		{"result": boarded, "cell": owner.person(replacement_index, false).get("cell"), "beside": beside, "walking": owner.is_walking(replacement_index)}): return
+	for tick in range(300):
+		if not transport.rider_state(replacement_id).is_empty(): break
+		_tick(lab, 1)
+	if not _check(int(wagon.operator_id) == replacement_id and int(wagon.get("convoy_id", 0)) > 0 and not transport.rider_state(replacement_id).is_empty(),
+		"the native convoy carries the new rider", {"operator": wagon.operator_id, "convoy": wagon.get("convoy_id"), "rider": transport.rider_state(replacement_id)}): return
+	if not _check(_gear(lab) == equipment_before, "a different person's boarding changes no real item or holder"): return
+	if not _check(_fixed_frame(_actual(lab, owner, replacement_index)), "the new rider's real kit shows the fixed cloth frame"): return
+	var reloaded := _roundtrip(lab, "mounted_takeover_crowd")
+	if reloaded.is_empty(): return
+	if not _check(int(reloaded.data.site.vehicles[vehicle_id].operator_id) == replacement_id and reloaded.data.site.item_records == equipment_before.items, "Store keeps the new rider and every item"): return
 	lab.queue_free()
 	await process_frame
-	print("SITE_WAGON_CLOTH_PASS checks=", checks, ": crowd two-faction standard gear untouched; both genders display fixed cloth only while riding; late append rollback; Store keeps items and riders; dismount changes no item")
+	print("SITE_WAGON_CLOTH_PASS checks=", checks, ": crowd two-faction standard gear untouched; both genders display fixed cloth only while riding; late append rollback; Store keeps items and riders; dismount and a different person's take-over change no item")
 	quit(0)
