@@ -62,8 +62,9 @@ func _new_lab(suffix: String) -> TerrainLab:
 	return instance
 
 func _run() -> void:
-	create_timer(900.0).timeout.connect(func() -> void:
-		_check(false, "explicit 900 second script deadline")
+	# 11/14: B's 900 Lab steps of a 5,000-person Site cost about 0.4-1.5 s each (outer 1860 s).
+	create_timer(1800.0).timeout.connect(func() -> void:
+		_check(false, "explicit 1800 second script deadline")
 		quit(3))
 	var args := OS.get_cmdline_user_args()
 	if not _check(args.has("--crowd") and not run_id.is_empty() and mode in ["B-native", "D-scene"] and output_root.begins_with("res://output/"), "explicit isolated replay configuration"): quit(2); return
@@ -99,13 +100,19 @@ func _snapshot(world: Object) -> Dictionary:
 	var stats: PackedFloat64Array = world.stats()
 	return {"hash": str(world.state_hash()), "A": Array(stats.slice(0, 18)), "C": Array(stats.slice(33, 40))}
 
-func _first_frame(world: Object) -> bool:
+func _first_frame(world: Object, kitless: Dictionary = {}) -> bool:
 	world.pack_frame(64.0, 0.0)
+	var skipped := 0
 	for index in range(int(world.soldier_count())):
+		# Nekki 11/11 A: a headless unadmitted look is bodied without a kit, so it has no drawn frame row.
+		if kitless.has(int(ids[index])):
+			skipped += 1
+			continue
 		var view: PackedFloat32Array = world.soldier_view(index)
 		if view[0] != view[9] * 64.0 or view[1] != view[10] * 64.0:
-			return _check(false, "first rebuilt frame equals simulated coordinates times 64", {"index": index, "person": ids[index], "view": Array(view)})
-	return _check(true, "first rebuilt frame equals simulated coordinates times 64 for every person", ids.size())
+			return _check(false, "first rebuilt frame equals simulated coordinates times 64", {"index": index, "person": ids[index], "view": Array(view),
+				"kitless_count": kitless.size(), "soldier_state_head": Array(world.get_soldier_state(index)).slice(0, 8)})
+	return _check(true, "first rebuilt frame equals simulated coordinates times 64 for every kit-drawn person", {"people": ids.size(), "kitless": skipped})
 
 func _input(step: int) -> Dictionary:
 	# The sequence includes direction changes, run and release. No gameplay state is injected.
@@ -178,6 +185,43 @@ func _native_replay() -> void:
 				return
 			wounded += 1
 	if not _check(wounded == 500, "B starts with 500 wounded conscious soldiers", wounded): return
+	var profile_steps := int(_argument(OS.get_cmdline_user_args(), "--crowd-replay-profile", "0"))
+	if profile_steps > 0: # Debug only: per-step wall time and the Lab's optional stage counters, never an acceptance result.
+		lab.combat_profile_enabled = true
+		lab.combat_profile_usec.clear()
+		for step in range(profile_steps):
+			if step == maxi(0, profile_steps - 40): lab.combat_profile_usec.clear() # Stage totals cover only the last 40 steps.
+			var started_step := Time.get_ticks_usec()
+			lab._advance_action_time(DT)
+			print("C3 profile step ", step, " ms=", float(Time.get_ticks_usec() - started_step) / 1000.0, " combat_left=", lab.terrain.site.combat_left)
+		var stages: Array = lab.combat_profile_usec.keys()
+		stages.sort_custom(func(a: Variant, b: Variant) -> bool: return int(lab.combat_profile_usec[a]) > int(lab.combat_profile_usec[b]))
+		for stage: Variant in stages.slice(0, 30): print("C3 profile stage ", stage, " ms=", float(lab.combat_profile_usec[stage]) / 1000.0)
+		# Per-person cost split of the fire motion capture (debug only).
+		var people: Array[Dictionary] = lab._siege_people()
+		var timed := {"inputs": 0, "query_bounds": 0, "incoming_geometry": 0, "owner_motion": 0}
+		var sourced := 0
+		for person: Dictionary in people:
+			if int(person.unit) < 0: continue
+			var t0 := Time.get_ticks_usec()
+			var inputs: Dictionary = person.owner._siege_contact_inputs(int(person.unit))
+			var t1 := Time.get_ticks_usec()
+			if inputs.has("source") and inputs.has("sample"):
+				var sample: Array = inputs.sample
+				inputs.source.query_bounds(sample[0], sample[1], sample[2], sample[3] if sample.size() > 3 else Vector2.ZERO, sample[4] if sample.size() > 4 else 0.0, inputs.appearance)
+				sourced += 1
+			var t2 := Time.get_ticks_usec()
+			person.owner.incoming_geometry(int(person.unit))
+			var t3 := Time.get_ticks_usec()
+			lab._fire_owner_motion(person)
+			var t4 := Time.get_ticks_usec()
+			timed.inputs += t1 - t0
+			timed.query_bounds += t2 - t1
+			timed.incoming_geometry += t3 - t2
+			timed.owner_motion += t4 - t3
+		print("C3 profile people=", people.size(), " sourced=", sourced, " us=", timed)
+		_check(false, "profile-only debug run, not an acceptance result", profile_steps)
+		return
 	for step in range(900):
 		lab._advance_action_time(DT)
 		if step % 30 == 0: await process_frame
@@ -201,8 +245,10 @@ func _native_replay() -> void:
 	var appearances: Array = []
 	for identity: int in ids:
 		appearances.append(null if site._actors.has(identity) else site._appearance(identity))
+	# Nekki 11/11 A: as the owner's own kit rebuild does, headless unadmitted looks stay bodied without a kit.
+	presenter._headless_unadmitted_bodied(appearances, ids)
 	if not _check(presenter._register_kits(appearances), "B rebuilds actual appearance kits for first-frame assertion"): return
-	if not _first_frame(copy): return
+	if not _first_frame(copy, presenter._no_atlas): return
 	if not _check(_snapshot(copy) == initial, "render reconstruction does not mutate B simulation"): return
 	var player := int(site.player_index)
 	var host_combat_left := float(lab.terrain.site.combat_left)
@@ -338,7 +384,7 @@ func _scene_replay() -> void:
 	site = lab.crowd_site
 	if not _check(site.crowd.person_ids() == ids and _snapshot(site.crowd) == initial and _positions(site.crowd) == initial_positions, "D fresh full scene begins with exact native state, A/C and positions"): return
 	site.render(0.0)
-	if not _first_frame(site.crowd): return
+	if not _first_frame(site.crowd, site._no_atlas): return
 	if not first_frame_capture.is_empty():
 		if not await _capture_first_frame(site): return
 	var captured: Dictionary = lab.site_controller._capture_for_save()
