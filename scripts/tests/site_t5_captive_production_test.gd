@@ -230,14 +230,8 @@ func _check_real_prison_authority() -> void:
 	var lab := _building_lab(data)
 	var actions: SitePersonActions = lab.site_controller.person_actions
 	var player_id := lab.character.person_id
-	var team: TerrainArmy = lab.army
-	team.roster_size = 3
-	team.faction_id = lab.character.faction_id
-	assert(team.deploy_at(data, null, null, [Vector2i(28, 30), Vector2i(29, 30), Vector2i(30, 30)]))
-	assert(team.enable_combat(false))
-	team.set_process(false)
-	team.settle_combat_command()
-	var warden := team.combat_identity(1)
+	# Nekki 11/14 A: the warden-priority part used a GD trial army as its warden (retired grid simulation, stepped by
+	# the escort clock below) and was removed; prison escort, captive work in prison and release remain.
 	var placement := Runtime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	assert(placement.ok and lab.character.place(Vector2i(26, 22), true))
 	var cells: Array[int] = []
@@ -263,11 +257,6 @@ func _check_real_prison_authority() -> void:
 	# Physical fixture layout: existing camp at actual prison contact, no remote
 	# materials or invented workshop/store owner. No active job is relocated.
 	data.site.depot_cell = data.index(slot.contact_cell)
-	var offices := Settlement.offices(lab)
-	var prison_position := str(offices.duties["settlement.prison"])
-	assert(Settlement.apply_office_plan(lab, player_id, int(offices.revision), [{"op": "appoint", "position_id": prison_position, "person_id": warden}]).ok)
-	assert(str(_begin(lab).code) == "NO_AUTHORITY", "Original current warden defeats guard/faction-only authority")
-	assert(Settlement.apply_office_plan(lab, player_id, int(Settlement.offices(lab).revision), [{"op": "dismiss", "position_id": prison_position}]).ok)
 	var tech_before := _technology_bytes(lab)
 	assert(_begin(lab).ok)
 	_plan_step(lab, 108.0)
@@ -291,5 +280,5 @@ func _run() -> void:
 	_check_field_production()
 	_check_failures_and_rest()
 	_check_real_prison_authority()
-	print("SITE_T5_CAPTIVE_PRODUCTION_PASS genuine learned F07 + real capture/supply/escort/admission; supervised joint busy/fatigue, atomic paid original bow, no research evidence, late original source/authority failure, REST latch, original warden priority and actual release; complete collector/native/UI closure separate")
+	print("SITE_T5_CAPTIVE_PRODUCTION_PASS genuine learned F07 + real capture/supply/escort/admission; supervised joint busy/fatigue, atomic paid original bow, no research evidence, late original source/authority failure, REST latch, prison work and actual release; complete collector/native/UI closure separate")
 	quit(0)

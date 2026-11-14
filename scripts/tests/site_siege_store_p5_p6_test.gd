@@ -5,7 +5,7 @@ extends "res://scripts/tests/site_siege_store_roundtrip_test.gd"
 const CASES := ["stable", "deployed", "disabled", "wreck", "legacy", "plain"]
 const DT := 1.0 / 120.0
 const OUTPUT := "res://output/site_siege_close_20261004/store_integration"
-var store_mode := "gd"
+var store_mode := "native" # Nekki 11/14 A: the GD-army mode is retired with grid simulation; its branches are unreachable.
 var store_case := "stable"
 var test_checks := 0
 var test_roundtrips := 0
@@ -55,7 +55,7 @@ func _report() -> void:
 	file.close()
 
 func _preflight() -> bool:
-	if not _expect(store_mode in ["gd", "native"] and CASES.has(store_case), "known Store mode/case"): return false
+	if not _expect(store_mode == "native" and CASES.has(store_case), "known Store mode/case (the GD-army mode is retired)", store_mode): return false
 	if not _expect(DisplayServer.get_name() == "headless", "Store contract requires bounded headless verification"): return false
 	var args := OS.get_cmdline_user_args()
 	var paths := SiteController.new()

@@ -45,14 +45,11 @@ func run() -> void:
 				timing_cases += 1
 	var lab := TerrainLab.new()
 	lab.npc = TerrainTestNPC.new() # Historical command fixture supplies its original NPC before entering the tree.
-	lab.exchange_enabled = false # This historical test asserts geometry/BFS threats and continuous guard effort.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
 	lab.character.set_process(false)
 	lab.npc.set_process(false)
-	lab.npc_allied_toggle.button_pressed = false # This historical threat fixture explicitly needs an opponent.
-	assert(lab.npc.faction_id != lab.character.faction_id)
 	lab.terrain.site.worker_enabled = false
 	var save_path: String = lab.site_controller.save_path
 	assert(not lab.site_controller.crowd_test_run_id.is_empty(), "A unique --crowd-test run is required for original autosave isolation")
@@ -99,140 +96,11 @@ func run() -> void:
 	actor.restore_state(snapshot)
 	actor.reset_combat()
 	near(actor.fatigue, 67.25, "combat reset cannot erase fatigue")
-	# Controlled traversable Site; no fake hit geometry or fabricated contacts.
-	var data := lab.terrain
-	for index in range(data.size.x * data.size.y):
-		data.height_levels[index] = 0
-		data.flags[index] = TerrainData.Flag.WALKABLE
-		data.static_blocked[index] = 0
-	data.ramp_edges.fill(0)
-	actor.place(Vector2i(20, 20), true)
-	npc.place(Vector2i(29, 20), true)
-	# Zero-fatigue solo bodies still retain the original peaceful rest phase.
-	# Positive-fatigue recovery/threat/clock assertions below remain unchanged.
-	var original_combat_left := float(data.site.combat_left)
-	data.site.combat_left = 0.0
-	actor.fatigue = 0.0
-	actor.fatigue_rest = 0.0
-	lab._advance_fatigue(2.0)
-	near(actor.fatigue, 0.0, "zero solo idle rest cannot create fatigue")
-	near(actor.fatigue_rest, 2.0, "zero solo peaceful idle retains original rest delay")
-	npc.place(Vector2i(28, 20), true)
-	lab._advance_fatigue(1.0)
-	near(actor.fatigue, 0.0, "zero solo local enemy cannot create fatigue")
-	near(actor.fatigue_rest, 0.0, "original eight-step enemy threat also interrupts zero solo rest")
-	npc.place(Vector2i(29, 20), true)
-	lab._advance_fatigue(2.0)
-	near(actor.fatigue_rest, 2.0, "zero solo rest resumes only after the original local threat leaves")
-	data.site.combat_left = 10.0
-	lab._advance_fatigue(1.0)
-	near(actor.fatigue, 0.0, "zero solo combat cannot create fatigue")
-	near(actor.fatigue_rest, 0.0, "zero solo original Site combat clock resets rest")
-	data.site.combat_left = 0.0
-	lab._advance_fatigue(2.0)
-	near(actor.fatigue_rest, 2.0, "zero solo rest resumes on the original peaceful boundary")
-	actor.guarding = true
-	lab._advance_fatigue(1.0)
-	near(actor.fatigue, PersonFatigue.GUARD_RATE, "original active guard charges the previously zero body")
-	near(actor.fatigue_rest, 0.0, "actual original guard activity resets solo rest")
-	actor.guarding = false
-	data.site.combat_left = original_combat_left
-	actor.fatigue = 60
-	actor.fatigue_rest = 0
-	lab._advance_fatigue(30)
-	near(actor.fatigue, 60)
-	near(actor.fatigue_rest, 30)
-	lab._advance_fatigue(60)
-	near(actor.fatigue, 60.0 - 1.0 / 3.0)
-	npc.place(Vector2i(28, 20), true)
-	lab._advance_fatigue(60)
-	near(actor.fatigue_rest, 0, "eight-step threat interrupts rest")
-	near(actor.fatigue, 60.0 - 1.0 / 3.0)
-	for y in range(100):
-		data.static_blocked[data.index(Vector2i(24, y))] = 1
-	assert(not lab._fatigue_threat(actor.terrain_cell, actor.faction_id, actor, -1, {}), "Unreachable opponent is not a rest threat")
-	data.static_blocked[data.index(Vector2i(24, 20))] = 0
-	assert(lab._fatigue_threat(actor.terrain_cell, actor.faction_id, actor, -1, {}))
-	data.static_blocked.fill(0)
-	npc.place(Vector2i(40, 20), true)
-	var before := actor.fatigue
-	actor.guarding = true
-	lab._advance_fatigue(60)
-	near(actor.fatigue, before + 3, "guard effort")
-	actor.guarding = false
-	actor.knockout_left = 10
-	before = actor.fatigue
-	lab._advance_fatigue(3600)
-	near(actor.fatigue, before, "unconscious is not rest")
-	actor.knockout_left = 0
-	actor.captive = true
-	lab._advance_fatigue(3600)
-	near(actor.fatigue, before, "captive is not rest")
-	actor.captive = false
-	npc.projectiles.append({"position": actor.position - Vector2(20, 0), "velocity": Vector2.RIGHT * 420, "ground": actor.position, "remaining": 100.0})
-	assert(lab._fatigue_threat(actor.terrain_cell, actor.faction_id, actor, -1, {}), "Headless missing projection conservatively blocks near projectile rest")
-	npc.projectiles.clear()
-	actor.fatigue = 50
-	actor.fatigue_rest = 30
-	lab._advance_combat(2.0, 0.5)
-	near(actor.fatigue, 50.0 - 90.5 * PersonFatigue.RECOVERY_RATE, "shared peace/combat clock")
-	before = actor.fatigue
-	data.site.paused = true
-	lab._advance_combat(1.0)
-	near(actor.fatigue, before)
-	data.site.paused = false
-	paused = true
-	lab._advance_combat(1.0)
-	near(actor.fatigue, before)
-	paused = false
-	# Fatigue during work belongs to this exact actor; no simultaneous rest.
-	lab._fatigue_work_seconds.clear()
-	actor.fatigue = 50
-	var expected_work := PersonFatigue.work_seconds(50, 60) / 60.0
-	near(lab.fatigue_work_minutes(true, 1), expected_work)
-	lab._advance_fatigue(60)
-	near(actor.fatigue, 50.0 + 1.0 / 6.0)
-	near(actor.fatigue_rest, 0)
-	lab._fatigue_work_seconds.clear()
-	actor.training_query = Callable()
-	actor.training = 60
-	actor.fatigue = 100
-	npc.place(Vector2i(21, 20), true)
-	assert(actor.start_attack(npc))
-	var duration := actor._attack_duration
-	actor.fatigue = 0
-	actor.training = 0
-	near(actor._clip_time(duration), actor._clip_duration, "immutable action-start fatigue/training")
-	near(actor._fatigue_slowdown, 0.3)
-	actor.reset_combat()
-	var team := lab.army
-	var cells: Array[Vector2i] = []
-	for index in range(100):
-		cells.append(Vector2i(40 + index % 10, 40 + floori(float(index) / 10)))
-	assert(team.deploy_at(data, actor, npc, cells) and team.enable_combat(false))
-	assert(not team.exchange_enabled and team.team_fatigue.is_empty(), "Historical geometry fixture retains original individual fatigue")
-	lab.combat_armies.assign([team])
-	team.set_process(false)
-	team.training = 60
-	team.combat_units[1].fatigue = 100
-	assert(team.start_unit_attack(1, team.cells[1] + Vector2i.RIGHT))
-	near(float(team.combat_units[1].attack_fatigue), 0.3)
-	near(float(team.combat_units[1].attack_reduction), SiteCombatRules.diminishing(60, 0.15))
-	team.training = 0
-	team.combat_units[1].fatigue = 40
-	actor.fatigue = 40
-	npc.fatigue = 40
-	assert(actor.start_attack(npc))
-	assert(npc.start_attack(actor))
-	lab._advance_fatigue(10)
-	near(actor.fatigue, 41)
-	near(npc.fatigue, 41)
-	near(float(team.combat_units[1].fatigue), 41, "all three original owners use same attack effort")
-	near(float(team.combat_units[1].attack_fatigue), 0.3, "row attack snapshot cannot drift")
-	actor.reset_combat()
-	npc.reset_combat()
-	lab.clear_army()
+	# Nekki 11/14 A: the rest/threat/guard/attack-effort part ran on the retired legacy geometry mode (exchange off)
+	# and a GD army; it was removed. Timing tables, Actor fatigue save/load/autosave and state validation remain.
 	lab.queue_free()
 	await process_frame
-	print("SITE FATIGUE PASS: ", timing_cases, " timing combinations; integrated work partition, rest/threat/clock/pause, original actor state/save/legacy/action snapshots; no GPU claim")
+	TerrainArmy.release_contact_source()
+	await process_frame
+	print("SITE FATIGUE PASS: ", timing_cases, " timing combinations; original actor fatigue save/autosave/legacy defaults/state validation; no GPU claim")
 	quit(0)

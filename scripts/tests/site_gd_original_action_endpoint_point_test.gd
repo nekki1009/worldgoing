@@ -11,7 +11,7 @@ func _run() -> void:
 	create_timer(180.0).timeout.connect(func() -> void: quit(1))
 	await _structure_point()
 	await _vehicle_point()
-	await _takeover_point()
+	# Nekki 11/14 A: the siege takeover point deployed a GD trial army (retired grid simulation) and was removed.
 	TerrainArmy.release_contact_source()
 	print("GD_ORIGINAL_ACTION_ENDPOINTS_POINT_PASS")
 	quit(0)
@@ -36,6 +36,10 @@ func _close_action_lab(lab: TerrainLab) -> void:
 
 func _arm_actor(lab: TerrainLab) -> void:
 	var actor: TerrainTestCharacter = lab.character
+	if actor.item_state.get("equipped", {}).has("weapon"):
+		# The controlled person is now seeded with gear: the seeded weapon goes to the bag so the axe fixture can take the slot.
+		actor.item_state.equipped.erase("weapon")
+		actor.item_state.version = int(actor.item_state.version) + 1
 	var made := Runtime.create_equipment(lab.terrain, actor.item_state, "action_endpoint_axe", {"slot": "weapon", "asset": "axe_01", "tint": [1.0, 1.0, 1.0, 1.0]}, actor.person_id, "weapon")
 	assert(made.ok, str(made))
 	lab.site_controller.equipment_changed(actor.person_id)
@@ -47,7 +51,9 @@ func _assert_not_work(lab: TerrainLab, identity: int) -> void:
 func _structure_point() -> void:
 	var data := _building_fixture()
 	var lab := _building_lab(data)
-	var key := _formal_feature(data, "stone_wall", Vector2i(20, 20), Vector2i.ONE, {"owner_faction": 2})
+	# A worker may build only its own faction's feature: build the wall as faction 1, then make it the foreign target.
+	var key := _formal_feature(data, "stone_wall", Vector2i(20, 20), Vector2i.ONE)
+	data.site.features[key].owner_faction = 2
 	var part := "c:" + str(data.index(Vector2i(20, 20)))
 	assert(lab.character.place(Vector2i(19, 20), true))
 	_arm_actor(lab)
@@ -104,45 +110,4 @@ func _vehicle_point() -> void:
 	assert(actions.cancel(lab.character.person_id).ok)
 	for index in range(150): _action_point(lab)
 	assert(float(vehicle.hp) == accepted_hp and int(holder.version) == version)
-	await _close_action_lab(lab)
-
-func _takeover_point() -> void:
-	var lab := _building_lab(_building_fixture())
-	var vehicle := _initial_engine(lab)
-	var parsed := lab._trial_side_settings({"friendly_count": 1, "friendly_training": 0, "friendly_female_percent": 0, "friendly_attack": false, "friendly_ai_enabled": false}, "friendly")
-	assert(parsed.ok)
-	var side: Dictionary = parsed.side
-	side.faction = 1
-	var sides: Array[Dictionary] = [side]
-	var positions: Array[Vector2i] = [Vector2i(24, 20)]
-	var inactive_crowd: Variant = lab.crowd_site
-	lab.crowd_site = null # Select the existing genuine GD deploy entry before creating original rows.
-	var deployed := lab._deploy_trial_teams(sides, [positions], 0)
-	lab.crowd_site = inactive_crowd
-	assert(deployed.ok, str(deployed))
-	var team: TerrainArmy = lab.army
-	var identity := team.combat_identity(team.current_commander)
-	assert(team.command_eligible(team.current_commander))
-	lab.terrain.set_meta(&"site_garrison_lab", weakref(lab))
-	var holder: Dictionary = vehicle.holder
-	var cargo: Dictionary = vehicle.cargo
-	var original := vehicle.duplicate(true)
-	var actions: SitePersonActions = lab.site_controller.person_actions
-	assert(actions.begin_siege_takeover(identity, str(vehicle.id), identity, true).ok)
-	_assert_not_work(lab, identity)
-	var action_begin := lab.fire_action_cursor
-	var game_begin := Runtime.now(lab.terrain) * 60.0
-	for index in range(1199):
-		_action_point(lab)
-		if index % 120 == 0: await process_frame
-	assert(actions.is_busy(identity) and int(vehicle.team_id) == 0)
-	assert(Runtime.now(lab.terrain) * 60.0 - game_begin > 500.0)
-	await _finish_action(lab, identity, 0.1)
-	assert(absf(lab.fire_action_cursor - action_begin - 10.0) <= TerrainLab.ACTION_STEP + 0.000001)
-	assert(int(vehicle.team_id) == int(team.team_id) and int(holder.version) == int(original.holder.version) + 1)
-	assert(is_same(vehicle.holder, holder) and is_same(vehicle.cargo, cargo))
-	for field: String in ["id", "kind", "cell", "facing", "hp", "cargo", "next_attack_seq", "rng_state"]: assert(vehicle[field] == original[field], field)
-	var final_version := int(holder.version)
-	for index in range(10): _action_point(lab)
-	assert(int(holder.version) == final_version)
 	await _close_action_lab(lab)
