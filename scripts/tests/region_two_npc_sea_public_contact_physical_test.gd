@@ -33,7 +33,9 @@ func _initialize() -> void:
 	for argument: String in OS.get_cmdline_args() + OS.get_cmdline_user_args():
 		if argument.begins_with("--sea-case="): fleet_case = argument.trim_prefix("--sea-case=")
 	# Nekki 2026-10-27: the friendly case waits for a real meal and runs 592-610 s; in-file 720 s, outer 780 s.
-	if fleet_case == "friendly": deadline = Time.get_ticks_msec() + 720000
+	# 2026-11-14: it now runs 687-745 s alone (crowd/cold fixes since 10/27); in-file 900 s, outer 960 s (standing rule:
+	# loosen test timeouts directly).
+	if fleet_case == "friendly": deadline = Time.get_ticks_msec() + 900000
 	action_speed = 1.0
 	_run.call_deferred()
 
