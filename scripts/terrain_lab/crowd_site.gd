@@ -1080,7 +1080,9 @@ func _appearance_now(identity: int) -> Dictionary:
 	else:
 		hp = float(body.get("hp"))
 	# The original presentation owner keeps worn gear on the remains holder.
-	if hp <= 0.0 and bool(body.get("loot_settled", false)):
+	# A roster row is a Dictionary; an original Actor is a Node, whose get() takes one argument (found 2026-11-14,
+	# CC-20261114-193: a live crowd death crashed here and its remains/family pause never settled).
+	if hp <= 0.0 and bool((body.get("loot_settled", false) if body is Dictionary else body.get("loot_settled")) == true):
 		# Decision A2 on crowd (2026-11-10): a settled fallen member that travelled inert with its team left its remains
 		# container at the Site it fell in. Here it is drawn with its own saved look, as it fell; an empty holder would
 		# project an unarmed look no atlas kit covers (MISSING_ASSET at the arrival conversion).
