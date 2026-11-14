@@ -176,8 +176,13 @@ func _contact(actor: TerrainTestCharacter, owner: Variant, index: int) -> bool:
 		return _expect(actor.position == actor_position and is_same(holder, _person(mounted_identity).holder)
 			and is_same(cargo, _person(mounted_identity).cargo) and holder == holder_before and cargo == cargo_before,
 			"cold original Foot queries preserve actual Actor position and original holder/cargo aliases")
+	# CAV-3: an admitted rider's source lookup is its same-body foot source; the live Actor still answers the query.
 	if not _expect(inputs.has("actor") and inputs.actor == actor and actual.body.size() == 10 and int(actor.editor._body_index) == mounted_body
-		and (not bool(appearance.mounted) or TerrainArmy.contact_source_for(appearance) == null), "exact Native prepared Actor query uses same original live Actor and actual ten bone polygons"): return false
+		and (not bool(appearance.mounted) or TerrainArmy.contact_source_for(appearance) == TerrainArmy.contact_source_for(TerrainArmy.contact_appearance(appearance))),
+		"exact Native prepared Actor query uses same original live Actor and actual ten bone polygons",
+		{"has_actor": inputs.has("actor"), "same_actor": inputs.get("actor") == actor, "body_parts": actual.get("body", []).size(),
+		"body_index": int(actor.editor._body_index), "mounted": bool(appearance.get("mounted", false)),
+		"source_null": TerrainArmy.contact_source_for(appearance) == null, "input_keys": inputs.keys()}): return false
 	var raw: Array = actor._geometry.body_shapes(actor)
 	var vertices := 0
 	for part in range(raw.size()):

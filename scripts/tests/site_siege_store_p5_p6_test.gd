@@ -486,10 +486,14 @@ func _native_crew_refusal_contract() -> bool:
 		# AFTER injection, so validation is forbidden from repairing this state.
 		if not _expect(bool(native.call("set_siege_crew_members", specimen.indices)), "original owner applies live flag fault: " + label): return false
 		var fault: Dictionary = _native_crew_snapshot(native)
-		if not _expect(fault.hash != baseline.hash and fault.crew_marks != baseline.crew_marks and fault.blob == baseline.blob
-			and bool(native.call("validate")), "live fault changes derived flags while preserving a valid original blob: " + label): return false
+		# KW21 (Nekki 2026-11-09 A): crew membership is saved native state, so the fault also changes the blob.
+		if not _expect(fault.hash != baseline.hash and fault.crew_marks != baseline.crew_marks and fault.blob != baseline.blob
+			and bool(native.call("validate")), "live fault changes the saved crew flags while native state stays valid: " + label,
+			{"hash_changed": fault.hash != baseline.hash, "marks_changed": fault.crew_marks != baseline.crew_marks,
+			"blob_same": fault.blob == baseline.blob, "valid": bool(native.call("validate")), "marks_before": baseline.crew_marks, "marks_after": fault.crew_marks}): return false
 		var rejected: Dictionary = SiteStore.save(data, current_path, native)
-		if not _expect(rejected == SiteRuntime.fail("INVALID_CROWD", "原生操作班旗標與原 Site 操作人集合不符"),
+		# KW21: the saved blob carries the flags, so the candidate/blob equality gate refuses first.
+		if not _expect(rejected == SiteRuntime.fail("INVALID_CROWD", "群眾候選已變更或與原存檔內容不符"),
 			"full Store.save rejects the exact live crew mismatch: " + label, rejected): return false
 		if not _crew_source_unchanged(source, fault, "live " + label): return false
 		if not _expect(bool(native.call("set_siege_crew_members", expected_indices)) and _native_crew_snapshot(native) == baseline,
@@ -506,9 +510,9 @@ func _native_crew_refusal_contract() -> bool:
 			"original owner injects the same fault into the actual detached result: " + label): return false
 		var detached_fault: Dictionary = _native_crew_snapshot(detached)
 		if not _expect(detached_fault.hash != detached_baseline.hash and detached_fault.crew_marks != detached_baseline.crew_marks
-			and detached_fault.blob == detached_baseline.blob and bool(detached.call("validate")), "detached snapshot is taken after a valid flag-only fault: " + label): return false
+			and detached_fault.blob != detached_baseline.blob and bool(detached.call("validate")), "detached snapshot is taken after a valid saved-flag fault: " + label): return false
 		var candidate_rejected: Dictionary = SiteStore._validate_state(candidate.data, candidate.data.site, clampi(OS.get_processor_count(), 1, 8), detached)
-		if not _expect(candidate_rejected == SiteRuntime.fail("INVALID_CROWD", "原生操作班旗標與原 Site 操作人集合不符"),
+		if not _expect(candidate_rejected == SiteRuntime.fail("INVALID_CROWD", "群眾候選已變更或與原存檔內容不符"),
 			"full supplied-candidate Store boundary rejects before navigation restoration: " + label, candidate_rejected): return false
 		if not _expect(_native_crew_snapshot(detached) == detached_fault and JSON.stringify(candidate.data.site, "", true, true) == candidate_state,
 			"supplied candidate refusal does not repair flags or change hash/blob/navigation/crew: " + label): return false

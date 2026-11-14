@@ -8,14 +8,21 @@ class LabFixture extends Node2D:
 	var character := TerrainTestCharacter.new()
 	var npc: TerrainTestCharacter
 	var combat_actors: Array[TerrainTestCharacter] = []
+	var combat_profile_enabled := false # CrowdSite reads the Lab's optional profiling switch.
 	func controlled_person_id() -> int:
 		return 10
 	func _next_army_identity() -> int:
 		return 2
 
 func _initialize() -> void:
+	# The root joins the tree only after _initialize returns; contact preparation needs a live tree.
+	create_timer(120.0).timeout.connect(func() -> void: printerr("CROWD_C2_APPEND_ATOMIC deadline"); quit(1))
+	_run.call_deferred()
+
+func _run() -> void:
 	assert(ClassDB.class_exists("ArmyCrowd"))
 	var lab := LabFixture.new()
+	root.add_child(lab) # Contact appearance preparation parks its resource Actor under the Lab's tree.
 	lab.terrain.allocate(Vector2i(16, 16))
 	lab.terrain.flags.fill(TerrainData.Flag.WALKABLE)
 	lab.terrain.site = {"manual": {"cargo": {}}, "worker": {"cargo": {}}, "captivity": {}}
@@ -85,5 +92,7 @@ func _initialize() -> void:
 	site.free()
 	actor.free()
 	lab.free()
+	TerrainArmy.release_contact_source() # The append prepared a contact source; release it before exit like other crowd tests.
+	await process_frame
 	print("CROWD_C2_APPEND_ATOMIC_PASS")
 	quit(0)

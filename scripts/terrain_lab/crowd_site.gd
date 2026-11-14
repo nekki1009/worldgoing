@@ -3816,6 +3816,8 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 		elif actor_ids.has(int(identity)):
 			var saved: Dictionary = actor_ids[int(identity)]
 			var appearance := SiteRuntime.equipment_appearance(data, saved.item_state, saved.appearance)
+			# CAV-3, as in _appearance_now: a saved Actor keeps its own riding state, which equipment_appearance alone clears.
+			if not appearance.is_empty() and bool(saved.appearance.get("mounted", false)): appearance["mounted"] = true
 			if not _prepare_contact_appearance(appearance, int(identity), true): return SiteRuntime.fail("MISSING_ASSET", "存檔原 actor 同 body 接觸資源未備妥")
 			appearances.append(null)
 			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)

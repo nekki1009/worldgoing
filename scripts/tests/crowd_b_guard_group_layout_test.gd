@@ -460,5 +460,7 @@ func _run() -> void:
 	var ok: bool = _cases()
 	for node: Node in owned:
 		if is_instance_valid(node): node.free()
+	TerrainArmy.release_contact_source() # Fixture deploys prepare contact sources; release them before exit.
+	await process_frame
 	print("CROWD_B_GUARD_GROUP_LAYOUT_", "PASS" if ok else "FAIL", " checks=", checks)
 	quit(0 if ok else 2)

@@ -56,7 +56,11 @@ func _run() -> void:
 	assert(not TerrainArmy._contact_source.supports_appearance(female), "Male original guard must still reject the female recipe")
 	var mounted: Dictionary = appearance.duplicate(true)
 	mounted.mounted = true
-	assert(not TerrainArmy.prepare_contact_source_for(mounted) and TerrainArmy.contact_source_for(mounted) == null)
+	# CAV-3: an admitted rider answers with its same-body foot source; without a riding atlas it stays refused.
+	if SiteMountedSoldierAtlas.available(mounted):
+		assert(TerrainArmy.prepare_contact_source_for(mounted) and is_same(TerrainArmy.contact_source_for(mounted), source))
+	else:
+		assert(not TerrainArmy.prepare_contact_source_for(mounted) and TerrainArmy.contact_source_for(mounted) == null)
 	var row := {"person_id": 103, "hp": 999.0, "ko": 0.0, "captive": false, "cell": [1, 1], "appearance": appearance, "item_state": {}, "cargo": {"bolt": 7}, "loot_settled": false, "site_exited": false, "hit_revision": 0}
 	assert(Runtime.seed_person_equipment(lab.terrain, row.item_state, 103, appearance).ok)
 	assert(native.add_soldiers(formation, PackedInt64Array([103]), PackedInt32Array([site._packed_equip(appearance)]), PackedByteArray([0]), PackedInt32Array([0])) == 0)
