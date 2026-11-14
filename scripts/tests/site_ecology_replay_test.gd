@@ -79,9 +79,31 @@ func _ecology_same_original(actual: Variant, expected: Variant, path: String = "
 	elif actual is Array and expected is Array:
 		assert(actual.size() == expected.size(), path)
 		for index: int in range(actual.size()): assert(_ecology_same_original(actual[index], expected[index], path + "[%d]" % index))
+	elif actual is String and expected is String and path.ends_with(".bytes") and actual != expected:
+		# The owner graph wraps typed values as base64 var_to_bytes; the wrapped numbers follow the same 1e-6 rule as
+		# every other number here (found 2026-11-14: a resident-prefix float differed from the exact tail by ~1e-15).
+		var decoded_actual: Variant = bytes_to_var(Marshalls.base64_to_raw(actual))
+		var decoded_expected: Variant = bytes_to_var(Marshalls.base64_to_raw(expected))
+		assert(typeof(decoded_actual) == typeof(decoded_expected), "%s decoded types differ" % path)
+		assert(_ecology_same_original(decoded_actual, decoded_expected, path + "(decoded)"))
 	else:
 		assert(actual == expected, "%s actual=%s expected=%s" % [path, str(actual), str(expected)])
 	return true
+
+const GRID_TICK_KEY := "current_logic_tick"
+
+func _without_grid_tick(graph: Dictionary) -> Dictionary:
+	var result := graph.duplicate(true)
+	for node: Variant in result.get("nodes", []):
+		if not node is Dictionary or node.get("kind") != "dictionary" or not node.get("entries") is Array: continue
+		var kept: Array = []
+		for entry: Variant in node.entries:
+			var key: Variant = null
+			if entry is Array and entry.size() == 2 and entry[0] is Dictionary and entry[0].get("kind") == "atom":
+				key = bytes_to_var(Marshalls.base64_to_raw(str(entry[0].bytes)))
+			if not (key is String or key is StringName) or str(key) != GRID_TICK_KEY: kept.append(entry)
+		node["entries"] = kept
+	return result
 
 func _assert_history(data: TerrainData, key: String, resting: bool) -> bool:
 	var info := SiteEnvironment.ecology_info(data, key)
@@ -213,7 +235,10 @@ func _resident_prefix(fixture: Dictionary) -> bool:
 	assert(EcologyCold._resident_inputs(hybrid.terrain).ok, "Resident helper inputs come from the actual original Lab owner admission")
 	assert(_ecology_same_original(_capture(hybrid), _capture(normal)))
 	assert(_ecology_same_original(candidate.progress, expected.progress))
-	assert(_ecology_same_original(_r2_actual_owner_graph(hybrid), _r2_actual_owner_graph(normal)))
+	# Nekki 2026-11-14 A: the retired grid movement coordinator's idle step counter (current_logic_tick, and the copy
+	# TerrainArmy keeps) is not part of the equality: the exact tail counts every idle step, the resident prefix
+	# summarises them, and no crowd behaviour reads it. Every other owner field is still compared.
+	assert(_ecology_same_original(_without_grid_tick(_r2_actual_owner_graph(hybrid)), _without_grid_tick(_r2_actual_owner_graph(normal))))
 	assert(_ecology_near(float(hybrid.terrain.site.phase), fposmod(0.375 + ECOLOGY_REPLAY_SECONDS / 60.0, 1.0)))
 	ecology_rows.append({"case": "actual_resident_prefix", "resting_at_source": fixture.resting,
 		"target": target, "source_sha256": fixture.sha256, "prefix_steps": candidate.prefix_steps,
