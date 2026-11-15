@@ -726,6 +726,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 		if str(data.site.housing[identity].house_id) in changed:
 			data.site.housing.erase(identity)
 			released.append(int(identity))
+	if not released.is_empty(): preload("res://scripts/terrain_lab/site_households.gd").reconcile(data.site)
 	for supply: Dictionary in data.site.get("team_supply", {}).values():
 		if str(supply.get("training_feature_id", "")) in changed:
 			supply.training_order = false

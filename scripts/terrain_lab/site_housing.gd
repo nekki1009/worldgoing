@@ -2,6 +2,7 @@ extends RefCounted
 ## Queries/transactions on Site housing references; no person, stock, or clock owner.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
+const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const MULTIPLIER := 1.25
 
 static func _integer(value: Variant, lower: int, upper: int) -> bool:
@@ -108,6 +109,7 @@ static func assign(lab: Variant, identity: int, house_id: String, requester_id: 
 	if destination < 0: return Runtime.fail("CAPACITY", "沒有空閒可達的住宅門前休息格")
 	if not lab.terrain.site.has("housing"): lab.terrain.site["housing"] = {}
 	lab.terrain.site.housing[str(identity)] = {"version": 1, "house_id": house_id, "cell": destination}
+	Households.reconcile(lab.terrain.site)
 	return Runtime.ok("已分配原住宅；真正到家後才有休息收益", {"cell": destination, "house_id": house_id, "person_id": identity})
 
 static func leave(lab: Variant, identity: int, requester_id: int) -> Dictionary:
@@ -117,6 +119,7 @@ static func leave(lab: Variant, identity: int, requester_id: int) -> Dictionary:
 	if person.is_empty() or not _commands_current(lab, requester_id, person): return Runtime.fail("NO_AUTHORITY")
 	if lab.get_tree().paused or bool(lab.terrain.site.get("paused", false)) or lab.site_controller.person_actions.is_busy(identity) or bool(person.moving) or not lab.site_controller.person_actions._prison_stopped(person): return Runtime.fail("BUSY", "須先取消返家並收束原步進")
 	lab.terrain.site.housing.erase(str(identity))
+	Households.reconcile(lab.terrain.site)
 	return Runtime.ok("已離住；原人物、位置、物品與供養保留")
 
 static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}) -> bool:

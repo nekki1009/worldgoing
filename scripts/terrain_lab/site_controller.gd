@@ -29,6 +29,7 @@ const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_appen
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
+const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
@@ -598,6 +599,8 @@ func _build_ui() -> void:
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
 	_button(launcher.column, "舉所選人物為文吏", "RaiseClerk", func() -> void: show_result(raise_clerk(int(lab.selected_army_target))))
+	_button(launcher.column, "起義（土匪頭目）", "BanditRise", func() -> void: show_result(bandit_rise()))
+	_button(launcher.column, "落草", "GoOutlaw", func() -> void: show_result(go_outlaw("")))
 	_button(launcher.column, "評估與所選人物談招安", "PreviewBanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), true)))
 	_button(launcher.column, "與所選人物談招安", "BanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), false)))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
@@ -11184,6 +11187,55 @@ func raise_clerk(person_id: int) -> Dictionary:
 	if not allowed: return Runtime.fail("NO_AUTHORITY", "只有此人的正式隊長或本地聚落首長能舉用文吏")
 	PersonSocialPacket.set_civil_role(person.body, "clerk")
 	return Runtime.ok("已舉 #%d 為文吏" % person_id, {"person_id": person_id})
+
+## Bandit spec §9.1 (B4a): the controlled chief raises his band into a rebel faction (same id; he is crowned its king).
+## Gate: his prestige >= 30, 30 or more band members in this Site, heat < 50, free and out of any fight.
+func bandit_rise() -> Dictionary:
+	if region_slot == null or not _crowd_active(): return Runtime.fail("UNSUPPORTED", "須在台灣地圖世界的群眾 Site")
+	var player := int(lab.controlled_person_id())
+	var mine: Dictionary = lab._original_person_target(player)
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	if mine.is_empty() or not RegionFactionQuery.is_bandit(registry, int(mine.owner.faction_id)): return Runtime.fail("NOT_BANDIT", "你不是土匪")
+	var band := int(mine.owner.faction_id)
+	if not RegionPeerage.same_ref(registry.entries[str(band)].leader_ref, JoinFaction._world_ref(self, player)): return Runtime.fail("NOT_CHIEF", "只有頭目本人能起義")
+	if JoinFaction._fight_nearby(lab, Vector2(mine.position)): return Runtime.fail("IN_COMBAT", "附近正在交戰，不能起義")
+	var gate: Dictionary = BanditRegistry.may_rise(registry, band, Reputation.shown(int(reputation_of(player).prestige)), BanditAmnesty._members(lab, band).size())
+	if not gate.ok: return gate
+	var risen: Dictionary = BanditRegistry.rise(registry, band, float(region_slot.control.logical_game_seconds))
+	var done := _commit_diplomacy(risen, "起義成功：土匪改為叛軍，你稱王")
+	if done.ok: adjust_reputation(player, float(Reputation.FOUND_KING), 0.0)
+	return done
+
+## Bandit spec §10 / §9.2 (B4a): the controlled person goes outlaw in the middle of a game. A neutral captain founds a band
+## of his team (as the 落草 start). The head of a rebel faction without nation, settlements or fiefs turns it into a band
+## (titles end, treaties end, credit -20). Lawful factions must break up into rebels first.
+func go_outlaw(band_name: String) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中")
+	var player := int(lab.controlled_person_id())
+	var mine: Dictionary = lab._original_person_target(player)
+	if mine.is_empty(): return Runtime.fail("NO_TARGET", "你不在自己的隊伍中")
+	var faction := int(mine.owner.faction_id)
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	if faction == RegionFactionQuery.NEUTRAL_FACTION_ID:
+		var named := band_name.strip_edges()
+		if named.is_empty(): named = "%s寨" % str(person_actions._person(player, false).get("name", "無名"))
+		return found_start_faction(named.left(32), true)
+	if RegionFactionQuery.is_bandit(registry, faction): return Runtime.fail("ALREADY", "你已是土匪")
+	var entry: Dictionary = registry.get("entries", {}).get(str(faction), {})
+	if entry.get("kind") != "rebel": return Runtime.fail("LAWFUL", "正式勢力須先解散或分裂成叛軍才能落草")
+	if not RegionPeerage.same_ref(entry.get("leader_ref"), JoinFaction._world_ref(self, player)): return Runtime.fail("NOT_HEAD", "只有叛軍首長能帶全伙落草")
+	for record: Dictionary in RegionPeerage.table(registry).values():
+		if int(record.faction_id) == faction and not record.get("fiefs", {}).is_empty(): return Runtime.fail("HAS_FIEFS", "還有封地，不能落草")
+	for fall: Dictionary in RegionDiplomacy.table(registry).get("falls", {}).values():
+		if int(fall.owner) == faction: return Runtime.fail("HAS_SETTLEMENTS", "還有聚落，不能落草")
+	var here: Dictionary = Settlement.record(lab.terrain)
+	if not here.is_empty() and int(here.get("owner_faction", -1)) == faction: return Runtime.fail("HAS_SETTLEMENTS", "還有聚落，不能落草")
+	var at: Dictionary = person_actions._person(player, false)
+	var cell: Vector2i = at.cell
+	var fell: Dictionary = BanditRegistry.fall(registry, faction, {"site_id": str(lab.terrain.site.get("id", "")), "cell": [cell.x, cell.y]}, float(region_slot.control.logical_game_seconds))
+	var done := _commit_diplomacy(fell, "已落草：叛軍改為土匪，爵位與協定全部失效")
+	if done.ok: adjust_reputation(player, 0.0, float(Reputation.OUTLAW))
+	return done
 
 ## Bandit spec §6 / §10 (B3): amnesty in person with the selected person. A player who chiefs a band offers to come in to
 ## the selected official; any other player (a head or viscount and above) offers it to the selected chief.

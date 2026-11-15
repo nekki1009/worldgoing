@@ -8,6 +8,7 @@ const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
@@ -1349,6 +1350,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	if not state.has("team_supply"):
 		state["team_supply"] = {}
 	if not state.has("housing"): state["housing"] = {}
+	Households.normalize(state) # 平民 C0: an old save gets its households from the housing registrations.
 	Settlement.normalize(state)
 	ResearchInstitutions.normalize(state)
 	for registered: Dictionary in state.housing.values():
@@ -3801,6 +3803,10 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 			housing_people[int(unit.person_id)] = projection
 	var housing_validation := Housing.validate(data, state, housing_people)
 	if not housing_validation.ok: return housing_validation
+	# 平民 C0: validation never changes the state (a detached source must stay byte-equal); the table is brought in line
+	# with the registrations on load (normalize) and by the owners that change a registration.
+	var household_validation := Households.validate(state)
+	if not household_validation.ok: return household_validation
 	var settlement_validation := Settlement.validate(data, state, housing_people)
 	if not settlement_validation.ok: return settlement_validation
 	var institution_validation := ResearchInstitutions.validate(state, people)
