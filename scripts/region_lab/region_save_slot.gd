@@ -2931,8 +2931,8 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 			or float(row.scale) not in [0.5, 1.0, 2.0, 4.0] \
 			or float(row.tactical_seconds) > float(row.action_end) - previous_action + 0.000000001:
 			return _fail("CORRUPT_FIRE_JOURNAL", "區間不連續或倍率非法")
-		var expected := (float(row.tactical_seconds) + (float(row.action_end) - previous_action - float(row.tactical_seconds)) * 60.0) * float(row.scale)
-		if absf(float(row.game_end) - previous_game - expected) > maxf(0.00000001, expected * 0.000000001): return _fail("CORRUPT_FIRE_JOURNAL", "雙時間不一致")
+		var expected := (float(row.action_end) - previous_action) * 60.0 * float(row.scale)
+		if not Runtime.interval_game_ok(float(row.game_end) - previous_game, float(row.action_end) - previous_action, float(row.tactical_seconds), float(row.scale), maxf(0.00000001, expected * 0.000000001)): return _fail("CORRUPT_FIRE_JOURNAL", "雙時間不一致")
 		previous_sequence = int(row.last_sequence)
 		previous_action = float(row.action_end)
 		previous_game = float(row.game_end)
@@ -3029,7 +3029,7 @@ static func preview_fire_interval(clock: Dictionary, game_begin: float, action_s
 		or not _seconds(tactical_seconds) or tactical_seconds > action_seconds or int(clock.sequence) >= 2147483647:
 		return _fail("INVALID_FIRE_INTERVAL", "原 shared-step 區間非法")
 	var action_end := float(clock.action_seconds) + action_seconds
-	var game_delta := (tactical_seconds + (action_seconds - tactical_seconds) * 60.0) * scale
+	var game_delta := Runtime.game_seconds(action_seconds) * scale # TCM: one Site rate.
 	var game_end := game_begin + game_delta
 	if not is_finite(action_end) or action_end <= float(clock.action_seconds) or not is_finite(game_end) or game_end <= game_begin: return _fail("INVALID_FIRE_INTERVAL", "時間不可表示")
 	return {"ok": true, "epoch": str(clock.epoch), "sequence": int(clock.sequence) + 1,

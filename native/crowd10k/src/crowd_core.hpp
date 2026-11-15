@@ -525,6 +525,11 @@ public:
 	double game_dt = 0;       // game seconds of the current step
 	double combat_mark = 0;   // largest combat_event duration raised during the last step
 	bool external_clock = false;
+	// TCM (time-and-climate plan §6, Nekki 11/15 M1 A): game_dt is world time at one Site rate (60 game s per action
+	// second, combat included). Combat mechanics keep the pre-TCM tactical clock (combat 1:1, the rest at 60), derived
+	// from the combat_left the step started with (SiteRuntime.tactical_seconds). Runtime only: set by every step entry.
+	double step_combat_start = 0;
+	double tactical_dt(float dt, double gdt) const;
 	Stats stats;
 	PhaseTimes last;
 

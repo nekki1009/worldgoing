@@ -649,19 +649,24 @@ static func capture_sample(lab: Variant) -> Dictionary:
 	return {"owner": owner, "attacker": attacker,
 		"leader": _leader_of(lab, first_attacker[attacker]) if attacker >= 0 else -1}
 
-static func capture_interval_limit(data: TerrainData, sample: Dictionary, maximum: float) -> float:
+## TCM: the 60-second capture count is tactical time (action seconds in combat); `maximum` and the result are world game
+## seconds. `combat_left` is the step-start combat flag (negative: read the Site).
+static func capture_interval_limit(data: TerrainData, sample: Dictionary, maximum: float, combat_left: float = -1.0) -> float:
+	if combat_left < 0.0: combat_left = float(data.site.get("combat_left", 0.0))
 	var settlement := record(data)
 	if settlement.is_empty() or sample.is_empty() or int(sample.attacker) < 0: return maximum
 	var fall: Dictionary = settlement.fall_record
 	var accrued := float(fall.contest_seconds) if int(fall.contest_faction) == int(sample.attacker) else 0.0
 	var remaining := CAPTURE_SECONDS - accrued
 	if remaining <= CAPTURE_RESIDUE_SECONDS: return 0.0 # the completed endpoint (see CAPTURE_RESIDUE_SECONDS)
-	return minf(maximum, remaining)
+	return minf(maximum, remaining * (Runtime.GAME_RATE if combat_left > 0.0 else 1.0))
 
 ## Integrate [begin,end) only. The exact completed endpoint is retained in the
 ## same original fall_record until contacts/player events have been consumed.
-static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_seconds: float) -> Dictionary:
+static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_seconds: float, combat_left: float = -1.0) -> Dictionary:
 	if not is_finite(game_seconds) or game_seconds < 0.0: return Runtime.fail("INVALID_TIME")
+	if combat_left < 0.0: combat_left = float(data.site.get("combat_left", 0.0))
+	game_seconds = Runtime.tactical_of_world(game_seconds, combat_left) # TCM: the capture count is tactical time
 	var settlement := record(data)
 	if settlement.is_empty() or sample.is_empty(): return Runtime.ok()
 	if int(sample.get("owner", -1)) != int(settlement.owner_faction): return Runtime.fail("STALE_CAPTURE_SAMPLE")

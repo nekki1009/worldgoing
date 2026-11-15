@@ -20,7 +20,8 @@ func _initialize() -> void:
 	registry.modes["npc:A"].tactical_until_action = 0.01
 	registry.modes["npc:B"].tactical_until_action = 0.02
 	var interval := Clock.clip_interval(registry, 0.0, 0.0, 1.0 / 30.0, 2.0)
-	check(interval.ok and absf(float(interval.game_seconds) - 1.64) < 0.000000001, "Two distant tactical demands use their union, never their sum")
+	# TCM (Nekki 11/15 M1 A): one Site rate, so 1/30 action s at ×2 is 4 game s whatever the tactical share.
+	check(interval.ok and absf(float(interval.game_seconds) - 4.0) < 0.000000001, "Two distant tactical demands use their union, never their sum")
 	check(absf(float(interval.tactical_seconds) - 0.02) < 0.000000001, "Longest actual demand ends at .02 original action seconds")
 	check(Clock.queue_event(registry, "battle:round:1", "battle", 0.5, "battle:A").ok, "Round endpoint can be scheduled inside a large step")
 	var cut := Clock.clip_interval(registry, 0.0, 0.0, 1.0 / 30.0, 2.0)
@@ -95,7 +96,7 @@ func _held_player_death_contract() -> void:
 	check(not Clock.player_barrier(registry, 0.0).is_empty() and not Clock.begin_permit(registry, "site:live", "live", 7, 0.0, 0.0, "original_live").ok and Clock.clip_interval(registry, 0.0, 0.0, 2.2, 1.0, 2.2).pending, "Old callers retain the due-zero player barrier even after a point effect is paid")
 	check(Clock.player_barrier(registry, 0.0, held).is_empty() and Clock.begin_permit(registry, "site:live", "live", 7, 0.0, 0.0, "original_live", held).ok, "Only the exact held paid controlled-death event can permit the original positive ACTION close")
 	var closed: Dictionary = Clock.clip_interval(registry, 0.0, 0.0, 2.2, 1.0, 2.2, held)
-	check(closed.ok and not closed.pending and absf(float(closed.action_seconds) - 2.2) < 0.000000001 and absf(float(closed.game_end) - 2.2) < 0.000000001, "The caller's genuine remaining 2.2 ACTION is admitted without manufacturing a zero or larger interval")
+	check(closed.ok and not closed.pending and absf(float(closed.action_seconds) - 2.2) < 0.000000001 and absf(float(closed.game_end) - 132.0) < 0.000000001, "The caller's genuine remaining 2.2 ACTION is admitted without manufacturing a zero or larger interval")
 	check(Clock.next_endpoint(registry, 0.0, 2.2, held) == 2.2 and Clock.next_endpoint(registry, 0.0, 2.2, wrong_ids) == 0.0 and not Clock.player_barrier(registry, 0.0, wrong_ids).is_empty(), "IDs require exact equality and cannot grant prefix or unrelated-event bypass")
 	check(JSON.stringify(registry, "", true, true) == original and registry.events[0].at == 0.0 and registry.events[0].status == "pending", "Pure admission never changes original event time/status, sequences, generation, mode watermarks or runtime revision")
 	check(Clock.pending_at(registry, 0.0).size() == 1 and Clock.pending_at(registry, 0.0)[0].id == identity, "The paid held event remains in its original immutable zero-time queue")
@@ -136,7 +137,7 @@ func _held_player_death_contract() -> void:
 		var future: Dictionary = registry.duplicate(true)
 		Clock.queue_event(future, "future:" + endpoint_kind, endpoint_kind, 0.75, "npc:A")
 		var bounded: Dictionary = Clock.clip_interval(future, 0.0, 0.0, 2.2, 1.0, 2.2, held)
-		check(bounded.ok and not bounded.pending and absf(float(bounded.action_seconds) - 0.75) < 0.000000001 and absf(float(bounded.game_end) - 0.75) < 0.000000001, "The positive death close cannot cross a future original non-player endpoint: " + endpoint_kind)
+		check(bounded.ok and not bounded.pending and absf(float(bounded.action_seconds) - 0.75 / 60.0) < 0.000000001 and absf(float(bounded.game_end) - 0.75) < 0.000000001, "The positive death close cannot cross a future original non-player endpoint: " + endpoint_kind)
 		check(Clock.clip_interval(future, 0.75, 0.75, 1.45, 1.0, 1.45, held).pending and future.events[0].at == 0.0 and future.events[1].at == 0.75, "On reaching a future endpoint its zero-time consumption is mandatory and old accepted at stays unchanged")
 	var future_p0: Dictionary = registry.duplicate(true)
 	Clock.queue_event(future_p0, "future:player", "player_encounter", 1.0, "site:other", {}, true)

@@ -400,7 +400,7 @@ func _process(delta: float) -> void:
 			_sync_render_projection()
 	queue_redraw()
 	if not combat_driven_by_lab:
-		advance_combat(delta, false, SiteRuntime.game_seconds(delta, float(data.site.get("combat_left", 0.0))) if data != null and not data.site.is_empty() else delta)
+		advance_combat(delta, false, SiteRuntime.tactical_seconds(delta, float(data.site.get("combat_left", 0.0))) if data != null and not data.site.is_empty() else delta)
 	if combat_pose_profile_enabled:
 		combat_pose_profile_usec["render_process"] = int(combat_pose_profile_usec.get("render_process", 0)) + Time.get_ticks_usec() - render_started
 

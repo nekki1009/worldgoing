@@ -350,7 +350,8 @@ func _mixed_clock(source: TerrainData) -> bool:
 	for tick: int in 6:
 		if not _live_frame(live): return false
 	var target: float = SiteRuntime.now(live.terrain) * 60.0
-	if not _require(absf(target - game_before - (0.04 + 0.16 * 60.0)) < 0.000001, "current Native 30Hz combat-to-peace integration", [game_before, target]): return false
+	# TCM (Nekki 11/15 M1 A): six 30 Hz frames are 0.2 action s at the one Site rate, combat included (was 0.04 + 0.16 × 60).
+	if not _require(absf(target - game_before - 0.2 * 60.0) < 0.000001, "current Native 30Hz combat-to-peace integration", [game_before, target]): return false
 	var replayed: Dictionary = _replay(cold, target)
 	if failed or not _require(replayed.ok, "mixed clock replay", replayed): return false
 	if not _same_original(_capture(cold), _capture(live), "mixed"): return false
@@ -394,7 +395,8 @@ func _cross_site_clock(source: TerrainData) -> bool:
 	var replayed: Dictionary = _replay(cold, target)
 	if failed or not _require(replayed.ok, "original cross-Site journal clock replay", replayed): return false
 	RegionSaveSlot.record_completed_fire_replay(live.terrain.site, {"epoch": epoch, "sequence": sequence + 1, "action_end": action + DT, "game_end": target})
-	if not _require(absf(target - at - DT * 4.0) < 0.000001, "remote Fire keeps this peaceful Site tactical at scale4"): return false
+	# TCM (Nekki 11/15 M1 A): a tactical step also runs at the one Site rate (was DT × 4).
+	if not _require(absf(target - at - DT * 60.0 * 4.0) < 0.000001, "remote Fire keeps this peaceful Site tactical at scale4"): return false
 	if not _same_original(_capture(cold), _capture(live), "cross_site_fire_clock"): return false
 	_close(live)
 	_close(cold)
@@ -479,7 +481,8 @@ func _run() -> void:
 	started = true
 	if not _require(OS.get_cmdline_user_args().has("--crowd") and OS.get_cmdline_user_args().has("--crowd-test"), "explicit isolated crowd startup"): return
 	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "e09788315d303457d4bb0be529390232359e16f881e341a86b59381005d9a2cd", "fixed KW21 serializer state.cpp for typed byte comparison"): return
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "5c3f6a5c5b3bab3102685d0eb663a9c66fc0ead66f9da8be597b06719fab6437", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
+	# TCM 11/16: crowd_core.hpp gained the runtime-only step_combat_start (not serialized); the KW21 layout is unchanged.
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "e1005556018e416f4d1e0a770cb5ad4a24506d20bbc5cd2fa7dbb7e528677bfc", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
 	root.gui_embed_subwindows = true
 	var initial := _initial()
 	if failed: return

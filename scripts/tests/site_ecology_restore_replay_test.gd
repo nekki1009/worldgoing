@@ -132,8 +132,9 @@ func _pause_speed_and_combat(resident: Dictionary) -> bool:
 			assert(_ecology_near(float(a.game_seconds), float(a.action_seconds) * 60.0 * first.simulation_speed))
 			assert(_ecology_near(float(b.game_seconds), float(b.action_seconds) * 60.0 * second.simulation_speed))
 		if index == 10:
-			assert(_ecology_near(float(a.game_seconds), float(a.action_seconds) * first.simulation_speed))
-			assert(_ecology_near(float(b.game_seconds), float(b.action_seconds) * second.simulation_speed))
+			# TCM (Nekki 11/15 M1 A): combat runs at the one Site rate too (was 1:1).
+			assert(_ecology_near(float(a.game_seconds), float(a.action_seconds) * 60.0 * first.simulation_speed))
+			assert(_ecology_near(float(b.game_seconds), float(b.action_seconds) * 60.0 * second.simulation_speed))
 		if SiteRuntime.now(first.terrain) >= float(deadline_minute): break
 	assert(marked and SiteRuntime.now(first.terrain) >= float(deadline_minute))
 	assert(float(first.terrain.site.combat_left) == 0.0 and float(second.terrain.site.combat_left) == 0.0)

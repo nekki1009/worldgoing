@@ -2745,10 +2745,11 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 		var time_multiplier := float(lab.simulation_speed)
 		var work_interval := accepted_game_seconds if accepted_game_seconds >= 0.0 else Runtime.game_seconds(delta, float(data.site.combat_left)) * time_multiplier
 		var manual_limit: int = int(inputs.get("manual_limit", 0))
+		var combat_before := float(data.site.combat_left) # TCM: the capture count reads the step-start combat flag
 		Runtime.advance(data, delta, worker_ready, manual_ready, reserves_cell, lab.fatigue_work_minutes, _advance_crew,
 			worker_limit, manual_limit, time_multiplier, int(inputs.get("worker_faction", -1)), work_interval,
 			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan), checked_runtime_clock_interval())
-		_advance_settlement(delta, work_interval)
+		_advance_settlement(delta, work_interval, combat_before)
 		ResearchInstitutions.advance(data, person_actions, work_interval)
 		if checked_runtime_clock_interval().is_empty() and worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
@@ -8951,11 +8952,11 @@ func settle_settlement_endpoint() -> Dictionary:
 		show_result(fallen)
 	return Runtime.ok()
 
-func _advance_settlement(real_seconds: float, game_seconds: float) -> void:
+func _advance_settlement(real_seconds: float, game_seconds: float, combat_left: float = -1.0) -> void:
 	if Settlement.record(lab.terrain).is_empty(): return
 	var sample := _settlement_capture_sample
 	if sample.is_empty(): sample = Settlement.capture_sample(lab)
-	var advanced := Settlement.advance_capture_sample(lab.terrain, sample, game_seconds)
+	var advanced := Settlement.advance_capture_sample(lab.terrain, sample, game_seconds, combat_left)
 	_settlement_capture_sample = {}
 	if not advanced.ok: latch_original_step_fault(advanced); return
 	# The existing quarter-second cadence serves offices/UI only. Capture

@@ -4125,9 +4125,30 @@ static func mark_combat(data: TerrainData, duration: float = COMBAT_GRACE, prese
 		data.site.manual.target = ""
 		data.site.manual.progress = 0.0
 
-static func game_seconds(real_seconds: float, combat_left: float) -> float:
+## 時間與氣候 TCM (reports/time-and-climate-plan.md §6, Nekki 11/15 M1 A): the Site has one rate, 1 action second =
+## 1 game minute, combat included. combat_left stays the "in combat" flag. World time (the Site clock, meals, production,
+## research, journals, Region intervals) uses game_seconds.
+const GAME_RATE := 60.0
+
+static func game_seconds(real_seconds: float, _combat_left: float = 0.0) -> float:
+	return maxf(0.0, real_seconds) * GAME_RATE
+
+## Combat mechanics keep the pre-TCM tactical clock, so a fight feels as before (M2 A: a knockout lasts the combat and
+## 4 game hours after it; M3 A: combat fatigue recovery as slow as before): combat seconds 1:1, the rest at 60.
+## Used for knockouts, fatigue charge and recovery outside work, captures, escort escapes and the settlement capture
+## count. The native crowd derives the same clock from its own combat_left (World::tactical_dt).
+static func tactical_seconds(real_seconds: float, combat_left: float) -> float:
 	var combat := minf(maxf(0.0, real_seconds), maxf(0.0, combat_left))
-	return combat + maxf(0.0, real_seconds - combat) * 60.0
+	return combat + maxf(0.0, real_seconds - combat) * GAME_RATE
+
+## The tactical share of `world_game` game seconds spent while `combat_left` (a flag here, read at the step start).
+static func tactical_of_world(world_game: float, combat_left: float) -> float:
+	return world_game / GAME_RATE if combat_left > 0.0 else world_game
+
+## A Fire journal or battle interval row written before TCM used the tactical clock for its game seconds; such rows
+## stay valid (old saves are not converted).
+static func interval_game_ok(game_delta: float, action: float, tactical: float, scale: float, tolerance: float) -> bool:
+	return absf(game_delta - action * GAME_RATE * scale) <= tolerance or absf(game_delta - (tactical + (action - tactical) * GAME_RATE) * scale) <= tolerance
 
 static func advance(data: TerrainData, real_seconds: float, worker_ready: bool = false, manual_ready: bool = false, occupied: Callable = Callable(), work_time: Callable = Callable(), crew_work: Callable = Callable(), worker_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, time_multiplier: float = 1.0, worker_faction: int = -1, accepted_game_seconds: float = -1.0, shared_operating_projection: bool = false, checked_clock: Dictionary = {}) -> void:
 	if data.site.is_empty() or bool(data.site.paused) or real_seconds <= 0.0 or not is_finite(real_seconds) or time_multiplier <= 0.0 or not is_finite(time_multiplier):

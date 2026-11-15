@@ -121,7 +121,8 @@ func _clips() -> bool:
 		for tactical: float in [0.0, step * 0.5, step]:
 			var uncut: Dictionary = Clock.clip_interval(Clock.empty_registry(), 104.0, 0.0, step, scale, tactical)
 			if not _check(uncut.ok and not uncut.get("pending", false) and float(uncut.action_seconds) == step, "Uncut ACTION stays exact at every original public scale"): return false
-	var bits: PackedByteArray = PackedFloat64Array([104.0 + step * 4.0]).to_byte_array()
+	# TCM (Nekki 11/15 M1 A): a combat step also runs at the one Site rate, so its ×4 end is 104 + step × 60 × 4.
+	var bits: PackedByteArray = PackedFloat64Array([104.0 + step * 60.0 * 4.0]).to_byte_array()
 	bits.encode_u64(0, bits.decode_u64(0) - 1)
 	var at: float = bits.decode_double(0)
 	var registry: Dictionary = Clock.empty_registry()

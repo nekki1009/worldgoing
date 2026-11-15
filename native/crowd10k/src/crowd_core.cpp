@@ -2307,6 +2307,7 @@ bool World::step_clock_work_plan(float dt, double seconds, double combat_now,
 	external_clock = true;
 	game_dt = seconds;
 	combat_left = combat_now;
+	step_combat_start = std::max(0.0, combat_now);
 	step_body(dt, &plan); // Same original step; no pending state survives this call.
 	return true;
 }
@@ -2332,7 +2333,7 @@ bool World::step_clock_work_point(float dt, double seconds, double combat_now,
     }
     work_point_begin_tick_=tick; work_point_seconds_=seconds;
     work_point_finish_ready_=false; work_point_finish_.clear(); work_point_training_.clear(); work_point_deaths_.clear(); work_point_active_=true;
-    external_clock=true; game_dt=seconds; combat_left=combat_now;
+    external_clock=true; game_dt=seconds; combat_left=combat_now; step_combat_start=std::max(0.0,combat_now);
     step_body(dt,&precontact_plan); // Same ORIGINAL sustain/fatigue/people/motion/contacts exactly once.
     return true;
 }
@@ -2466,11 +2467,17 @@ void World::publish_work_point_finish() {
     work_point_finish_ready_=false; work_point_active_=false;
 }
 
+double World::tactical_dt(float dt, double gdt) const {
+	if (!(dt > 0.0f) || !(gdt > 0.0)) return 0.0;
+	const double c = std::min((double)dt, step_combat_start);
+	return gdt * (c + ((double)dt - c) * 60.0) / ((double)dt * 60.0);
+}
+
 bool World::step(float dt) {
 	if (work_point_active_ || !valid_action_dt(dt)) return false;
 	external_clock = false;
-	double combat = std::min((double)dt, std::max(0.0, combat_left));
-	game_dt = (combat + std::max(0.0, (double)dt - combat) * 60.0) * cfg.speed;
+	step_combat_start = std::max(0.0, combat_left);
+	game_dt = (double)dt * 60.0 * cfg.speed; // TCM: one Site rate
 	combat_left = std::max(0.0, combat_left - (double)dt);
 	step_body(dt);
 	return true;
@@ -2481,6 +2488,7 @@ bool World::step_clock(float dt, double game_seconds, double combat_left_now) {
 	external_clock = true;
 	game_dt = std::max(0.0, game_seconds);
 	combat_left = std::max(0.0, combat_left_now);
+	step_combat_start = combat_left;
 	step_body(dt);
 	return true;
 }
@@ -2497,6 +2505,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	if ((int)wake_buf_.size() < chunks_) { wake_buf_.resize(chunks_); getup_buf_.resize(chunks_); }
 	combat_mark = 0;
 	const double gdt = game_dt;
+	const double tdt = tactical_dt(dt, gdt); // TCM: combat mechanics (morale, fatigue outside work, capture, KO, bleed)
 
 	build_hash();
 	pt.hash = ms_since(t); t = Clock::now();
@@ -2508,10 +2517,10 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	}
 	pt.fields = ms_since(t); t = Clock::now();
 
-	sustain_stage(gdt);      // morale observation, rout, resupply, rally
-	fatigue_stage(gdt, work_plan);      // shared fatigue charge / recovery
+	sustain_stage(tdt);      // morale observation, rout, resupply, rally
+	fatigue_stage(tdt, work_plan);      // shared fatigue charge / recovery (a covered work formation takes its plan)
 	pt.fatigue = ms_since(t); t = Clock::now();
-	person_actions_stage(gdt); // capture (auto + ordered) and escape
+	person_actions_stage(tdt); // capture (auto + ordered) and escape
 	pt.actions = ms_since(t); t = Clock::now();
 
 	if (cfg.ai && tick % 15 == 0) ai_review();
@@ -2525,13 +2534,13 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	formation_stage(dt);
 	pt.formation = ms_since(t); t = Clock::now();
 
-	pool_.run(chunks_, [&](int ch) { timers_stage(dt, gdt, ch); });
+	pool_.run(chunks_, [&](int ch) { timers_stage(dt, tdt, ch); });
 	for (int ch = 0; ch < chunks_; ++ch) {
 		for (int i : wake_buf_[ch]) { stats.wakes++; formations[form[i]].command_dirty = true; push_event(EV_WAKE, i, -1); }
 		for (int i : getup_buf_[ch]) formations[form[i]].command_dirty = true;
 	}
 	rescue_stage(dt);
-	bleed_stage(gdt);
+	bleed_stage(tdt);
 	pt.timers = ms_since(t); t = Clock::now();
 
 	pool_.run(chunks_, [&](int ch) { contact_stage(ch); });

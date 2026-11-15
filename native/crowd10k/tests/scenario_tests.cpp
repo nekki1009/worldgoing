@@ -664,7 +664,8 @@ static void test_site_clock() {
 		s.w.apply_contact(0, 1.0, 0.0);
 		CHECK(std::fabs(s.w.combat_left - 10.0) < 1e-9 && s.w.combat_mark == 10.0, "an effective hit marks 10 s (%.3f)", s.w.combat_left);
 		checked_step(s.w, DT);
-		CHECK(std::fabs(s.w.game_dt - DT) < 1e-9, "combat: game_dt %.6f", s.w.game_dt);
+		// TCM (Nekki 11/15 M1 A): one Site rate; combat mechanics keep the tactical clock (1:1 in combat).
+		CHECK(std::fabs(s.w.game_dt - DT * 60.0) < 1e-9 && std::fabs(s.w.tactical_dt(DT, s.w.game_dt) - DT) < 1e-9, "combat: game_dt %.6f, tactical %.6f", s.w.game_dt, s.w.tactical_dt(DT, s.w.game_dt));
 		s.run(9.9);
 		checked_step(s.w, DT); checked_step(s.w, DT); checked_step(s.w, DT); checked_step(s.w, DT);
 		CHECK(s.w.combat_left == 0.0 && std::fabs(s.w.game_dt - DT * 60.0) < 1e-9, "10 s later the clock is back to peace");

@@ -78,7 +78,8 @@ func _run() -> void:
 	lab._process(0.3)
 	assert(is_equal_approx(lab.character.exchange_stagger, 0.7) and is_equal_approx(lab.character.action_time, 0.7)
 		and is_zero_approx(float(lab.terrain.site.combat_left)), "Combat boundary and action seconds remain on the unaccelerated real-time clock")
-	assert(is_equal_approx(SiteRuntime.now(lab.terrain) - time_before, (0.1 + 0.2 * 60.0) * 4.0 / 60.0), "Four-times Site time integrates the combat-to-peace boundary without accelerating actions")
+	# TCM (Nekki 11/15 M1 A): combat runs at the one Site rate too (was (0.1 + 0.2 × 60) × 4 / 60).
+	assert(is_equal_approx(SiteRuntime.now(lab.terrain) - time_before, 0.3 * 60.0 * 4.0 / 60.0), "Four-times Site time integrates the combat-to-peace boundary without accelerating actions")
 	assert(lab.change_simulation_speed(-3) == 2.0 and lab.change_simulation_speed(-2) == 1.0)
 	assert(controller.status_panel.is_ancestor_of(controller.details))
 	assert(controller.status_panel.is_ancestor_of(controller.message))

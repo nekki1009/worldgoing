@@ -2054,7 +2054,7 @@ func _next_fire_replay_interval() -> Dictionary:
 			if fire_action_cursor != _fire_replay_partial_cursor or fire_action_cursor <= action_begin or fire_action_cursor >= action_end: return {}
 			var consumed := fire_action_cursor - action_begin
 			var tactical_consumed := minf(consumed, tactical_per_step)
-			game_begin += (tactical_consumed + (consumed - tactical_consumed) * 60.0) * float(row.scale)
+			game_begin += SiteRuntime.game_seconds(consumed) * float(row.scale) # TCM: one Site rate
 			tactical_per_step -= tactical_consumed
 			action_begin = fire_action_cursor
 		return {"epoch": _fire_replay_epoch, "sequence": int(row.first_sequence) + offset,
@@ -2119,8 +2119,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		if _fire_replay_tracking:
 			action_step = float(fire_interval.action_end) - float(fire_interval.action_begin)
 			simulation_speed = float(fire_interval.scale)
-			var journal_game_seconds := (float(fire_interval.tactical_seconds)
-				+ (action_step - float(fire_interval.tactical_seconds)) * 60.0) * simulation_speed
+			var journal_game_seconds := SiteRuntime.game_seconds(action_step) * simulation_speed # TCM: one Site rate
 			var site_game_seconds := SiteRuntime.game_seconds(action_step, combat_left) * simulation_speed
 			var tolerance := maxf(0.00000001, journal_game_seconds * 0.000000001)
 			if absf(journal_game_seconds - (float(fire_interval.game_end) - float(fire_interval.game_begin))) > tolerance \
@@ -2133,7 +2132,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 			# Invert the SAME existing action->game conversion, then pass action
 			# seconds to original Runtime.advance. Never feed it game seconds.
 			var unscaled := pending / simulation_speed
-			var until_target := unscaled if unscaled <= combat_left else combat_left + (unscaled - combat_left) / 60.0
+			var until_target := unscaled / SiteRuntime.GAME_RATE # TCM: one Site rate
 			# Match live's interrupted quantum before admitting the next fixed step.
 			var quantum: float = _replay_action_step_remaining if retained_quantum and _replay_action_step_remaining > 0.0 else (EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
 			action_step = minf(quantum, until_target)
@@ -2248,6 +2247,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			SiteRuntime.mark_combat(terrain, 10.0)
 			combat_clock = maxf(combat_clock, 10.0)
 		var game_seconds := SiteRuntime.game_seconds(elapsed, combat_clock) * simulation_speed
+		var tactical_game := SiteRuntime.tactical_seconds(elapsed, combat_clock) * simulation_speed # TCM: combat mechanics
 		var stage_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 		combat_clock = maxf(0.0, combat_clock - elapsed)
 		# A Fire journal interval's action width is a difference of absolute clocks, one ulp short of the tactical width
@@ -2286,7 +2286,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			for actor: TerrainTestCharacter in combat_actors:
 				if not is_instance_valid(actor) or crowd_site.contains_person(actor.person_id): continue
 				if actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id(): actor.advance_navigation()
-				actor.advance_combat(elapsed, true, game_seconds)
+				actor.advance_combat(elapsed, true, tactical_game) # TCM M2: knockouts on the tactical clock
 			stage_started = _combat_profile_stage("crowd_host_actors", stage_started)
 			siege_begin_contact_batch()
 			_advance_siege(elapsed)
@@ -2317,8 +2317,8 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 					(actor as TerrainTestNPC).advance_navigation()
 			# Both held player input and autonomous NPC intent have now committed.
 			# Charge the same game-time slice before physically advancing either body.
-			if _gd_mesh_work_point.is_empty(): _advance_fatigue(game_seconds)
-			else: _advance_fatigue(game_seconds, true) # Original uncovered recovery once; covered effort awaits genuine contacts.
+			if _gd_mesh_work_point.is_empty(): _advance_fatigue(game_seconds, false, tactical_game)
+			else: _advance_fatigue(game_seconds, true, tactical_game) # Original uncovered recovery once; covered effort awaits genuine contacts.
 			if site_controller != null:
 				site_controller.vehicles.update_ships(elapsed)
 				site_controller.vehicles.sync_ship_decks() # G1 S2: native deck points of crowd passengers follow this tick's ships
@@ -2338,7 +2338,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			stage_started = _combat_profile_stage("navigation_and_team_prepare", stage_started)
 			for actor: TerrainTestCharacter in combat_actors:
 				if is_instance_valid(actor):
-					actor.advance_combat(elapsed, true, game_seconds)
+					actor.advance_combat(elapsed, true, tactical_game) # TCM M2: knockouts on the tactical clock
 			if combat_movement_coordinator != null:
 				combat_movement_coordinator.complete_committed_moves()
 			stage_started = _combat_profile_stage("actors_advance", stage_started)
@@ -2564,7 +2564,10 @@ func resolve_structure_change(result: Dictionary) -> void:
 		combat_movement_coordinator.request_occupancy_rebuild()
 	queue_redraw()
 
-func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> void:
+## `seconds` is world game time (meals, supply, work, person actions); `tactical` the combat-mechanics clock for a
+## present actor's own fatigue outside work (TCM M3). A negative `tactical` derives it from the Site's combat flag.
+func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false, tactical: float = -1.0) -> void:
+	if tactical < 0.0: tactical = SiteRuntime.tactical_of_world(seconds, float(terrain.site.get("combat_left", 0.0)) if terrain != null else 0.0)
 	if terrain == null or seconds <= 0.0:
 		return
 	var fatigue_started := Time.get_ticks_usec() if combat_profile_enabled else 0
@@ -2607,6 +2610,7 @@ func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> voi
 		var worked := minf(seconds, float(_fatigue_work_seconds.get(actor, 0.0)))
 		_fatigue_work_seconds[actor] = maxf(0.0, float(_fatigue_work_seconds.get(actor, 0.0)) - worked)
 		var available := maxf(0.0, seconds - worked - float(training_seconds.get(actor.person_id, 0.0)))
+		if seconds > 0.0 and tactical < seconds: available *= tactical / seconds # TCM M3: combat fatigue on the tactical clock
 		if available <= 0.0:
 			continue
 		if _shared_pool_has_effort(actor): continue

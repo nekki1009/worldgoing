@@ -300,7 +300,7 @@ static func _validate_interval(battle: Dictionary, interval: Dictionary) -> Dict
 		return _fail("CLOCK_CONTRACT")
 	if str(interval.permit_id).is_empty() or int(interval.journal_revision) < 0: return _fail("MISSING_INTERVAL_PERMIT")
 	if absf(game_start - float(battle.completed_game_time)) > EPSILON: return _fail("NONCONTIGUOUS_INTERVAL")
-	if absf(game_end - game_start - (tactical + 60.0 * (action - tactical)) * scale) > EPSILON:
+	if not SiteRuntime.interval_game_ok(game_end - game_start, action, tactical, scale, EPSILON): # TCM; pre-TCM rows stay valid
 		return _fail("CLOCK_CONTRACT")
 	return {"ok": true, "code": ""}
 

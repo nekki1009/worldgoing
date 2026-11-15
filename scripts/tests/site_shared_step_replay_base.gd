@@ -334,7 +334,7 @@ func _run() -> void:
 		mixed_live.movement_input_enabled = false
 		mixed_live._advance_action_time(0.2)
 		var mixed_target := float(mixed_slot.control.logical_game_seconds)
-		_near(mixed_target + mixed_live._action_time_remainder * 60.0 * mixed_live.simulation_speed, float(initial.at) + 0.04 + 0.16 * 60.0)
+		_near(mixed_target + mixed_live._action_time_remainder * 60.0 * mixed_live.simulation_speed, float(initial.at) + 0.2 * 60.0) # TCM: one Site rate
 		var mixed_result := mixed_cold.replay_site_to(mixed_target)
 		assert(mixed_result.ok and mixed_result.status == "COMPLETE", str(mixed_result))
 		mixed_live.terrain.site.erase("fire_settlement")

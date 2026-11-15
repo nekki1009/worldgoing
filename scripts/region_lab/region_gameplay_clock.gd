@@ -197,14 +197,14 @@ static func tactical_seconds(registry: Dictionary, action: float, elapsed: float
 			result = maxf(result, clampf(float(value.tactical_until_action) - action, 0.0, elapsed))
 	return result
 
-static func action_for_game(delta_game: float, scale: float, tactical: float) -> float:
-	var unscaled := delta_game / scale
-	return unscaled if unscaled <= tactical else tactical + (unscaled - tactical) / 60.0
+## TCM (Nekki 11/15 M1 A): one Site rate; `tactical` is kept for the callers' signature only.
+static func action_for_game(delta_game: float, scale: float, _tactical: float = 0.0) -> float:
+	return delta_game / scale / 60.0
 
 static func clip_interval(registry: Dictionary, world: float, action: float, elapsed: float, scale: float, local_tactical: float = 0.0, held_player_death_ids: Array[String] = []) -> Dictionary:
 	if not seconds(world) or not seconds(action) or not seconds(elapsed) or elapsed <= 0.0 or scale not in [0.5, 1.0, 2.0, 4.0]: return fail("REGION_INTERVAL", "共同區間非法")
 	var tactical: float = tactical_seconds(registry, action, elapsed, local_tactical)
-	var delta_game: float = (tactical + 60.0 * (elapsed - tactical)) * scale
+	var delta_game: float = 60.0 * elapsed * scale # TCM (Nekki 11/15 M1 A): one Site rate; tactical is the combat share only
 	var endpoint: float = next_endpoint(registry, world, world + delta_game, held_player_death_ids)
 	if endpoint <= world + 0.0000000001: return {"ok": true, "pending": true, "action_seconds": 0.0, "game_seconds": 0.0, "tactical_seconds": 0.0, "game_end": world}
 	var clipped: float = elapsed
@@ -212,5 +212,5 @@ static func clip_interval(registry: Dictionary, world: float, action: float, ela
 	if endpoint < world + delta_game:
 		clipped = minf(elapsed, action_for_game(endpoint - world, scale, tactical))
 	var clipped_tactical: float = minf(tactical, clipped)
-	var game: float = (clipped_tactical + 60.0 * (clipped - clipped_tactical)) * scale
+	var game: float = 60.0 * clipped * scale # TCM: one Site rate
 	return {"ok": true, "pending": false, "action_seconds": clipped, "game_seconds": game, "tactical_seconds": clipped_tactical, "game_end": world + game}

@@ -826,7 +826,10 @@ func _drive_capture(target: float) -> bool:
 		# and clips the accepted interval, including a real zero-time completion.
 		var requested := maximum
 		if remaining > TerrainLab.ACTION_TIME_EPSILON:
-			requested = minf(maximum, RegionSaveSlot.GameplayClock.action_for_game(remaining, lab.simulation_speed, tactical))
+			# TCM (Nekki 11/15 M1 A): the capture count is tactical time, so in combat its remaining seconds are action
+			# seconds, which the one Site rate turns into 60× as many game seconds.
+			var remaining_game := remaining * (SiteRuntime.GAME_RATE if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 else 1.0)
+			requested = minf(maximum, RegionSaveSlot.GameplayClock.action_for_game(remaining_game, lab.simulation_speed, tactical))
 		var result: Dictionary = lab._advance_original_shared_step(requested)
 		if result.get("ok", false) and str(result.get("status", "")) == "REGION_EVENT_PENDING" and int(center_owner.terrain.site.settlement.owner_faction) == 1:
 			# A due Region event (e.g. the arrived party's scheduled evaluation) is consumed by the
