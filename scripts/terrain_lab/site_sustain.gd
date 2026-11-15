@@ -197,7 +197,8 @@ static func _valid_location_key(value: Variant) -> bool:
 	if not value is String:
 		return false
 	var parts := str(value).split(":")
-	if parts.size() != 2 or parts[0] not in ["shore", "vehicle"] or not parts[1].is_valid_int():
+	# "house:<id>" (平民 C1b): a household's pantry inside its residents team's ledger.
+	if parts.size() != 2 or parts[0] not in ["shore", "vehicle", "house"] or not parts[1].is_valid_int():
 		return false
 	var identity := int(parts[1])
 	return _integer(identity, 0 if parts[0] == "shore" else 1) and str(identity) == parts[1]

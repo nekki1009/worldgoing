@@ -1,17 +1,16 @@
 extends RefCounted
 ## Households (平民行為 C0, reports/civilian-site-behavior-plan.md §4.1; Q1 A: one resident team per settlement, the
 ## household is a grouping inside it). A household is the set of residents registered to one house in `site.housing`.
-## `site.households[house_id] = {version, head, stock, job}`:
+## `site.households[house_id] = {version, head, job}`:
 ## - members are never stored: they are derived from `site.housing` (one authority);
-## - head: the household head's person id (the lowest id at first, kept while he stays a member), or -1 for a house that
-##   only keeps leftover stock;
-## - stock: the household's own goods {item: positive count} (real items; later stages move them in and out);
+## - head: the household head's person id (the lowest id at first, kept while he stays a member);
 ## - job: {feature, since_day}: the household's main work place ("" = none) and the Site day it was set.
+## The household's food (戶糧, C1) is not stored here: it is the "house:<id>" food location of the residents team's
+## supply ledger (SiteSustain), so meals and hunger keep their one authority. See SiteResidentLife.
 ## An old save without the table gets it on load (normalize); houses gain and lose entries as people register and leave.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const VERSION := 1
-const FIELDS := ["version", "head", "stock", "job"]
-const STOCK_MAX := 1000000
+const FIELDS := ["version", "head", "job"]
 
 static func _integer(value: Variant, lower: int, upper: int) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) >= lower and float(value) <= upper and float(value) == floorf(float(value))
@@ -34,13 +33,13 @@ static func members(state: Dictionary, house_id: String) -> Array:
 	return membership(state).get(house_id, [])
 
 static func _empty(head: int, day: int) -> Dictionary:
-	return {"version": VERSION, "head": head, "stock": {}, "job": {"feature": "", "since_day": day}}
+	return {"version": VERSION, "head": head, "job": {"feature": "", "since_day": day}}
 
 static func _day(state: Dictionary) -> int:
 	return int(floorf(float(state.get("minute", 0)) / 1440.0))
 
 ## Brings the table in line with the housing registrations. Returns true when anything changed. A household whose head
-## left passes to its lowest-id member; a house without members keeps its entry only while it still holds stock.
+## left passes to its lowest-id member; a house without members loses its entry.
 static func reconcile(state: Dictionary) -> bool:
 	var changed := false
 	if not state.get("households") is Dictionary:
@@ -57,12 +56,8 @@ static func reconcile(state: Dictionary) -> bool:
 			table[house_id]["head"] = int(people[0])
 			changed = true
 	for house_id: Variant in table.keys():
-		if houses.has(house_id): continue
-		if table[house_id].stock.is_empty():
+		if not houses.has(house_id):
 			table.erase(house_id)
-			changed = true
-		elif int(table[house_id].head) != -1:
-			table[house_id]["head"] = -1
 			changed = true
 	return changed
 
@@ -73,9 +68,6 @@ static func normalize(state: Dictionary) -> void:
 			if not entry is Dictionary: continue
 			for field: String in ["version", "head"]:
 				if entry.get(field) is float: entry[field] = int(entry[field])
-			if entry.get("stock") is Dictionary:
-				for item: Variant in entry.stock:
-					if entry.stock[item] is float: entry.stock[item] = int(entry.stock[item])
 			if entry.get("job") is Dictionary and entry.job.get("since_day") is float: entry.job.since_day = int(entry.job.since_day)
 	reconcile(state)
 
@@ -86,31 +78,26 @@ static func validate(state: Dictionary) -> Dictionary:
 	if not state.has("households"): return Runtime.ok()
 	var table: Variant = state.get("households", {})
 	if not table is Dictionary: return Runtime.fail("CORRUPT_SAVE", "戶表")
-	var houses := membership(state)
 	for house_id: Variant in table:
 		var entry: Variant = table[house_id]
 		if not house_id is String or not entry is Dictionary or entry.size() != FIELDS.size(): return Runtime.fail("CORRUPT_SAVE", "戶欄位")
 		for field: String in FIELDS:
 			if not entry.has(field): return Runtime.fail("CORRUPT_SAVE", "戶欄位")
 		if not _integer(entry.version, VERSION, VERSION): return Runtime.fail("CORRUPT_SAVE", "戶版本")
-		if not entry.stock is Dictionary or not entry.job is Dictionary or entry.job.size() != 2 or not entry.job.get("feature") is String or not _integer(entry.job.get("since_day"), 0, 2147483647): return Runtime.fail("CORRUPT_SAVE", "戶糧或主業")
-		for item: Variant in entry.stock:
-			if not item is String or str(item).is_empty() or not _integer(entry.stock[item], 1, STOCK_MAX): return Runtime.fail("CORRUPT_SAVE", "戶糧數量")
+		if not entry.job is Dictionary or entry.job.size() != 2 or not entry.job.get("feature") is String or not _integer(entry.job.get("since_day"), 0, 2147483647): return Runtime.fail("CORRUPT_SAVE", "戶主業")
 		var feature_id := str(entry.job.feature)
 		if not feature_id.is_empty() and not state.get("features", {}).has(feature_id): return Runtime.fail("CORRUPT_SAVE", "戶主業須引用現存建物")
-		if not _integer(entry.head, -1, 2147483647) or int(entry.head) == 0: return Runtime.fail("CORRUPT_SAVE", "戶長")
+		if not _integer(entry.head, 1, 2147483647): return Runtime.fail("CORRUPT_SAVE", "戶長")
 	return Runtime.ok()
 
-## Is the table exactly in line with the registrations (every registered house has an entry headed by a member, an
-## empty house only keeps stock)? Tests and owners that just reconciled use it.
+## Is the table exactly in line with the registrations? Tests and owners that just reconciled use it.
 static func in_sync(state: Dictionary) -> bool:
 	var table: Variant = state.get("households")
 	if not table is Dictionary: return false
 	var houses := membership(state)
+	if table.size() != houses.size(): return false
 	for house_id: String in houses:
 		if not table.has(house_id) or not houses[house_id].has(int(table[house_id].head)): return false
-	for house_id: Variant in table:
-		if not houses.has(house_id) and (int(table[house_id].head) != -1 or table[house_id].stock.is_empty()): return false
 	return true
 
 static func household(state: Dictionary, house_id: String) -> Dictionary:
@@ -139,14 +126,6 @@ static func set_job(state: Dictionary, house_id: String, feature_id: String) -> 
 	entry["job"] = {"feature": feature_id, "since_day": _day(state)}
 	return Runtime.ok("", {"changed": true})
 
-## Adds (`delta` > 0) or takes (`delta` < 0) household goods; never below zero, never created from nothing by callers
-## that do not hold the matching source (C1 moves real stock).
-static func change_stock(state: Dictionary, house_id: String, item: String, delta: int) -> Dictionary:
-	var entry: Dictionary = household(state, house_id)
-	if entry.is_empty() or item.is_empty(): return Runtime.fail("NO_TARGET", "沒有這一戶")
-	var next := int(entry.stock.get(item, 0)) + delta
-	if next < 0: return Runtime.fail("INSUFFICIENT", "戶糧不足")
-	if next > STOCK_MAX: return Runtime.fail("CAPACITY", "戶糧已滿")
-	if next == 0: entry.stock.erase(item)
-	else: entry.stock[item] = next
-	return Runtime.ok("", {"count": next})
+## The food location key of a house in its residents team's supply ledger.
+static func food_key(house_id: String) -> String:
+	return "house:" + house_id

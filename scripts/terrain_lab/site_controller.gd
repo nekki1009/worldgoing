@@ -30,6 +30,7 @@ const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
+const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
@@ -5511,6 +5512,10 @@ func _supply_location_valid(team: Variant, key: String) -> bool:
 	if key.begins_with("shore:"):
 		var index := int(key.trim_prefix("shore:"))
 		return index >= 0 and index < lab.terrain.size.x * lab.terrain.size.y and lab.terrain.is_walkable(lab.terrain.cell_from_index(index))
+	if key.begins_with("house:"):
+		# 平民 C1b: a pantry is a completed house of the team's own faction.
+		var house: Dictionary = lab.terrain.site.get("features", {}).get(key.trim_prefix("house:"), {})
+		return str(house.get("kind", "")) == "house" and int(house.get("owner_faction", -1)) == int(team.faction_id)
 	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(key.trim_prefix("vehicle:"), {})
 	return SiteVehicleTransport.is_ship(vehicle) and int(vehicle.get("team_id", -1)) == team.team_id
 
@@ -5538,6 +5543,10 @@ func ship_food_locations(team: Variant, members: Dictionary, candidate_locations
 		if vehicles.is_embarked(id):
 			var key := "vehicle:" + str(vehicles.ship_for_person(id).id)
 			if locations.has(key): result[id] = key
+			continue
+		var home := ResidentLife.member_house_key(self, id, person.cell, locations)
+		if not home.is_empty():
+			result[id] = home # 平民 C1b: at his door a resident eats from his own house's pantry.
 			continue
 		for key: String in keys:
 			if not key.begins_with("shore:") or not _supply_shore_contact(person.cell, lab.terrain.cell_from_index(int(key.trim_prefix("shore:")))):
