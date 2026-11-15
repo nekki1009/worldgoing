@@ -32,6 +32,7 @@ const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd"
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
@@ -3156,7 +3157,7 @@ func _refresh_saved_sites() -> void:
 		var path := save_root.path_join(file)
 		var decoded := Store._read(path)
 		if decoded.ok:
-			saved_sites.add_item("%s · seed %d · 第%d日" % [TerrainPreset.NAMES[int(decoded.payload.preset)], int(decoded.payload.seed), floori(float(decoded.payload.state.get("minute", 0)) / 1440) + 1])
+			saved_sites.add_item("%s · seed %d · %s" % [TerrainPreset.NAMES[int(decoded.payload.preset)], int(decoded.payload.seed), Calendar.date_text(float(decoded.payload.state.get("minute", 0)))])
 			saved_sites.set_item_metadata(saved_sites.item_count - 1, path)
 
 func _request_exit(next_scene: String = "") -> void:

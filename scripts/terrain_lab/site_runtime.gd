@@ -4605,9 +4605,9 @@ static func rebuild_water(data: TerrainData) -> void:
 static func allocate_water(data: TerrainData) -> void:
 	data.site["water_status"] = _water_allocation_candidate(data, _water_schedule_categories(data))
 
+## 時間與氣候 TC1: the one clock text of the solar calendar (SiteCalendar).
 static func date_text(data: TerrainData) -> String:
-	var minute := int(data.site.get("minute", 0))
-	return "第 %d 日  %02d:%02d" % [floori(float(minute) / 1440.0) + 1, floori(float(minute % 1440) / 60.0), minute % 60]
+	return preload("res://scripts/terrain_lab/site_calendar.gd").clock_text(float(int(data.site.get("minute", 0))))
 
 
 # Ship-relative ground_loot stays in the original item container collection.

@@ -465,7 +465,7 @@ func _refresh() -> void:
 		if str(party.party.get("mode", "land")) == "sea": party_summary = "%d 人・%d 艘船（海路）" % [census.people.size(), census.vehicles.size()]
 		else: party_summary = "%d 人・%d 輛車・%.1f 公里／時（陸路）" % [census.people.size(), census.vehicles.size(), float(party.party.get("speed_mps", 0.0)) * 3.6]
 	var minute := floori(now / 60.0)
-	_clock.text = "第 %d 日 %02d:%02d　速度 ×%s%s" % [minute / 1440 + 1, (minute % 1440) / 60, minute % 60,
+	_clock.text = "%s　速度 ×%s%s" % [preload("res://scripts/terrain_lab/site_calendar.gd").clock_text(float(minute)),
 		"0.5" if speed == 0.5 else str(int(speed)), "　（行進中）" if running else "　（暫停）"]
 	var lines: Array[String] = [party_summary, "位置：Site %d, %d" % [current.site.x, current.site.y]]
 	if current.has("destination"):

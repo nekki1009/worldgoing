@@ -11,6 +11,7 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 
 const Schedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
 var checks := 0
 
@@ -26,7 +27,7 @@ func _ok(condition: bool, message: String, detail: Variant = null) -> bool:
 func _run() -> void:
 	if not _ok(Schedule.phase_at(23 * 60) == "sleep" and Schedule.phase_at(4 * 60) == "sleep" and Schedule.phase_at(5 * 60 + 30) == "wake" and Schedule.phase_at(7 * 60) == "work" and Schedule.phase_at(12 * 60) == "meal" and Schedule.phase_at(15 * 60) == "work" and Schedule.phase_at(19 * 60) == "evening", "the day's phases"): return
 	if not _ok(Schedule.phase_at(5 * 60 + 40, 80) == "work" and Schedule.phase_at(5 * 60 + 40, 50) == "wake" and Schedule.phase_at(18 * 60 + 10, 80) == "work" and Schedule.phase_at(18 * 60 + 10, 50) == "evening", "a diligent person works 30 minutes longer at both ends"): return
-	if not _ok(Schedule.check_index(1449.0) == 144 and Schedule.meals_between(600.0, 1440.0 + 700.0).size() == 3 and Schedule.meals_between(660.0, 660.0).is_empty(), "ten-minute checks and the meal list"): return
+	if not _ok(Schedule.check_index(1449.0) == 144 and Schedule.meals_between(float(Calendar.day_start_minute(0) + 600), float(Calendar.day_start_minute(1) + 700)).size() == 3 and Schedule.meals_between(660.0, 660.0).is_empty(), "ten-minute checks and the meal list"): return
 	var data := _building_fixture()
 	var lab := _building_lab(data)
 	var controller: SiteController = lab.site_controller

@@ -22,14 +22,16 @@ const MEALS_PER_DAY := 2
 ## Where a phase sends the resident.
 const PLACE := {"sleep": "home", "wake": "out", "work": "work", "meal": "home", "evening": "home"}
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 
+## 時間與氣候 TC1: the schedule reads the one calendar (SiteCalendar), not its own minute arithmetic.
 static func minute_of_day(minute: float) -> int:
-	return int(floorf(fposmod(minute, float(DAY))))
+	return Calendar.minute_of_day(minute)
 
 static func day_of(minute: float) -> int:
-	return int(floorf(minute / float(DAY)))
+	return Calendar.day_index(minute)
 
 ## The phase at a minute of the day for a person of `diligence` (0..100).
 static func phase_at(minute_in_day: int, diligence: int = 50) -> String:
@@ -55,7 +57,7 @@ static func meals_between(from_minute: float, to_minute: float) -> Array:
 	if to_minute <= from_minute: return result
 	for day: int in range(day_of(from_minute), day_of(to_minute) + 1):
 		for meal: int in range(MEAL_MINUTES.size()):
-			var at := float(day * DAY + int(MEAL_MINUTES[meal]))
+			var at := float(Calendar.day_start_minute(day) + int(MEAL_MINUTES[meal]))
 			if at > from_minute and at <= to_minute: result.append({"day": day, "meal": meal})
 	return result
 
