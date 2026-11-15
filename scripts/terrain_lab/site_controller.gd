@@ -32,6 +32,8 @@ const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd"
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
+const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
 var _resident_check := -1
 var last_resident_schedule: Dictionary = {}
@@ -14964,4 +14966,39 @@ func resident_schedule_tick() -> void:
 	var check := ResidentSchedule.check_index(minute)
 	if check == _resident_check: return
 	_resident_check = check
+	if ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
 	last_resident_schedule = ResidentSchedule.drive(self, minute)
+
+## 平民 C2: the 戶籍 duty's authority over the settlement's households. Ok with {faction, decider} when `requester_id` is
+## the duty's decider (the head acts while the seat is vacant).
+func registry_authority(requester_id: int) -> Dictionary:
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if settlement.is_empty(): return Runtime.fail("UNESTABLISHED", "尚未建制聚落")
+	var resolved: Dictionary = Settlement.duty_resolve(lab, ResidentWork.DUTY, true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, Settlement.offices(lab, true))
+	return Runtime.ok("", {"faction": int(settlement.owner_faction), "decider": requester_id})
+
+## 平民 C2: the decider sets one household's main job (an operate feature of the settlement's faction, or "" to clear).
+func assign_household_job(house_id: String, feature_key: String, requester_id: int) -> Dictionary:
+	var checked := registry_authority(requester_id)
+	if not checked.ok: return checked
+	var house: Dictionary = lab.terrain.site.get("features", {}).get(house_id, {})
+	if int(house.get("owner_faction", -1)) != int(checked.faction) or not lab.terrain.site.get("households", {}).has(house_id): return Runtime.fail("NO_TARGET", "須是本聚落有登記居民的住宅")
+	if not feature_key.is_empty() and not ResidentWork.job_features(lab.terrain.site, int(checked.faction)).has(feature_key): return Runtime.fail("NO_TARGET", "主業須是本聚落開工中的建物")
+	return Households.set_job(lab.terrain.site, house_id, feature_key)
+
+## 平民 C2: the decider fills every household without a valid job (SiteResidentWork.plan).
+func plan_household_jobs(requester_id: int) -> Dictionary:
+	var checked := registry_authority(requester_id)
+	if not checked.ok: return checked
+	Households.reconcile(lab.terrain.site)
+	var changed := ResidentWork.apply(lab.terrain.site, ResidentWork.plan(lab.terrain.site, int(checked.faction)))
+	return Runtime.ok("已分派 %d 戶主業" % changed, {"changed": changed})
+
+## The duty AI plans once a day for a decider who is not the controlled person.
+func _registry_ai_day() -> void:
+	var current: Dictionary = Settlement.offices(lab, true)
+	if current.is_empty() or not bool(current.get("duty_ai", false)): return
+	var resolved: Dictionary = Settlement.duty_resolve(lab, ResidentWork.DUTY, true)
+	if not bool(resolved.ok) or int(resolved.decider) <= 0 or int(resolved.decider) == int(lab.controlled_person_id()): return
+	plan_household_jobs(int(resolved.decider))

@@ -3,6 +3,8 @@ extends RefCounted
 ## Original Army rows perform the existing Site worker pipeline. This helper
 ## keeps only active identity handles/retry delays; no people, cargo or clock.
 
+const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const RETRY_SECONDS := 30.0
 const WORK_PROVIDER := "work_team"
 var lab: Variant
@@ -195,10 +197,12 @@ func begin_manual(identity: int, key: String, action: String = "harvest") -> Dic
 func assign(team: Variant, identities: Array[int], requester_id: int) -> Dictionary:
 	if team == null or not team.combat_enabled or not _known_team(team) or bool(lab.terrain.site.paused):
 		return SiteRuntime.fail("BUSY")
+	var scheduled := requester_id == Housing.SCHEDULE_REQUESTER and _schedule_may_assign(identities)
 	var requester: int = team.index_for_identity(requester_id)
-	if requester < 0 or not team is TerrainArmy and not team.command_eligible(requester):
+	if scheduled: pass # 平民 C2: the resident schedule hands its own civilians to their household's work.
+	elif requester < 0 or not team is TerrainArmy and not team.command_eligible(requester):
 		return SiteRuntime.fail("NO_AUTHORITY", "只有原队伍当前适任指挥者可派工")
-	if team is TerrainArmy: # team.work may be a 文官 seat: fitness comes from the resolver.
+	elif team is TerrainArmy: # team.work may be a 文官 seat: fitness comes from the resolver.
 		var refused: Dictionary = team.duty_authority("team.work", requester_id)
 		if not refused.is_empty(): return refused
 	elif requester != team.current_commander:
@@ -230,6 +234,12 @@ func assign(team: Variant, identities: Array[int], requester_id: int) -> Diction
 		_active_ids[identity] = true
 		_retry_left.erase(identity)
 	return SiteRuntime.ok("原成员开始轮流选择可用工作", {"members": identities.duplicate()})
+
+func _schedule_may_assign(identities: Array[int]) -> bool:
+	if identities.is_empty(): return false
+	for identity: int in identities:
+		if not Housing.schedule_authority(lab, lab.site_controller.person_actions._person(identity, false)): return false
+	return true
 
 func cancel(identity: int) -> Dictionary:
 	_cancel_ladder_for_person(identity)
@@ -380,7 +390,10 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if SiteRuntime.inventory_size(row.cargo) == 0:
 				selected = _choose_vehicle_task(team, person.cell, occupied, claims)
 			if not bool(selected.ok):
-				selected = SiteRuntime.choose_task(lab.terrain, person.cell, occupied, task, row.cargo, claims, int(team.faction_id))
+				var excluded: Dictionary = claims
+				var job_excluded := ResidentWork.excluded_for(lab.terrain.site, identity)
+				if not job_excluded.is_empty(): excluded = claims.merged(job_excluded) # 平民 C2: only the household's job.
+				selected = SiteRuntime.choose_task(lab.terrain, person.cell, occupied, task, row.cargo, excluded, int(team.faction_id))
 			SiteRuntime.assign_task(lab.terrain, selected, task)
 			if not bool(selected.ok):
 				_retry_left[identity] = RETRY_SECONDS
