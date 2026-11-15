@@ -2260,6 +2260,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 		var crowd_events_us := 0
 		if site_controller != null:
 			site_controller.person_actions.advance_fire_jobs(fire_action_begin, completed_fire_end, game_seconds)
+			site_controller.resident_schedule_tick()
 			site_controller.person_actions.advance_housing_jobs(elapsed)
 			site_controller.person_actions.advance_structure_attacks(elapsed)
 		stage_started = _combat_profile_stage("person_fire_housing_structure_jobs", stage_started)

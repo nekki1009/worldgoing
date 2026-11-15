@@ -31,6 +31,10 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
+const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
+## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
+var _resident_check := -1
+var last_resident_schedule: Dictionary = {}
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
@@ -14950,3 +14954,14 @@ func _audio_settings_changed(volume: float, muted: bool) -> void:
 func _faction_label(faction_id: int) -> String:
 	var view: Dictionary = region_slot.faction_display(faction_id) if region_slot != null else RegionFactionQuery.display({}, faction_id)
 	return str(faction_id) if view.name == "勢力 %d" % faction_id else str(view.name)
+
+
+## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
+func resident_schedule_tick() -> void:
+	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)): return
+	if lab.terrain.site.get("housing", {}).is_empty(): return
+	var minute := float(lab.terrain.site.get("minute", 0))
+	var check := ResidentSchedule.check_index(minute)
+	if check == _resident_check: return
+	_resident_check = check
+	last_resident_schedule = ResidentSchedule.drive(self, minute)

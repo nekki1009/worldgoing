@@ -4,6 +4,9 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const MULTIPLIER := 1.25
+## 平民 C1a: the requester id the resident daily schedule uses. It has authority only over a civilian of a commanderless
+## team (the settlement's residents) who is not the controlled person.
+const SCHEDULE_REQUESTER := -2
 
 static func _integer(value: Variant, lower: int, upper: int) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) >= lower and float(value) <= upper and float(value) == floorf(float(value))
@@ -61,6 +64,12 @@ static func _same_team_authority(lab: Variant, requester: Dictionary, person: Di
 	var team := _gd_team(lab, person)
 	return team != null and _gd_team(lab, requester) == team and team.command_eligible(team.current_commander) and team.combat_identity(team.current_commander) == int(requester.person_id)
 
+static func schedule_authority(lab: Variant, person: Dictionary) -> bool:
+	if person.is_empty() or int(person.person_id) == int(lab.controlled_person_id()): return false
+	var body: Variant = person.get("body")
+	var role: String = str(body.get("military_role", "soldier")) if body is Dictionary else (str(body.military_role) if body is Object and "military_role" in body else "soldier")
+	return role == "civilian" and int(_formation(lab, person).get("current_person", -1)) < 0
+
 static func _commands_current(lab: Variant, requester_id: int, person: Dictionary) -> bool:
 	if requester_id != int(lab.controlled_person_id()): return false
 	var requester: Dictionary = lab.site_controller.person_actions._person(requester_id)
@@ -76,7 +85,8 @@ static func context(lab: Variant, identity: int, house_id: String, requester_id:
 	if not layout.ok or not bool(layout.get("complete", false)) or not Runtime.feature_usable(feature, "lodging") or int(feature.get("owner_faction", -1)) < 0: return Runtime.fail("NO_HOUSE", "須選取已有管理方的完工可用住宅")
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.get("surrender_pending", false)): return Runtime.fail("BUSY", "原住戶須存活清醒自由")
 	if int(person.faction) != int(feature.owner_faction): return Runtime.fail("NO_AUTHORITY")
-	if not _commands_current(lab, requester_id, person) and not (allow_moving and requester_id == int(lab.controlled_person_id()) and (requester_id == identity or _same_team_authority(lab, actions._person(requester_id), person))): return Runtime.fail("NO_AUTHORITY", "須由本人或原當前隊長操作")
+	var scheduled := requester_id == SCHEDULE_REQUESTER and schedule_authority(lab, person)
+	if not scheduled and not _commands_current(lab, requester_id, person) and not (allow_moving and requester_id == int(lab.controlled_person_id()) and (requester_id == identity or _same_team_authority(lab, actions._person(requester_id), person))): return Runtime.fail("NO_AUTHORITY", "須由本人或原當前隊長操作")
 	var formation := _formation(lab, person)
 	if int(formation.get("order", -1)) != int(TerrainArmy.CombatOrder.HOLD) or bool(formation.get("garrisoned", false)) or bool(formation.get("routed", false)): return Runtime.fail("BUSY", "原人物須保持 HOLD 且未駐營或潰退")
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須先脫戰")

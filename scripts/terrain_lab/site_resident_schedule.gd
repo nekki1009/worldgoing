@@ -21,6 +21,8 @@ const MEAL_MINUTES := [NOON, EVENING]
 const MEALS_PER_DAY := 2
 ## Where a phase sends the resident.
 const PLACE := {"sleep": "home", "wake": "out", "work": "work", "meal": "home", "evening": "home"}
+const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 
 static func minute_of_day(minute: float) -> int:
 	return int(floorf(fposmod(minute, float(DAY))))
@@ -54,4 +56,34 @@ static func meals_between(from_minute: float, to_minute: float) -> Array:
 		for meal: int in range(MEAL_MINUTES.size()):
 			var at := float(day * DAY + int(MEAL_MINUTES[meal]))
 			if at > from_minute and at <= to_minute: result.append({"day": day, "meal": meal})
+	return result
+
+## The diligence axis of a person dictionary (SitePersonActions._person); neutral 50 when it has no packet.
+static func diligence_of(person: Dictionary) -> int:
+	var body: Variant = person.get("body")
+	var packet: Variant = body.get("personality") if body is Dictionary else (body.personality if body is Object and "personality" in body else null)
+	return int(PersonPersonality.read(packet).diligence)
+
+## C1a driver, run once per ten-minute check by SiteController.resident_schedule_tick. Every registered resident under
+## the schedule's authority (Housing.schedule_authority) whose phase is a home phase and who is not home and not busy
+## starts the normal step-by-step housing return. Work and wake phases change nothing yet (C2 hands residents to work).
+## Refusals (threat, combat, a moving person) are counted, never forced. Returns {started, refused, home}.
+static func drive(controller: Variant, minute: float) -> Dictionary:
+	var lab: Variant = controller.lab
+	var actions: RefCounted = controller.person_actions
+	var result := {"started": 0, "refused": 0, "home": 0}
+	var ids: Array = lab.terrain.site.get("housing", {}).keys()
+	ids.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in ids:
+		var identity := int(key)
+		var person: Dictionary = actions._person(identity, false)
+		if person.is_empty() or float(person.hp) <= 0.0 or not Housing.schedule_authority(lab, person): continue
+		if place_at(minute_of_day(minute), diligence_of(person)) != "home": continue
+		if Housing._attends(lab, identity):
+			result.home = int(result.home) + 1
+			continue
+		if actions.is_busy(identity) or bool(person.moving): continue
+		var begun: Dictionary = actions.begin_housing_return(identity, Housing.SCHEDULE_REQUESTER)
+		if begun.ok: result.started = int(result.started) + 1
+		else: result.refused = int(result.refused) + 1
 	return result
