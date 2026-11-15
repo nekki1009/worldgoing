@@ -8,6 +8,7 @@ extends RefCounted
 
 const RegionPolicy = preload("res://scripts/region_lab/region_gameplay_ai.gd")
 const TrainingGround = preload("res://scripts/terrain_lab/site_training_ground.gd")
+const CivilPromotion = preload("res://scripts/terrain_lab/site_civil_promotion.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const REVIEW_GAME_SECONDS := 60.0
 # Military axes (risk 勇猛↔謹慎, casualty 愛兵↔不惜損失, achievement 好功↔淡泊)
@@ -200,6 +201,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		# P1c (NEKKI_DECISION_20261031_crowd_peacetime_systems + crowd_team_data_survey.md Option A): day settlement is
 		# bookkeeping and runs on every day, combat days included. Family vacancy runs at peace only. Duty review stays gated.
 		SiteSocial.settle_site(lab)
+		CivilPromotion.day(lab) # 文武官 W3: civil tenure rides the day settlement.
 		if not lab.site_controller.person_actions.crowd_peace_guard([]).ok: return
 		settle_family_vacancy(lab)
 		# P1d: team personnel at peace, on the grid review's own cadence: the same stamp gate, round counter (due() reads it)
@@ -221,6 +223,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 			crowd_cadence.last_game_time = crowd_stamp
 		return
 	SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.
+	CivilPromotion.day(lab) # 文武官 W3: civil tenure rides the day settlement.
 	settle_family_vacancy(lab) # R5 S6: family vacancy episodes ride the same tick, after the G0 day settlement.
 	var controller: Variant = lab.site_controller
 	var controlled: int = lab.controlled_person_id()

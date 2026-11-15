@@ -8,6 +8,7 @@ extends RefCounted
 
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
+const CivilPromotion = preload("res://scripts/terrain_lab/site_civil_promotion.gd")
 
 const VERSION := 1
 const DAY_MINUTES := 1440
@@ -153,3 +154,11 @@ static func advance(data: TerrainData, actions: Variant, seconds: float) -> void
 		# never re-lengthens a trial already halved).
 		if project.get("institution_halved") != true and prepared(data, str(owner.scope), str(owner.scope_id), project) and int(project.get("rules_version", 0)) == 2:
 			project["institution_halved"] = true
+			# 文武官 W3 (§5.3-3): the scope's paid researchers without a civil role become 文吏.
+			var contributors: Array = []
+			for other_key: String in records(data):
+				var other: Dictionary = data.site.get("features", {}).get(other_key, {})
+				if str(Runtime.RESEARCH_INSTITUTIONS.get(str(other.get("kind", "")), {}).get("scope", "")) != str(owner.scope): continue
+				for identity: int in records(data)[other_key].paid:
+					if not contributors.has(identity): contributors.append(identity)
+			CivilPromotion.research_finished(actions, contributors)

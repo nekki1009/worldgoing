@@ -13,6 +13,8 @@ extends RefCounted
 ## packets. Missing = prestige at the person's rank floor (read by callers) and credit 0, so old saves need no migration.
 ## Civil qualification (文武官 W1, reports/civil-military-office-plan.md §5.1): an optional `civil_role` "clerk" (文吏) or
 ## "official" (文官) on v1 and v3 packets; missing = "none". It follows the person (team change, captivity, save/load).
+## Civil service (文武官 W3): an optional `civil_service` {seat, since, seen} counting a clerk's continuous days in one
+## civil seat (SiteCivilPromotion); missing = not counting.
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -33,6 +35,9 @@ static func valid(packet: Variant) -> bool:
 		extra += 1
 	if packet.has("civil_role"):
 		if not packet.civil_role is String or packet.civil_role not in ["clerk", "official"]: return false
+		extra += 1
+	if packet.has("civil_service"):
+		if not valid_civil_service(packet.civil_service): return false
 		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
@@ -93,6 +98,7 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 	if valid_reputation(packet.get("reputation")): result["reputation"] = packet.reputation.duplicate(true)
 	if valid_combat_record(packet.get("combat_record")): result["combat_record"] = packet.combat_record.duplicate(true)
 	if packet.get("civil_role") in ["clerk", "official"]: result["civil_role"] = str(packet.civil_role)
+	if valid_civil_service(packet.get("civil_service")): result["civil_service"] = packet.civil_service.duplicate(true)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -175,6 +181,29 @@ static func set_civil_role(body: Variant, role: String) -> bool:
 		packet = {"version": 1, "capture_seq": 0}
 	if role == "none": packet.erase("civil_role")
 	else: packet["civil_role"] = role
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+	return true
+
+static func valid_civil_service(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 3 and value.get("seat") is String and not str(value.seat).is_empty() \
+		and _integer(value.get("since"), 0, 2147483647) and _integer(value.get("seen"), 0, 2147483647) and int(value.seen) >= int(value.since)
+
+static func civil_service(body: Variant) -> Dictionary:
+	var stored: Variant = read(body).get("civil_service")
+	return stored.duplicate(true) if valid_civil_service(stored) else {}
+
+## Writes (or with {} removes) the civil service counter; a person with no packet and nothing to write stays without one.
+static func set_civil_service(body: Variant, value: Dictionary) -> bool:
+	if not value.is_empty() and not valid_civil_service(value): return false
+	var packet := read(body).duplicate(true)
+	if packet.is_empty():
+		if value.is_empty(): return true
+		packet = {"version": 1, "capture_seq": 0}
+	if value.is_empty():
+		if not packet.has("civil_service"): return true
+		packet.erase("civil_service")
+	else: packet["civil_service"] = value.duplicate(true)
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 	return true
