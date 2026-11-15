@@ -531,8 +531,18 @@ func _refresh_summary() -> void:
 
 ## The selected start faction for RegionEntry.request_new_world.
 func start_faction_choice() -> Dictionary:
-	if _start_faction == null or str(_start_faction.get_item_metadata(_start_faction.selected)) != "found": return {"mode": "neutral"}
-	return {"mode": "found", "name": _start_faction_name.text.strip_edges()}
+	var mode: String = str(_start_faction.get_item_metadata(_start_faction.selected)) if _start_faction != null and _start_faction.selected >= 0 else "neutral"
+	if mode not in ["found", "bandit"]: return {"mode": "neutral"}
+	return {"mode": mode, "name": _start_faction_name.text.strip_edges()}
+
+## The 落草 start item is disabled (and left) when the selected scenario sets allow_bandit_start false.
+func _refresh_bandit_start() -> void:
+	if _start_faction == null or _initial_scenario == null: return
+	var allowed := RegionEntry.bandit_start_allowed(str(_initial_scenario.get_item_metadata(_initial_scenario.selected)) if _initial_scenario.selected >= 0 else "")
+	_start_faction.set_item_disabled(2, not allowed)
+	if not allowed and _start_faction.selected == 2:
+		_start_faction.select(0)
+		_start_faction_name.visible = false
 
 func start_new_game() -> void:
 	var data: Dictionary = RegionEntry.draft.get("character", {})
@@ -576,17 +586,22 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	_start_faction.set_item_metadata(0, "neutral")
 	_start_faction.add_item("自建勢力（你是首長；預設與所有勢力敵對）")
 	_start_faction.set_item_metadata(1, "found")
+	# Bandit spec §10: 落草 start, only when the scenario allows it.
+	_start_faction.add_item("落草（你是土匪頭目；與所有人敵對，不能外交、佔領或受封，信譽 −20）")
+	_start_faction.set_item_metadata(2, "bandit")
 	parent.add_child(_start_faction)
 	_start_faction_name = LineEdit.new()
 	_start_faction_name.name = "StartFactionName"
-	_start_faction_name.placeholder_text = "勢力名稱（1–32 字）"
+	_start_faction_name.placeholder_text = "勢力或山寨名稱（1–32 字）"
 	_start_faction_name.max_length = 32
 	_start_faction_name.visible = false
 	parent.add_child(_start_faction_name)
 	var draft_faction: Dictionary = RegionEntry.draft.get("start_faction", {})
-	if str(draft_faction.get("mode", "neutral")) == "found":
-		_start_faction.select(1)
+	if str(draft_faction.get("mode", "neutral")) in ["found", "bandit"]:
+		_start_faction.select(1 if str(draft_faction.mode) == "found" else 2)
 		_start_faction_name.text = str(draft_faction.get("name", ""))
 		_start_faction_name.visible = true
 	_start_faction.item_selected.connect(func(index: int) -> void:
-		_start_faction_name.visible = str(_start_faction.get_item_metadata(index)) == "found")
+		_start_faction_name.visible = str(_start_faction.get_item_metadata(index)) in ["found", "bandit"])
+	_refresh_bandit_start()
+	_initial_scenario.item_selected.connect(func(_index: int) -> void: _refresh_bandit_start())

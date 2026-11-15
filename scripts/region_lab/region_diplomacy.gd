@@ -43,8 +43,16 @@ static func _pair(record: Dictionary, a: int, b: int) -> bool:
 static func _active_faction(registry: Dictionary, id: int) -> bool:
 	return id != RegionFactionQuery.NEUTRAL_FACTION_ID and RegionFactionQuery.active(registry, id).ok
 
+## Bandit spec §3.2 / BA-02: a bandit has no diplomacy at all; every pair with one is hostile and treaty-less.
+static func involves_bandit(registry: Dictionary, a: int, b: int) -> bool:
+	return RegionFactionQuery.is_bandit(registry, a) or RegionFactionQuery.is_bandit(registry, b)
+
+static func _bandit_refusal() -> Dictionary:
+	return fail("BANDIT_NO_DIPLOMACY", "土匪沒有外交；只能剿滅或招安")
+
 ## The active truce or peace between two factions at `now`, or {}.
 static func treaty_between(registry: Dictionary, a: int, b: int, now: float) -> Dictionary:
+	if involves_bandit(registry, a, b): return {}
 	for treaty: Dictionary in table(registry).treaties.values():
 		if treaty.status != "active" or not _pair(treaty, a, b): continue
 		if treaty.kind == "truce" and float(treaty.ends_at) <= now: continue
@@ -57,10 +65,12 @@ static func at_peace(registry: Dictionary, a: int, b: int, now: float) -> bool:
 ## §11.1: the same active faction is never hostile to itself (neutral teams excepted); peace or truce ends hostility.
 static func hostile(registry: Dictionary, a: int, b: int, now: float) -> bool:
 	if RegionFactionQuery.same_side(a, b): return false
+	if involves_bandit(registry, a, b): return true
 	return not at_peace(registry, a, b, now)
 
 ## A breacher is refused by its victim for 30 days and by everyone else for 10 (§11.5), half-open windows.
 static func in_breach_window(registry: Dictionary, breaker: int, judge: int, now: float) -> bool:
+	if involves_bandit(registry, breaker, judge): return false
 	for breach: Dictionary in table(registry).breaches:
 		if int(breach.breaker) != breaker: continue
 		var days := VICTIM_WINDOW_DAYS if int(breach.victim) == judge else OTHER_WINDOW_DAYS
@@ -107,6 +117,7 @@ static func _invalidate_pair(diplomacy: Dictionary, a: int, b: int, reason: Stri
 ## §11.5: a head declares war at once. Against a pair at peace it is a breach: every treaty of the pair ends, open letters
 ## are invalidated, a breach is recorded. Already hostile: unchanged, no breach.
 static func declare_war(registry: Dictionary, by_faction: int, target: int, by_ref: Variant, now: float) -> Dictionary:
+	if involves_bandit(registry, by_faction, target): return _bandit_refusal()
 	if not _active_faction(registry, by_faction) or not _active_faction(registry, target) or by_faction == target: return fail("INVALID", "雙方須是不同的有效勢力（中立不能宣戰）")
 	if not at_peace(registry, by_faction, target, now): return {"ok": true, "registry": registry, "breach": false, "changed": false}
 	var candidate := _candidate(registry)
@@ -125,6 +136,7 @@ static func delay_seconds(distance_m: float) -> float:
 ## §11.4 step 1: a head proposes a truce (3..60 days) or peace. One open letter per unordered pair and kind; a rejection
 ## puts the pair and kind on a 3-day cooldown. Truce and peace need the pair hostile and not fighting (caller checks combat).
 static func propose(registry: Dictionary, from: int, to: int, kind: String, days: int, by_ref: Variant, distance_m: float, now: float) -> Dictionary:
+	if involves_bandit(registry, from, to): return _bandit_refusal()
 	if not _active_faction(registry, from) or not _active_faction(registry, to) or from == to: return fail("INVALID", "雙方須是不同的有效勢力（中立不能外交）")
 	if kind not in KINDS: return fail("INVALID", "未開放的提議種類")
 	if kind == "truce" and (days < TRUCE_MIN_DAYS or days > TRUCE_MAX_DAYS): return fail("INVALID", "停戰須 3–60 日")
@@ -148,6 +160,7 @@ static func propose(registry: Dictionary, from: int, to: int, kind: String, days
 static func reply(registry: Dictionary, proposal_id: int, accept: bool, by_ref: Variant, distance_m: float, now: float) -> Dictionary:
 	var proposal: Dictionary = table(registry).proposals.get(str(proposal_id), {})
 	if proposal.is_empty(): return fail("NO_TARGET", "找不到這封信")
+	if involves_bandit(registry, int(proposal.from), int(proposal.to)): return _bandit_refusal()
 	var settled := settle(registry, now)
 	proposal = settled.registry.diplomacy.proposals.get(str(proposal_id), {}) if settled.ok else proposal
 	if proposal.status != "delivered": return fail("NOT_DELIVERED", "這封信目前不能回覆（%s）" % str(proposal.status))
@@ -222,11 +235,13 @@ static func validate(value: Variant, registry: Dictionary, now: float) -> Dictio
 		if treaty.kind not in KINDS or treaty.status not in ["active", "ended"] or int(treaty.a) >= int(treaty.b): return fail("CORRUPT_SAVE", "diplomacy treaty kind")
 		if (treaty.kind == "truce") != (treaty.ends_at != null): return fail("CORRUPT_SAVE", "diplomacy treaty end")
 		if treaty.status == "active" and not (_active_faction(registry, int(treaty.a)) and _active_faction(registry, int(treaty.b))): return fail("CORRUPT_SAVE", "diplomacy treaty faction")
+		if treaty.status == "active" and involves_bandit(registry, int(treaty.a), int(treaty.b)): return fail("CORRUPT_SAVE", "bandit treaty")
 	for key: Variant in value.proposals:
 		var proposal: Variant = value.proposals[key]
 		if not proposal is Dictionary or not RegionFactionQuery.keys(proposal, ["id", "from", "to", "kind", "days", "status", "sent_at", "deliver_at", "reply_deliver_at", "accepted", "by_ref", "reply_ref", "reason"]) or str(int(proposal.id)) != str(key) or int(proposal.id) >= int(value.next_id): return fail("CORRUPT_SAVE", "diplomacy proposal")
 		if proposal.kind not in KINDS or proposal.status not in ["outbound", "delivered", "reply_in_transit"] + TERMINAL: return fail("CORRUPT_SAVE", "diplomacy proposal status")
 		if float(proposal.deliver_at) < float(proposal.sent_at) or float(proposal.sent_at) > now: return fail("CORRUPT_SAVE", "diplomacy proposal time")
+		if proposal.status not in TERMINAL and involves_bandit(registry, int(proposal.from), int(proposal.to)): return fail("CORRUPT_SAVE", "bandit proposal")
 	for breach: Variant in value.breaches:
 		if not breach is Dictionary or not RegionFactionQuery.keys(breach, ["id", "breaker", "victim", "at", "by_ref", "ended_treaties"]) or float(breach.at) > now: return fail("CORRUPT_SAVE", "diplomacy breach")
 	return {"ok": true}

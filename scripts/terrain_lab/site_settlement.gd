@@ -619,6 +619,12 @@ static func _hostile_to_owner(lab: Variant, faction: int, owner: int) -> bool:
 	if controller == null or controller.region_slot == null: return true
 	return RegionDiplomacy.hostile(controller.region_slot.control.get("faction_registry", {}), faction, owner, float(controller.region_slot.control.logical_game_seconds))
 
+## Bandit spec §5.1 / BA-03: a band never takes a settlement; it may only loot stores through the ordinary entries.
+static func _bandit(lab: Variant, faction: int) -> bool:
+	var controller: Variant = lab.get("site_controller")
+	if controller == null or controller.region_slot == null: return false
+	return RegionFactionQuery.is_bandit(controller.region_slot.control.get("faction_registry", {}), faction)
+
 ## Eligibility is sampled before the interval. The original fall_record owns
 ## elapsed progress; handoff never resamples old time using a new roster.
 static func capture_sample(lab: Variant) -> Dictionary:
@@ -633,7 +639,7 @@ static func capture_sample(lab: Variant) -> Dictionary:
 		var conscious := float(person.hp) > 0.0 and float(person.ko) <= 0.0
 		if int(person.faction) == owner:
 			defended = defended or conscious and not bool(person.captive)
-		elif _fit(person) and str(person.role) != "civilian" and _hostile_to_owner(lab, int(person.faction), owner):
+		elif _fit(person) and str(person.role) != "civilian" and _hostile_to_owner(lab, int(person.faction), owner) and not _bandit(lab, int(person.faction)):
 			attackers[int(person.faction)] = int(attackers.get(int(person.faction), 0)) + 1
 			if not first_attacker.has(int(person.faction)): first_attacker[int(person.faction)] = person
 	var attacker := -1
@@ -704,6 +710,7 @@ static func _keeps_defender(data: TerrainData, key: String, feature: Dictionary)
 static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: bool = true) -> Dictionary:
 	var data: TerrainData = lab.terrain
 	if attacker == RegionFactionQuery.NEUTRAL_FACTION_ID: return Runtime.fail("NEUTRAL_NOT_NATION", "建國後才能進行")
+	if _bandit(lab, attacker): return Runtime.fail("BANDIT_NO_OCCUPY", "土匪不能佔領聚落，只能劫掠倉庫")
 	var settlement := record(data)
 	var defender := int(settlement.owner_faction)
 	var changed: Array[String] = []

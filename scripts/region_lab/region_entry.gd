@@ -35,14 +35,23 @@ static var draft: Dictionary = {}
 ## Failure to report on the main menu after a scene hand-off.
 static var menu_message := ""
 
-## start_faction: {"mode": "neutral"} (default) or {"mode": "found", "name": ...}: the main-menu start choice, settled after birth.
+## start_faction: {"mode": "neutral"} (default), {"mode": "found", "name": ...} or {"mode": "bandit", "name": ...} (落草, bandit
+## spec §10; only when the scenario allows it): the main-menu start choice, settled after birth.
+## Bandit spec §10: a scenario may forbid the 落草 start with `allow_bandit_start: false`; the default allows it.
+static func bandit_start_allowed(initial_scenario_id: String) -> bool:
+	if initial_scenario_id.is_empty(): return true
+	return bool(TechnologyArtisans.scenario_config(initial_scenario_id).get("allow_bandit_start", true))
+
 static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
 		return false
 	var mode := str(start_faction.get("mode", "neutral"))
-	if mode not in ["neutral", "found"] or mode == "found" and (str(start_faction.get("name", "")).strip_edges().is_empty() or str(start_faction.name).strip_edges().length() > 32):
-		menu_message = "自建勢力須取 1–32 字的名稱；未建立世界"
+	if mode not in ["neutral", "found", "bandit"] or mode != "neutral" and (str(start_faction.get("name", "")).strip_edges().is_empty() or str(start_faction.name).strip_edges().length() > 32):
+		menu_message = ("落草的山寨" if mode == "bandit" else "自建勢力") + "須取 1–32 字的名稱；未建立世界"
+		return false
+	if mode == "bandit" and not bandit_start_allowed(initial_scenario_id):
+		menu_message = "這個起始情境不允許落草開局；未建立世界"
 		return false
 	var accepted := false
 	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path

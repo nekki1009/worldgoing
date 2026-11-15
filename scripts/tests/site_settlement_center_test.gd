@@ -246,6 +246,20 @@ func _run() -> void:
 	lab.combat_armies.append(attackers)
 	var zone := Settlement.capture_zone(data)
 	assert(zone.has(Vector2i(20, 18)) and not zone.has(Vector2i(20, 20)))
+	# Bandit spec BA-03: with faction 2 a bandit band, its people in the zone never run the timer and it cannot take the place.
+	var outlaw_registry: Dictionary = {"version": 1, "revision": 0, "next_faction_id": 1, "migration_complete": true, "entries": {}, "coverage": {"complete": false, "sources": [], "counts": null}}
+	var lawful_made: Dictionary = RegionFactionQuery.allocate(outlaw_registry, 0, 0.0, {"name": "官", "kind": "npc"})
+	var band_made: Dictionary = RegionFactionQuery.allocate(lawful_made.registry, 1, 0.0, {"name": "匪", "kind": "bandit", "leader_ref": {"type": "person", "namespace": "settlement_test", "lineage": 1}})
+	assert(band_made.ok and int(band_made.faction_id) == 2, str(band_made))
+	var outlaw_slot := RegionSaveSlot.new()
+	outlaw_slot.control["faction_registry"] = band_made.registry
+	controller.region_slot = outlaw_slot
+	var bandit_sample: Dictionary = Settlement.capture_sample(lab)
+	assert(int(bandit_sample.get("attacker", 0)) == -1, str(bandit_sample))
+	var bandit_fall: Dictionary = Settlement.fall_to(lab, 2, -1, false)
+	assert(not bandit_fall.ok and str(bandit_fall.code) == "BANDIT_NO_OCCUPY" and int(record.owner_faction) == 1, str(bandit_fall))
+	controller.region_slot = null
+	_pass("capture_bandit_never_occupies")
 	assert(Settlement.advance_capture(lab, 30.0).is_empty())
 	assert(int(record.fall_record.contest_faction) == 2 and is_equal_approx(float(record.fall_record.contest_seconds), 30.0))
 	assert(lab.npc.place(Vector2i(19, 19), true))

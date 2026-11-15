@@ -32,6 +32,8 @@ const WIPED_OUT := -4
 const REBEL_INDEPENDENT := -30
 const REBEL_DEFECT := -40
 const DESERT := -10
+## Bandit spec §12: going outlaw (落草, also the 落草 start) costs credit once.
+const OUTLAW := -20
 const BREAK_TREATY := -20
 const TREATY_KEPT := 2
 const TAX_SEASON := 1

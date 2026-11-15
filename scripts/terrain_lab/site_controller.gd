@@ -10356,8 +10356,8 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
 	var start_faction: Dictionary = request.get("start_faction", {})
-	if result.ok and str(start_faction.get("mode", "neutral")) == "found":
-		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")))
+	if result.ok and str(start_faction.get("mode", "neutral")) in ["found", "bandit"]:
+		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
 		if not founded.ok: result = founded
 	if result.ok:
 		lab._audio_boot_complete()
@@ -10370,7 +10370,9 @@ func _settle_boot_request(result: Dictionary) -> void:
 ## Nekki 2026-11-04 (C): the main-menu start choice "found own faction". A new registry faction (kind player, hostile to
 ## everyone by default) is founded and the player's start team joins it; the player, its formal captain, is the faction's
 ## head (FQ2: before a nation, the roster head). Registry and Site are published in one Region checkpoint, else undone.
-func found_start_faction(faction_name: String) -> Dictionary:
+## `outlaw` (落草, bandit spec §10): the faction is a one-person bandit band instead (kind bandit, the player its chief, lair at
+## the player's cell in this start Site, raid AI off, credit -20, no title).
+func found_start_faction(faction_name: String, outlaw: bool = false) -> Dictionary:
 	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中才能建立勢力")
 	var named := faction_name.strip_edges()
 	if named.is_empty() or named.length() > 32: return Runtime.fail("INVALID", "勢力名稱須為 1–32 字")
@@ -10383,6 +10385,13 @@ func found_start_faction(faction_name: String) -> Dictionary:
 	if resolved.get("ok", false) and RegionFactionQuery.ref_valid(resolved.get("typed_ref", {}), "person"): leader = resolved.typed_ref
 	elif resolved.get("ok", false) and resolved.get("status") == "current": leader = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), player)
 	var fields := {"name": named, "kind": "player", "leader_ref": leader, "founded_at": float(region_slot.control.logical_game_seconds)}
+	if outlaw:
+		var at: Dictionary = person_actions._person(player, false)
+		if at.is_empty() or not at.get("cell") is Vector2i: return Runtime.fail("NO_TARGET", "找不到玩家的位置，無法立寨")
+		var cell: Vector2i = at.cell
+		fields.kind = "bandit"
+		fields["color"] = RegionFactionQuery.BANDIT_COLOR
+		fields["bandit"] = {"origin": "scenario", "raid_ai": false, "lair": {"site_id": str(lab.terrain.site.get("id", "")), "cell": [cell.x, cell.y]}}
 	var revision := int(region_slot.control.get("faction_registry", {}).get("revision", 0))
 	var prepared: Dictionary = region_slot.prepare_faction_creation(lab.terrain, revision, [], fields)
 	if not prepared.ok: return prepared
@@ -10393,6 +10402,9 @@ func found_start_faction(faction_name: String) -> Dictionary:
 	if not committed.ok:
 		lab.relabel_team_faction(team_id, RegionFactionQuery.NEUTRAL_FACTION_ID)
 		return committed
+	if outlaw:
+		adjust_reputation(player, 0.0, float(Reputation.OUTLAW))
+		return Runtime.ok("已落草，立寨「%s」，你是頭目" % named, {"faction_id": int(prepared.faction_id)})
 	adjust_reputation(player, float(Reputation.FOUND_KING), 0.0)
 	return Runtime.ok("已建立勢力「%s」，你是首長" % named, {"faction_id": int(prepared.faction_id)})
 ## --- Reputation (聲望系統規劃): prestige and credit live on the person's own row (social_state) ---
@@ -10851,7 +10863,8 @@ func npc_diplomacy_day() -> Dictionary:
 	for key: Variant in registry.get("entries", {}):
 		var entry: Dictionary = registry.entries[key]
 		var id := int(entry.faction_id)
-		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and RegionPeerage.head_of(registry, id).ok: factions.append(id)
+		# Bandit bands have no diplomacy (bandit spec §3.2); their daily choice is a separate rule set (B4).
+		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and not RegionFactionQuery.is_bandit(registry, id) and RegionPeerage.head_of(registry, id).ok: factions.append(id)
 	factions.sort()
 	var changed := false
 	var ids: Array = RegionDiplomacy.table(registry).proposals.keys()
@@ -10871,7 +10884,7 @@ func npc_diplomacy_day() -> Dictionary:
 			registry = answered.registry
 			changed = true
 	var others: Array[int] = factions.duplicate()
-	if player_faction >= 0: others.append(player_faction)
+	if player_faction >= 0 and not RegionFactionQuery.is_bandit(registry, player_faction): others.append(player_faction)
 	for me: int in factions:
 		var mind := _head_mind(registry, me)
 		var head_ref: Variant = RegionPeerage.head_of(registry, me).get("person_ref")

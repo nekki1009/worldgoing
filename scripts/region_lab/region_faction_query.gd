@@ -10,6 +10,17 @@ const MAX_REVISION := 9007199254740991
 const NEUTRAL_FACTION_ID := 255
 const NEUTRAL_NAME := "中立"
 const ENTRY_FIELDS := ["faction_id", "name", "color", "kind", "leader_ref", "nation_ref", "status", "merged_into", "founded_at", "ended_at"]
+## `kind` is a founding label (FACTION_DIPLOMACY_SPECIFICATION §3.1) except `bandit`, which carries its own rule set
+## (reports/bandit-faction-spec.md, BQ1 A): no nation, no diplomacy, no settlement capture, no peerage, hostile to all.
+const KINDS := ["player", "npc", "rebel", "bandit"]
+## The `bandit` sub-table (only on kind bandit). Missing keys read as BANDIT_DEFAULTS (bandit spec §3.3).
+const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from"]
+const BANDIT_ORIGINS := ["scenario", "rout", "desertion", "escaped_captive", "refugee", "fallen_rebel"]
+const BANDIT_DEFAULTS := {"origin": "scenario", "lair": null, "raid_ai": true, "heat": 0, "converted_from": null}
+const BANDIT_HEAT_MAX := 100
+## Bandit spec §10 display: grey-brown, marked 匪.
+const BANDIT_COLOR := "7a6650ff"
+const BANDIT_MARK := "匪"
 
 static func fail(code: String, message: String = "") -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
@@ -47,8 +58,9 @@ static func validate(value: Variant, now: float) -> Dictionary:
 		if not key is String or not key.is_valid_int() or str(int(key)) != key or not entry is Dictionary: return fail("CORRUPT_SAVE", "faction key")
 		var fields: Array = ENTRY_FIELDS.duplicate()
 		if entry.get("nation_ref") == null: fields.append("duty_ai")
+		if entry.get("kind") == "bandit": fields.append("bandit")
 		if not keys(entry, fields) or not whole(entry.faction_id, 0, MAX_ID) or int(entry.faction_id) != int(key) or int(entry.faction_id) >= int(value.next_faction_id): return fail("CORRUPT_SAVE", "faction high water")
-		if not entry.name is String or entry.name != entry.name.strip_edges() or entry.name.length() > 32 or not entry.color is String or entry.color.length() != 8 or not entry.color.is_valid_hex_number(false) or entry.color.right(2).to_lower() != "ff" or entry.kind not in ["player", "npc", "rebel"]: return fail("CORRUPT_SAVE", "faction presentation")
+		if not entry.name is String or entry.name != entry.name.strip_edges() or entry.name.length() > 32 or not entry.color is String or entry.color.length() != 8 or not entry.color.is_valid_hex_number(false) or entry.color.right(2).to_lower() != "ff" or entry.kind not in KINDS: return fail("CORRUPT_SAVE", "faction presentation")
 		if entry.status not in ["active", "merged", "extinct"] or not _time(entry.founded_at, now) or not _time(entry.ended_at, now): return fail("CORRUPT_SAVE", "faction status/time")
 		if entry.status == "active" and (entry.ended_at != null or entry.merged_into != null): return fail("CORRUPT_SAVE", "active faction endpoint")
 		if entry.status != "active" and entry.ended_at == null: return fail("CORRUPT_SAVE", "missing historical endpoint")
@@ -61,6 +73,9 @@ static func validate(value: Variant, now: float) -> Dictionary:
 			if entry.status != "active" or entry.leader_ref != null or not ref_valid(entry.nation_ref, "nation") or bound.has(ref_key(entry.nation_ref)): return fail("CORRUPT_SAVE", "duplicate nation binding")
 			bound[ref_key(entry.nation_ref)] = true
 		elif not entry.duty_ai is bool: return fail("CORRUPT_SAVE", "unbound duty switch")
+		if entry.kind == "bandit":
+			var outlaw: Dictionary = _bandit_valid(entry, now)
+			if not outlaw.ok: return outlaw
 	var coverage: Dictionary = value.coverage
 	if not keys(coverage, ["complete", "sources", "counts"]) or coverage.complete != false or not coverage.complete is bool or not coverage.sources is Array or coverage.counts != null: return fail("CORRUPT_SAVE", "unknown coverage must not be zero")
 	for source: Variant in coverage.sources:
@@ -75,6 +90,48 @@ static func validate(value: Variant, now: float) -> Dictionary:
 		var fought: Dictionary = RegionBattleLog.validate(value.battles, now)
 		if not fought.ok: return fought
 	return {"ok": true}
+
+## Bandit entry rules (bandit spec §3.1): no nation, duty AI off, an active band has a chief; sub-table keys may be missing
+## (they read as BANDIT_DEFAULTS) but never unknown.
+static func _bandit_valid(entry: Dictionary, now: float) -> Dictionary:
+	if entry.nation_ref != null: return fail("CORRUPT_SAVE", "bandit nation")
+	if entry.duty_ai != false: return fail("CORRUPT_SAVE", "bandit duty switch")
+	if entry.status == "active" and not ref_valid(entry.leader_ref, "person"): return fail("CORRUPT_SAVE", "bandit chief")
+	var table: Variant = entry.bandit
+	if not table is Dictionary: return fail("CORRUPT_SAVE", "bandit table")
+	for key: Variant in table:
+		if not key is String or str(key) not in BANDIT_FIELDS: return fail("CORRUPT_SAVE", "bandit table field")
+	if table.has("origin") and table.origin not in BANDIT_ORIGINS: return fail("CORRUPT_SAVE", "bandit origin")
+	if table.has("raid_ai") and not table.raid_ai is bool: return fail("CORRUPT_SAVE", "bandit raid switch")
+	if table.has("heat") and not whole(table.heat, 0, BANDIT_HEAT_MAX): return fail("CORRUPT_SAVE", "bandit heat")
+	var lair: Variant = table.get("lair")
+	if lair != null and not (lair is Dictionary and keys(lair, ["site_id", "cell"]) and lair.site_id is String and not str(lair.site_id).is_empty() and lair.cell is Array and lair.cell.size() == 2 and whole(lair.cell[0], 0, 2147483647) and whole(lair.cell[1], 0, 2147483647)): return fail("CORRUPT_SAVE", "bandit lair")
+	var converted: Variant = table.get("converted_from")
+	if converted != null and not (converted is Dictionary and keys(converted, ["kind", "at"]) and converted.kind == "rebel" and converted.at != null and _time(converted.at, now)): return fail("CORRUPT_SAVE", "bandit conversion")
+	return {"ok": true}
+
+## The one entry point for the bandit rule set (bandit spec §2.1). A merged or extinct band stays a bandit id; the neutral
+## side and unknown ids are not bandits.
+static func is_bandit(registry: Dictionary, faction_id: int) -> bool:
+	if faction_id == NEUTRAL_FACTION_ID or faction_id < 0: return false
+	var entries: Variant = registry.get("entries")
+	return entries is Dictionary and entries.get(str(faction_id), {}).get("kind") == "bandit"
+
+## The bandit sub-table with defaults filled in, or {} for a non-bandit.
+static func bandit_of(registry: Dictionary, faction_id: int) -> Dictionary:
+	if not is_bandit(registry, faction_id): return {}
+	return canonical_bandit(registry.entries[str(faction_id)].get("bandit", {}))
+
+static func canonical_bandit(value: Dictionary) -> Dictionary:
+	var table: Dictionary = BANDIT_DEFAULTS.duplicate(true)
+	table.merge(value.duplicate(true), true)
+	if table.heat is int or table.heat is float: table.heat = int(table.heat)
+	if table.lair is Dictionary and table.lair.get("cell") is Array:
+		var cell: Array = []
+		for axis: Variant in table.lair.cell: cell.append(int(axis) if (axis is int or axis is float) else axis)
+		table.lair.cell = cell
+	if table.converted_from is Dictionary and (table.converted_from.get("at") is int or table.converted_from.get("at") is float): table.converted_from.at = float(table.converted_from.at)
+	return table
 
 ## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with
 ## neutral: two different neutral teams stay apart. Callers keep same-team identity checks themselves.
@@ -103,7 +160,10 @@ static func active(registry: Dictionary, faction_id: int) -> Dictionary:
 static func display(registry: Dictionary, faction_id: int) -> Dictionary:
 	var entry: Dictionary = registry.get("entries", {}).get(str(faction_id), {})
 	if entry.is_empty() and faction_id == NEUTRAL_FACTION_ID: entry = neutral_entry()
-	return {"id": faction_id, "name": str(entry.get("name", "")) if not str(entry.get("name", "")).is_empty() else "勢力 %d" % faction_id, "color": entry.get("color"), "status": entry.get("status", "unknown"), "counts": null, "coverage_complete": bool(registry.get("coverage", {}).get("complete", false))}
+	var shown: String = str(entry.get("name", "")) if not str(entry.get("name", "")).is_empty() else "勢力 %d" % faction_id
+	var outlaw: bool = entry.get("kind") == "bandit"
+	if outlaw: shown = "%s（%s）" % [shown, BANDIT_MARK]
+	return {"id": faction_id, "name": shown, "color": entry.get("color"), "status": entry.get("status", "unknown"), "counts": null, "coverage_complete": bool(registry.get("coverage", {}).get("complete", false)), "bandit": outlaw}
 
 static func legacy_entry(faction_id: int) -> Dictionary:
 	var palette: String = SiteEquipmentOrders.npc_palette_id(faction_id)
@@ -182,6 +242,9 @@ static func canonical_registry(value: Dictionary) -> Dictionary:
 	if registry.get("peerage") is Dictionary: registry.peerage = RegionPeerage.canonical(registry.peerage)
 	if registry.get("diplomacy") is Dictionary: registry.diplomacy = RegionDiplomacy.canonical(registry.diplomacy)
 	if registry.get("battles") is Dictionary: registry.battles = RegionBattleLog.canonical(registry.battles)
+	if registry.get("entries") is Dictionary:
+		for entry: Variant in registry.entries.values():
+			if entry is Dictionary and entry.get("kind") == "bandit" and entry.get("bandit") is Dictionary: entry.bandit = canonical_bandit(entry.bandit)
 	return registry
 
 static func migration(states: Array[Dictionary], receipts: Array[Dictionary], reserved: Array, previous: Dictionary, now: float, complete: bool) -> Dictionary:
@@ -216,7 +279,7 @@ static func migration(states: Array[Dictionary], receipts: Array[Dictionary], re
 	if not bound.ok: return bound
 	return {"ok": true, "registry": registry}
 
-## `fields` (name, color, kind, leader_ref, founded_at, duty_ai) overrides the legacy defaults of a founded faction, e.g.
+## `fields` (name, color, kind, leader_ref, founded_at, duty_ai, bandit) overrides the legacy defaults of a founded faction, e.g.
 ## the player's own faction at the start (kind player, leader the player); the candidate is validated as a whole.
 static func allocate(registry: Dictionary, expected_revision: int, now: float, fields: Dictionary = {}) -> Dictionary:
 	var checked: Dictionary = validate(registry, now)
@@ -230,6 +293,12 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float, f
 	var entry := legacy_entry(id)
 	for key: String in ["name", "color", "kind", "leader_ref", "founded_at", "duty_ai"]:
 		if fields.has(key): entry[key] = fields[key]
+	if entry.kind == "bandit":
+		if not fields.has("color"): entry.color = BANDIT_COLOR
+		# A band never has formal duty AI; its raid AI lives in the sub-table (bandit spec §3.1).
+		entry.duty_ai = false
+		entry["bandit"] = canonical_bandit(fields.get("bandit", {}) if fields.get("bandit") is Dictionary else {})
+	elif fields.has("bandit"): return fail("CORRUPT_SAVE", "bandit table on a non-bandit faction")
 	candidate.entries[str(id)] = entry
 	candidate.next_faction_id = id + 1
 	candidate.revision = expected_revision + 1
@@ -238,7 +307,8 @@ static func allocate(registry: Dictionary, expected_revision: int, now: float, f
 		if not founded.ok: return founded
 	# A founder with a person ref is crowned king of the new faction (RegionPeerage head record). A noble who rebels
 	# into it keeps his record until RegionPeerage.rebel makes him its king.
-	if ref_valid(entry.leader_ref, "person") and RegionPeerage.record_of(candidate, entry.leader_ref).is_empty():
+	# A bandit chief holds no title (bandit spec §1.2).
+	if entry.kind != "bandit" and ref_valid(entry.leader_ref, "person") and RegionPeerage.record_of(candidate, entry.leader_ref).is_empty():
 		var crowned: Dictionary = RegionPeerage.crown_founder(candidate, id, entry.leader_ref, now)
 		if not crowned.ok: return crowned
 		candidate = crowned.registry

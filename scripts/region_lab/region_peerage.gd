@@ -123,6 +123,7 @@ static func validate(peerage: Variant, registry: Dictionary, now: float) -> Dict
 		if not RegionFactionQuery.whole(record.faction_id, 0, RegionFactionQuery.MAX_ID) or int(record.faction_id) == RegionFactionQuery.NEUTRAL_FACTION_ID: return fail("CORRUPT_SAVE", "peerage faction")
 		var entry: Dictionary = registry.get("entries", {}).get(str(int(record.faction_id)), {})
 		if entry.get("status") != "active": return fail("CORRUPT_SAVE", "peerage faction not active")
+		if entry.get("kind") == "bandit": return fail("CORRUPT_SAVE", "peerage inside a bandit band")
 		if not (record.granted_at is int or record.granted_at is float) or not is_finite(float(record.granted_at)) or float(record.granted_at) < 0.0 or float(record.granted_at) > now: return fail("CORRUPT_SAVE", "peerage time")
 		if record.liege_ref == null:
 			if record.rank not in HEAD_RANKS: return fail("CORRUPT_SAVE", "a liegeless noble must be the head")
@@ -190,6 +191,7 @@ static func _finish(candidate: Dictionary, now: float) -> Dictionary:
 
 ## The founder of a faction becomes its king.
 static func crown_founder(registry: Dictionary, faction_id: int, person_ref: Dictionary, now: float) -> Dictionary:
+	if RegionFactionQuery.is_bandit(registry, faction_id): return fail("BANDIT_NO_NATION", "土匪頭目不能稱王；先起義")
 	var head: Dictionary = head_of(registry, faction_id)
 	if not head.ok: return head
 	if not same_ref(head.get("person_ref"), person_ref): return fail("NOT_HEAD", "只有勢力首長能稱王")
@@ -289,6 +291,7 @@ static func inherit(registry: Dictionary, dead_ref: Dictionary, heir_ref: Varian
 ## An untitled person swears fealty to `acceptor` (the head, or viscount and above) on joining in person.
 static func swear(registry: Dictionary, acceptor_ref: Dictionary, person_ref: Dictionary, now: float) -> Dictionary:
 	var acceptor: Dictionary = record_of(registry, acceptor_ref)
+	if not acceptor.is_empty() and RegionFactionQuery.is_bandit(registry, int(acceptor.faction_id)): return fail("BANDIT_NO_DIPLOMACY", "土匪不收投靠")
 	if not may_hold(acceptor, "none"): return fail("NOT_ACCEPTOR", "只有首長或子爵以上的貴族能收投靠")
 	if same_ref(acceptor_ref, person_ref): return fail("SELF_GRANT")
 	if not record_of(registry, person_ref).is_empty(): return fail("ALREADY_SWORN", "此人已效忠某勢力")
@@ -367,6 +370,7 @@ static func rebel(registry: Dictionary, rebel_ref: Dictionary, mode: String, new
 	if record.is_empty() or record.rank == "none": return fail("NOT_NOBLE", "只有貴族能帶封地叛離")
 	if record.liege_ref == null: return fail("IS_HEAD", "首長不能對自己叛離")
 	if new_faction == int(record.faction_id): return fail("SAME_FACTION")
+	if RegionFactionQuery.is_bandit(registry, new_faction): return fail("BANDIT_NO_NATION", "帶封地叛離不能投土匪")
 	var candidate := _candidate(registry)
 	var old_liege: Variant = record.liege_ref
 	# Everyone below the rebel, depth first: a follower brings his own vassals along; a stayer's subtree stays with him.

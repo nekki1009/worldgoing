@@ -58,6 +58,7 @@ static func preview(controller: Variant, official_id: int) -> Dictionary:
 	if int(mine.owner.faction_id) != RegionFactionQuery.NEUTRAL_FACTION_ID: return Runtime.fail("NOT_NEUTRAL", "只有中立隊伍能投靠；離開勢力是另一個流程")
 	if CrowdSite._roster_index_for_person(roster, player) != int(roster.get("formal_commander", -1)): return Runtime.fail("CAPTAIN_REQUIRED", "須由正式隊長本人帶全隊投靠")
 	var faction := int(theirs.owner.faction_id)
+	if RegionFactionQuery.is_bandit(controller.region_slot.control.get("faction_registry", {}), faction): return Runtime.fail("BANDIT_NO_DIPLOMACY", "土匪不收投靠；落草另有入口")
 	if faction == RegionFactionQuery.NEUTRAL_FACTION_ID or faction < 0: return Runtime.fail("NO_FACTION", "對方不屬於任何勢力")
 	var now := float(controller.region_slot.control.logical_game_seconds)
 	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {})
