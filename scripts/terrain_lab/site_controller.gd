@@ -28,6 +28,7 @@ const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
+const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
@@ -596,6 +597,8 @@ func _build_ui() -> void:
 	_button(launcher.column, "把所選倉庫登記為家產", "RegisterFamilyEstate", func() -> void: show_result(register_estate_at_selection()))
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
+	_button(launcher.column, "評估與所選人物談招安", "PreviewBanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), true)))
+	_button(launcher.column, "與所選人物談招安", "BanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), false)))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
 	_button(launcher.column, "授予所選人物爵位", "GrantTitle", func() -> void:
 		show_result(grant_title(int(lab.selected_army_target), ["king", "duke", "marquis", "count", "viscount", "baron"][grant_rank.selected])))
@@ -11155,6 +11158,29 @@ func preview_join_faction(official_id: int) -> Dictionary:
 	var verdict := "願意收你" if seen.accepted else "不會收你"
 	var cadres := "所有幹部都會跟隨" if stay.is_empty() else "不願跟隨的幹部：" + "、".join(stay)
 	return Runtime.ok("對方%s（接受分 %.1f）；%s" % [verdict, float(seen.score), cadres], seen)
+## Bandit spec §6 / §10 (B3): amnesty in person with the selected person. A player who chiefs a band offers to come in to
+## the selected official; any other player (a head or viscount and above) offers it to the selected chief.
+func bandit_amnesty(target_id: int, preview_only: bool) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中才能招安")
+	var player := int(lab.controlled_person_id())
+	var mine: Dictionary = lab._original_person_target(player)
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	var chief_side := not mine.is_empty() and RegionFactionQuery.is_bandit(registry, int(mine.owner.faction_id))
+	var chief := player if chief_side else target_id
+	var official := target_id if chief_side else player
+	if not preview_only: return BanditAmnesty.amnesty(self, chief, official)
+	var seen: Dictionary = BanditAmnesty.preview(self, chief, official)
+	if not seen.ok: return seen
+	var stay: Array = []
+	for row: Dictionary in seen.members:
+		if not row.follows: stay.append("#%d（%.0f）" % [int(row.id), float(row.score)])
+	var verdict := "官員願意招安" if seen.accepted else "官員不肯招安"
+	var chief_word := "頭目願意受撫" if seen.chief_willing else "頭目不願受撫"
+	var members := "全伙都會跟隨" if stay.is_empty() else "不願受撫的人：" + "、".join(stay)
+	var values: Dictionary = seen.duplicate()
+	for key: String in ["ok", "code", "message"]: values.erase(key) # Runtime.ok merges values over its own message.
+	return Runtime.ok("%s（接受分 %.1f）；%s（意願 %.1f）；%s" % [verdict, float(seen.score), chief_word, float(seen.chief_score), members], values)
+
 ## Applies main-menu character creation to the new world's player and saves.
 func apply_created_character(data: Dictionary) -> Dictionary:
 	# Neutral part 2: the new-game player is the captain of a one-person crowd roster team. Its crowd record is the person.

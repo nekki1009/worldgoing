@@ -3505,6 +3505,46 @@ func rejoin_original_team(identity: int) -> Dictionary:
 	return SiteRuntime.ok("已回到原隊伍；原人物與持物不變", {"team_id": int(destination.team_id)})
 
 
+## Bandit spec §6.4 (B3): the formal captaincy of a live crowd team passes to `identity`, a member of the same team (the
+## team keeps its formation, slot, faction and members). The native formal/acting/current person, the roster's commander
+## indices, the head seat and the officer list follow; the new captain's other seat is vacated (one person, one seat).
+## The old captain stays an ordinary member. Refusals change nothing.
+func hand_over_captain(team_id: int, identity: int) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	var roster: Dictionary = native_roster(team_id)
+	var owner: Variant = native_owner(team_id)
+	if roster.is_empty() or owner == null: return SiteRuntime.fail("NO_TARGET", "找不到群眾隊伍")
+	var index := _roster_index_for_person(roster, identity)
+	if index < 0 or _actors.has(identity) or not _index_by_id.has(identity): return SiteRuntime.fail("INVALID", "新隊長須是本隊的群眾成員")
+	if index == int(roster.get("formal_commander", -1)): return SiteRuntime.ok("", {"changed": false})
+	if not str(roster.get("garrison_feature_id", "")).is_empty(): return SiteRuntime.fail("BUSY", "駐營隊伍不能換隊長")
+	var officers: Array = []
+	for officer: Variant in roster.get("officers", []):
+		if int(officer) != index: officers.append(int(officer))
+	var officer_persons: Array = []
+	for officer: Variant in officers:
+		if int(officer) >= 0 and int(officer) < roster.units.size(): officer_persons.append(int(roster.units[int(officer)].person_id))
+	if not set_formation_fields(int(owner.formation_index), {"formal_person": identity, "acting_person": identity, "current_person": identity, "officer_persons": officer_persons}):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定新隊長")
+	var held_before: bool = roster_post_holders(team_id).has(identity)
+	roster["formal_commander"] = index
+	roster["acting_commander"] = index
+	roster["current_commander"] = index
+	roster["officers"] = officers
+	if roster.get("offices") is Dictionary and not roster.offices.is_empty():
+		SiteOffices.vacate_unless(roster.offices, func(holder: int) -> bool: return holder != identity)
+		var head := SiteOffices.head_position(roster.offices)
+		if not head.is_empty(): head["holder"] = identity
+		roster.offices["revision"] = mini(SiteOffices.MAX_SEQ, int(roster.offices.get("revision", 0)) + 1)
+	var holds := roster_post_holders(team_id).has(identity)
+	if holds != held_before and not bool(crowd.set_post_holder(int(_index_by_id[identity]), int(holds))):
+		return SiteRuntime.fail("INVALID_ROLE", "原生職位旗標寫入失敗")
+	_refresh_bodies()
+	var synced: Dictionary = sync_to_site()
+	if not synced.ok: return synced
+	return SiteRuntime.ok("", {"changed": true})
+
+
 ## G6.5: the native exit gate for a split. It refuses a host-controlled soldier, and the controlled cadre leads the split,
 ## so his host control is handed back for the query and then restored; nothing else changes.
 func _split_exit_ready(owner: Variant, index: int, aboard_vehicle: int = -1) -> bool:
