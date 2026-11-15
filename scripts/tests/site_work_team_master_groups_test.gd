@@ -20,6 +20,8 @@ func _masters_fixture(alternate: bool = false) -> Dictionary:
 	_check(lab.character.place(Vector2i(24, 40) + Vector2i(fixture.natural_offset), true) and team.join_player(lab.character).ok, "Actual controlled Actor legally joins the living original captain's formation")
 	team.settle_combat_command()
 	var offices := team.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(int(fixture.control), "clerk")
 	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": int(fixture.control)}]).ok, "Original living current captain delegates its real existing civil work duty through the original office transaction")
 	_check(team.duty_resolve_readonly("team.work", team).decider == fixture.control, "Current original work decider is the SAME joined controlled Actor")
 	team.combat_units[1].technology = Technology.learned_candidate({}, "F11")

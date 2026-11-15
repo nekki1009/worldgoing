@@ -74,6 +74,8 @@ func _run() -> void:
 	captive._getting_up = false
 	captive.action_time = 0.0
 	# An appointed 典獄 takes the decision away from the head.
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	TerrainTestCharacter.PersonSocial.set_civil_role(lab.site_controller.person_actions._person(warden, false).body, "clerk")
 	assert(Settlement.apply_office_plan(lab, player_id, int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["settlement.prison"]), "person_id": warden}]).ok)
 	var refused := controller.captive_escort.begin_prison(player_id, player_id, prison_key)
 	assert(str(refused.code) == "NO_AUTHORITY" and str(refused.message).contains("典獄"), str(refused))

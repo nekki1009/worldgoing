@@ -42,6 +42,8 @@ func _run() -> void:
 	var keeper := keeper_team.combat_identity(1)
 	# Vacant seat: the controlled head acts.
 	assert(Settlement.garrison_authority(lab, key, player_id).is_empty(), "Head acts while 營務官 is vacant")
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	keeper_team.combat_units[1]["military_role"] = "officer"
 	assert(Settlement.apply_office_plan(lab, player_id, int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["settlement.garrison"]), "person_id": keeper}]).ok)
 	var refused := Garrison.admit(lab, key, source.team_id)
 	assert(str(refused.code) == "NO_AUTHORITY" and str(refused.message).contains("營務官"), "The controlled head is refused once 營務官 is held: %s" % str(refused))

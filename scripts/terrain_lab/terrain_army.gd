@@ -3891,10 +3891,23 @@ func _member_can_serve(index: int) -> bool:
 	if index == PLAYER_MEMBER: return is_instance_valid(player_member) and player_member.can_act() and player_present
 	return is_member(index) and combat_can_act(index) and bool(combat_hot_get(index, &"present"))
 
+## `office_class` is SiteOffices.required_class: "military", "civil" (文吏+) or "civil_official" (文官).
 func office_candidate_ok(person_id: int, office_class: String = "military") -> bool:
 	var index := index_for_identity(person_id)
 	if index < 0 or index == formal_commander or member_gone(index) or index != PLAYER_MEMBER and not is_member(index): return false
-	return military_role(index) == "officer" if office_class == "military" else true
+	return SiteOffices.qualified(office_class, military_role(index), civil_role(index))
+
+## 文武官 W2: writes a member's civil qualification by person id (首長舉用 and fixtures). False when not a member here.
+func set_civil_role(person_id: int, role: String) -> bool:
+	var index := index_for_identity(person_id)
+	if index == PLAYER_MEMBER: return is_instance_valid(player_member) and TerrainTestCharacter.PersonSocial.set_civil_role(player_member, role)
+	if index < 0 or index >= combat_units.size(): return false
+	return TerrainTestCharacter.PersonSocial.set_civil_role(combat_units[index], role)
+
+## 文武官 W1: the member's civil qualification ("none", "clerk", "official"), from the person's own social packet.
+func civil_role(index: int) -> String:
+	if index == PLAYER_MEMBER: return TerrainTestCharacter.PersonSocial.civil_role(player_member) if is_instance_valid(player_member) else "none"
+	return TerrainTestCharacter.PersonSocial.civil_role(combat_units[index]) if index >= 0 and index < combat_units.size() else "none"
 
 func _vacate_unqualified_holders() -> void:
 	# Only appointment loss vacates: KO/captivity keep the seat (head acts meanwhile).
@@ -3972,7 +3985,7 @@ func apply_office_plan(requester_id: int, expected_revision: int, ops: Array, ph
 	var candidate := func(person_id: int, office_class: String) -> bool:
 		var index := index_for_identity(person_id)
 		if index < 0 or index == formal_commander or member_gone(index) or index != PLAYER_MEMBER and not is_member(index): return false
-		return office_class != "military" or role_of.call(index) == "officer"
+		return SiteOffices.qualified(office_class, role_of.call(index), civil_role(index)) # 文武官 W2: both tracks.
 	var result := SiteOffices.apply_plan(offices, "team", expected_revision, office_ops, candidate, false) if not office_ops.is_empty() \
 		else {"ok": true, "offices": offices.duplicate(true), "refs": {}}
 	if not bool(result.ok): return result

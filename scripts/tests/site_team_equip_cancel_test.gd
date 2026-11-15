@@ -33,6 +33,8 @@ func _run() -> void:
 	# 整隊領裝 on a 文官 seat held by the player.
 	var offices := team.team_offices()
 	var seat := str(offices.duties["team.equip"])
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(player, "clerk")
 	var given := team.apply_office_plan(head, int(offices.revision), [{"op": "classify", "position_id": seat, "office_class": "civil"},
 		{"op": "appoint", "position_id": seat, "person_id": player}])
 	assert(given.ok, str(given))
@@ -42,6 +44,8 @@ func _run() -> void:
 	# Hand the duty to another member: the old holder's window is refused, the new holder may cancel.
 	_job(lab, team, representative)
 	offices = team.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(other, "clerk")
 	assert(team.apply_office_plan(head, int(offices.revision), [{"op": "dismiss", "position_id": seat}, {"op": "appoint", "position_id": seat, "person_id": other}]).ok)
 	var refused := orders.cancel_team_issue(player, representative)
 	assert(str(refused.code) == "NO_AUTHORITY" and actions.is_busy(representative), "Old holder after handover is refused: %s" % str(refused))

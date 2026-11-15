@@ -652,6 +652,8 @@ func _prepare_original_house_and_office(original: TerrainLab) -> bool:
 	original.site_controller.initialize_team_items(officials)
 	center_office_holder = officials.combat_identity(0)
 	if not _crowd_admit(original): return false
+	# 文武官 W2: 典獄 is a 文官 seat; the old office holder is a 文吏.
+	TerrainTestCharacter.PersonSocial.set_civil_role(original.site_controller.person_actions._person(center_office_holder, false).body, "clerk")
 	var offices := Settlement.offices(original)
 	center_prison_seat = str(offices.duties["settlement.prison"])
 	var appointed := Settlement.apply_office_plan(original, original.controlled_person_id(), int(offices.revision),

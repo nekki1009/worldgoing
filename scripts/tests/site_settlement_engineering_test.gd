@@ -48,6 +48,8 @@ func _engineering_fixture() -> Dictionary:
 	team.controlled_person_query = lab.controlled_person_id
 	team.person_busy_query = lab.site_controller.person_actions.is_busy
 	assert(team.join_player(lab.character).ok)
+	# 文武官 W2: the 施工主持 (文官) seat needs a 文吏.
+	TerrainTestCharacter.PersonSocial.set_civil_role(lab.site_controller.person_actions._person(control, false).body, "clerk")
 	var offices: Dictionary = team.team_offices()
 	var appointment = team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [
 		{"op": "add", "name": "施工主持", "office_class": "civil", "ref": "engineering_work"},

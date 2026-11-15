@@ -371,7 +371,13 @@ static func review_team_personnel(team: TerrainArmy, controlled: int, physical: 
 		if duties.is_empty() or holder > 0 and not stranded:
 			_seat_filled(key)
 			continue
-		var pool: Array[int] = candidates if SiteOffices.needs_officer(offices, seat) else civil_candidates
+		var required := SiteOffices.required_class(offices, seat)
+		var pool: Array[int] = candidates
+		if required != "military":
+			# 文武官 W2: a civil seat takes only a 文吏 (or a 文官 for OFFICIAL_DUTIES).
+			pool = []
+			for identity: int in civil_candidates:
+				if team.office_candidate_ok(identity, required): pool.append(identity)
 		if pool.is_empty(): continue
 		if not _seat_ready(key, stranded_wait(head_mind) if stranded else fill_delay(head_mind)): continue
 		var best := _best(team, pool, duties, head_mind)

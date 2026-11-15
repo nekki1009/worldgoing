@@ -85,6 +85,8 @@ func run() -> void:
 		{"op": "assign", "duty_id": "team.work", "position_id": logistics_seat}])
 	if not swapped.ok or team.duty_decider("team.work") != officer_a or team.duty_decider("team.logistics") != head: return _fail("swap plan")
 	revision = int(team.offices.revision)
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(officer_b, "clerk")
 	var added := team.apply_office_plan(head, revision, [{"op": "add", "name": "兵部", "ref": "new"},
 		{"op": "assign", "duty_id": "team.logistics", "position_id": "new"}, {"op": "appoint", "position_id": "new", "person_id": officer_b},
 		{"op": "abolish", "position_id": work_seat}])
@@ -148,6 +150,8 @@ func run() -> void:
 	# Roster authority follows the 書記 seat.
 	var clerk_seat := str(grown.duties["team.roster"])
 	var clerk := team.combat_identity(team.officer_service[0])
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(clerk, "clerk")
 	if not team.apply_office_plan(head, int(grown.revision), [{"op": "appoint", "position_id": clerk_seat, "person_id": clerk}]).ok: return _fail("appoint clerk")
 	var empty_team := TerrainArmy.new()
 	var moved := team.transfer_members_to(empty_team, [soldier], team.formal_commander)

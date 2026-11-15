@@ -800,9 +800,11 @@ static func apply_office_plan(lab: Variant, requester_id: int, expected_revision
 	var current := offices(lab)
 	if requester_id <= 0 or current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "只有清醒自由的聚落首長可調整聚落職位")
 	var settlement := record(lab.terrain)
-	var result := SiteOffices.apply_plan(current, "settlement", expected_revision, ops, func(identity: int, _office_class: String) -> bool:
+	var result := SiteOffices.apply_plan(current, "settlement", expected_revision, ops, func(identity: int, required: String) -> bool:
 		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
-		return not person.is_empty() and float(person.hp) > 0.0 and int(person.faction) == int(settlement.owner_faction))
+		if person.is_empty() or float(person.hp) <= 0.0 or int(person.faction) != int(settlement.owner_faction): return false
+		# 武官 seats of a settlement keep their earlier rule (no rank check here); the civil track is checked (文武官 W2).
+		return required == "military" or SiteOffices.qualified(required, SiteOffices.body_military_role(person.body), TerrainTestCharacter.PersonSocial.civil_role(person.body)))
 	if not bool(result.ok): return result
 	settlement.offices = result.offices
 	return Runtime.ok("已套用聚落人事方案", {"revision": int(settlement.offices.revision), "refs": result.refs})

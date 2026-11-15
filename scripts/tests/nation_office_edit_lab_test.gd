@@ -137,6 +137,8 @@ func _run() -> void:
 	var closed: Dictionary = slot.release_organization_stage(session.ticket)
 	_check(closed.ok, "Close private nation scope")
 	# Original live entry still upgrades and writes its actual live target.
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	TerrainTestCharacter.PersonSocial.set_civil_role(lab.site_controller.person_actions._person(npc, false).body, "clerk")
 	var live_plan: Dictionary = orders.apply_nation_office_plan(player, "n1", normalized, ops)
 	var live_offices: Dictionary = lab.terrain.site.equipment_nations.n1.offices
 	_check(live_plan.ok and int(live_offices.version) == SiteOffices.VERSION and int(live_offices.revision) == normalized + 1

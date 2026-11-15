@@ -89,6 +89,8 @@ func run() -> void:
 	var after_one := SiteCombatRules.diminishing(sum_of([0, 2], "tactics"), CAP)
 	if not is_equal_approx(rule.command_effect("tactics", CAP), after_one): return _fail("Captain + seated 武官 only")
 	var offices := rule.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	rule.set_civil_role(rule.combat_identity(3), "clerk")
 	if not rule.apply_office_plan(rule.combat_identity(0), int(offices.revision), [{"op": "classify", "position_id": str(offices.duties["team.equip"]), "office_class": "civil"},
 		{"op": "appoint", "position_id": str(offices.duties["team.equip"]), "person_id": rule.combat_identity(3)}]).ok: return _fail("officer on a 文官 seat")
 	# 2026-10-07 (Nekki: 文官也可以帶兵): an officer-qualified 文官 holder counts too.

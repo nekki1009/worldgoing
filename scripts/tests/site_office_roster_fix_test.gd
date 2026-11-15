@@ -50,6 +50,8 @@ func run() -> void:
 		# Old-save team: duty AI off; it must never flip on by itself (D17).
 		team.offices = SiteOffices.default_offices("team", -1, false)
 	if not appoint(first, "team.logistics", 1) or not appoint(first, "team.training", 2): return _fail("appoint first")
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	second.set_civil_role(second.combat_identity(1), "clerk")
 	if not appoint(second, "team.work", 1): return _fail("appoint second")
 	var keeper := first.combat_identity(1)
 	var leaver := first.combat_identity(2)

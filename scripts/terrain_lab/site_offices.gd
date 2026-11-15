@@ -11,6 +11,8 @@ const CLASSES := ["civil", "military"]
 # Duties whose holder needs officer qualification (軍官資格). Since 2026-10-07
 # (Nekki: 文官也可以帶兵) they may sit on a 文官 or 武官 seat; 文官/武官 is a label
 # and the default for new seats, never a command restriction.
+## 文武官 W2 (civil-military plan §5.4, Nekki 11/09 7-A): these civil duties need a full 文官 (official), not a 文吏.
+const OFFICIAL_DUTIES := ["nation.institutions", "nation.finance"]
 const MILITARY_DUTIES := ["team.succession", "team.training", "team.recruit", "nation.corps", "nation.dispatch", "nation.fleet"]
 # Class a seat gets when created for this duty (default layout, catalog growth, v1 upgrade).
 const DEFAULT_CLASS := {"team.succession": "military", "team.work": "civil", "team.roster": "civil", "team.logistics": "military",
@@ -164,6 +166,27 @@ static func needs_officer(offices: Dictionary, entry: Dictionary) -> bool:
 	for duty_id: String in duties_of_position(offices, str(entry.get("id", ""))):
 		if MILITARY_DUTIES.has(duty_id): return true
 	return false
+
+## The qualification a non-head seat asks of its holder (文武官 W2): "military" (武官: officer rank), "civil_official"
+## (文官) for a civil seat carrying an OFFICIAL_DUTIES duty, otherwise "civil" (文吏 or better).
+static func required_class(offices: Dictionary, entry: Dictionary) -> String:
+	if needs_officer(offices, entry): return "military"
+	for duty_id: String in duties_of_position(offices, str(entry.get("id", ""))):
+		if OFFICIAL_DUTIES.has(duty_id): return "civil_official"
+	return "civil"
+
+## The military rank stored on a person's body (an Army row or an Actor).
+static func body_military_role(body: Variant) -> String:
+	if body is Dictionary: return str(body.get("military_role", "soldier"))
+	if body is Object and "military_role" in body: return str(body.military_role)
+	return "soldier"
+
+## Does a person with `military_role` and `civil_role` meet `required` (from required_class)? A 儒將 holds both tracks.
+static func qualified(required: String, military_role: String, civil_role: String) -> bool:
+	match required:
+		"military": return military_role == "officer"
+		"civil_official": return civil_role == "official"
+		_: return civil_role in ["clerk", "official"]
 
 static func unique_name(offices: Dictionary, wanted: String) -> String:
 	var taken := {}
@@ -357,8 +380,10 @@ static func apply_plan(offices: Dictionary, kind: String, expected_revision: int
 			var count := 0
 			for entry: Dictionary in draft.positions: count += int(int(entry.holder) == person)
 			if count > 1: return _plan_fail("DUPLICATE_HOLDER", "同一人在同一組織最多擔任一個職位")
-			if not candidate_ok.is_valid() or not bool(candidate_ok.call(person, "military" if needs_officer(draft, seat) else str(seat.office_class))):
-				return _plan_fail("NOT_ELIGIBLE", "人物 #%d 不具「%s」（%s）的任職資格" % [person, str(seat.name), class_label(str(seat.office_class))])
+			var required := required_class(draft, seat)
+			if not candidate_ok.is_valid() or not bool(candidate_ok.call(person, required)):
+				var need := "須具軍官資格" if required == "military" else ("須為文官" if required == "civil_official" else "須為文吏以上")
+				return _plan_fail("NOT_ELIGIBLE", "人物 #%d 不具「%s」（%s）的任職資格：%s" % [person, str(seat.name), class_label(str(seat.office_class)), need])
 	# A sitting holder whose seat now needs officer qualification (reclassified or
 	# given 訓練/軍團編成) must have it too.
 	for entry: Dictionary in draft.positions:

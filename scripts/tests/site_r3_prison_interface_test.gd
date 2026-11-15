@@ -216,6 +216,8 @@ func _r3_prison_fixture(initial_loyalty: int = 2500) -> Dictionary:
 	var known_people := {requester: true, head: true, keeper: true}
 	if not _r3_check(controller.equipment_orders.valid_nations(data.site.equipment_nations, data.site.item_definitions, known_people, data.site)): return {}
 	var national_offices: Dictionary = data.site.equipment_nations.n1.offices
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	home.set_civil_role(head, "clerk")
 	var national_plan := controller.equipment_orders.apply_nation_office_plan(requester, "n1", int(national_offices.revision), [{"op": "appoint", "position_id": str(national_offices.duties["nation.admission"]), "person_id": head}])
 	if not _r3_check(national_plan.ok): return {}
 	var target := enemy.combat_identity(0)
@@ -290,6 +292,8 @@ func _run() -> void:
 	national_plan = controller.equipment_orders.apply_nation_office_plan(requester, "n1", int(national_offices.revision), [{"op": "dismiss", "position_id": str(national_offices.duties["nation.admission"])}])
 	if not _r3_check(national_plan.ok): return
 	var offices := Settlement.offices(lab)
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	home.set_civil_role(keeper, "clerk")
 	var appointed := Settlement.apply_office_plan(lab, requester, int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["settlement.prison"]), "person_id": keeper}])
 	if not _r3_check(appointed.ok): return
 	policy = Settlement.set_duty_ai_enabled(lab, requester, false)

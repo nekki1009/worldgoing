@@ -78,6 +78,8 @@ func _settlement_fixture() -> Dictionary:
 	data.site.worker.cell = int(data.site.depot_cell) # Explicit idle original fixture worker at its real generated camp.
 	var team = _settlement_natural_team(lab, data)
 	_check(team.join_player(lab.character).ok, "Original living Army accepts the existing Actor without spawning another person")
+	# 文武官 W2: the 施工主持 (文官) seat needs a 文吏.
+	TerrainTestCharacter.PersonSocial.set_civil_role(lab.site_controller.person_actions._person(control, false).body, "clerk")
 	var offices: Dictionary = team.team_offices()
 	var appointment = team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [
 		{"op": "add", "name": "原施工主持", "office_class": "civil", "ref": "earned_work"},

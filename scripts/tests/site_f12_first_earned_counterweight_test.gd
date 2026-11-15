@@ -110,6 +110,8 @@ func _f12_fixture() -> Dictionary:
 	var control := lab.controlled_person_id()
 	# The ordinary vehicle work admission needs the controlled person as the team's work head.
 	var offices := team.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(control, "clerk")
 	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": control}]).ok
 		and team.duty_resolve_readonly("team.work", team).decider == control, "Actual living captain delegates team.work to the joined controlled Actor")
 	var refs: Array = []

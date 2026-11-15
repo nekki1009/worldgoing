@@ -258,6 +258,8 @@ func _run() -> void:
 	team.set_process(false)
 	team.settle_combat_command()
 	var holder := team.combat_identity(1)
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(holder, "clerk")
 	assert(Settlement.apply_office_plan(lab, player, revision, [{"op": "appoint", "position_id": seat, "person_id": holder}]).ok)
 	original = _frozen(data)
 	assert(Settlement.ecology_authority(lab, key, holder).ok)

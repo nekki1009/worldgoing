@@ -101,6 +101,8 @@ func _check_npc_flags_and_two_team_consent() -> void:
 		_check(not f.actions.begin_technology_lesson(control, teacher, student).ok and f.actions.job_for(teacher) == course, "Resending cannot open or replay another accepted course")
 		_check(blocked_team.set_duty_ai_enabled(captain, false).ok, "Close original flag after acceptance")
 		var office: Dictionary = blocked_team.team_offices()
+		# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+		blocked_team.set_civil_role(blocked_team.combat_identity(2), "clerk")
 		var changed := blocked_team.apply_office_plan(captain, int(office.revision),
 			[{"op": "appoint", "position_id": str(office.duties["team.work"]), "person_id": blocked_team.combat_identity(2)}])
 		_check(changed.ok and blocked_team.duty_decider("team.work") == blocked_team.combat_identity(2), "Original legitimate team duty handover")

@@ -11,6 +11,8 @@ extends RefCounted
 ## per-organization observation start (obs_from). v2 loads with no proven progress.
 ## Reputation (聲望系統規劃): an optional `reputation` {prestige 0..10000, credit -10000..10000, day} on v1 and v3
 ## packets. Missing = prestige at the person's rank floor (read by callers) and credit 0, so old saves need no migration.
+## Civil qualification (文武官 W1, reports/civil-military-office-plan.md §5.1): an optional `civil_role` "clerk" (文吏) or
+## "official" (文官) on v1 and v3 packets; missing = "none". It follows the person (team change, captivity, save/load).
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -18,6 +20,7 @@ const ORG_KINDS := ["team", "nation", "family", "settlement"]
 const MAX_ORGS := 16
 const MAX_PENDING := 64
 const MAX_SEEN := 128
+const CIVIL_ROLES := ["none", "clerk", "official"]
 
 static func valid(packet: Variant) -> bool:
 	if not packet is Dictionary or not _integer(packet.get("capture_seq"), 0, 2147483647): return false
@@ -27,6 +30,9 @@ static func valid(packet: Variant) -> bool:
 		extra += 1
 	if packet.has("combat_record"):
 		if not valid_combat_record(packet.combat_record): return false
+		extra += 1
+	if packet.has("civil_role"):
+		if not packet.civil_role is String or packet.civil_role not in ["clerk", "official"]: return false
 		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
@@ -86,6 +92,7 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 		"no_post_days": 0, "pending": [], "seen": [], "evidence": {}, "proven": {}, "unexecuted": {"days": 0, "events": 0}}
 	if valid_reputation(packet.get("reputation")): result["reputation"] = packet.reputation.duplicate(true)
 	if valid_combat_record(packet.get("combat_record")): result["combat_record"] = packet.combat_record.duplicate(true)
+	if packet.get("civil_role") in ["clerk", "official"]: result["civil_role"] = str(packet.civil_role)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -150,6 +157,27 @@ static func set_reputation(body: Variant, value: Dictionary) -> void:
 	packet["reputation"] = {"prestige": clampi(int(value.prestige), 0, 10000), "credit": clampi(int(value.credit), -10000, 10000), "day": int(value.get("day", -1))}
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
+
+## The person's civil qualification: "none", "clerk" or "official".
+static func civil_role(body: Variant) -> String:
+	var stored: Variant = read(body).get("civil_role")
+	return str(stored) if stored is String and stored in ["clerk", "official"] else "none"
+
+static func civil_rank(role: String) -> int:
+	return maxi(0, CIVIL_ROLES.find(role))
+
+## Writes the civil qualification ("none" removes it), creating a v1 packet when the person has none.
+static func set_civil_role(body: Variant, role: String) -> bool:
+	if role not in CIVIL_ROLES: return false
+	var packet := read(body).duplicate(true)
+	if packet.is_empty():
+		if role == "none": return true
+		packet = {"version": 1, "capture_seq": 0}
+	if role == "none": packet.erase("civil_role")
+	else: packet["civil_role"] = role
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+	return true
 
 ## Personal combat record (Nekki 2026-11-05): optional `combat_record` with the RegionBattleLog.RECORD_FIELDS counters.
 const COMBAT_FIELDS := ["battles", "wins", "losses", "routs", "kills", "kos_dealt", "captures", "nobles_captured", "captured", "kod", "commanded"]

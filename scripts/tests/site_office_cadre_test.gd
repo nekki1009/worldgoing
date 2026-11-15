@@ -43,6 +43,8 @@ func run() -> void:
 
 	# A soldier on a 文官 post is cadre (exempt) but not in succession, no command, no cape.
 	var clerk := 10
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(team.combat_identity(clerk), "clerk")
 	if not plan(team, [{"op": "appoint", "position_id": work_seat, "person_id": team.combat_identity(clerk)}]).ok: return _fail("appoint 文官")
 	if not team.officer_service.has(clerk) or team.officer_order.has(clerk): return _fail("文官 holder is cadre but not in the succession order")
 	if not team._troop_exempt_ids().has(team.combat_identity(clerk)): return _fail("文官 cadre get the troop-type exemption")
@@ -67,6 +69,8 @@ func run() -> void:
 	# A 文官 cadre officer may drop officer rank and keep the post (v2 §3.5).
 	var scribe := 12
 	if not team.set_military_role(team.combat_identity(scribe), "officer").ok: return _fail("promote scribe")
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(team.combat_identity(scribe), "clerk")
 	if not plan(team, [{"op": "dismiss", "position_id": str(SiteOffices.position_of(team.team_offices(), team.combat_identity(scribe)).id)},
 		{"op": "appoint", "position_id": str(team.team_offices().duties["team.roster"]), "person_id": team.combat_identity(scribe)}]).ok: return _fail("move scribe to 文官 書記")
 	# 2026-10-07 (Nekki: 文官也可以帶兵): an officer on a 文官 post leads and wears the cape.

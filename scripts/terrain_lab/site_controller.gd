@@ -597,6 +597,7 @@ func _build_ui() -> void:
 	_button(launcher.column, "把所選倉庫登記為家產", "RegisterFamilyEstate", func() -> void: show_result(register_estate_at_selection()))
 	_button(launcher.column, "評估向所選官員投靠", "PreviewJoinFaction", func() -> void: show_result(preview_join_faction(int(lab.selected_army_target))))
 	_button(launcher.column, "向所選官員投靠", "JoinFactionInPerson", func() -> void: show_result(JoinFaction.join(self, int(lab.selected_army_target))))
+	_button(launcher.column, "舉所選人物為文吏", "RaiseClerk", func() -> void: show_result(raise_clerk(int(lab.selected_army_target))))
 	_button(launcher.column, "評估與所選人物談招安", "PreviewBanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), true)))
 	_button(launcher.column, "與所選人物談招安", "BanditAmnesty", func() -> void: show_result(bandit_amnesty(int(lab.selected_army_target), false)))
 	var grant_rank := _options(launcher.column, ["王", "公爵", "侯爵", "伯爵", "子爵", "男爵"], "GrantRank")
@@ -11158,6 +11159,32 @@ func preview_join_faction(official_id: int) -> Dictionary:
 	var verdict := "願意收你" if seen.accepted else "不會收你"
 	var cadres := "所有幹部都會跟隨" if stay.is_empty() else "不願跟隨的幹部：" + "、".join(stay)
 	return Runtime.ok("對方%s（接受分 %.1f）；%s" % [verdict, float(seen.score), cadres], seen)
+## 文武官 W2 (civil-military plan §5.3-1): the controlled person raises a conscious, free member of his own organization to
+## 文吏 at once: as the formal captain of the person's team, or as the acting head of this Site's settlement for a person of
+## its faction. No quota, no exam. The qualification follows the person.
+func raise_clerk(person_id: int) -> Dictionary:
+	var player := int(lab.controlled_person_id())
+	if person_id <= 0 or person_id == player: return Runtime.fail("INVALID", "請選擇另一名人物")
+	var person: Dictionary = person_actions._person(person_id, false)
+	if person.is_empty(): return Runtime.fail("NO_TARGET", "此人不在此地")
+	if float(person.get("hp", 0.0)) <= 0.0 or float(person.get("ko", 0.0)) > 0.0 or bool(person.get("captive", false)): return Runtime.fail("NOT_FREE", "只能舉用清醒自由的人")
+	if PersonSocialPacket.civil_role(person.body) != "none": return Runtime.fail("ALREADY", "此人已有文職資格")
+	var mine: Dictionary = lab._original_person_target(player)
+	var theirs: Dictionary = lab._original_person_target(person_id)
+	var allowed := false
+	if not mine.is_empty() and not theirs.is_empty() and mine.owner == theirs.owner:
+		var team_id := int(theirs.owner.team_id)
+		if lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site.has_live_team(team_id):
+			var roster: Dictionary = lab.crowd_site.native_roster(team_id)
+			allowed = not roster.is_empty() and int(roster.get("formal_commander", -1)) >= 0 and int(roster.units[int(roster.formal_commander)].person_id) == player
+		elif theirs.owner is TerrainArmy:
+			allowed = int(theirs.owner.formal_commander) >= 0 and theirs.owner.combat_identity(theirs.owner.formal_commander) == player
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if not allowed and not settlement.is_empty() and Settlement.head_executor(lab) == player and int(person.get("faction", -1)) == int(settlement.owner_faction): allowed = true
+	if not allowed: return Runtime.fail("NO_AUTHORITY", "只有此人的正式隊長或本地聚落首長能舉用文吏")
+	PersonSocialPacket.set_civil_role(person.body, "clerk")
+	return Runtime.ok("已舉 #%d 為文吏" % person_id, {"person_id": person_id})
+
 ## Bandit spec §6 / §10 (B3): amnesty in person with the selected person. A player who chiefs a band offers to come in to
 ## the selected official; any other player (a head or viscount and above) offers it to the selected chief.
 func bandit_amnesty(target_id: int, preview_only: bool) -> Dictionary:

@@ -50,6 +50,8 @@ func _spares_fixture() -> Dictionary:
 	# A legitimate starting office appointment delegates work to the actual
 	# joined Actor. Runtime still obtains every manual consent from that person.
 	var offices: Dictionary = team.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(control, "clerk")
 	var appointment = team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [
 		{"op": "add", "name": "施工主持", "office_class": "civil", "ref": "fixture_work"},
 		{"op": "appoint", "position_id": "fixture_work", "person_id": control},

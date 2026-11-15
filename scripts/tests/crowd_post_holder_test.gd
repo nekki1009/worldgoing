@@ -41,6 +41,8 @@ func run() -> void:
 	team._mark_serving_dirty()
 	var offices := team.team_offices()
 	var head := team.combat_identity(team.formal_commander)
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	for index in [3, 4]: team.set_civil_role(team.combat_identity(index), "clerk")
 	if not team.apply_office_plan(head, int(offices.revision), [
 		{"op": "appoint", "position_id": str(offices.duties["team.training"]), "person_id": team.combat_identity(2)},
 		{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": team.combat_identity(3)},

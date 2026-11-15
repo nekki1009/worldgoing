@@ -66,6 +66,8 @@ func _run() -> void:
 	if not _r3_check(bool(reauthorized.ok), "holder authorizes again"): return
 	# Appoint the keeper as 贖務官: the head no longer exercises it, the appointee does.
 	var seat_id: String = str(nation.offices.duties["nation.ransom"])
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	TerrainTestCharacter.PersonSocial.set_civil_role(lab.site_controller.person_actions._person(keeper, false).body, "clerk")
 	var appoint: Dictionary = orders.apply_nation_office_plan(requester, "n1", int(nation.offices.revision), [{"op": "appoint", "position_id": seat_id, "person_id": keeper}])
 	if not _r3_check(bool(appoint.ok), "head appoints the 贖務官: " + str(appoint)): return
 	var before: PackedByteArray = var_to_bytes([nation, data.site.stockpiles[key]])

@@ -32,6 +32,8 @@ func run() -> void:
 	var head := team.combat_identity(team.formal_commander)
 	var soldier := team.combat_identity(10)
 	var clerk := team.combat_identity(11)
+	# 文武官 W2: 文官 seats need 文吏; the fixture's civil holders are raised first.
+	for index: int in [10, 11, 12]: TerrainTestCharacter.PersonSocial.set_civil_role(team.combat_units[index], "clerk")
 
 	# v1 record (pre-R1a) is valid and upgrades on first use.
 	var v1 := SiteOffices.default_offices("team", -1, false)

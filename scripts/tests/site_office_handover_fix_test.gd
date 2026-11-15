@@ -73,6 +73,8 @@ func _run() -> void:
 	var settlement_offices := Settlement.offices(lab)
 	var warden_seat := str(settlement_offices.duties["settlement.prison"])
 	var warden := team.combat_identity(3)
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(warden, "clerk")
 	assert(Settlement.apply_office_plan(lab, player.person_id, int(settlement_offices.revision), [{"op": "appoint", "position_id": warden_seat, "person_id": warden}]).ok)
 	team.combat_hot_set(3, &"captive", true)
 	Settlement.settle_offices(lab)

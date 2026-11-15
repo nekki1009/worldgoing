@@ -88,6 +88,8 @@ func _f11_fixture() -> Dictionary:
 	var actions = lab.site_controller.person_actions
 	var control := int(lab.controlled_person_id())
 	var offices := team.team_offices()
+	# 文武官 W2: a 文官 seat needs a 文吏 (a 武官 seat an officer); the fixture qualifies its holder first.
+	team.set_civil_role(control, "clerk")
 	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [{"op": "appoint", "position_id": str(offices.duties["team.work"]), "person_id": control}]).ok, "Actual living original captain delegates its existing team.work office through the original transaction")
 	_check(team.duty_resolve_readonly("team.work", team).decider == control, "Actual original work decider is the same joined controlled Actor")
 	var refs: Array = []

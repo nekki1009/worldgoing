@@ -230,7 +230,7 @@ func apply_nation_office_plan(requester_id: int, nation_id: String, expected_rev
 	if requester_id <= 0 or nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation):
 		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的本國元首可調整國家職位")
 	var result := SiteOffices.apply_plan(nation.offices, "nation", expected_revision, ops,
-		func(person_id: int, _office_class: String) -> bool: return _member(nation, person_id))
+		func(person_id: int, required: String) -> bool: return _member(nation, person_id) and _qualified_here(person_id, required))
 	if not bool(result.ok): return result
 	nation["offices"] = result.offices
 	return Runtime.ok("已套用國家人事方案", {"revision": int(nation.offices.revision), "refs": result.refs})
@@ -1160,6 +1160,13 @@ static func nation_departure_candidate(nation: Dictionary, person_id: int, autho
 	if changed: candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
 
 	return {"ok": true, "code": "", "message": "", "nation": candidate, "seat_vacated": seat_vacated}
+
+## 文武官 W2: a person present here must meet the seat's track; one not present is checked by membership only (the
+## organization edit applies remotely and the owner rechecks on arrival).
+func _qualified_here(identity: int, required: String) -> bool:
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false) if lab != null and lab.site_controller != null else {}
+	if person.is_empty() or required == "military": return true # 武官 seats of a nation keep their earlier rule.
+	return SiteOffices.qualified(required, SiteOffices.body_military_role(person.body), TerrainTestCharacter.PersonSocial.civil_role(person.body))
 
 static func _member(nation: Dictionary, identity: int) -> bool:
 	for member_id: Variant in nation.get("members", []):

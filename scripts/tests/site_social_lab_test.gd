@@ -21,6 +21,8 @@ func _run() -> void:
 	var head := team.combat_identity(team.formal_commander)
 	var holder := team.combat_identity(2)
 	var mover := team.combat_identity(3)
+	# 文武官 W2: 文官 seats need 文吏; both civil holders are raised first.
+	for index: int in [2, 3]: TerrainTestCharacter.PersonSocial.set_civil_role(team.combat_units[index], "clerk")
 	var offices := team.team_offices()
 	var work := str(offices.duties["team.work"])
 	var roster := str(offices.duties["team.roster"])
@@ -31,7 +33,7 @@ func _run() -> void:
 	var holder_row: Dictionary = team.combat_units[2]
 	var mover_row: Dictionary = team.combat_units[3]
 	assert(holder_row.social_state.pending.size() == 1 and str(holder_row.social_state.pending[0].kind) == "dismissed", str(holder_row.get("social_state")))
-	assert(not mover_row.has("social_state") or mover_row.social_state.pending.is_empty(), "A move between seats is not a dismissal")
+	assert(not mover_row.has("social_state") or mover_row.social_state.get("pending", []).is_empty(), "A move between seats is not a dismissal")
 	DutyAI.reset_site_state()
 	DutyAI.review(lab) # day 0: everyone starts now
 	data.site.minute = int(data.site.minute) + 1440
