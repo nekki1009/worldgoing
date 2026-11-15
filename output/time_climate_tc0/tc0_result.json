@@ -1,0 +1,56 @@
+{
+  "climate": {
+    "cached_lookup_us": 0.15994,
+    "per_call_us": 1.10548,
+    "sink": 101209.706461699
+  },
+  "cold": [
+    {
+      "calls": 474,
+      "complete": false,
+      "days": 1,
+      "game_seconds_per_wall_second": 88.0998681121027,
+      "game_seconds_reached": 10580.4430822891,
+      "ok": true,
+      "projected_wall_seconds": 980.705213883638,
+      "wall_seconds": 120.096015
+    },
+    {
+      "calls": 474,
+      "complete": false,
+      "days": 10,
+      "game_seconds_per_wall_second": 88.1331536082802,
+      "game_seconds_reached": 10580.4430822891,
+      "ok": true,
+      "projected_wall_seconds": 9803.34828185277,
+      "wall_seconds": 120.050658
+    },
+    {
+      "calls": 474,
+      "complete": false,
+      "days": 30,
+      "game_seconds_per_wall_second": 88.155372605733,
+      "game_seconds_reached": 10580.4430822891,
+      "ok": true,
+      "projected_wall_seconds": 29402.6322319853,
+      "wall_seconds": 120.0204
+    }
+  ],
+  "precision": {
+    "drift_fractional": 0.0,
+    "drift_seconds": 0.0,
+    "end_date": {
+      "day": 1,
+      "day_of_year": 0,
+      "hour": 6,
+      "minute": 0,
+      "month": 1,
+      "season": "winter",
+      "year": 4
+    },
+    "frame_sum_drift": 0.0000000959698809310794,
+    "ms": 30.279,
+    "steps": 1576800,
+    "ulp_at_3_years": 0.0000000149011611938477
+  }
+}
