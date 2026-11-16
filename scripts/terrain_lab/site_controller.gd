@@ -35,6 +35,9 @@ const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedu
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
+## 文武官 W5: the settlement level the live controller last saw (runtime), and the civil prestige per level reached.
+var _settlement_level_seen := -1
+const CIVIL_LEVEL_PRESTIGE := {3: 2.0, 4: 3.0, 5: 5.0}
 ## 時間與氣候 TC7: the calendar year the New Year scan last ran for (runtime; the scan is idempotent per person).
 var _vital_year := -1
 var last_vital_scan: Dictionary = {}
@@ -2754,6 +2757,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 	if not bool(data.site.paused) and not get_tree().paused:
 		advance_sleep() # TC2
 		vital_year_tick() # TC7
+		_civil_level_prestige() # W5
 		vehicles.settle_operators()
 		_work_elapsed += delta
 		_save_elapsed += delta
@@ -9360,7 +9364,7 @@ func _open_offices(host: Window = null) -> void:
 			people.add_item("選擇任職人選")
 			people.set_item_metadata(0, -1)
 			for identity: int in org.candidates:
-				people.add_item("#%d" % identity)
+				people.add_item("#%d%s" % [identity, qualification_tag(identity)])
 				people.set_item_metadata(people.item_count - 1, identity)
 			return
 		if int(state.revision) != int(current.revision):
@@ -9395,7 +9399,7 @@ func _open_offices(host: Window = null) -> void:
 		people.set_item_metadata(0, -1)
 		for identity: int in org.candidates:
 			var seated := SiteOffices.position_of(shown, identity)
-			people.add_item("#%d%s" % [identity, "（現任「%s」）" % seated.name if not seated.is_empty() else ""])
+			people.add_item("#%d%s%s" % [identity, qualification_tag(identity), "（現任「%s」）" % seated.name if not seated.is_empty() else ""])
 			people.set_item_metadata(people.item_count - 1, identity)
 		var editable: bool = can_edit.call()
 		note.text = str(org.note) + ("" if editable else ("\n群眾戰鬥中：職位頁唯讀。" if _crowd_active() else "\n只有本組織首長可調整；目前僅能查看。"))
@@ -15137,3 +15141,42 @@ func _mark_vital_hunger(body: Variant) -> void:
 	if vital.is_empty() or bool(vital.starved): return
 	vital.starved = true
 	TerrainTestCharacter.PersonSocial.set_vital(body, vital)
+
+
+## 文武官 W4: a person's tracks for lists: 〔武〕 officer, 〔文吏〕/〔文官〕 civil, both for 文武兼備; "" for neither.
+func qualification_tag(identity: int) -> String:
+	var person: Dictionary = person_actions._person(identity, false)
+	if person.is_empty() or person.get("body") == null: return ""
+	var tags: Array[String] = []
+	if SiteOffices.body_military_role(person.body) == "officer": tags.append("武")
+	match TerrainTestCharacter.PersonSocial.civil_role(person.body):
+		"clerk": tags.append("文吏")
+		"official": tags.append("文官")
+	return "〔%s〕" % "・".join(tags) if not tags.is_empty() else ""
+
+
+## 文武官 W5: when the settlement here reaches a new level, its head and main civil officer share the civil prestige.
+func _civil_level_prestige() -> void:
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if settlement.is_empty(): return
+	var level := int(settlement.get("level", 0))
+	if _settlement_level_seen < 0 or level <= _settlement_level_seen:
+		_settlement_level_seen = level
+		return
+	var reached := _settlement_level_seen
+	_settlement_level_seen = level
+	var gain := 0.0
+	for each: int in range(reached + 1, level + 1): gain += float(CIVIL_LEVEL_PRESTIGE.get(each, 0.0))
+	if gain <= 0.0: return
+	var offices: Dictionary = Settlement.offices(lab, true)
+	var head := Settlement.head_executor(lab, true)
+	var civil := -1
+	var registry := SiteOffices.position(offices, str(offices.get("duties", {}).get("settlement.registry", "")))
+	if int(registry.get("holder", -1)) > 0 and not bool(registry.get("head", false)): civil = int(registry.holder)
+	if civil <= 0:
+		for seat: Dictionary in offices.get("positions", []):
+			if not bool(seat.head) and int(seat.holder) > 0 and str(seat.get("office_class", "")) == "civil":
+				civil = int(seat.holder)
+				break
+	if head > 0: adjust_reputation(head, gain / 2.0, 0.0)
+	if civil > 0 and civil != head: adjust_reputation(civil, gain / 2.0, 0.0)

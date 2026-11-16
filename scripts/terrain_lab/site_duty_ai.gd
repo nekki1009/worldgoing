@@ -636,15 +636,51 @@ static func review_settlement_personnel(lab: Variant, controlled: int) -> Dictio
 			candidates.append(identity)
 	if candidates.is_empty(): return {}
 	var site: Dictionary = lab.terrain.site
-	var best := _rank_people(candidates, func(identity: int) -> int:
-		return candidate_bonus(personality(identity, null, lab), head_mind, same_family(site, head, identity)))
 	for seat: Dictionary in offices.positions:
 		if bool(seat.head) or int(seat.holder) > 0 or SiteOffices.duties_of_position(offices, str(seat.id)).is_empty(): continue
 		var key := "settlement:%s" % str(seat.id)
 		if not _seat_ready(key, fill_delay(head_mind)): continue
+		# 文武官 W5: only people qualified for this seat (settlement 武官 seats keep their earlier rule, W2).
+		var required := SiteOffices.required_class(offices, seat)
+		var pool: Array[int] = []
+		for identity: int in candidates:
+			if required == "military" or _civil_ok(lab, identity, required): pool.append(identity)
+		if pool.is_empty():
+			if required != "military": return _raise_clerk(lab, head, candidates)
+			continue
+		var best := _rank_people(pool, func(identity: int) -> int:
+			return candidate_bonus(personality(identity, null, lab), head_mind, same_family(site, head, identity)))
 		_seat_filled(key)
 		return Settlement.apply_office_plan(lab, head, int(offices.revision), [{"op": "appoint", "position_id": str(seat.id), "person_id": best}])
 	return {}
+
+## W5: days between two NPC raises to 文吏 (the plan's "每 30 日").
+const RAISE_DAYS := 30
+## Last raise day per settlement head (runtime; a reload may raise one more time early).
+static var _raised_day: Dictionary = {}
+
+static func _civil_ok(lab: Variant, identity: int, required: String) -> bool:
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+	if person.is_empty() or person.get("body") == null: return false
+	return SiteOffices.qualified(required, SiteOffices.body_military_role(person.body), PersonSocial.civil_role(person.body))
+
+## W5 NPC 舉用: the most 守法 candidate without a civil role becomes 文吏 (tie: lower id).
+static func _raise_clerk(lab: Variant, head: int, candidates: Array[int]) -> Dictionary:
+	var today := int(floorf(float(lab.terrain.site.get("minute", 0)) / 1440.0))
+	if today - int(_raised_day.get(head, -RAISE_DAYS)) < RAISE_DAYS: return {}
+	var best := -1
+	var best_lawful := -1
+	for identity: int in candidates:
+		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+		if person.is_empty() or person.get("body") == null or PersonSocial.civil_role(person.body) != "none": continue
+		var lawful := int(personality(identity, null, lab).get("lawful", 50))
+		if lawful > best_lawful:
+			best = identity
+			best_lawful = lawful
+	if best < 0: return {}
+	_raised_day[head] = today
+	PersonSocial.set_civil_role(lab.site_controller.person_actions._person(best, false).body, "clerk")
+	return SiteRuntime.ok("聚落首長舉 #%d 為文吏" % best, {"raised": best})
 
 static func _faction_people(lab: Variant, faction: int) -> Array[int]:
 	var people: Array[int] = []
