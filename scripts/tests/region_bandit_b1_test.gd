@@ -123,6 +123,6 @@ func _run() -> void:
 	if not _check(row.heat is int and row.heat == 40 and row.lair.cell[0] is int and row.lair.cell == [4, 7] and row.converted_from.at == 12.0, "canonical ints come back", row): return
 	if not _check(RegionFactionQuery.validate(back, 1000.0).ok and RegionDiplomacy.hostile(back, band, lawful, t), "the round-tripped registry validates and keeps the band hostile"): return
 	var back_partial: Dictionary = RegionFactionQuery.canonical_registry(partial)
-	if not _check(back_partial.entries[str(band)].bandit.size() == RegionFactionQuery.BANDIT_FIELDS.size(), "canonicalising fills a partial sub-table"): return
+	if not _check(back_partial.entries[str(band)].bandit.size() == RegionFactionQuery.BANDIT_DEFAULTS.size(), "canonicalising fills a partial sub-table"): return
 	print("REGION_BANDIT_B1_PASS checks=", checks)
 	quit(0)

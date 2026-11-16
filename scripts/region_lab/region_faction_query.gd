@@ -14,7 +14,9 @@ const ENTRY_FIELDS := ["faction_id", "name", "color", "kind", "leader_ref", "nat
 ## (reports/bandit-faction-spec.md, BQ1 A): no nation, no diplomacy, no settlement capture, no peerage, hostile to all.
 const KINDS := ["player", "npc", "rebel", "bandit"]
 ## The `bandit` sub-table (only on kind bandit). Missing keys read as BANDIT_DEFAULTS (bandit spec §3.3).
-const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from"]
+## B4b adds two optional keys: `hoard` {item: n} (goods kept at the lair) and `protection` {site_id: {asked, until}} (the
+## day a settlement was last asked for protection money and the day its protection lasts to, -1 when it refused).
+const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from", "hoard", "protection"]
 const BANDIT_ORIGINS := ["scenario", "rout", "desertion", "escaped_captive", "refugee", "fallen_rebel"]
 const BANDIT_DEFAULTS := {"origin": "scenario", "lair": null, "raid_ai": true, "heat": 0, "converted_from": null}
 const BANDIT_HEAT_MAX := 100
@@ -112,6 +114,15 @@ static func _bandit_valid(entry: Dictionary, now: float) -> Dictionary:
 	if table.has("heat") and not whole(table.heat, 0, BANDIT_HEAT_MAX): return fail("CORRUPT_SAVE", "bandit heat")
 	var lair: Variant = table.get("lair")
 	if lair != null and not (lair is Dictionary and keys(lair, ["site_id", "cell"]) and lair.site_id is String and not str(lair.site_id).is_empty() and lair.cell is Array and lair.cell.size() == 2 and whole(lair.cell[0], 0, 2147483647) and whole(lair.cell[1], 0, 2147483647)): return fail("CORRUPT_SAVE", "bandit lair")
+	if table.has("hoard"):
+		if not table.hoard is Dictionary or table.hoard.size() > 64: return fail("CORRUPT_SAVE", "bandit hoard")
+		for item: Variant in table.hoard:
+			if not item is String or str(item).is_empty() or not whole(table.hoard[item], 1, 100000000): return fail("CORRUPT_SAVE", "bandit hoard")
+	if table.has("protection"):
+		if not table.protection is Dictionary or table.protection.size() > 64: return fail("CORRUPT_SAVE", "bandit protection")
+		for site_id: Variant in table.protection:
+			var row: Variant = table.protection[site_id]
+			if not site_id is String or str(site_id).is_empty() or not row is Dictionary or not keys(row, ["asked", "until"]) or not whole(row.asked, 0, 2147483646) or not whole(row.until, -1, 2147483646): return fail("CORRUPT_SAVE", "bandit protection")
 	var converted: Variant = table.get("converted_from")
 	if converted != null and not (converted is Dictionary and keys(converted, ["kind", "at"]) and converted.kind == "rebel" and converted.at != null and _time(converted.at, now)): return fail("CORRUPT_SAVE", "bandit conversion")
 	return {"ok": true}
@@ -137,6 +148,13 @@ static func canonical_bandit(value: Dictionary) -> Dictionary:
 		for axis: Variant in table.lair.cell: cell.append(int(axis) if (axis is int or axis is float) else axis)
 		table.lair.cell = cell
 	if table.converted_from is Dictionary and (table.converted_from.get("at") is int or table.converted_from.get("at") is float): table.converted_from.at = float(table.converted_from.at)
+	if table.get("hoard") is Dictionary:
+		for item: Variant in table.hoard: table.hoard[item] = int(table.hoard[item])
+	if table.get("protection") is Dictionary:
+		for row: Variant in table.protection.values():
+			if row is Dictionary:
+				row["asked"] = int(row.get("asked", 0))
+				row["until"] = int(row.get("until", -1))
 	return table
 
 ## Same side for hostility, recruiting, garrison, consent and diplomacy. Neutral is never allied with

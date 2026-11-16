@@ -180,3 +180,48 @@ static func fall(registry: Dictionary, rebel_faction: int, lair: Variant, now: f
 	entry.duty_ai = false
 	entry["bandit"] = RegionFactionQuery.canonical_bandit({"origin": "fallen_rebel", "lair": lair, "converted_from": {"kind": "rebel", "at": now}})
 	return _finish(candidate, now)
+
+# --- B4b: protection money (bandit spec §5.1, §12) -------------------------------------------------------------------
+const PROTECTION_DAYS := 30
+const REACH_SITES := 2
+
+## Chebyshev distance in Sites between two "atlas:x:y" Site ids; a large number when either is not a world Site.
+static func site_distance(a: String, b: String) -> int:
+	var pa := a.split(":")
+	var pb := b.split(":")
+	if pa.size() < 3 or pb.size() < 3 or not pa[pa.size() - 2].is_valid_int() or not pb[pb.size() - 2].is_valid_int() or not pa[pa.size() - 1].is_valid_int() or not pb[pb.size() - 1].is_valid_int(): return 1000000
+	return maxi(absi(int(pa[pa.size() - 2]) - int(pb[pb.size() - 2])), absi(int(pa[pa.size() - 1]) - int(pb[pb.size() - 1])))
+
+## The bands that may ask `site_id` for protection money today: active, raiding, lair within REACH_SITES, not asked in the
+## last PROTECTION_DAYS and not currently paid. Sorted by faction id.
+static func protection_due(registry: Dictionary, site_id: String, day: int) -> Array[int]:
+	var result: Array[int] = []
+	for key: String in registry.get("entries", {}):
+		var entry: Dictionary = registry.entries[key]
+		if entry.get("kind") != "bandit" or entry.get("status") != "active": continue
+		var table: Dictionary = RegionFactionQuery.canonical_bandit(entry.get("bandit", {}))
+		if not bool(table.raid_ai) or not table.lair is Dictionary or site_distance(str(table.lair.site_id), site_id) > REACH_SITES: continue
+		var row: Dictionary = table.get("protection", {}).get(site_id, {})
+		if not row.is_empty() and (day - int(row.asked) < PROTECTION_DAYS or int(row.until) >= day): continue
+		result.append(int(key))
+	result.sort()
+	return result
+
+## Population x 1 day of grain (§12).
+static func protection_fee(population: int) -> int:
+	return maxi(0, population)
+
+static func protected(registry: Dictionary, band: int, site_id: String, day: int) -> bool:
+	return int(RegionFactionQuery.bandit_of(registry, band).get("protection", {}).get(site_id, {}).get("until", -1)) >= day
+
+## Records the answer: paid goods join the lair's hoard and protection lasts PROTECTION_DAYS; a refusal records until -1.
+static func protection_answer(registry: Dictionary, band: int, site_id: String, day: int, paid: Dictionary, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		var rows: Dictionary = table.get("protection", {})
+		rows[site_id] = {"asked": day, "until": day + PROTECTION_DAYS if not paid.is_empty() else -1}
+		table["protection"] = rows
+		if not paid.is_empty():
+			var hoard: Dictionary = table.get("hoard", {})
+			for item: String in paid: hoard[item] = int(hoard.get(item, 0)) + int(paid[item])
+			table["hoard"] = hoard, now)
+

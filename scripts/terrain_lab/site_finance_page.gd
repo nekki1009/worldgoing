@@ -21,6 +21,7 @@ const Stocks = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
 const RegionFinance = preload("res://scripts/region_lab/region_finance.gd")
+const BanditProtection = preload("res://scripts/terrain_lab/site_bandit_protection.gd")
 
 ## Soldier pay and food for a season (§4.4: 30 + 90 points).
 const SOLDIER_SEASON := 120
@@ -117,6 +118,8 @@ static func summary(lab: Variant, org: Dictionary) -> String:
 			lines.append("可養約 %d 人（上季實收＋封地庫半數，每兵每季 %d 點）" % [floori((float(last) + float(stored) * 0.5) / PayTable.TENTHS / SOLDIER_SEASON), SOLDIER_SEASON])
 			var grievance := int(ProduceTax.UNHAPPY.get(int(record.tax_rate), 0))
 			if grievance > 0: lines.append("稅率偏高：登記居民 %d 人每日不滿 +%d" % [ProduceTax.residents(lab.terrain).size(), grievance])
+			var asked: Dictionary = BanditProtection.pending.get(str(lab.terrain.site.get("id", "")), {})
+			for band: Variant in asked: lines.append("土匪（勢力 %d）索要保護費 %d 糧，尚未答覆" % [int(band), int(asked[band])])
 			if int(record.tax_rate) > PayTable.FREE_TAX_MAX or not ProduceTax.high_rate_allowed(lab.terrain): lines.append("15%／20% 需要國家已知「稅籍與財政制度」（N09）")
 		"nation":
 			var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(str(ref.org_id), {})
@@ -162,6 +165,15 @@ static func set_auto_fund(lab: Variant, org: Dictionary, on: bool) -> Dictionary
 	if not made.ok: return made
 	made.record.auto_fund = on
 	return Runtime.ok("自動撥餉已" + ("開啟" if on else "關閉"))
+
+## Answers the first pending protection demand on this Site (the settlement's head only).
+static func _answer_protection(lab: Variant, pay: bool) -> Dictionary:
+	var asked: Dictionary = BanditProtection.pending.get(str(lab.terrain.site.get("id", "")), {})
+	if asked.is_empty(): return Runtime.fail("NO_TARGET", "目前沒有待答覆的保護費")
+	if Settlement.head_executor(lab, true) != int(lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY", "只有聚落長能答覆保護費")
+	var bands: Array = asked.keys()
+	bands.sort()
+	return BanditProtection.answer(lab, int(bands[0]), pay)
 
 # --- The dialog ----------------------------------------------------------------------------------------------------
 
@@ -246,6 +258,8 @@ static func open(controller: Variant, host: Window = null) -> void:
 		["綁定為稅源", "FinanceBindTax", ["settlement"], func() -> void: act.call(bind(lab, current.call(), "tax_source", picked.call()))],
 		["定稅率", "FinanceSetTax", ["settlement"], func() -> void: act.call(ProduceTax.set_tax(lab, int(lab.controlled_person_id()), int(PayTable.TAX_RATES[tax_rate.selected])))],
 		["綁定為封地庫", "FinanceBindTreasury", ["settlement"], func() -> void: act.call(bind(lab, current.call(), "treasury", picked.call()))],
+		["付保護費", "FinancePayProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, true))],
+		["拒絕保護費", "FinanceRefuseProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, false))],
 		["切換自動撥餉", "FinanceAutoFund", ["nation"], func() -> void:
 			var record := Finance.record_of(lab.terrain, current.call().ref, _today(lab))
 			act.call(set_auto_fund(lab, current.call(), not bool(record.auto_fund)))],
