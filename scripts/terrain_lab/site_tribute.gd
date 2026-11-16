@@ -185,7 +185,7 @@ static func _fits(lab: Variant, target: Dictionary, items: Dictionary) -> bool:
 ## The settlement's tax day. Returns {due, paid, transit, on_time} or {} when nothing is due.
 static func tax_day(lab: Variant, today: int, ctx: Dictionary = {}) -> Dictionary:
 	if ctx.is_empty(): ctx = context_of(lab)
-	if not PayTable.is_tax_day(today): return {}
+	# P5 (§8.1): the first day of a season, or the first live day after a season began while the Site was away.
 	var ref := ProduceTax.settlement_ref(lab.terrain)
 	if ref.is_empty(): return {}
 	var record: Dictionary = Finance.records(lab.terrain).get(Finance.org_key(ref), {})

@@ -37,6 +37,10 @@ const PAY_GOODS := ["coin", "grain", "fish", "meat"]
 
 static var _done := {}
 
+## 軍餉與稅收 P5 (§6.1): the start-of-battle morale factor for `periods` unpaid paydays: 1 − 0.1 × periods, at least 0.7.
+static func morale_factor(periods: float) -> float:
+	return maxf(0.7, 1.0 - 0.1 * maxf(0.0, periods))
+
 ## Once per calendar day per Site; the duty review calls it on every tick at peace.
 static func day(lab: Variant) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null: return {}

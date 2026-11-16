@@ -12606,7 +12606,7 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	_advance_fatigue(game_seconds)
 	if coarse:
 		var day_after := Calendar.day_index(float(terrain.site.get("minute", 0)) + float(terrain.site.get("phase", 0.0)))
-		for _day: int in range(maxi(0, day_after - day_before)): ResidentWork.daily_production(terrain.site, _coarse_work_minutes)
+		for _day: int in range(maxi(0, day_after - day_before)): ResidentWork.daily_production(terrain.site, _coarse_work_minutes, terrain)
 		_exchange_phase = fposmod(_exchange_phase + action_seconds, EXCHANGE_QUERY_STEP)
 		for actor: TerrainTestCharacter in combat_actors:
 			if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)

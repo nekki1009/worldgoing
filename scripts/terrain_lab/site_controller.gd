@@ -35,6 +35,8 @@ const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedu
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Climate = preload("res://scripts/terrain_lab/site_climate.gd")
 const Season = preload("res://scripts/terrain_lab/site_season.gd")
+const FinancePage = preload("res://scripts/terrain_lab/site_finance_page.gd") # 軍餉與稅收 P4
+const FinanceData = preload("res://scripts/terrain_lab/site_finance.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
 const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
@@ -802,6 +804,7 @@ func _build_ui() -> void:
 	player_army_label = _label(column, "尚未入隊；青色圓圈為建議站位，不會接管角色。", 15)
 	_button(column, "查看／調整接任順位", "PlayerOfficerPriority", _open_officer_priority)
 	_button(column, "職位頁：本隊／國家／聚落職位與職責", "OfficesPage", _open_offices)
+	_button(column, "財政頁：餉源、餉表、稅率、封地庫、撥餉", "FinancePage", func() -> void: FinancePage.open(self))
 	_button(column, "拆出選取隊員（需本隊指揮權）", "SplitSelectedSoldier", func() -> void: show_result(lab.split_selected_soldier()))
 	_button(column, "本隊名冊：多人派工／補員／拆併", "ManagePlayerRoster", _open_roster)
 	_button(column, "本隊正式領裝／換裝", "TeamEquipment", _open_team_equipment)
@@ -9120,8 +9123,11 @@ func _social_summary(team: TerrainArmy) -> String:
 		var own: bool = team.combat_identity(index) == lab.controlled_person_id()
 		if status.is_empty() or str(status.label).is_empty() and not own: continue
 		var remaining := "（尚餘觀察 %d 日）" % int(status.days_left) if int(status.days_left) >= 0 else ""
-		lines.append("#%d 不滿 %d／門檻 %d · 忠誠 %.1f%s%s" % [team.combat_identity(index), int(status.G), int(status.threshold), float(status.L) / 100.0,
-			" · " + str(status.label) if not str(status.label).is_empty() else "", remaining])
+		# 軍餉與稅收 P4 (§7): what the team owes the person.
+		var owed: Dictionary = PersonSocialPacket.arrears_for(team.combat_units[index], SiteSocial.org_key(ref))
+		var owed_text := " · 應領未領 %d 期 %.1f 點" % [int(owed.periods), float(owed.tenths) / 10.0] if int(owed.tenths) > 0 else ""
+		lines.append("#%d 不滿 %d／門檻 %d · 忠誠 %.1f%s%s%s" % [team.combat_identity(index), int(status.G), int(status.threshold), float(status.L) / 100.0,
+			" · " + str(status.label) if not str(status.label).is_empty() else "", remaining, owed_text])
 	return "" if lines.is_empty() else "社會狀態（每日結算）：
 " + "
 ".join(lines)
@@ -10420,6 +10426,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and str(start_faction.get("mode", "neutral")) in ["found", "bandit"]:
 		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
 		if not founded.ok: result = founded
+	if result.ok and bool(request.get("create_new", false)): _start_finance(str(start_faction.get("mode", "neutral")))
 	if result.ok:
 		lab._audio_boot_complete()
 		_record_world(str(request.get("world_name", "")))
@@ -15066,6 +15073,17 @@ func _forecast_text(data: TerrainData) -> String:
 	_forecast_cache = {"hour": hour, "text": "
 ".join(lines)}
 	return str(_forecast_cache.text)
+
+## 軍餉與稅收 P4 (§7): a new game starts with the scenario's coin in the camp (a neutral one-person team 10, a founded
+## faction or band 30) and the player's team gets its finance record (paydays start once a pay source is bound).
+const START_COIN := {"neutral": 10, "found": 30, "bandit": 30}
+func _start_finance(mode: String) -> void:
+	if lab.terrain == null: return
+	var coin := int(START_COIN.get(mode, 10))
+	lab.terrain.site.inventory["coin"] = int(lab.terrain.site.inventory.get("coin", 0)) + coin
+	var team: Variant = lab.player_army()
+	if team != null and is_instance_valid(team):
+		FinanceData.ensure(lab.terrain, SiteSocial.team_ref(str(lab.terrain.site.get("id", "")), int(team.team_id)), Calendar.day_index(float(lab.terrain.site.get("minute", 0))))
 
 ## 時間與氣候 TC2: the controlled person goes to sleep; the Site stays live at `speed` (×8 / ×16) until the target time.
 func start_sleep(mode: String, amount: int = 1, speed: float = 16.0) -> Dictionary:

@@ -108,7 +108,7 @@ static func excluded_for(state: Dictionary, identity: int) -> Dictionary:
 ## them and each full recipe cycle becomes one batch: the inputs are paid from the camp stock, the outputs added while
 ## the camp has room, as long as the camp has a tool. Returns the batches made.
 const WORK_HOURS := 10.0
-static func daily_production(state: Dictionary, minutes: Dictionary) -> int:
+static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null) -> int:
 	var made := 0
 	var stock: Dictionary = state.get("inventory", {})
 	var houses: Array = state.get("households", {}).keys()
@@ -130,7 +130,10 @@ static func daily_production(state: Dictionary, minutes: Dictionary) -> int:
 			for item: String in recipe.output: size += int(recipe.output[item])
 			if room < size: break
 			for item: String in recipe.get("input", {}): stock[item] = int(stock.get(item, 0)) - int(recipe.input[item])
-			for item: String in recipe.output: stock[item] = int(stock.get(item, 0)) + int(recipe.output[item])
+			# 軍餉與稅收 P5: the batch pays the settlement's production tax as a published batch would.
+			var kept: Dictionary = recipe.output
+			if data != null and state.has("finance"): kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, feature_key, feature, recipe.output)
+			for item: String in kept: stock[item] = int(stock.get(item, 0)) + int(kept[item])
 			minutes[house_id] = float(minutes[house_id]) - float(recipe.cycle)
 			made += 1
 	return made

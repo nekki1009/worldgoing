@@ -24,6 +24,7 @@ signal events_received(events: PackedInt64Array)
 # C2/C3: native hot state, original Site records and item holders, transactional event/save boundaries.
 
 const BatchView := preload("res://scripts/terrain_lab/terrain_army_batch_view.gd")
+const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd") # 軍餉與稅收 P5: arrears morale
 const SiegeWorkAppend := preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const Atlas := preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
@@ -2295,6 +2296,7 @@ func _battle_tick(combat_left: float) -> void:
 		if not combat_on: return
 		battle.begin(str(lab.terrain.site.get("id", "")), now)
 		_battle_sample = 0
+		_arrears_morale()
 	if combat_on:
 		_battle_sample += 1
 		if _battle_sample % 120 == 1:
@@ -2303,6 +2305,26 @@ func _battle_tick(combat_left: float) -> void:
 	if battle.tick(combat_on, now) and lab.site_controller.has_method("close_battle"):
 		lab.site_controller.close_battle(battle, now)
 
+
+## 軍餉與稅收 P5 (§6.1, adapted: crowd morale is per team): when a battle opens, each team's morale is multiplied by
+## SitePayroll.morale_factor of its members' mean unpaid paydays owed by that team (×0.9 per payday, at least ×0.7).
+func _arrears_morale() -> void:
+	var site_id := str(lab.terrain.site.get("id", ""))
+	for owner: Variant in lab.team_owners():
+		if not is_instance_valid(owner) or int(owner.get("formation_index")) < 0: continue
+		var key := "team:%s:%d" % [site_id, int(owner.team_id)]
+		var periods := 0
+		var members := 0
+		for unit: Variant in owner.combat_units.keys():
+			if not owner.is_member(int(unit)) or owner.member_gone(int(unit)): continue
+			members += 1
+			periods += int(PersonSocialPacket.arrears_for(owner.combat_units[unit], key).periods)
+		if members == 0 or periods == 0: continue
+		var factor: float = (load("res://scripts/terrain_lab/site_payroll.gd") as Script).call("morale_factor", float(periods) / float(members))
+		var state := team_morale_of(int(owner.formation_index))
+		if state.is_empty(): continue
+		state["morale"] = clampf(float(state.morale) * factor, 0.0, 100.0)
+		apply_team_morale(crowd, int(owner.formation_index), state)
 
 func _freeze_dead_person_fatigue(identity: int, value: float, rested: float) -> void:
 	# Native already decremented its formation count. Keep the same original body;
