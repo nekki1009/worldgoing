@@ -319,3 +319,68 @@ static func take_party_food(party: Dictionary, fee: int) -> Dictionary:
 			rest -= units
 	return taken
 
+# --- B4d: the chief's daily decision and band formation (bandit spec §4 B, §11, §12) ----------------------------------
+const RAID_STRENGTH := 1.2
+const FORM_MIN := 3
+const FORM_WAIT_DAYS := 7
+
+## May the band raid this target: within REACH_SITES of the lair, at least 1.2 times as strong, not protected by a paid
+## fee (a settlement) or a paid pass (a party).
+static func may_raid(registry: Dictionary, band: int, target: Dictionary, band_strength: float, day: int) -> bool:
+	var table: Dictionary = RegionFactionQuery.bandit_of(registry, band)
+	if table.is_empty() or not table.lair is Dictionary or not bool(table.raid_ai): return false
+	if site_distance(str(table.lair.site_id), str(target.get("site_id", ""))) > REACH_SITES: return false
+	if float(target.get("strength", 0.0)) <= 0.0 or band_strength < float(target.strength) * RAID_STRENGTH: return false
+	if str(target.get("kind", "")) == "settlement" and protected(registry, band, str(target.site_id), day): return false
+	if str(target.get("kind", "")) == "party" and int(table.get("passes", {}).get(str(target.get("token", "")), -1)) >= day: return false
+	return true
+
+## The best raid target: the nearest, then the weakest against the band, then the lower id. {} when none qualifies.
+## A target: {kind "party"|"settlement", id, site_id, strength, token (party)}.
+static func pick_raid(registry: Dictionary, band: int, targets: Array, band_strength: float, day: int) -> Dictionary:
+	var lair: Variant = RegionFactionQuery.bandit_of(registry, band).get("lair")
+	var best := {}
+	var best_key: Array = []
+	for target: Variant in targets:
+		if not target is Dictionary or not may_raid(registry, band, target, band_strength, day): continue
+		var key := [site_distance(str(lair.site_id), str(target.site_id)), float(target.strength) / band_strength, str(target.get("id", ""))]
+		if best.is_empty() or key < best_key:
+			best = target
+			best_key = key
+	return best
+
+## The one action of the day for a band chief (§11), in the order of the spec: move the lair (heat >= 70), rise (§9.1),
+## accept an amnesty on the table, ask the settlements whose fee is due, raid, else rest. `facts`:
+## {day, heat, can_rise (bool), amnesty_score (float, < 0 none), amnesty_gate (float), protection_due ([site_id]),
+##  targets ([target]), strength (float)}. Returns {action, ...}.
+static func daily_decision(registry: Dictionary, band: int, facts: Dictionary) -> Dictionary:
+	var day := int(facts.get("day", 0))
+	if int(facts.get("heat", 0)) >= HEAT_MOVE: return {"action": "move_lair"}
+	if bool(facts.get("can_rise", false)): return {"action": "rise"}
+	if float(facts.get("amnesty_score", -1.0)) >= 0.0 and float(facts.amnesty_score) >= float(facts.get("amnesty_gate", 55.0)): return {"action": "accept_amnesty"}
+	var due: Array = facts.get("protection_due", [])
+	if not due.is_empty():
+		var sites: Array = due.duplicate()
+		sites.sort()
+		return {"action": "demand_protection", "site_id": str(sites[0])}
+	var target := pick_raid(registry, band, facts.get("targets", []), float(facts.get("strength", 0.0)), day)
+	if not target.is_empty(): return {"action": "raid", "target": target}
+	return {"action": "rest"}
+
+## §4 B: do the survivors of a rout form a band today? At least FORM_MIN free living people of one side, FORM_WAIT_DAYS
+## since the rout without returning to any settlement or team of their faction, and their faction is gone or their
+## team no longer exists; never the controlled person. `survivors`: [{id, prestige, controlled (bool)}].
+## Returns {ok, chief, members} or {ok false, reason}.
+static func rout_band(survivors: Array, rout_day: int, day: int, faction_gone: bool, team_gone: bool, returned_home: bool) -> Dictionary:
+	if returned_home: return {"ok": false, "reason": "returned"}
+	if not (faction_gone or team_gone): return {"ok": false, "reason": "has_home"}
+	if day - rout_day < FORM_WAIT_DAYS: return {"ok": false, "reason": "waiting"}
+	var members: Array = []
+	for person: Variant in survivors:
+		if person is Dictionary and not bool(person.get("controlled", false)): members.append(person)
+	if members.size() < FORM_MIN: return {"ok": false, "reason": "too_few"}
+	members.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("prestige", 0)) > int(b.get("prestige", 0)) or int(a.get("prestige", 0)) == int(b.get("prestige", 0)) and int(a.id) < int(b.id))
+	var ids: Array = []
+	for person: Dictionary in members: ids.append(int(person.id))
+	return {"ok": true, "chief": int(members[0].id), "members": ids}
+
