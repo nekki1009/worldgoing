@@ -221,6 +221,10 @@ func _region_original_ready() -> void:
 	var weather_view: Node = (load("res://scripts/terrain_lab/site_weather_view.gd") as Script).new()
 	weather_view.set("lab", self)
 	add_child(weather_view)
+	# 時間與氣候 TC5: the weather's sound on the SFX bus (silent while climate is off).
+	var weather_audio: Node = (load("res://scripts/terrain_lab/site_weather_audio.gd") as Script).new()
+	weather_audio.set("lab", self)
+	add_child(weather_audio)
 	_fire_view = FirePresentation.new()
 	_fire_view.name = "FirePresentation"
 	_fire_view.lab = self

@@ -1323,6 +1323,195 @@
       "priority": 12,
       "semantic": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質",
       "admission": "OUTPUT_ONLY_PROVISIONAL_NATIVE_IMPORT_AND_Q01_NOT_RUN"
+    },
+    "weather_rain_light_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_rain_light_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "40b34266a5b782b696b4d28c32bfa815045ccf818f5552487187d0524288a228",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir"
+          ],
+          "modification": [
+            "Original rain_4.ogg, excerpt 5.00-26.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 3.42709117;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 12,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_rain_heavy_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_rain_heavy_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "4fa5832b941d7f1db834b346d92e4e58bc3f89bdc757de2d94088f6e8e5c757f",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir"
+          ],
+          "modification": [
+            "Original rain_2.ogg, excerpt 2.00-23.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 0.662189991;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 16,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_wind_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_wind_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "fdbb797379e873c9ea3dbae64844f34a4189df71abcbf669e53f5c59d328c0b5",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_wind_luke"
+          ],
+          "modification": [
+            "Original wind_original.wav, excerpt 5.00-26.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 3.14932909;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 10,
+      "volume_db": -20.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_storm_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_storm_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "f79f5178bbb2454e2dfe4659b851368d5a8c29e0fe64c5b811561cce3bbf99d4",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir",
+            "weather_wind_luke"
+          ],
+          "modification": [
+            "rain1 excerpt3-24s + synthesized wind1 excerpt12-33s;mono arithmetic means",
+            "each1s equal-power cyclic overlap;20s rain/wind composite without embedded thunder",
+            "component gains rain=1.32973565,wind=4.73342688;mix gain=0.979891434",
+            "low-delta cyclic rotation and final2frame seam alignment;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 22,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_01": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_01.wav",
+          "duration": 7.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "7206f4290497cbc4840f43290ec90e6bacd7a3a7d2226efbecca141aa90e2711",
+          "bytes": 617444,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 19.8-26.8s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "smooth spectral lowpass 1200Hz",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 2.48060892;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_02": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_02.wav",
+          "duration": 7.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "5aa15361d0c1a3cda78110e990b6c433a1934a81b4cfaf6a130c6b2a9ad74d12",
+          "bytes": 617444,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 0.6-7.6s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "original bandwidth retained",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 0.709368596;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_03": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_03.wav",
+          "duration": 8.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "6bd1103a61fd8c8fc06de95f1b9827fe9ef939040cd39705f773675b5ef8ca4f",
+          "bytes": 705644,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 34.3-42.3s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "smooth spectral lowpass 3500Hz",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 0.99188411;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
     }
   },
   "sources": [
@@ -2157,11 +2346,56 @@
         "attenuation only if required, never boost; PCM peak cap floor(.45*32768)/32768",
         "PCM16 nearest integer quantization and wave readback"
       ]
+    },
+    {
+      "creator": "Ylmir",
+      "source_title": "Rain (loopable)",
+      "source_url": "https://opengameart.org/content/rain-loopable",
+      "download_url": "https://opengameart.org/sites/default/files/Rain%20OGG.zip",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "file": "originals/rain_loopable.zip",
+      "license_page": "pages/rain_loopable.html",
+      "quality": "Author-published Ogg Vorbis160kbps from mono window recording processed to stereo; not a lossless master.",
+      "id": "weather_rain_ylmir",
+      "sha256": "e68f3e1c77493cf43bec84cebff5043bff6be9ce16d59b24caa988cd460aa75b",
+      "license_snapshot_sha256": "494d439fdfbbc8e05fff4124f0bf79f663788466e63fa7ef938fbcef763b9acc",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
+    },
+    {
+      "creator": "Luke.RUSTLTD",
+      "source_title": "wind1",
+      "source_url": "https://opengameart.org/content/wind1",
+      "download_url": "https://opengameart.org/sites/default/files/wind1.wav",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "file": "originals/wind_original.wav",
+      "license_page": "pages/wind.html",
+      "quality": "Author-published synthesized PureData wind; author credits Andy Farnell tutorial.",
+      "id": "weather_wind_luke",
+      "sha256": "a2856f794fbf77e05f8241dc4adeade7f62fa21c3c9dc49f7725b6c6218060c3",
+      "license_snapshot_sha256": "b710a10007a2d22c80fd042043190d6fe23dce76d3d08a801b7c25de6955f23c",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
+    },
+    {
+      "creator": "Jerimee",
+      "source_title": "Thunder / thunder-seq.wav",
+      "source_url": "https://opengameart.org/content/thunder",
+      "download_url": "https://opengameart.org/sites/default/files/thunder-seq.wav",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "file": "originals/thunder_original.wav",
+      "license_page": "pages/thunder.html",
+      "quality": "Author-published synthesized thunder sequence; made using Rene Nyffenegger cSound instrument with minor modifications. Not a field recording.",
+      "id": "weather_thunder_jerimee",
+      "sha256": "eab85a5880092668026264e356953169a24e2d12f956b255b5090e9162f4722d",
+      "license_snapshot_sha256": "6b4a1482d0f551cb903662517e6008d39747ef9f3f63628e9bf66dc7cf04a914",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
     }
   ],
   "baseline_files": 36,
   "additional_p1_files": 7,
-  "active_unique_files": 68,
+  "active_unique_files": 75,
   "count_history": {
     "baseline_files": 36,
     "step_files": 24,
@@ -2240,5 +2474,6 @@
       "state": "PROVISIONAL_GENERIC_FOLEY_QUALITY_NOT_ACCEPTED",
       "reason": "One official original single wood contact used as generic completed deck-contact Foley; no original boarding/ship recording or device/listening acceptance."
     }
-  ]
+  ],
+  "additional_weather_files": 7
 }
