@@ -16,7 +16,7 @@ const KINDS := ["player", "npc", "rebel", "bandit"]
 ## The `bandit` sub-table (only on kind bandit). Missing keys read as BANDIT_DEFAULTS (bandit spec §3.3).
 ## B4b adds two optional keys: `hoard` {item: n} (goods kept at the lair) and `protection` {site_id: {asked, until}} (the
 ## day a settlement was last asked for protection money and the day its protection lasts to, -1 when it refused).
-const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from", "hoard", "protection"]
+const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from", "hoard", "protection", "passes"]
 const BANDIT_ORIGINS := ["scenario", "rout", "desertion", "escaped_captive", "refugee", "fallen_rebel"]
 const BANDIT_DEFAULTS := {"origin": "scenario", "lair": null, "raid_ai": true, "heat": 0, "converted_from": null}
 const BANDIT_HEAT_MAX := 100
@@ -123,6 +123,11 @@ static func _bandit_valid(entry: Dictionary, now: float) -> Dictionary:
 		for site_id: Variant in table.protection:
 			var row: Variant = table.protection[site_id]
 			if not site_id is String or str(site_id).is_empty() or not row is Dictionary or not keys(row, ["asked", "until"]) or not whole(row.asked, 0, 2147483646) or not whole(row.until, -1, 2147483646): return fail("CORRUPT_SAVE", "bandit protection")
+	# B4c: `passes` {party token: day the paid passage lasts to}.
+	if table.has("passes"):
+		if not table.passes is Dictionary or table.passes.size() > 64: return fail("CORRUPT_SAVE", "bandit passes")
+		for token: Variant in table.passes:
+			if not token is String or str(token).is_empty() or not whole(table.passes[token], 0, 2147483646): return fail("CORRUPT_SAVE", "bandit passes")
 	var converted: Variant = table.get("converted_from")
 	if converted != null and not (converted is Dictionary and keys(converted, ["kind", "at"]) and converted.kind == "rebel" and converted.at != null and _time(converted.at, now)): return fail("CORRUPT_SAVE", "bandit conversion")
 	return {"ok": true}
@@ -150,6 +155,8 @@ static func canonical_bandit(value: Dictionary) -> Dictionary:
 	if table.converted_from is Dictionary and (table.converted_from.get("at") is int or table.converted_from.get("at") is float): table.converted_from.at = float(table.converted_from.at)
 	if table.get("hoard") is Dictionary:
 		for item: Variant in table.hoard: table.hoard[item] = int(table.hoard[item])
+	if table.get("passes") is Dictionary:
+		for token: Variant in table.passes: table.passes[token] = int(table.passes[token])
 	if table.get("protection") is Dictionary:
 		for row: Variant in table.protection.values():
 			if row is Dictionary:

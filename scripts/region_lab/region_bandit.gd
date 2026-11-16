@@ -225,3 +225,35 @@ static func protection_answer(registry: Dictionary, band: int, site_id: String, 
 			for item: String in paid: hoard[item] = int(hoard.get(item, 0)) + int(paid[item])
 			table["hoard"] = hoard, now)
 
+# --- B4c: toll on the road (bandit spec §5.1, §12) -------------------------------------------------------------------
+const TOLL_STRENGTH := 1.5
+const TOLL_DAYS_PER_PERSON := 2
+const TOLL_PASS_DAYS := 3
+
+## People x 2 days of travel rations.
+static func toll_fee(people: int) -> int:
+	return maxi(0, people) * TOLL_DAYS_PER_PERSON
+
+## May the band offer a toll to this party: the band is at least 1.5 times as strong and the party holds no paid pass.
+static func toll_offer(registry: Dictionary, band: int, party_token: String, band_strength: float, party_strength: float, day: int) -> bool:
+	if not RegionFactionQuery.is_bandit(registry, band) or party_strength <= 0.0 or band_strength < party_strength * TOLL_STRENGTH: return false
+	return int(RegionFactionQuery.bandit_of(registry, band).get("passes", {}).get(party_token, -1)) < day
+
+## An NPC party's answer (§5.1: the chief's greed against the party's nerve): it pays when it carries the fee and its
+## captain is not bold (risk under 60); a bold captain, or one who cannot pay, fights.
+static func npc_pays_toll(captain_risk: int, carried_food: int, fee: int) -> bool:
+	return carried_food >= fee and captain_risk < 60
+
+## A paid toll: the food joins the hoard and the party passes for TOLL_PASS_DAYS; expired passes are dropped.
+static func toll_paid(registry: Dictionary, band: int, party_token: String, day: int, paid: Dictionary, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		var passes: Dictionary = table.get("passes", {})
+		for token: Variant in passes.keys():
+			if int(passes[token]) < day: passes.erase(token)
+		if passes.size() >= 64: passes.erase(passes.keys()[0])
+		passes[party_token] = day + TOLL_PASS_DAYS
+		table["passes"] = passes
+		var hoard: Dictionary = table.get("hoard", {})
+		for item: String in paid: hoard[item] = int(hoard.get(item, 0)) + int(paid[item])
+		if not hoard.is_empty(): table["hoard"] = hoard, now)
+
