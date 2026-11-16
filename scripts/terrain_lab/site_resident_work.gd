@@ -9,6 +9,7 @@ extends RefCounted
 ## The controller checks the duty's authority and runs the plan; SiteResidentSchedule hands residents to SiteWorkTeam in
 ## the work phases and back home in the home phases.
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
+const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const FOOD_KINDS := ["farm"]
 const DUTY := "settlement.registry"
 
@@ -84,3 +85,35 @@ static func excluded_for(state: Dictionary, identity: int) -> Dictionary:
 	for zone: Variant in state.get("zones", []):
 		if zone is Dictionary and str(zone.get("action", "")) == "operate" and str(zone.get("feature", "")) != job: result["feature:" + str(zone.get("feature", ""))] = true
 	return result
+
+
+## Long-absence catch-up (Nekki 11/16 A): one game day of household work, by daily averages. Each living registered
+## member puts WORK_HOURS into his household's job; `minutes` (house id → minutes, the caller's runtime carry) collects
+## them and each full recipe cycle becomes one batch: the inputs are paid from the camp stock, the outputs added while
+## the camp has room, as long as the camp has a tool. Returns the batches made.
+const WORK_HOURS := 10.0
+static func daily_production(state: Dictionary, minutes: Dictionary) -> int:
+	var made := 0
+	var stock: Dictionary = state.get("inventory", {})
+	var houses: Array = state.get("households", {}).keys()
+	houses.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for house_id: String in houses:
+		var feature_key := str(state.households[house_id].get("job", {}).get("feature", ""))
+		var feature: Dictionary = state.get("features", {}).get(feature_key, {})
+		if feature.is_empty() or str(feature.get("stage", "")) != "complete" or not Runtime.feature_usable(feature): continue
+		var recipe := Runtime.feature_recipe(feature)
+		if not recipe.has("cycle") or float(recipe.cycle) <= 0.0 or not recipe.get("output") is Dictionary: continue
+		var workers := Households.members(state, house_id).size()
+		if workers <= 0: continue
+		minutes[house_id] = float(minutes.get(house_id, 0.0)) + float(workers) * WORK_HOURS * 60.0
+		while float(minutes[house_id]) >= float(recipe.cycle):
+			if not Runtime.can_pay(stock, {"tools": 1}) or not Runtime.can_pay(stock, recipe.get("input", {})): break
+			var room := int(state.get("capacity", 0)) - Runtime.inventory_size(stock)
+			var size := 0
+			for item: String in recipe.output: size += int(recipe.output[item])
+			if room < size: break
+			for item: String in recipe.get("input", {}): stock[item] = int(stock.get(item, 0)) - int(recipe.input[item])
+			for item: String in recipe.output: stock[item] = int(stock.get(item, 0)) + int(recipe.output[item])
+			minutes[house_id] = float(minutes[house_id]) - float(recipe.cycle)
+			made += 1
+	return made

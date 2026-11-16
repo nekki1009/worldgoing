@@ -1,6 +1,9 @@
 class_name TerrainLab
 extends Node2D
 
+const SiteHousing = preload("res://scripts/terrain_lab/site_housing.gd")
+const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
 const TechnologyPolicy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
@@ -12503,10 +12506,22 @@ func region_cold_original_inputs() -> Dictionary:
 func _region_cold_quiet_admission() -> Dictionary:
 	var original := region_cold_original_inputs()
 	if not original.ok: return original
+	if bool(_region_cold_isolated.get("coarse", false)) and original.inputs.p0_stable == true and original.inputs.actions_stable != true and _coarse_release_residents():
+		original = region_cold_original_inputs() # offline residents leave scheduled work; the daily formula stands for it
+		if not original.ok: return original
 	if original.inputs.p0_stable != true or original.inputs.actions_stable != true:
 		return SiteRuntime.fail("COLD_INPUT_EVENT")
 	var idle_fire := _region_cold_idle_fire_proof(terrain)
 	if not idle_fire.ok: return idle_fire
+	if bool(_region_cold_isolated.get("coarse", false)):
+		# Nekki 11/16 A: a long quiet gap settles a developed Site by its daily owners. No combat, fire, siege or paused
+		# Site; the formal journal admission still holds.
+		if site_controller.region_slot != null or terrain.site.has("region_snapshot") or terrain.site.has("fire_settlement"):
+			var coarse_formal := _region_cold_formal_admission()
+			if not coarse_formal.ok: return coarse_formal
+		if bool(terrain.site.get("paused", false)) or float(terrain.site.get("combat_left", 0.0)) > 0.0 or _fire_activity() or _siege_active():
+			return SiteRuntime.fail("COLD_INPUT_EVENT")
+		return SiteRuntime.ok("", {"inputs": original.inputs, "kind": "coarse"})
 	# Politics/technology/production have no offline rate contract here. A saved
 	# body carrying any such owner keeps the complete original exact consumer.
 	if site_controller.region_slot != null or terrain.site.has("region_snapshot") or terrain.site.has("fire_settlement"):
@@ -12558,8 +12573,10 @@ func _region_cold_idle_fire_proof(data: TerrainData) -> Dictionary:
 func _region_advance_original_quiet_minute(target: float, game_seconds: float) -> Dictionary:
 	var admitted := _region_cold_quiet_admission()
 	if not admitted.ok: return admitted
-	if not is_finite(game_seconds) or game_seconds <= 0.0 or game_seconds > 60.0 + ACTION_TIME_EPSILON:
+	var coarse := bool(_region_cold_isolated.get("coarse", false))
+	if not is_finite(game_seconds) or game_seconds <= 0.0 or game_seconds > (COARSE_STEP_SECONDS if coarse else 60.0) + ACTION_TIME_EPSILON:
 		return SiteRuntime.fail("INVALID_TIME")
+	var day_before := Calendar.day_index(float(terrain.site.get("minute", 0)) + float(terrain.site.get("phase", 0.0)))
 	var combat_left := float(terrain.site.get("combat_left", 0.0))
 	if combat_left > 0.0 or _fire_activity() or _siege_active(): return SiteRuntime.fail("COLD_INPUT_EVENT")
 	var fire_guard := _fire_step_guard()
@@ -12578,10 +12595,27 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	var opened := _begin_fire_boundary(action_end)
 	if not opened.ok: return opened
 	site_controller.prepare_settlement_interval()
+	site_controller.coarse_offline = bool(_region_cold_isolated.get("coarse", false)) # A: no live schedule offline
 	site_controller.tick(action_seconds, game_seconds)
+	site_controller.coarse_offline = false
 	if terrain != original or get_tree().paused or bool(terrain.site.get("paused", false)):
 		return site_controller.latch_original_step_fault(SiteRuntime.fail("INTERRUPTED_STEP"))
 	_advance_fatigue(game_seconds)
+	if coarse:
+		var day_after := Calendar.day_index(float(terrain.site.get("minute", 0)) + float(terrain.site.get("phase", 0.0)))
+		for _day: int in range(maxi(0, day_after - day_before)): ResidentWork.daily_production(terrain.site, _coarse_work_minutes)
+		_exchange_phase = fposmod(_exchange_phase + action_seconds, EXCHANGE_QUERY_STEP)
+		for actor: TerrainTestCharacter in combat_actors:
+			if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
+		if not _combat_contacts.is_empty() or not site_controller._pending_deaths.is_empty():
+			return site_controller.latch_original_step_fault(SiteRuntime.fail("COLD_UNEXPECTED_P0"))
+		if not _finish_fire_boundary(action_begin, action_end): return _fire_boundary_error
+		_fatigue_work_seconds.clear()
+		var coarse_fault: Dictionary = site_controller.original_step_fault_guard()
+		if not coarse_fault.ok: return coarse_fault
+		var coarse_recorded := RegionSaveSlot.record_completed_replay_step(terrain.site, target, game_seconds)
+		if not coarse_recorded.ok: return coarse_recorded
+		return SiteRuntime.ok("", {"game_seconds": game_seconds, "action_seconds": action_seconds, "at": float(coarse_recorded.at)})
 	_advance_tactical_ai(action_seconds)
 	if not _region_quiet_formal_steps.is_empty():
 		# Live advances duty inside _advance_combat, one call per combat sub-step of
@@ -12659,7 +12693,46 @@ func _region_cold_replaced_steps(begin: float, end: float) -> int:
 	var after := ceili((end - origin) / step - 0.000001)
 	return maxi(0, after - before)
 
+## Long-absence catch-up (Nekki 11/16 A).
+const COARSE_MIN_SECONDS := 86400.0
+const COARSE_STEP_SECONDS := 3600.0
+## Work minutes each household put into its job during the coarse prefix (runtime; ResidentWork.daily_production).
+var _coarse_work_minutes: Dictionary = {}
+
+## Offline, residents on scheduled work stop (the daily formula stands for their work). Returns whether any stopped.
+func _coarse_release_residents() -> bool:
+	var released := false
+	for identity: Variant in site_controller.work_team.active_ids():
+		var person: Dictionary = site_controller.person_actions._person(int(identity), false)
+		if SiteHousing.schedule_authority(self, person):
+			site_controller.work_team.cancel(int(identity))
+			released = true
+	return released
+
+## Hunger that would start to hurt (48 h of deficit) stops the coarse prefix: the exact path settles deaths.
+func _coarse_hunger_stop() -> String:
+	for entry: Variant in terrain.site.get("team_supply", {}).values():
+		if not entry is Dictionary: continue
+		for cohort: Variant in entry.get("sustain", {}).get("cohorts", []):
+			if cohort is Dictionary and float(cohort.get("hunger", 0.0)) >= 40.0: return "COARSE_HUNGER"
+	for supply: Variant in terrain.site.get("person_supply", {}).values():
+		if not supply is Dictionary: continue
+		for cohort: Variant in supply.get("cohorts", []):
+			if cohort is Dictionary and float(cohort.get("hunger", 0.0)) >= 40.0: return "COARSE_HUNGER"
+	return ""
+
+## The New Year can kill (TC7): coarse steps end at its first minute and one minute past it replays exactly.
+func _coarse_new_year_limit(from_game: float, game: float) -> float:
+	var minute := from_game / 60.0
+	var at := Calendar.date(minute)
+	var next_year_day := Calendar.day_of(int(at.year) + 1, 1, 1)
+	var new_year := float(Calendar.day_start_minute(next_year_day)) * 60.0
+	var this_year := float(Calendar.day_start_minute(Calendar.day_of(int(at.year), 1, 1))) * 60.0
+	if from_game >= this_year and from_game < this_year + 120.0: return 0.0 # the first two minutes of a year stay exact
+	return minf(game, maxf(0.0, new_year - from_game))
+
 func _region_cold_quiet_limit(maximum: float) -> float:
+	if bool(_region_cold_isolated.get("coarse", false)): return minf(COARSE_STEP_SECONDS, maximum) # A: no exactness alignment
 	var limit := minf(60.0, maximum)
 	if _duty_ai_elapsed > ACTION_TIME_EPSILON:
 		limit = minf(limit, maxf(0.0, DutyAI.REVIEW_GAME_SECONDS - _duty_ai_elapsed))
@@ -12716,7 +12789,10 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 			"source_sha256": str(_region_cold_formal.get("source_sha256", source.source_sha256)), "owner_generation": int(original.inputs.owner_generation),
 			"prefix_end": _region_cold_grid_prefix_end(float(window.from), maxf(float(window.from), target - tail_seconds)), "prefix_steps": 0, "exact_steps": 0,
 			"prefix_game_seconds": 0.0, "prefix_action_seconds": 0.0, "fallback": "",
-			"logic_action_origin": fire_action_cursor}
+			"logic_action_origin": fire_action_cursor,
+			# Long-absence catch-up (Nekki 2026-11-16 A, NPC AI §10A D5): a gap over a day lets a developed Site take the
+			# quiet prefix in hour steps by its original daily owners; politics (duty AI) does not run offline.
+			"coarse": maxf(float(window.from), target - tail_seconds) - float(window.from) >= COARSE_MIN_SECONDS}
 	if _region_cold_isolated.data != terrain or float(_region_cold_isolated.target) != target or float(_region_cold_isolated.tail) != tail_seconds:
 		return SiteRuntime.fail("BUSY", "原隔離來源／固定目標仍在補算")
 	var steps := 0
@@ -12725,16 +12801,23 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 	if not window.ok: return window
 	while float(window.from) + ACTION_TIME_EPSILON < float(_region_cold_isolated.prefix_end) \
 		and steps < max_steps and Time.get_ticks_usec() < deadline and str(_region_cold_isolated.fallback).is_empty():
-		_region_formal_duty_due(float(window.from))
+		var coarse := bool(_region_cold_isolated.get("coarse", false))
+		if not coarse: _region_formal_duty_due(float(window.from))
 		var admitted := _region_cold_quiet_admission()
 		if not admitted.ok:
 			_region_cold_isolated.fallback = str(admitted.get("code", "COLD_UNSUPPORTED_OWNER"))
 			break
 		var game := _region_cold_quiet_limit(float(_region_cold_isolated.prefix_end) - float(window.from))
+		if coarse:
+			var hungry := _coarse_hunger_stop()
+			if not hungry.is_empty():
+				_region_cold_isolated.fallback = hungry
+				break
+			game = _coarse_new_year_limit(float(window.from), game)
 		var journal := _region_cold_quiet_journal(game) if not _region_cold_formal.is_empty() else {}
 		if not _region_cold_formal.is_empty():
 			if not journal.get("ok", false):
-				if str(journal.get("code", "")) == "COLD_EXACT_REMAINDER":
+				if str(journal.get("code", "")) == "COLD_EXACT_REMAINDER" or coarse and str(journal.get("code", "")) == "COARSE_NEW_YEAR":
 					var quantum := _next_fire_replay_interval()
 					var exact := _fire_replay_exact_step(float(quantum.action_end) - float(quantum.action_begin), target, quantum)
 					if not exact.get("ok", false) or not exact.get("completed", false): return exact
@@ -12940,13 +13023,16 @@ func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 	if not admitted.ok: return admitted
 	if _fire_replay_boundaries_unrecoverable: return SiteRuntime.fail("COLD_EXACT_JOURNAL", "legacy journal rows: exact path")
 	var first := _next_fire_replay_interval()
-	if float(first.tactical_seconds) > ACTION_TIME_EPSILON or float(first.scale) != simulation_speed:
+	var coarse := bool(_region_cold_isolated.get("coarse", false))
+	if coarse and not first.is_empty(): simulation_speed = float(first.scale) # A: rows at another speed are still quiet time
+	if first.is_empty() or (float(first.tactical_seconds) > ACTION_TIME_EPSILON and not coarse) or float(first.scale) != simulation_speed:
 		return SiteRuntime.fail("COLD_EXACT_JOURNAL")
+	if coarse and _coarse_new_year_limit(float(first.game_begin), maximum_game_seconds) <= ACTION_TIME_EPSILON: return SiteRuntime.fail("COARSE_NEW_YEAR")
 	var row: Dictionary = _fire_replay_segments[_fire_replay_segment_index]
 	var remaining := int(row.steps) - _fire_replay_segment_offset
 	var game_step := (float(row.game_end) - float(row.game_begin)) / int(row.steps)
 	var action_step := (float(row.action_end) - float(row.action_begin)) / int(row.steps)
-	if game_step <= 0.0 or action_step <= 0.0 or float(row.tactical_seconds) > ACTION_TIME_EPSILON:
+	if game_step <= 0.0 or action_step <= 0.0 or (float(row.tactical_seconds) > ACTION_TIME_EPSILON and not coarse):
 		return SiteRuntime.fail("COLD_EXACT_JOURNAL")
 	var count := mini(remaining, floori((maximum_game_seconds + ACTION_TIME_EPSILON) / game_step))
 	# Keep a short remainder on the exact path. No rounding beyond a paid meal.

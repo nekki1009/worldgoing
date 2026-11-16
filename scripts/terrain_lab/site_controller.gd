@@ -14992,9 +14992,12 @@ func _faction_label(faction_id: int) -> String:
 	return str(faction_id) if view.name == "勢力 %d" % faction_id else str(view.name)
 
 
+## Long-absence catch-up (Nekki 11/16 A): set while a cold Site settles quiet hours offline; no live schedule runs.
+var coarse_offline := false
+
 ## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
 func resident_schedule_tick() -> void:
-	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)): return
+	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)) or coarse_offline: return
 	if lab.terrain.site.get("housing", {}).is_empty(): return
 	var minute := float(lab.terrain.site.get("minute", 0))
 	var check := ResidentSchedule.check_index(minute)
