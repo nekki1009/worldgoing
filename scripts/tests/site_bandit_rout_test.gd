@@ -102,8 +102,13 @@ func _run() -> void:
 	if not _check(new_band >= bands_before and new_band != band and RegionFactionQuery.is_bandit(registry, new_band) and table.origin == "rout"
 		and RegionPeerage.same_ref(registry.entries[str(new_band)].leader_ref, JoinFaction._world_ref(controller, best)), "a new band of origin rout, led by the most prestigious survivor", registry.entries.get(str(new_band))): return
 	if not _check(str(table.lair.site_id) == str(lab.terrain.site.id) and table.lair.cell == [chief_cell.x, chief_cell.y], "its lair is at the chief's cell on this Site", table.lair): return
+	var band_team: Dictionary = _team_of(lab, best)
 	for person: int in cadres:
-		if not _check(int(_team_of(lab, person).get("faction", -1)) == new_band, "#%d is in the new band" % person, _team_of(lab, person)): return
+		if not _check(int(_team_of(lab, person).get("faction", -1)) == new_band and int(_team_of(lab, person).team_id) == int(band_team.team_id), "#%d is in the new band's one team" % person, _team_of(lab, person)): return
+	if not _check(controller.team_captain_of_team(int(band_team.team_id)) == best and band_team.person_ids.size() == cadres.size(), "the chief captains the band's team", band_team): return
+	var other_side: Dictionary = lab.crowd_site.join_team(player, int(band_team.team_id))
+	var not_alone: Dictionary = lab.crowd_site.join_team(best, int(_team_of(lab, player).team_id))
+	if not _check(not other_side.ok and str(other_side.code) == "WRONG_FACTION" and not not_alone.ok and str(not_alone.code) == "WHOLE_TEAM" and int(_team_of(lab, player).faction) != new_band, "a join into another faction or out of a full team is refused", [other_side, not_alone]): return
 	if not _check(int(_team_of(lab, player).faction) != new_band and not lab.terrain.site.has(Rout.SECTION), "the player is left out; the watch is cleared", _team_of(lab, player)): return
 	var noticed := false
 	for notice: Variant in lab.terrain.site.get("notices", []):

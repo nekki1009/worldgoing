@@ -6,7 +6,7 @@ extends RefCounted
 ## in a team of their old faction (those went home). When their faction has ended or their team no longer exists, and
 ## 7 days have passed, at least 3 of them form a band: a new bandit faction (origin rout) led by the most prestigious,
 ## its lair at the chief's cell. A team made only of survivors takes the band's faction; a survivor in a mixed team
-## leaves into a new team of the band. Any other outcome (too few, has a home, a team that cannot change) drops the watch.
+## leaves into a new team of the band; everyone standing alone then joins the chief's team. Any other outcome (too few, has a home, a team that cannot change) drops the watch.
 ## Survivors elsewhere (another Site, a road) are not followed: nothing is decided without the people (§11).
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -141,6 +141,13 @@ static func form(controller: Variant, chief: int, members: Array) -> Dictionary:
 	for person: int in leavers:
 		var left: Dictionary = lab.crowd_site.detach_to_new_team(person, band)
 		if not left.ok: return left
+	# One band, one team: every survivor standing alone joins the chief's team (CrowdSite.join_team).
+	var chief_team := int(_team_of(lab, chief).get("team_id", -1))
+	for person: Variant in members:
+		var team := _team_of(lab, int(person))
+		if int(person) == chief or int(team.get("team_id", -1)) == chief_team or team.get("person_ids", []).size() != 1: continue
+		var joined: Dictionary = lab.crowd_site.join_team(int(person), chief_team)
+		if not joined.ok: return joined
 	var committed: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
 	if not committed.ok: return committed
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("潰兵 %d 人落草成伙：%s" % [members.size(), named.left(32)])
