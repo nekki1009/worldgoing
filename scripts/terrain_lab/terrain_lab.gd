@@ -217,6 +217,10 @@ func _region_original_ready() -> void:
 	var daylight: Node = (load("res://scripts/terrain_lab/site_daylight.gd") as Script).new()
 	daylight.set("lab", self)
 	add_child(daylight)
+	# 時間與氣候 TC5a: rain streaks and fog over the world, under the UI (nothing while climate is off).
+	var weather_view: Node = (load("res://scripts/terrain_lab/site_weather_view.gd") as Script).new()
+	weather_view.set("lab", self)
+	add_child(weather_view)
 	_fire_view = FirePresentation.new()
 	_fire_view.name = "FirePresentation"
 	_fire_view.lab = self
