@@ -67,7 +67,9 @@ func _run() -> void:
 	node._thunder_wait = 0.0
 	node.step(0.1)
 	if not _ok(node._thunder.stream != null and node._thunder.playing, "thunder sounds in a storm"): return
-	node.queue_free()
-	await process_frame
+	for player: AudioStreamPlayer in node._players.values(): player.stop()
+	node._thunder.stop()
+	node.free()
+	for _frame: int in range(3): await process_frame
 	print("SITE_WEATHER_AUDIO_TC5_PASS checks=", checks)
 	quit(0)

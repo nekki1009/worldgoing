@@ -143,7 +143,7 @@ static func fire_aim_offset(shooter: Dictionary, distance: float, target_moving:
 		+ clampf(training, 0.0, 100.0) * 0.1 - clampf(fatigue, 0.0, 100.0) * 0.25 \
 		- maxf(0.0, distance - 2.0) * 4.0 \
 		+ (EXCHANGE_SKILL_BONUS if str(shooter.get("skill", "")) == "power" else 0.0) \
-		- (20.0 if target_moving else 0.0), 5.0, 95.0)
+		- (20.0 if target_moving else 0.0) 		- clampf(float(shooter.get("weather_penalty", 0.0)), 0.0, 60.0), 5.0, 95.0) # 時間與氣候 TC10: rain, night, wind
 	var radius := (0.10 + distance * 0.12 * (100.0 - quality) / 100.0) * scatter_multiplier
 	# Versioned SHA samples are in [0,1), independent of any presentation/global RNG.
 	var digest := ("%s|%d|%d|%d|%d" % [FIRE_RANGED_CONFIG_VERSION, seed_value, member_id, order_serial, release_sequence]).sha256_text()

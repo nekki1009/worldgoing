@@ -6827,7 +6827,7 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 		if released.is_empty(): continue
 		# Preflight already validated the finite trajectory inputs. Power only changes scatter;
 		# use the actual original-owner shooter snapshot after its atomic commit.
-		offset = SiteCombatRules.fire_aim_offset(released.shooter, float(profile.nominal_distance), bool(aim.moving), terrain.seed_value, identity, int(reservation.serial), sequence + 1, float(profile.scatter_multiplier))
+		offset = SiteCombatRules.fire_aim_offset(_weather_aim(released.shooter, aim.cell), float(profile.nominal_distance), bool(aim.moving), terrain.seed_value, identity, int(reservation.serial), sequence + 1, float(profile.scatter_multiplier))
 		flight["velocity"] = (nominal + right * offset.x + up * offset.y - origin) / float(flight.total) + Vector3(0, 0, 0.5 * float(profile.gravity) * float(flight.total))
 		sequence += 1
 		var source_formation_id := int(owner_ref.team_id) if owner_ref is TerrainArmy or owner_ref is CrowdPersonOwner and owner_ref.has_army() else 0
@@ -7297,6 +7297,27 @@ func _begin_fire_boundary(completed_action_end: float) -> Dictionary:
 ## 時間與氣候 TC5b (§4.6): on a climate Site the fire's weather follows the Region's 2-hour slot (wind, rain, drying). A
 ## new row is written at a completed fire boundary whenever the slot's weather differs from the last row, so live play
 ## and exact replays write the same rows; a full history is compacted first. Climate off: untouched.
+## 時間與氣候 TC10 (§4.7, D6 A): ranged aim quality under the Site's weather: drizzle −5, rain −15, storm −30, a strong
+## wind (0.6+) −5, night −10 unless the target stands within 3.5 cells of a fire light (SiteDaylight glows). Returns the
+## shooter with `weather_penalty` (a copy; the original snapshot is untouched). Climate off: the shooter as is.
+const RANGED_WEATHER := {"drizzle": 5.0, "rain": 15.0, "storm": 30.0}
+func _weather_aim(shooter: Dictionary, target: Variant) -> Dictionary:
+	if terrain == null or terrain.site.get("climate_enabled") != true: return shooter
+	var now: Dictionary = (load("res://scripts/terrain_lab/site_climate.gd") as Script).call("for_site", terrain)
+	if now.is_empty(): return shooter
+	var penalty := float(RANGED_WEATHER.get(str(now.weather), 0.0))
+	if (now.wind as Vector2).length() >= 0.6: penalty += 5.0
+	if str(now.band) == "night":
+		var lit := false
+		if target is Vector2i:
+			for cell: Vector2i in (load("res://scripts/terrain_lab/site_daylight.gd") as Script).call("glow_cells", terrain):
+				if Vector2(cell - target).length() <= 3.5: lit = true
+		if not lit: penalty += 10.0
+	if penalty <= 0.0: return shooter
+	var result := shooter.duplicate()
+	result["weather_penalty"] = penalty
+	return result
+
 func _climate_fire_weather(action_end: float) -> void:
 	if terrain == null or terrain.site.get("climate_enabled") != true or bool(terrain.site.get("paused", false)): return
 	var now: Dictionary = (load("res://scripts/terrain_lab/site_climate.gd") as Script).call("for_site", terrain)
@@ -15586,7 +15607,7 @@ func publish_validated_native_begin_ranged(prepared: Dictionary, check: Dictiona
 		var geometry: Dictionary = row.geometry
 		var profile: Dictionary = geometry.profile
 		var flight: Dictionary = geometry.flight
-		var offset: Vector2 = SiteCombatRules.fire_aim_offset(released.shooter, float(profile.nominal_distance), bool(geometry.aim.moving),
+		var offset: Vector2 = SiteCombatRules.fire_aim_offset(_weather_aim(released.shooter, geometry.aim.cell), float(profile.nominal_distance), bool(geometry.aim.moving),
 			terrain.seed_value, int(row.identity), int(row.reservation.serial), int(release.shot_id), float(profile.scatter_multiplier))
 		flight["velocity"] = (geometry.nominal + geometry.right * offset.x + geometry.up * offset.y - geometry.origin) / float(flight.total) \
 			+ Vector3(0, 0, 0.5 * float(profile.gravity) * float(flight.total))
@@ -15682,7 +15703,7 @@ func _prepare_fire_release_flight(person: Dictionary, reservation: Dictionary, s
 	profile.nominal_distance = Vector2(nominal.x - origin.x, nominal.y - origin.y).length()
 	profile["smoke_optical_depth"] = SiteRuntime.fire_smoke_optical_depth(terrain, origin, nominal)
 	profile.scatter_multiplier = float(profile.scatter_multiplier) * SiteRuntime.fire_smoke_scatter_scale(terrain, origin, nominal)
-	var offset := SiteCombatRules.fire_aim_offset(shooter, float(profile.nominal_distance), bool(aim.moving), terrain.seed_value, identity, int(reservation.serial), shot_id, float(profile.scatter_multiplier))
+	var offset := SiteCombatRules.fire_aim_offset(_weather_aim(shooter, aim.cell), float(profile.nominal_distance), bool(aim.moving), terrain.seed_value, identity, int(reservation.serial), shot_id, float(profile.scatter_multiplier))
 	var forward := (nominal - origin).normalized()
 	var right := forward.cross(Vector3(0, 0, 1)).normalized()
 	if right.length_squared() < 0.5: right = Vector3(1, 0, 0)
