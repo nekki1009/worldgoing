@@ -1478,6 +1478,11 @@ static func entry_cell(step: Dictionary) -> Vector2i:
 ## upkeep/distance and supplies actual full-component labels; no clock/body is
 ## published here. Exact simultaneous reverse crossings need their shared seam
 ## receipt because the two post-endpoint Site coordinates have already swapped.
+## Site pairs of a contact timeline compare by value: a plan read back from its JSON file holds float coordinates, a
+## freshly compiled one holds ints, and [0, 0] == [0.0, 0.0] is false for Arrays.
+static func contact_same_site(a: Array, b: Array) -> bool:
+	return a.size() == 2 and b.size() == 2 and float(a[0]) == float(b[0]) and float(a[1]) == float(b[1])
+
 static func route_contact_candidates(first: Array, second: Array, begin: float, end: float) -> Dictionary:
 	if not is_finite(begin) or not is_finite(end) or end < begin or first.is_empty() or second.is_empty():
 		return {"ok": false, "code": "INVALID_CONTACT_TIMELINE"}
@@ -1510,13 +1515,13 @@ static func route_contact_candidates(first: Array, second: Array, begin: float, 
 				indexes[which] += 1
 		var a: Dictionary = first[indexes[0]]
 		var b: Dictionary = second[indexes[1]]
-		if a.position.site == b.position.site and int(a.position.component) >= 0 \
+		if contact_same_site(a.position.site, b.position.site) and int(a.position.component) >= 0 \
 				and int(a.position.component) == int(b.position.component):
 			candidates.append({"kind": "same_component", "at": at,
 				"first": a.duplicate(true), "second": b.duplicate(true)})
 		elif absf(float(a.at) - at) <= 0.00000001 and absf(float(b.at) - at) <= 0.00000001 \
-				and old[0].position.site == b.position.site and old[1].position.site == a.position.site \
-				and old[0].position.site != old[1].position.site:
+				and contact_same_site(old[0].position.site, b.position.site) and contact_same_site(old[1].position.site, a.position.site) \
+				and not contact_same_site(old[0].position.site, old[1].position.site):
 			var sa: Dictionary = a.get("seam", {})
 			var sb: Dictionary = b.get("seam", {})
 			if int(sa.get("edge", -1)) in range(4) and int(sb.get("edge", -1)) == opposite(int(sa.edge)) \

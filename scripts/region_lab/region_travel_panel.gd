@@ -32,6 +32,11 @@ var _go_button: Button
 var _pause_button: Button
 var _retry_button: Button
 var _mode_button: Button
+var _toll_row: HBoxContainer
+var _toll_pay_button: Button
+var _toll_fight_button: Button
+var _toll_event := ""
+var _toll_error := ""
 var _speed_buttons: Array[Button] = []
 var _reroute_after_leg := false
 var _reroute_target := Vector2i.ZERO
@@ -61,6 +66,13 @@ func setup(owner_map: Control) -> void:
 	_pause_button = _button("暫停", "PauseTravel", pause_moving, row)
 	_retry_button = _button("重試入界", "RetryTravelArrival", retry_arrival)
 	_mode_button = _button("在此停靠／上下船", "TravelModeStop", mode_stop)
+	# Bandit B4c: shown only while a band holds the party for a toll.
+	_toll_row = HBoxContainer.new()
+	_toll_row.name = "TravelToll"
+	_toll_row.visible = false
+	add_child(_toll_row)
+	_toll_pay_button = _button("付買路錢", "TravelTollPay", answer_toll.bind(true), _toll_row)
+	_toll_fight_button = _button("不付，開打", "TravelTollFight", answer_toll.bind(false), _toll_row)
 	var speeds := HBoxContainer.new()
 	add_child(speeds)
 	for value: float in SPEEDS:
@@ -294,6 +306,27 @@ func start_moving() -> void:
 	_status.text = "行進中；時間流動。"
 	_refresh()
 
+## Bandit B4c: the player's answer to the band that holds the party (pay = pass, refuse = the ordinary encounter).
+func answer_toll(pay: bool) -> void:
+	if slot == null or _arriving or _toll_event.is_empty(): return
+	var answered: Dictionary = slot.answer_region_toll(_toll_event, pay)
+	if not answered.ok:
+		_toll_error = "買路錢未處理：%s %s" % [str(answered.get("code", "")), str(answered.get("message", ""))]
+		_refresh()
+		return
+	_toll_event = ""
+	_toll_error = ""
+	if pay:
+		var parts: Array[String] = []
+		for food: String in answered.get("paid", {}): parts.append("%s %d" % [food, int(answered.paid[food])])
+		_status.text = "已付買路錢（%s）；該伙 3 日內不再攔這支隊伍。可繼續行進。" % "、".join(parts)
+	else:
+		# The encounter takes the party off the map; _process enters the materialised Site.
+		_status.text = "拒付買路錢；與土匪交戰。"
+		_toll_row.visible = false
+		return
+	_refresh()
+
 func pause_moving() -> void:
 	_accumulated = 0.0
 	if not running: return
@@ -492,6 +525,18 @@ func _refresh() -> void:
 	_pause_button.disabled = not running
 	_retry_button.disabled = not bool(current.get("arrived", false)) or _arriving or not slot.has_method("retry_region_arrival")
 	_mode_button.disabled = _arriving or _route_thread != null or not slot.has_method("prepare_region_mode_stop")
+	var toll: Dictionary = slot.region_toll_pending() if slot.has_method("region_toll_pending") else {"ok": true, "offer": false}
+	var held: bool = toll.get("ok", false) and bool(toll.get("offer", false))
+	_toll_row.visible = held
+	_toll_event = str(toll.get("event_id", "")) if held else ""
+	if held:
+		running = false
+		_toll_pay_button.text = "付買路錢（%d 糧）" % int(toll.fee)
+		_toll_pay_button.disabled = _arriving or not bool(toll.can_pay)
+		_toll_fight_button.disabled = _arriving
+		_go_button.disabled = true
+		_status.text = "%s %d 人攔路，索要買路錢 %d 糧（隊伍存糧 %d）。付了放行，3 日內不再攔；不付就開打。" % [str(toll.band_name), int(toll.band_people), int(toll.fee), int(toll.food)]
+		if not _toll_error.is_empty(): _status.text += "\n" + _toll_error
 	_mode_button.text = "回到原旅隊實體操作" if party.ok and str(party.party.upkeep.get("live", {}).get("upkeep", "")) == "mapBody" else "在此停靠／上下船"
 
 func _site_center(site: Variant) -> Vector2:

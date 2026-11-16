@@ -294,6 +294,8 @@ static func _party_food_stores(party: Dictionary) -> Array:
 				var location: Variant = supply.locations[place]
 				if location is Dictionary and location.get("inventory") is Dictionary: stores.append(location.inventory)
 		elif supply.get("inventory") is Dictionary: stores.append(supply.inventory)
+	# The controlled person's own bag travels as the party's manual cargo; a party without a shared supply pays from it.
+	if party.get("content", {}).get("manual_cargo") is Dictionary: stores.append(party.content.manual_cargo)
 	return stores
 
 static func party_food(party: Dictionary) -> int:

@@ -18,6 +18,10 @@ var nation_source_observation: Dictionary = {}
 var nation_goal_coordinate := Vector2i(0, 1)
 var nation_goal: TerrainLab
 var nation_trace: Array[Dictionary] = []
+## Faction of each authored source team (HQ, remote cohort, courier); a subclass may birth the cohort as another side.
+var nation_body_factions: Array[int] = [1, 1, 1]
+## People in each authored source team.
+var nation_body_rosters: Array[int] = [2, 2, 2]
 var nation_step_min := INF # Smallest accepted positive world step since the last reset.
 
 func _initialize() -> void:
@@ -128,8 +132,8 @@ func _nation_initial_bodies() -> bool:
 				break
 		if not _check(original != null, "finite source Genesis uses an empty original slot without replacing existing heirs", index): return false
 		original.team_id = lab._next_army_identity()
-		original.faction_id = 1
-		original.roster_size = 2
+		original.faction_id = nation_body_factions[index]
+		original.roster_size = nation_body_rosters[index]
 		var cells: Array[Vector2i] = []
 		for cell: Vector2i in _genesis_cells(positions[index][0], 64):
 			if lab._armies_block_cell(cell): continue
@@ -137,8 +141,8 @@ func _nation_initial_bodies() -> bool:
 			for actor: TerrainTestCharacter in lab.combat_actors:
 				if actor.occupies_cell(cell): occupied = true
 			if not occupied: cells.append(cell)
-			if cells.size() == 2: break
-		if not _check(cells.size() == 2, "new initial cohort uses actual unoccupied source cells without moving any existing body", index): return false
+			if cells.size() == nation_body_rosters[index]: break
+		if not _check(cells.size() == nation_body_rosters[index], "new initial cohort uses actual unoccupied source cells without moving any existing body", index): return false
 		if not _check(original.deploy_at(lab.terrain, null, null, cells) and original.enable_combat(false, 0), "actual initial source HQ, remote cohort and independent courier use the original body allocator", index): return false
 		genesis_teams.append(original)
 		lab.site_controller.initialize_team_items(original)

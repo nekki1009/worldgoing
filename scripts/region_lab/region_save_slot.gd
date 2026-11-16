@@ -3505,6 +3505,16 @@ func advance_region_travel(max_steps: int) -> Dictionary:
 	if str(initial.get("plan", {}).get("mode", "land")) == "sea": return advance_region_sea_travel(max_steps)
 	if not region_original_travel_interval.is_valid() or not region_original_party_progress.is_valid():
 		return fail("MISSING_REGION_ADAPTER", "缺原所有Site／party共同旅行區間主人")
+	# A road contact with an NPC party that is due right now (met at the very point of departure) is handed to its
+	# consumer here: the loop below never starts an interval while a player barrier is pending.
+	for due_event: Dictionary in pending_region_events():
+		if bool(due_event.get("player", false)) and str(due_event.get("kind", "")) == "player_encounter" and not str(due_event.get("payload", {}).get("token", "")).is_empty():
+			var due := consume_due_region_events()
+			if not due.ok: return due
+			# Held for the player's answer (a toll), or the encounter took the party off the map.
+			if not bool(due.get("complete", false)) or region_travel_journey().is_empty():
+				return {"ok": true, "steps": 0, "advanced": 0.0, "arrived": false, "barrier": true, "now": float(control.logical_game_seconds)}
+			break
 	var before := float(control.logical_game_seconds)
 	var count := 0
 	for _index: int in range(clampi(max_steps, 0, 100000)):
@@ -4489,10 +4499,15 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 		if not forecast.ok: return forecast
 		var siege := _region_queue_npc_siege_contact(token, unclipped_game_end, interval)
 		if not siege.ok: return siege
-		var contact := _region_first_player_route_contact(token, unclipped_game_end, interval)
+		# Bandit B4c: a band that was paid does not stop the same party again while the pass lasts.
+		var contact: Dictionary = {"ok": true, "contact": false} if _region_toll_passed(token) else _region_first_player_route_contact(token, unclipped_game_end, interval)
 		if not contact.ok: return contact
 		if bool(contact.get("contact", false)):
-			var queued_contact := queue_region_event("npc:%s:player-contact:%s:%d" % [token, str(contact.site_id), int(contact.component)],
+			var contact_identity := "npc:%s:player-contact:%s:%d" % [token, str(contact.site_id), int(contact.component)]
+			# A band's earlier stop at this same node is complete (paid and expired): the next one is a new event.
+			if _region_toll_band(token) >= 0 and registry.events.any(func(prior: Dictionary) -> bool: return str(prior.id) == contact_identity and str(prior.status) == "complete"):
+				contact_identity += ":day%d" % _region_toll_day()
+			var queued_contact := queue_region_event(contact_identity,
 				"player_encounter", float(contact.at), str(contact.site_id), {"token": token, "site": contact.site.duplicate(), "component": int(contact.component), "contact_receipt": contact.get("contact_receipt", {}).duplicate(true)}, true)
 			if not queued_contact.ok: return queued_contact
 		for event: Dictionary in forecast.events:
@@ -5667,12 +5682,180 @@ func consume_region_player_event(event: Dictionary) -> Dictionary:
 	if not siege_contact.ok: return siege_contact
 	if not siege_contact.valid:
 		return {"ok": true, "receipt": {"effects_complete": true, "complete": true, "skipped_contact": true, "reason": str(siege_contact.get("reason", "")), "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
+	# Bandit B4c: a band on the road asks the travelling player for a toll. A paid pass skips the contact; an open offer
+	# holds this event (nothing is materialised, no time passes) until the player answers; a refusal is the fight below.
+	var toll: Dictionary = region_toll_offer(event)
+	if not toll.ok: return toll
+	if bool(toll.get("passed", false)):
+		return {"ok": true, "receipt": {"effects_complete": true, "complete": true, "skipped_contact": true, "reason": "TOLL_PAID", "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
+	if bool(toll.get("offer", false)) and not bool(toll.get("refused", false)):
+		return {"ok": true, "receipt": {"effects_complete": true, "complete": false, "toll_pending": true, "toll": toll, "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
 	if not region_original_player_materialize.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺真joint livebind及原身體／Family消費者")
 	var consumed: Variant = region_original_player_materialize.call(event)
 	if not consumed is Dictionary or not consumed.get("ok", false): return consumed if consumed is Dictionary else fail("INVALID_REGION_RECEIPT")
 	if not consumed.get("receipt") is Dictionary or not bool(consumed.receipt.get("effects_complete", false)):
 		return fail("INVALID_REGION_RECEIPT", "P0原身體效果未完成")
 	return consumed
+
+# --- Bandit B4c step two: the toll on the road (bandit spec §5.1) -----------------------------------------------------
+const TollBandit = preload("res://scripts/region_lab/region_bandit.gd")
+const TollCalendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+## Offers the player turned down (event id -> true). Not saved: after a reload the band asks again.
+var _region_toll_refused: Dictionary = {}
+
+func _region_toll_day() -> int:
+	return TollCalendar.day_index(float(control.logical_game_seconds) / 60.0)
+
+## The band a travelling NPC party belongs to, or -1 when it is not a band's party.
+func _region_toll_band(token: String) -> int:
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) != "travelling": return -1
+	var npc := _region_npc_party(token)
+	if not npc.ok: return -1
+	var band := TollBandit.party_faction(npc.party)
+	return band if RegionFactionQuery.is_bandit(control.get("faction_registry", {}), band) else -1
+
+## Does the travelling player hold a paid pass from this NPC party's band today?
+func _region_toll_passed(token: String) -> bool:
+	var journey := region_travel_journey()
+	if journey.is_empty(): return false
+	var band := _region_toll_band(token)
+	if band < 0: return false
+	return int(RegionFactionQuery.bandit_of(control.faction_registry, band).get("passes", {}).get(str(journey.token), -1)) >= _region_toll_day()
+
+## The toll a band's travelling party asks of the travelling player at this pending road contact.
+## {offer false} when the contact is not a toll; {passed true} when a paid pass covers it; otherwise the band, the fee,
+## the food the party carries, whether it can pay and whether the player already refused.
+func region_toll_offer(event: Dictionary) -> Dictionary:
+	var none := {"ok": true, "offer": false, "passed": false}
+	if str(event.get("kind", "")) != "player_encounter" or str(event.get("status", "pending")) != "pending": return none
+	var payload: Dictionary = event.get("payload", {})
+	var token := str(payload.get("token", ""))
+	if token.is_empty() or payload.has("player_token") or str(payload.get("contact_receipt", {}).get("kind", "")) == "siege_channel": return none
+	var journey := region_travel_journey()
+	if journey.is_empty(): return none
+	var band := _region_toll_band(token)
+	if band < 0: return none
+	var registry: Dictionary = control.faction_registry
+	var npc := _region_npc_party(token)
+	if not npc.ok: return npc
+	var player := region_travel_party()
+	if not player.ok: return player
+	if TollBandit.party_faction(player.party) == band: return none
+	var day := _region_toll_day()
+	var player_token := str(journey.token)
+	if int(RegionFactionQuery.bandit_of(registry, band).get("passes", {}).get(player_token, -1)) >= day:
+		return {"ok": true, "offer": false, "passed": true, "band": band}
+	var people := TollBandit.party_people(player.party)
+	var band_people := TollBandit.party_people(npc.party)
+	if not TollBandit.toll_offer(registry, band, player_token, float(band_people), float(people), day): return none
+	var fee := TollBandit.toll_fee(people)
+	var food := TollBandit.party_food(player.party)
+	return {"ok": true, "offer": true, "passed": false, "band": band, "band_name": str(RegionFactionQuery.display(registry, band).name),
+		"band_people": band_people, "people": people, "event_id": str(event.get("id", "")), "token": token, "fee": fee, "food": food,
+		"can_pay": food >= fee, "refused": _region_toll_refused.has(str(event.get("id", ""))), "day": day}
+
+## The open toll offer that holds the travelling player right now ({offer false} when there is none).
+func region_toll_pending() -> Dictionary:
+	if region_travel_journey().is_empty(): return {"ok": true, "offer": false}
+	for event: Dictionary in pending_region_events():
+		if not bool(event.get("player", false)): continue
+		var offer := region_toll_offer(event)
+		if not offer.ok: return offer
+		if bool(offer.offer) and not bool(offer.refused): return offer
+	return {"ok": true, "offer": false}
+
+## The player's answer. Paying takes the fee from the party's shared food, adds it to the band's hoard and writes a
+## pass of TOLL_PASS_DAYS, all in one publication, and the held contact is then skipped. Refusing is the fight: the
+## held contact goes on to the ordinary encounter.
+func answer_region_toll(event_id: String, pay: bool) -> Dictionary:
+	var event: Dictionary = {}
+	for pending: Dictionary in pending_region_events():
+		if str(pending.id) == event_id: event = pending
+	if event.is_empty(): return fail("NO_TARGET", "沒有待答覆的買路錢")
+	var offer := region_toll_offer(event)
+	if not offer.ok: return offer
+	if not bool(offer.offer): return fail("NO_TARGET", "沒有待答覆的買路錢")
+	if not pay:
+		_region_toll_refused[event_id] = true
+		var fought := consume_due_region_events()
+		if not fought.ok: return fought
+		fought["toll"] = "refused"
+		return fought
+	if not bool(offer.can_pay): return fail("NOT_ENOUGH", "隊伍存糧不足以付買路錢")
+	var loaded := region_travel_party()
+	if not loaded.ok: return loaded
+	var before: Dictionary = loaded.party
+	var token := str(region_travel_journey().token)
+	var candidate: Dictionary = before.duplicate(true)
+	var taken := TollBandit.take_party_food(candidate, int(offer.fee))
+	if taken.is_empty(): return fail("NOT_ENOUGH", "隊伍存糧不足以付買路錢")
+	var paid := TollBandit.toll_paid(control.faction_registry, int(offer.band), token, int(offer.day), taken, float(control.logical_game_seconds))
+	if not paid.ok: return paid
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+	# The party's bodies and supplies live in its own sparse owner Lab. The fee leaves the owner's stores, the owner is
+	# captured as the paid body (it must equal the candidate), and the usual travel checkpoint publishes the party
+	# file, the journey and the band's table together. Any refusal puts the stores and the table back.
+	var owned: Dictionary = host.prepare_region_party_original_owner(token, before, self)
+	if not owned.ok: return owned
+	var owner_lab: TerrainLab = owned.lab
+	var owner_site: Dictionary = owner_lab.terrain.site
+	var owner_view := {"content": {"team_supply": owner_site.get("team_supply", {})}}
+	if before.content.get("manual_cargo") is Dictionary and owner_site.get("manual", {}).get("cargo") is Dictionary:
+		owner_view.content["manual_cargo"] = owner_site.manual.cargo
+	var owner_stores: Array = TollBandit._party_food_stores(owner_view)
+	# The runtime party and its owner pay the same fee from the same stores, in place, and the owner is re-keyed to the
+	# paid party; the travel checkpoint then verifies owner against party exactly as it does after any interval.
+	var party_stores: Array = TollBandit._party_food_stores(before)
+	if owner_stores.size() != party_stores.size(): return fail("ROUTE_BODY_CHANGED", "旅隊實體存糧與旅隊文件不一致，未收買路錢")
+	var backups: Array = []
+	for store: Dictionary in owner_stores + party_stores: backups.append(store.duplicate(true))
+	var old_hash: String = str(owner_lab._region_party_input_hash)
+	var rekey := func(value: String) -> void:
+		owner_lab._region_party_input_hash = value
+		var meta: Dictionary = owner_lab.terrain.get_meta(&"region_party_owner", {})
+		meta["party_hash"] = value
+		owner_lab.terrain.set_meta(&"region_party_owner", meta)
+	var undo := func() -> void:
+		var all: Array = owner_stores + party_stores
+		for index: int in all.size():
+			all[index].clear()
+			all[index].merge(backups[index])
+		rekey.call(old_hash)
+	if TollBandit.take_party_food(owner_view, int(offer.fee)) != taken or TollBandit.take_party_food(before, int(offer.fee)) != taken:
+		undo.call()
+		return fail("ROUTE_BODY_CHANGED", "旅隊實體存糧與旅隊文件不一致，未收買路錢")
+	rekey.call(str(owner_lab._region_party_hash(before)))
+	# One publication: the paid party file, the journey that selects it and the band's table (the same party-file
+	# pattern a new sea plan uses; the owner keeps its bound bodies, now keyed to the paid party).
+	var journey := region_travel_journey()
+	var document := _region_party_document(token, before)
+	if not document.ok:
+		undo.call()
+		return document
+	var relative := "travel/%s/party_toll_%09d_%s.json" % [token, int(_marker.get("generation", 0)) + 1, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var written := _write_new_document(folder.path_join(relative), document.payload)
+	if not written.ok:
+		undo.call()
+		return written
+	journey.party_path = relative
+	journey.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
+	var next_control := control.duplicate(true)
+	next_control.faction_registry = paid.registry
+	var published := _publish(_marker.get("sites", {}), next_control, str(_marker.get("transfer_token", "")), journey)
+	if not published.ok:
+		undo.call()
+		return published
+	_travel_party_runtime = before
+	_travel_party_runtime_token = token
+	var passed := consume_due_region_events()
+	if not passed.ok: return passed
+	passed["toll"] = "paid"
+	passed["paid"] = taken
+	passed["fee"] = int(offer.fee)
+	return passed
 
 var region_contact_active_data: Callable
 
