@@ -18,6 +18,9 @@ extends RefCounted
 ## Vital (時間與氣候 TC7): an optional `vital` {birth_year, base, max_hp, year, ko, starved} (SiteVital); missing = an
 ## adult of full health, created on the next New Year scan.
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
+## Learning (考試學校 E1, §4.1/§9): optional `learning` 0..100 and `last_exam_day` (-1 never). Missing learning reads 0,
+## or 20 for a 文吏/文官 (the plan's migration: existing civil officers are literate), never written back until changed.
+const LITERATE := 20
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -44,6 +47,12 @@ static func valid(packet: Variant) -> bool:
 		extra += 1
 	if packet.has("vital"):
 		if not Vital.valid(packet.vital): return false
+		extra += 1
+	if packet.has("learning"):
+		if not _integer(packet.learning, 0, 100): return false
+		extra += 1
+	if packet.has("last_exam_day"):
+		if not _integer(packet.last_exam_day, -1, 2147483647): return false
 		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
@@ -106,6 +115,8 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 	if packet.get("civil_role") in ["clerk", "official"]: result["civil_role"] = str(packet.civil_role)
 	if valid_civil_service(packet.get("civil_service")): result["civil_service"] = packet.civil_service.duplicate(true)
 	if Vital.valid(packet.get("vital")): result["vital"] = Vital.normalized(packet.vital)
+	if _integer(packet.get("learning"), 0, 100): result["learning"] = int(packet.learning)
+	if _integer(packet.get("last_exam_day"), -1, 2147483647): result["last_exam_day"] = int(packet.last_exam_day)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -211,6 +222,20 @@ static func set_civil_service(body: Variant, value: Dictionary) -> bool:
 		if not packet.has("civil_service"): return true
 		packet.erase("civil_service")
 	else: packet["civil_service"] = value.duplicate(true)
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+	return true
+
+static func learning(body: Variant) -> int:
+	var stored: Variant = read(body).get("learning")
+	if _integer(stored, 0, 100): return int(stored)
+	return LITERATE if civil_role(body) != "none" else 0
+
+static func set_learning(body: Variant, value: int) -> bool:
+	if value < 0 or value > 100: return false
+	var packet := read(body).duplicate(true)
+	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
+	packet["learning"] = value
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 	return true

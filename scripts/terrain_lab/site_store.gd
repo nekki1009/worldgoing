@@ -12,6 +12,7 @@ const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_institutions.gd")
+const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
@@ -1353,6 +1354,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	Households.normalize(state) # 平民 C0: an old save gets its households from the housing registrations.
 	Settlement.normalize(state)
 	ResearchInstitutions.normalize(state)
+	Schools.normalize(state)
 	for registered: Dictionary in state.housing.values():
 		registered.version = int(registered.version)
 		registered.cell = int(registered.cell)
@@ -3811,6 +3813,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not settlement_validation.ok: return settlement_validation
 	var institution_validation := ResearchInstitutions.validate(state, people)
 	if not institution_validation.ok: return institution_validation
+	var school_validation := Schools.validate(state, people)
+	if not school_validation.ok: return school_validation
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
 	# -1 names no controlled person (an NPC travel frame's view, 2026-11-10); any other value must be a real person.

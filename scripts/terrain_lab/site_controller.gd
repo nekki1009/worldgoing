@@ -35,6 +35,7 @@ const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedu
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
+const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
 ## 文武官 W5: the settlement level the live controller last saw (runtime), and the civil prestige per level reached.
 var _settlement_level_seen := -1
 const CIVIL_LEVEL_PRESTIGE := {3: 2.0, 4: 3.0, 5: 5.0}
@@ -2774,6 +2775,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan), checked_runtime_clock_interval())
 		_advance_settlement(delta, work_interval, combat_before)
 		ResearchInstitutions.advance(data, person_actions, work_interval)
+		Schools.advance(data, person_actions, work_interval) # 考試學校 E1
 		if checked_runtime_clock_interval().is_empty() and worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
@@ -15180,3 +15182,19 @@ func _civil_level_prestige() -> void:
 				break
 	if head > 0: adjust_reputation(head, gain / 2.0, 0.0)
 	if civil > 0 and civil != head: adjust_reputation(civil, gain / 2.0, 0.0)
+
+
+## 考試學校 E1 (§4.2–§4.3, §6): the 學正 (settlement.education; the head acts while vacant) seats or unseats a teacher or
+## student of a school of his settlement. The person must be of the settlement's faction, alive, free, inside the
+## jurisdiction and not already seated elsewhere.
+func school_seat(key: String, identity: int, role: String, seated: bool, requester_id: int) -> Dictionary:
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if settlement.is_empty(): return Runtime.fail("UNESTABLISHED", "尚未建制聚落")
+	var resolved: Dictionary = Settlement.duty_resolve(lab, Schools.DUTY, true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, Settlement.offices(lab, true))
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(key, {})
+	if int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "須是本聚落的學校")
+	var person: Dictionary = person_actions._person(identity, false)
+	if person.is_empty() or person.get("body") == null or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)): return Runtime.fail("NO_TARGET", "須是清醒自由的人")
+	if seated and (int(person.faction) != int(settlement.owner_faction) or not Settlement.cell_in_jurisdiction(lab.terrain, Vector2i(person.cell))): return Runtime.fail("NO_AUTHORITY", "須是本聚落轄區內的同陣營人物")
+	return Schools.set_seat(lab.terrain, key, identity, person.body, role, seated)

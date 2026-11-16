@@ -98,6 +98,10 @@ const FEATURES := {
 	"craft_room": {"placement": "fixed", "size": Vector2i(3, 3), "name": "工法室", "cost": {"wood": 10, "stone": 4}, "work": 20.0, "solid": true, "water": 0.0},
 	"artisan_academy": {"placement": "fixed", "size": Vector2i(4, 4), "name": "匠作院", "cost": {"wood": 24, "stone": 12, "rope": 2}, "work": 40.0, "solid": true, "water": 0.0},
 	"works_academy": {"placement": "fixed", "size": Vector2i(5, 4), "name": "考工院", "cost": {"wood": 40, "stone": 24, "rope": 4}, "work": 60.0, "solid": true, "water": 0.0},
+	# 考試學校 E1 (§3): schools; their art comes from the building_v2 pipeline (MISSING_ART until it exists).
+	"village_school": {"placement": "fixed", "size": Vector2i(3, 3), "name": "蒙學", "cost": {"wood": 20, "stone": 8, "rope": 4}, "work": 40.0, "solid": true, "water": 0.0},
+	"district_school": {"placement": "fixed", "size": Vector2i(4, 4), "name": "鄉學", "cost": {"wood": 30, "stone": 20, "brick": 10, "pottery": 4}, "work": 80.0, "solid": true, "water": 0.0},
+	"state_academy": {"placement": "fixed", "size": Vector2i(5, 5), "name": "國學", "cost": {"stone": 60, "brick": 40, "steel": 4, "cloth": 6}, "work": 160.0, "solid": true, "water": 0.0},
 }
 ## Research institution kinds: the scope each serves and its researcher seats (plan approved 11/07).
 const RESEARCH_INSTITUTIONS := {
@@ -11713,6 +11717,9 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 	if RESEARCH_INSTITUTIONS.has(kind):
 		var institution := research_institution_build_guard(data, kind, cells, int(options.get("quarter", 0)))
 		if not institution.ok: return institution
+	if kind in ["village_school", "district_school", "state_academy"]:
+		var school := school_build_guard(data, kind, cells, int(options.get("quarter", 0)))
+		if not school.ok: return school
 	var preview: Dictionary = preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
 	if not preview.ok: return preview
 	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")
@@ -13520,6 +13527,25 @@ static func research_institution_build_guard(data: TerrainData, kind: String, ce
 			for index: int in cells: inside = inside or bool(settlement_script.call("cell_in_jurisdiction", data, data.cell_from_index(index)))
 			if not inside: return fail("REQUIREMENTS", "%s須建在聚落轄區內" % str(FEATURES[kind].name))
 			if str(spec.scope) == "nation" and data.site.get("equipment_nations", {}).is_empty(): return fail("REQUIREMENTS", "考工院須先有國家")
+	if not formal_building_art_available(kind, quarter):
+		return fail("MISSING_ART", "%s缺正式美術資產；不以占位圖替代" % str(FEATURES[kind].name))
+	return ok()
+
+## 考試學校 E1 (§3): a school needs the settlement level of its grade and a cell in the jurisdiction; one of each grade
+## per settlement; the state academy (E3) also a nation that knows N07. Missing art refuses; nothing is placeheld.
+static func school_build_guard(data: TerrainData, kind: String, cells: Array[int], quarter: int) -> Dictionary:
+	var spec: Dictionary = load("res://scripts/terrain_lab/site_schools.gd").KINDS.get(kind, {})
+	if spec.is_empty(): return fail("INVALID")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if settlement.is_empty() or int(settlement.get("level", 0)) < int(spec.min_settlement_level):
+		return fail("REQUIREMENTS", "%s須聚落 %d 級" % [str(FEATURES[kind].name), int(spec.min_settlement_level)])
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var inside := false
+	for index: int in cells: inside = inside or bool(settlement_script.call("cell_in_jurisdiction", data, data.cell_from_index(index)))
+	if not inside: return fail("REQUIREMENTS", "%s須建在聚落轄區內" % str(FEATURES[kind].name))
+	for feature: Dictionary in data.site.get("features", {}).values():
+		if str(feature.get("kind", "")) == kind: return fail("LIMIT", "每座聚落只能有一座%s" % str(FEATURES[kind].name))
+	if kind == "state_academy": return fail("TECH_REQUIRED", "國學須國家已知技藝傳習制度（考試學校 E3）")
 	if not formal_building_art_available(kind, quarter):
 		return fail("MISSING_ART", "%s缺正式美術資產；不以占位圖替代" % str(FEATURES[kind].name))
 	return ok()
