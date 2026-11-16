@@ -213,6 +213,10 @@ func _region_original_ready() -> void:
 	renderer = TerrainRenderer.new()
 	renderer.name = "TerrainRenderer"
 	add_child(renderer)
+	# 時間與氣候 TC4: day and night light over the world canvas (white while the Site's climate is off).
+	var daylight: Node = (load("res://scripts/terrain_lab/site_daylight.gd") as Script).new()
+	daylight.set("lab", self)
+	add_child(daylight)
 	_fire_view = FirePresentation.new()
 	_fire_view.name = "FirePresentation"
 	_fire_view.lab = self
