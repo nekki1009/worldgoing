@@ -7294,6 +7294,20 @@ func _begin_fire_boundary(completed_action_end: float) -> Dictionary:
 		return SiteRuntime.fail("STALE_FIRE_BOUNDARY")
 	return SiteRuntime.fire_begin_boundary(terrain, completed_action_end, _region_deferring_endpoint())
 
+## 時間與氣候 TC5b (§4.6): on a climate Site the fire's weather follows the Region's 2-hour slot (wind, rain, drying). A
+## new row is written at a completed fire boundary whenever the slot's weather differs from the last row, so live play
+## and exact replays write the same rows; a full history is compacted first. Climate off: untouched.
+func _climate_fire_weather(action_end: float) -> void:
+	if terrain == null or terrain.site.get("climate_enabled") != true or bool(terrain.site.get("paused", false)): return
+	var now: Dictionary = (load("res://scripts/terrain_lab/site_climate.gd") as Script).call("for_site", terrain)
+	if now.is_empty(): return
+	var wind: Vector2 = now.wind
+	var last: Dictionary = SiteRuntime.fire_weather_at(terrain, action_end)
+	if float(last.wind_x) == wind.x and float(last.wind_y) == wind.y and float(last.rain) == float(now.rain) and float(last.drying) == float(now.drying): return
+	var written := SiteRuntime.fire_set_weather(terrain, action_end, wind, float(now.rain), float(now.drying))
+	if str(written.get("code", "")) == "WEATHER_HISTORY_CAPACITY" and SiteRuntime.fire_compact_weather(terrain).ok:
+		SiteRuntime.fire_set_weather(terrain, action_end, wind, float(now.rain), float(now.drying))
+
 func _finish_fire_boundary(action_begin: float, completed_action_end: float) -> bool:
 	if _region_deferring_endpoint(): return true
 	if terrain == null or terrain.site.is_empty(): return true
@@ -7315,6 +7329,7 @@ func _finish_fire_boundary(action_begin: float, completed_action_end: float) -> 
 		_latch_fire_boundary_error(result)
 		return false
 	if needs_publication: fire_action_cursor = completed_action_end
+	_climate_fire_weather(completed_action_end)
 	if site_controller != null: site_controller.person_actions.settle_fire_pot_trials()
 	if _fire_release_sequence > 0 or SiteRuntime.fire_active(terrain): _fire_unsaved = true
 	if int(result.get("boundaries", 0)) > 0: queue_redraw()

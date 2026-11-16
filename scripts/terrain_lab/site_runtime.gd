@@ -6380,6 +6380,30 @@ static func fire_set_weather(data: TerrainData, action_time: float, wind: Vector
 	state["dirty"] = true
 	return ok("原Site天氣區間已記錄", {"sequence": int(state.weather.sequence)})
 
+## 時間與氣候 TC5b (day-weather-season-plan §7 risk 1): when the weather history is full, the older half is merged
+## pairwise (each pair becomes one row at the first row's time with the time-weighted mean wind, rain and drying), so a
+## climate Site never runs out of rows. Deterministic: live play and exact replays compact at the same append.
+static func fire_compact_weather(data: TerrainData) -> Dictionary:
+	var weather: Variant = data.site.get("fire", {}).get("weather", {})
+	if not weather is Dictionary or not weather.get("history") is Array or (weather.history as Array).size() < 4: return fail("NO_TARGET")
+	var history: Array = weather.history
+	var half := history.size() / 2
+	half -= half % 2
+	var merged: Array = []
+	for index: int in range(0, half, 2):
+		var a: Dictionary = history[index]
+		var b: Dictionary = history[index + 1]
+		var end := float(history[index + 2].action_time) if index + 2 < history.size() else float(b.action_time)
+		var wa := maxf(0.0, float(b.action_time) - float(a.action_time))
+		var wb := maxf(0.0, end - float(b.action_time))
+		var total := wa + wb
+		var mix := func(field: String) -> float: return (float(a[field]) * wa + float(b[field]) * wb) / total if total > 0.0 else float(a[field])
+		merged.append({"action_time": float(a.action_time), "wind_x": mix.call("wind_x"), "wind_y": mix.call("wind_y"), "rain": mix.call("rain"), "drying": mix.call("drying")})
+	weather["history"] = merged + history.slice(half)
+	weather["sequence"] = (weather.history as Array).size()
+	data.site.fire["dirty"] = true
+	return ok("", {"rows": (weather.history as Array).size()})
+
 static func _fire_weather_index(history: Array, action_time: float) -> int:
 	var low := 0
 	var high := history.size()
