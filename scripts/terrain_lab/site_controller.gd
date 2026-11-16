@@ -32,6 +32,7 @@ const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd"
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd") # 土匪 B4d-1: the band chiefs' daily move.
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed teams are watched for 7 days.
+const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: the 營務 drafts residents in danger.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -15024,6 +15025,15 @@ func _faction_label(faction_id: int) -> String:
 ## Long-absence catch-up (Nekki 11/16 A): set while a cold Site settles quiet hours offline; no live schedule runs.
 var coarse_offline := false
 
+## 平民 C3c (option A): an NPC 營務 decider drafts the residents when an alarm finds no fight yet, and releases them once
+## the alarm is over. A controlled decider decides himself (SiteMilitia.draft / release).
+func _militia_auto(alarm: bool) -> void:
+	if Settlement.record(lab.terrain).is_empty(): return
+	var allowed: Dictionary = Militia.authority(lab, -1)
+	if not allowed.ok or int(allowed.decider) == int(lab.controlled_person_id()): return
+	if alarm and float(lab.terrain.site.get("combat_left", 0.0)) <= 0.0 and ResidentSchedule.danger(lab): Militia.draft(lab, int(allowed.decider))
+	elif not alarm and lab.terrain.site.has(Militia.SECTION): Militia.release(lab, int(allowed.decider))
+
 ## 平民 C3a: the minute until which residents stay home after danger (runtime; a reload re-reads the danger).
 var resident_alarm_until := -1.0
 var _resident_fighting := false
@@ -15042,6 +15052,7 @@ func resident_schedule_tick() -> void:
 	if check != _resident_check and ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
 	_resident_check = check
 	if ResidentSchedule.danger(lab): resident_alarm_until = minute + ResidentSchedule.ALARM_HOLD_MINUTES
+	_militia_auto(minute < resident_alarm_until)
 	last_resident_schedule = ResidentSchedule.drive(self, minute, minute < resident_alarm_until)
 	last_resident_schedule["alarm"] = minute < resident_alarm_until
 

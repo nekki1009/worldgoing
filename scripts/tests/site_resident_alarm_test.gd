@@ -72,7 +72,7 @@ func _run() -> void:
 	if not _ok(not bool(actions.job_for(civilian).get("cancelled", true)), "the fleeing walk passes its own step check near the enemy", actions.job_for(civilian)): return
 
 	# In a fight only the flight is allowed; a fight starting acts at once.
-	actions._cancel_housing_job(actions.job_for(civilian), "test reset")
+	actions._cancel_housing_job(actions._jobs.get(str(civilian), {}), "test reset")
 	actions.advance_housing_jobs(0.6)
 	data.site.combat_left = 5.0
 	# Both judged as a walk in progress (allow_moving), so only the fight rule differs.
@@ -85,14 +85,14 @@ func _run() -> void:
 	data.site.combat_left = 0.0
 
 	# The danger goes; the alarm holds 30 minutes, then work is back.
-	actions._cancel_housing_job(actions.job_for(civilian), "test reset")
+	actions._cancel_housing_job(actions._jobs.get(str(civilian), {}), "test reset")
 	actions.advance_housing_jobs(0.6)
 	enemy.combat_enabled = false # the enemy leaves the field
 	if not _ok(not Schedule.danger(lab), "with the enemy gone there is no danger"): return
 	data.site.minute = 3 * 1440 + 8 * 60 + 30
 	controller.resident_schedule_tick()
 	if not _ok(bool(controller.last_resident_schedule.alarm), "20 minutes after the danger the alarm still holds", controller.last_resident_schedule): return
-	if actions.is_busy(civilian): actions._cancel_housing_job(actions.job_for(civilian), "test reset"); actions.advance_housing_jobs(0.6)
+	if actions.is_busy(civilian): actions._cancel_housing_job(actions._jobs.get(str(civilian), {}), "test reset"); actions.advance_housing_jobs(0.6)
 	data.site.minute = 3 * 1440 + 8 * 60 + 50
 	controller.resident_schedule_tick()
 	if not _ok(not bool(controller.last_resident_schedule.alarm) and int(controller.last_resident_schedule.started) == 0, "after 30 minutes the work phase is back", controller.last_resident_schedule): return

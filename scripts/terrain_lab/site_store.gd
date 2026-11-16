@@ -15,6 +15,7 @@ const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_in
 const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
 const Finance = preload("res://scripts/terrain_lab/site_finance.gd") # 軍餉與稅收 P0: organization finance records.
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed survivors under watch.
+const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: drafted residents.
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
@@ -1359,6 +1360,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	Schools.normalize(state)
 	Finance.normalize(state)
 	BanditRout.normalize(state)
+	Militia.normalize(state)
 	for registered: Dictionary in state.housing.values():
 		registered.version = int(registered.version)
 		registered.cell = int(registered.cell)
@@ -3823,6 +3825,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not finance_validation.ok: return finance_validation
 	var rout_validation := BanditRout.validate(state)
 	if not rout_validation.ok: return rout_validation
+	var militia_validation := Militia.validate(state)
+	if not militia_validation.ok: return militia_validation
 	if state.has("climate_enabled") and not state.climate_enabled is bool: return Runtime.fail("CORRUPT_SAVE", "氣候開關")
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
