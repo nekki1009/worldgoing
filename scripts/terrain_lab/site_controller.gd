@@ -33,6 +33,10 @@ const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
+## 時間與氣候 TC2: the controlled person's sleep (SiteSleep record; runtime only).
+var sleep_record: Dictionary = {}
+var _sleep_minute := -1
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
@@ -544,6 +548,15 @@ func _build_ui() -> void:
 	_button(banner_row, "+", "FasterSite", func() -> void:
 		lab.change_simulation_speed(1))
 	pause_button = _button(banner_row, "暫停", "PauseSite", toggle_pause)
+	banner_row.add_child(VSeparator.new())
+	var sleep_choice := OptionButton.new()
+	sleep_choice.name = "SleepChoice"
+	for label: String in ["睡到天亮", "睡 8 小時", "休息 1 日", "休息 7 日", "睡到月初", "睡到季首"]: sleep_choice.add_item(label)
+	banner_row.add_child(sleep_choice)
+	_button(banner_row, "睡覺", "SleepStart", func() -> void:
+		var choice: Array = [["dawn", 1], ["hours", 8], ["days", 1], ["days", 7], ["month", 1], ["season", 1]][maxi(0, sleep_choice.selected)]
+		show_result(start_sleep(str(choice[0]), int(choice[1]))))
+	_button(banner_row, "醒來", "SleepWake", func() -> void: wake_up("醒來"))
 	banner_row.add_child(VSeparator.new())
 	player_status_label = _compact_label(banner_row, "", 15)
 	player_status_label.name = "PlayerStatus"
@@ -2735,6 +2748,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 	else:
 		_combat_ui_elapsed = 0.0
 	if not bool(data.site.paused) and not get_tree().paused:
+		advance_sleep() # TC2
 		vehicles.settle_operators()
 		_work_elapsed += delta
 		_save_elapsed += delta
@@ -3258,7 +3272,11 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 	legend.visible = not legend.text.is_empty()
 	var simulation_speed := float(lab.simulation_speed)
 	var speed_text := String.num(simulation_speed, 1)
-	clock_label.text = Runtime.date_text(data) + ("\n戰鬥：1 秒 = 遊戲 %s 秒 · 脫戰 %.0f 秒" % [speed_text, float(data.site.combat_left)] if float(data.site.combat_left) > 0 else "\n和平：1 秒 = 遊戲 %s 分鐘" % speed_text)
+	# TCM: one Site rate; TC2: a sleeper sees the wake time.
+	var rate_text := "1 秒 = 遊戲 %s 分鐘" % speed_text
+	if sleeping(): clock_label.text = Runtime.date_text(data) + "\n睡眠中，%s · 預計 %s 醒" % [rate_text, Calendar.clock_text(float(sleep_record.until))]
+	elif float(data.site.combat_left) > 0: clock_label.text = Runtime.date_text(data) + "\n戰鬥中：%s · 脫戰 %.0f 秒" % [rate_text, float(data.site.combat_left)]
+	else: clock_label.text = Runtime.date_text(data) + "\n和平：" + rate_text
 	speed_label.text = "%s×" % speed_text
 	pause_button.text = "繼續" if bool(data.site.paused) else "暫停"
 	var condition := Env.land(data, selected)
@@ -15004,3 +15022,44 @@ func _registry_ai_day() -> void:
 	var resolved: Dictionary = Settlement.duty_resolve(lab, ResidentWork.DUTY, true)
 	if not bool(resolved.ok) or int(resolved.decider) <= 0 or int(resolved.decider) == int(lab.controlled_person_id()): return
 	plan_household_jobs(int(resolved.decider))
+
+
+## 時間與氣候 TC2: the controlled person goes to sleep; the Site stays live at `speed` (×8 / ×16) until the target time.
+func start_sleep(mode: String, amount: int = 1, speed: float = 16.0) -> Dictionary:
+	if sleeping(): return Runtime.fail("BUSY", "已在睡覺")
+	var person: Dictionary = person_actions._person(int(lab.controlled_person_id()), false)
+	var record := Sleep.begin(lab, person, mode, amount, speed)
+	if record.has("error"): return Runtime.fail("REFUSED", str(record.error))
+	sleep_record = record
+	_sleep_minute = int(lab.terrain.site.get("minute", 0))
+	lab.simulation_speed = float(record.speed)
+	update_ui()
+	return Runtime.ok("入睡，預計 %s 醒來" % Calendar.clock_text(float(record.until)), {"until": int(record.until)})
+
+func sleeping() -> bool:
+	return not sleep_record.is_empty()
+
+## Ends the sleep and restores the speed the player had.
+func wake_up(reason: String = "醒來") -> void:
+	if sleep_record.is_empty(): return
+	lab.simulation_speed = float(sleep_record.prior_speed)
+	sleep_record = {}
+	_sleep_minute = -1
+	if lab.terrain != null and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append(reason)
+	update_ui()
+
+## Checked every frame: the target time, combat, a hit or knockout end the sleep; an enemy near is checked once per
+## game minute.
+func advance_sleep() -> void:
+	if sleep_record.is_empty() or lab.terrain == null: return
+	var person: Dictionary = person_actions._person(int(lab.controlled_person_id()), false)
+	var minute := int(lab.terrain.site.get("minute", 0))
+	var reason := ""
+	if minute >= int(sleep_record.until): reason = "睡醒了"
+	elif float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: reason = "戰鬥驚醒"
+	elif person.is_empty() or float(person.get("hp", 0.0)) <= 0.0: reason = "睡眠中斷"
+	elif float(person.get("ko", 0.0)) > 0.0 or bool(person.get("captive", false)) or int(person.get("hit", 0)) != int(sleep_record.hit): reason = "被攻擊驚醒"
+	elif minute != _sleep_minute:
+		_sleep_minute = minute
+		reason = Sleep.wake_reason(lab, sleep_record, person)
+	if not reason.is_empty(): wake_up(reason)

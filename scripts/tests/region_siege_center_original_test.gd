@@ -42,7 +42,8 @@ func _initialize() -> void:
 
 func _deadline_seconds() -> int:
 	# Nekki 2026-11-08 23:22Z (A): the crowd port's headless run gets 600 s (outer 660); visual stays 1080 (outer 1200).
-	return 600 if DisplayServer.get_name() == "headless" else 1080
+	# 2026-11-16 (standing rule: widen budgets for tests that time out): eight cases now take about 680 s alone → 840 (outer 900).
+	return 840 if DisplayServer.get_name() == "headless" else 1080
 
 func _process(_delta: float) -> bool:
 	if not finished and Time.get_ticks_msec() > deadline:

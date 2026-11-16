@@ -2928,7 +2928,7 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 			or int(row.last_sequence) - int(row.first_sequence) + 1 != int(row.steps) \
 			or float(row.action_begin) != previous_action or float(row.game_begin) != previous_game \
 			or float(row.action_end) <= previous_action or float(row.game_end) <= previous_game \
-			or float(row.scale) not in [0.5, 1.0, 2.0, 4.0] \
+			or float(row.scale) not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
 			or float(row.tactical_seconds) > float(row.action_end) - previous_action + 0.000000001:
 			return _fail("CORRUPT_FIRE_JOURNAL", "區間不連續或倍率非法")
 		var expected := (float(row.action_end) - previous_action) * 60.0 * float(row.scale)
@@ -3025,7 +3025,7 @@ static func preview_fire_interval(clock: Dictionary, game_begin: float, action_s
 	var clock_check := validate_fire_clock(clock, game_begin)
 	if not clock_check.ok: return clock_check
 	if not _seconds(action_seconds) or action_seconds <= 0.0 \
-		or action_seconds > 1.0 / 30.0 + 0.000000001 or scale not in [0.5, 1.0, 2.0, 4.0] \
+		or action_seconds > 1.0 / 30.0 + 0.000000001 or scale not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
 		or not _seconds(tactical_seconds) or tactical_seconds > action_seconds or int(clock.sequence) >= 2147483647:
 		return _fail("INVALID_FIRE_INTERVAL", "原 shared-step 區間非法")
 	var action_end := float(clock.action_seconds) + action_seconds

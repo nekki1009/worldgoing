@@ -202,7 +202,7 @@ static func action_for_game(delta_game: float, scale: float, _tactical: float = 
 	return delta_game / scale / 60.0
 
 static func clip_interval(registry: Dictionary, world: float, action: float, elapsed: float, scale: float, local_tactical: float = 0.0, held_player_death_ids: Array[String] = []) -> Dictionary:
-	if not seconds(world) or not seconds(action) or not seconds(elapsed) or elapsed <= 0.0 or scale not in [0.5, 1.0, 2.0, 4.0]: return fail("REGION_INTERVAL", "共同區間非法")
+	if not seconds(world) or not seconds(action) or not seconds(elapsed) or elapsed <= 0.0 or scale not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0]: return fail("REGION_INTERVAL", "共同區間非法")
 	var tactical: float = tactical_seconds(registry, action, elapsed, local_tactical)
 	var delta_game: float = 60.0 * elapsed * scale # TCM (Nekki 11/15 M1 A): one Site rate; tactical is the combat share only
 	var endpoint: float = next_endpoint(registry, world, world + delta_game, held_player_death_ids)

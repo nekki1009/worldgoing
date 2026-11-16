@@ -18,6 +18,8 @@ const ACTION_TIME_EPSILON := 0.000000000001
 ## Accumulated minute-phase drift admitted at a step's end (action seconds); see _region_owner_action_limit.
 const PHASE_BOUNDARY_TOLERANCE := 0.00000001
 const SIMULATION_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
+## 時間與氣候 TC2 (T2 A): sleeping and travelling also run at ×8 and ×16; every interval scale is one of these.
+const INTERVAL_SCALES: Array[float] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
 const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
@@ -1610,6 +1612,7 @@ func _process(delta: float) -> void:
 	_combat_profile_stage("process_total", process_started)
 
 func change_simulation_speed(direction: int) -> float:
+	if site_controller != null and site_controller.sleeping(): site_controller.wake_up("醒來") # the speed keys wake a sleeper
 	var index := SIMULATION_SPEEDS.find(simulation_speed)
 	if index < 0:
 		index = 1

@@ -4,7 +4,7 @@ extends VBoxContainer
 ## one world clock and every committed interval or checkpoint.
 
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
-const SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
+const SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] # TC2 (T2 A): travel also ×8 / ×16
 const CHECKPOINT_REAL_SECONDS := 5.0
 const SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 
