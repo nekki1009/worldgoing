@@ -34,6 +34,10 @@ const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
+const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
+## 時間與氣候 TC7: the calendar year the New Year scan last ran for (runtime; the scan is idempotent per person).
+var _vital_year := -1
+var last_vital_scan: Dictionary = {}
 ## 時間與氣候 TC2: the controlled person's sleep (SiteSleep record; runtime only).
 var sleep_record: Dictionary = {}
 var _sleep_minute := -1
@@ -2749,6 +2753,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 		_combat_ui_elapsed = 0.0
 	if not bool(data.site.paused) and not get_tree().paused:
 		advance_sleep() # TC2
+		vital_year_tick() # TC7
 		vehicles.settle_operators()
 		_work_elapsed += delta
 		_save_elapsed += delta
@@ -6323,6 +6328,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 			# result through the original death entrypoint, not a subtractive tail.
 			var ending_hp := float(pending_hp[id]) if hot_read.is_valid() else float(members[id].hp)
 			var loss := float(hp_before[id]) if ending_hp == 0.0 else float(outcome.damage[id])
+			_mark_vital_hunger(members[id]) # TC7: a hungry year costs health on the next New Year
 			if hot_read.is_valid():
 				pending_hp[int(id)] = _apply_supply_damage(int(id), loss)
 				changed_ids[int(id)] = true
@@ -15063,3 +15069,71 @@ func advance_sleep() -> void:
 		_sleep_minute = minute
 		reason = Sleep.wake_reason(lab, sleep_record, person)
 	if not reason.is_empty(): wake_up(reason)
+
+
+## 時間與氣候 TC7: once per calendar year, every person on this Site ages; health (max HP) follows SiteVital, HP above it
+## is cut through the environment damage entry, and a failed death check kills through the same entry.
+func vital_year_tick() -> void:
+	if lab == null or lab.terrain == null: return
+	var year := int(Calendar.date(float(lab.terrain.site.get("minute", 0))).year)
+	if year == _vital_year: return
+	var first := _vital_year < 0
+	_vital_year = year
+	if first: return # the first look only sets the baseline; New Year runs when the calendar year really turns here
+	last_vital_scan = vital_new_year(year)
+
+func _vital_world_seed() -> int:
+	var world := str(region_slot.pin.get("world_instance_id", "")) if region_slot != null and region_slot.get("pin") is Dictionary else ""
+	return hash(["worldgoing_vital", world])
+
+## Applies New Year `year` to every living person here. Returns {aged, created, cut, died}.
+func vital_new_year(year: int) -> Dictionary:
+	var result := {"aged": 0, "created": 0, "cut": 0, "died": []}
+	var seed_value := _vital_world_seed()
+	var ids: Array = _vital_people()
+	ids.sort()
+	for identity: int in ids:
+		var person: Dictionary = person_actions._person(identity, false)
+		if person.is_empty() or person.get("body") == null or float(person.get("hp", 0.0)) <= 0.0: continue
+		var body: Variant = person.body
+		var vital := TerrainTestCharacter.PersonSocial.vital(body)
+		var kod := int(TerrainTestCharacter.PersonSocial.read(body).get("combat_record", {}).get("kod", 0))
+		if vital.is_empty():
+			vital = Vital.fresh(seed_value, identity, year - 1, kod) # met for the first time: an adult at the closing year
+			result.created = int(result.created) + 1
+		if int(vital.year) >= year: continue
+		var housed: bool = not lab.terrain.site.get("housing", {}).get(str(identity), {}).is_empty()
+		var applied := Vital.new_year(vital, year, seed_value, identity, housed, kod)
+		TerrainTestCharacter.PersonSocial.set_vital(body, applied.vital)
+		result.aged = int(result.aged) + 1
+		var hp := float(person.hp)
+		if bool(applied.dies):
+			_apply_supply_damage(identity, hp)
+			result.died.append(identity)
+		elif hp > float(applied.max_hp):
+			_apply_supply_damage(identity, hp - float(applied.max_hp))
+			result.cut = int(result.cut) + 1
+	return result
+
+## Every person id on this Site (actors, Army rows, crowd rows).
+func _vital_people() -> Array:
+	var ids := {}
+	for actor: Variant in lab.combat_actors:
+		if is_instance_valid(actor) and int(actor.person_id) > 0: ids[int(actor.person_id)] = true
+	for team: Variant in lab.combat_armies:
+		if not is_instance_valid(team) or not team.combat_enabled: continue
+		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
+			ids[int(team.combat_identity(int(index)))] = true
+	if _crowd_active():
+		for owner: Variant in lab.team_owners():
+			if not is_instance_valid(owner): continue
+			for key: Variant in owner.combat_units.keys():
+				ids[int(owner.combat_identity(int(key)))] = true
+	ids.erase(0)
+	return ids.keys()
+
+func _mark_vital_hunger(body: Variant) -> void:
+	var vital := TerrainTestCharacter.PersonSocial.vital(body)
+	if vital.is_empty() or bool(vital.starved): return
+	vital.starved = true
+	TerrainTestCharacter.PersonSocial.set_vital(body, vital)

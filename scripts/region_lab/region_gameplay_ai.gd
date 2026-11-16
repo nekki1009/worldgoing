@@ -584,7 +584,9 @@ static func _crowd_team_summary(team: CrowdPersonOwner, lab: TerrainLab, morale:
 		count += 1
 		if not team.combat_can_act(index): continue
 		var identity: int = team.combat_identity(index)
-		var hp := clampf(float(team.combat_hot_get(index, &"hp", 0.0)), 0.0, 100.0)
+		var vital: Dictionary = TerrainTestCharacter.PersonSocial.vital(team.combat_units[index])
+		var max_hp := float(vital.get("max_hp", 100.0)) if not vital.is_empty() else 100.0 # TC7: health is each person's max HP
+		var hp := clampf(float(team.combat_hot_get(index, &"hp", 0.0)), 0.0, maxf(1.0, max_hp)) * 100.0 / maxf(1.0, max_hp)
 		var spirit := float(morale.get(identity, 100.0))
 		var score := SiteCombatRules.exchange_score({"ability": 50.0, "training": training, "morale": spirit, "fatigue": fatigue})
 		power += hp / 100.0 * maxf(0.1, score / 50.0)

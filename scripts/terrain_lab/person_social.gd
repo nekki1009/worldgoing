@@ -15,6 +15,9 @@ extends RefCounted
 ## "official" (文官) on v1 and v3 packets; missing = "none". It follows the person (team change, captivity, save/load).
 ## Civil service (文武官 W3): an optional `civil_service` {seat, since, seen} counting a clerk's continuous days in one
 ## civil seat (SiteCivilPromotion); missing = not counting.
+## Vital (時間與氣候 TC7): an optional `vital` {birth_year, base, max_hp, year, ko, starved} (SiteVital); missing = an
+## adult of full health, created on the next New Year scan.
+const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -38,6 +41,9 @@ static func valid(packet: Variant) -> bool:
 		extra += 1
 	if packet.has("civil_service"):
 		if not valid_civil_service(packet.civil_service): return false
+		extra += 1
+	if packet.has("vital"):
+		if not Vital.valid(packet.vital): return false
 		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
@@ -99,6 +105,7 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 	if valid_combat_record(packet.get("combat_record")): result["combat_record"] = packet.combat_record.duplicate(true)
 	if packet.get("civil_role") in ["clerk", "official"]: result["civil_role"] = str(packet.civil_role)
 	if valid_civil_service(packet.get("civil_service")): result["civil_service"] = packet.civil_service.duplicate(true)
+	if Vital.valid(packet.get("vital")): result["vital"] = Vital.normalized(packet.vital)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -204,6 +211,19 @@ static func set_civil_service(body: Variant, value: Dictionary) -> bool:
 		if not packet.has("civil_service"): return true
 		packet.erase("civil_service")
 	else: packet["civil_service"] = value.duplicate(true)
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+	return true
+
+static func vital(body: Variant) -> Dictionary:
+	var stored: Variant = read(body).get("vital")
+	return Vital.normalized(stored) if Vital.valid(stored) else {}
+
+static func set_vital(body: Variant, value: Dictionary) -> bool:
+	if not Vital.valid(value): return false
+	var packet := read(body).duplicate(true)
+	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
+	packet["vital"] = Vital.normalized(value)
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 	return true
