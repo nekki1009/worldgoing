@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-16 23:00（台北）
+更新：2026-11-17 01:15（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,12 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-17 01:15（台北）土匪 B4b／B4c
+- 已提交（未推送）：6a3e282 TC10；2f4ca8b B4b 保護費（SiteBanditProtection、財政頁付／拒）；698bd3d B4c 買路錢規則；18221f8 在途隊伍的勢力／人數／扣糧工具。
+- B4c 尚未接上大地圖相遇。接點：RegionSaveSlot.queue_region_gameplay_endpoints 排的 "npc:<token>:player-contact:…" 事件，consume_region_player_event 已有 skipped_contact 出口；付款後存回在途隊伍照 5290 行附近的寫法（新 party 文件＋journey.party_sha256＋_publish）。風險：10839 行附近把已完成的 player_encounter 當成已接受接觸，不可盲目手動完成事件。
+- 需要先做的測試情境：玩家在途＋土匪隊伍在途、路線交會。現有 region_remote_nation_original_test 的相遇是「玩家在活動 Site」，不是在途，不能直接用。
+- 詳見記憶 bandit-b4-progress。
 
 ## 2026-11-16 23:00（台北）時間與氣候 TC4–TC10 提交
 - 已提交（未推送）：df72a19 TC4 晝夜光色與夜間光暈；e5582cb TC5a 雨霧畫面；5b88280 天氣音效（Nekki 09:43Z 選 A，Codex CC-20261116-195，CC0／CC BY 3.0，assets/audio/WEATHER_CREDITS.md）；ef4c3ba TC9 大地圖行進與露天休息、世界氣候開關（勢力登錄 `climate`）；a0a4dea TC5b 風雨接火攻（歷史滿 4096 筆時兩兩合併）；6a3e282 TC10 遠程命中受天氣與夜晚影響（同一段 GD 規則，DLL 未改）。
