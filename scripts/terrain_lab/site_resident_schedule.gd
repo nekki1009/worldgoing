@@ -75,7 +75,8 @@ static func diligence_of(person: Dictionary) -> int:
 ## starts the normal step-by-step housing return; one still on scheduled work is taken off it first (C2). In a work phase
 ## a resident whose household has a job (SiteResidentWork) is handed to SiteWorkTeam, which walks him to the job's zone.
 ## Refusals (threat, combat, a moving person) are counted, never forced. Returns {started, refused, home, working, sent}.
-static func drive(controller: Variant, minute: float) -> Dictionary:
+## `alarm` (平民 C3): danger in the settlement sends every civilian home at once, through a fight; work stops.
+static func drive(controller: Variant, minute: float, alarm: bool = false) -> Dictionary:
 	var lab: Variant = controller.lab
 	var actions: RefCounted = controller.person_actions
 	var result := {"started": 0, "refused": 0, "home": 0, "working": 0, "sent": 0}
@@ -88,7 +89,7 @@ static func drive(controller: Variant, minute: float) -> Dictionary:
 		var person: Dictionary = actions._person(identity, false)
 		if person.is_empty() or float(person.hp) <= 0.0 or not Housing.schedule_authority(lab, person): continue
 		var place := place_at(minute_of_day(minute), diligence_of(person))
-		if shelter and place in ["work", "out"]: place = "home"
+		if (shelter or alarm) and place in ["work", "out"]: place = "home"
 		if place == "work":
 			if work_team.is_assigned(identity):
 				result.working = int(result.working) + 1
@@ -106,7 +107,51 @@ static func drive(controller: Variant, minute: float) -> Dictionary:
 			result.home = int(result.home) + 1
 			continue
 		if actions.is_busy(identity) or bool(person.moving): continue
-		var begun: Dictionary = actions.begin_housing_return(identity, Housing.SCHEDULE_REQUESTER)
+		var begun: Dictionary = actions.begin_housing_return(identity, Housing.SCHEDULE_REQUESTER, alarm)
 		if begun.ok: result.started = int(result.started) + 1
 		else: result.refused = int(result.refused) + 1
 	return result
+
+# --- 平民 C3a: danger (reports/civilian-site-behavior-plan.md §4.5) -------------------------------------------------
+## Residents stay home ALARM_HOLD_MINUTES after the danger has passed.
+const ALARM_HOLD_MINUTES := 30
+
+## Danger now: the Site is fighting, or an armed person (anyone not a civilian) hostile to the settlement's owner stands
+## on the Site. Without a settlement the residents' own faction is the one threatened.
+static func danger(lab: Variant) -> bool:
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return true
+	var owner := int(lab.terrain.site.get("settlement", {}).get("owner_faction", -1)) if lab.terrain.site.get("settlement") is Dictionary else -1
+	if owner < 0:
+		for key: Variant in lab.terrain.site.get("housing", {}):
+			var resident: Dictionary = lab.site_controller.person_actions._person(int(key), false)
+			if not resident.is_empty():
+				owner = int(resident.faction)
+				break
+	if owner < 0: return false
+	var registry: Dictionary = {}
+	var now := 0.0
+	var slot: Variant = lab.site_controller.region_slot
+	if slot != null:
+		registry = slot.control.get("faction_registry", {})
+		now = float(slot.control.logical_game_seconds)
+	var hostile := func(faction: int) -> bool: return faction >= 0 and RegionDiplomacy.hostile(registry, owner, faction, now)
+	if lab.crowd_site != null and lab.crowd_site.active:
+		for team: Dictionary in lab.crowd_site.teams:
+			if bool(team.get("departed", false)) or not hostile.call(int(team.get("faction", -1))): continue
+			for person: Variant in team.get("person_ids", []):
+				if _armed(lab, int(person)): return true
+		return false
+	for army: TerrainArmy in lab.combat_armies:
+		if not army.combat_enabled or not hostile.call(int(army.faction_id)): continue
+		for index: int in army.combat_units.size():
+			if _armed(lab, army.combat_identity(index)): return true
+	for actor: Variant in lab.combat_actors:
+		if is_instance_valid(actor) and lab.actor_present(actor) and hostile.call(int(actor.faction_id)) and _armed(lab, int(actor.person_id)): return true
+	return false
+
+static func _armed(lab: Variant, identity: int) -> bool:
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+	if person.is_empty() or float(person.hp) <= 0.0 or bool(person.get("captive", false)): return false
+	var body: Variant = person.get("body")
+	var role: String = str(body.get("military_role", "soldier")) if body is Dictionary else (str(body.military_role) if body is Object and "military_role" in body else "soldier")
+	return role != "civilian"

@@ -15012,16 +15012,26 @@ func _faction_label(faction_id: int) -> String:
 ## Long-absence catch-up (Nekki 11/16 A): set while a cold Site settles quiet hours offline; no live schedule runs.
 var coarse_offline := false
 
+## 平民 C3a: the minute until which residents stay home after danger (runtime; a reload re-reads the danger).
+var resident_alarm_until := -1.0
+var _resident_fighting := false
+
 ## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
 func resident_schedule_tick() -> void:
 	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)) or coarse_offline: return
 	if lab.terrain.site.get("housing", {}).is_empty(): return
 	var minute := float(lab.terrain.site.get("minute", 0))
 	var check := ResidentSchedule.check_index(minute)
-	if check == _resident_check: return
+	# 平民 C3a: a fight starting sends the residents home at once, not at the next ten-minute check.
+	var fighting := float(lab.terrain.site.get("combat_left", 0.0)) > 0.0
+	var onset := fighting and not _resident_fighting
+	_resident_fighting = fighting
+	if check == _resident_check and not onset: return
+	if check != _resident_check and ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
 	_resident_check = check
-	if ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
-	last_resident_schedule = ResidentSchedule.drive(self, minute)
+	if ResidentSchedule.danger(lab): resident_alarm_until = minute + ResidentSchedule.ALARM_HOLD_MINUTES
+	last_resident_schedule = ResidentSchedule.drive(self, minute, minute < resident_alarm_until)
+	last_resident_schedule["alarm"] = minute < resident_alarm_until
 
 ## 平民 C2: the 戶籍 duty's authority over the settlement's households. Ok with {faction, decider} when `requester_id` is
 ## the duty's decider (the head acts while the seat is vacant).

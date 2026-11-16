@@ -2275,11 +2275,11 @@ func _ship_loot_contact(executor: Dictionary, source: Dictionary) -> bool:
 # Add Housing preload and append these methods to SitePersonActions.
 # Skip housing_return in game-WORK advance and branch before after-contact
 # _job_context. cancel keeps the original pending step until physically settled.
-func begin_housing_return(person_id: int, requester_id: int) -> Dictionary:
+func begin_housing_return(person_id: int, requester_id: int, flee: bool = false) -> Dictionary:
 	if is_busy(person_id): return Runtime.fail("BUSY")
 	var registered: Dictionary = Housing.relation(lab, person_id)
 	if registered.is_empty(): return Runtime.fail("NO_TARGET", "須先分配原住宅")
-	var checked: Dictionary = Housing.context(lab, person_id, str(registered.house_id), requester_id)
+	var checked: Dictionary = Housing.context(lab, person_id, str(registered.house_id), requester_id, false, flee)
 	if not checked.ok: return checked
 	if checked.person.owner is CrowdOwner and not checked.person.owner.crowd_site.crowd.has_method("order_housing_step"): return Runtime.fail("CROWD_BUILD_MISMATCH")
 	if Housing._attends(lab, person_id): return Runtime.ok("原人物已在家")
@@ -2287,7 +2287,7 @@ func begin_housing_return(person_id: int, requester_id: int) -> Dictionary:
 	var route: Array[Vector2i] = lab.terrain.path_between(checked.person.cell, destination, func(cell: Vector2i) -> bool: return prison_blocked(cell, [person_id]))
 	if checked.person.cell != destination and route.is_empty(): return Runtime.fail("UNREACHABLE")
 	var job := _new_job(checked.person, "housing_return", 0)
-	job.merge({"house_id": str(registered.house_id), "cell": int(registered.cell), "requester_id": requester_id, "duration": 0.0,
+	job.merge({"house_id": str(registered.house_id), "cell": int(registered.cell), "requester_id": requester_id, "duration": 0.0, "flee": flee,
 		"terrain": lab.terrain, "site_state": lab.terrain.site, "cancelled": false, "reason": "", "route_elapsed": 0.5})
 	_jobs[str(person_id)] = job
 	if person_id == int(lab.controlled_person_id()): lab._clear_movement_input()
@@ -2297,7 +2297,7 @@ func _housing_job_context(job: Dictionary) -> Dictionary:
 	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_SITE")
 	var registered: Dictionary = Housing.relation(lab, int(job.executor_id))
 	if str(registered.get("house_id", "")) != str(job.house_id) or int(registered.get("cell", -1)) != int(job.cell): return Runtime.fail("STALE_SOURCE")
-	var checked: Dictionary = Housing.context(lab, int(job.executor_id), str(job.house_id), int(job.requester_id), true)
+	var checked: Dictionary = Housing.context(lab, int(job.executor_id), str(job.house_id), int(job.requester_id), true, bool(job.get("flee", false)))
 	if not checked.ok: return checked
 	if int(checked.person.hit) != int(job.executor_hit): return Runtime.fail("INTERRUPTED", "原人物受擊；保留住房並收束原步進")
 	if not checked.layout.slots.has(int(job.cell)): return Runtime.fail("STALE_SOURCE", "原返家格已失效")

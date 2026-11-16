@@ -75,7 +75,9 @@ static func _commands_current(lab: Variant, requester_id: int, person: Dictionar
 	var requester: Dictionary = lab.site_controller.person_actions._person(requester_id)
 	return not requester.is_empty() and lab.site_controller.person_actions._ready(requester) and _same_team_authority(lab, requester, person)
 
-static func context(lab: Variant, identity: int, house_id: String, requester_id: int, allow_moving: bool = false) -> Dictionary:
+## `flee` (平民 C3): a civilian the schedule sends home from danger may start and keep walking during a fight or near an
+## enemy; every other refusal stays.
+static func context(lab: Variant, identity: int, house_id: String, requester_id: int, allow_moving: bool = false, flee: bool = false) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null: return Runtime.fail("NO_TARGET")
 	if lab.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
 	var actions: RefCounted = lab.site_controller.person_actions
@@ -89,13 +91,14 @@ static func context(lab: Variant, identity: int, house_id: String, requester_id:
 	if not scheduled and not _commands_current(lab, requester_id, person) and not (allow_moving and requester_id == int(lab.controlled_person_id()) and (requester_id == identity or _same_team_authority(lab, actions._person(requester_id), person))): return Runtime.fail("NO_AUTHORITY", "須由本人或原當前隊長操作")
 	var formation := _formation(lab, person)
 	if int(formation.get("order", -1)) != int(TerrainArmy.CombatOrder.HOLD) or bool(formation.get("garrisoned", false)) or bool(formation.get("routed", false)): return Runtime.fail("BUSY", "原人物須保持 HOLD 且未駐營或潰退")
-	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須先脫戰")
+	var fleeing := flee and scheduled
+	if not fleeing and float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須先脫戰")
 	if not bool(person.moving) and not actions._ready(person): return Runtime.fail("BUSY")
 	if not allow_moving and not actions._prison_stopped(person): return Runtime.fail("BUSY")
 	if person.body.get("site_exited") == true or person.body.get("departed") == true: return Runtime.fail("BUSY")
 	if actions.is_guarding(identity) or lab.site_controller.vehicles.is_operator(identity) or lab.site_controller.vehicles.is_siege_crew(identity) or not lab.site_controller.vehicles.ship_for_person(identity).is_empty() or lab.site_controller._is_delivering_person(identity): return Runtime.fail("BUSY", "原人物仍有其他職務")
 	if person.owner is TerrainArmy and not person.body.get("work_task", {}).is_empty(): return Runtime.fail("BUSY")
-	if bool(actions._threat(person, {})): return Runtime.fail("THREAT")
+	if not fleeing and bool(actions._threat(person, {})): return Runtime.fail("THREAT")
 	return Runtime.ok("", {"person": person, "layout": layout})
 
 static func assign(lab: Variant, identity: int, house_id: String, requester_id: int, selected_cell: int = -1) -> Dictionary:
