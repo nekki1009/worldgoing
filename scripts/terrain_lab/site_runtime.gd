@@ -13545,10 +13545,20 @@ static func school_build_guard(data: TerrainData, kind: String, cells: Array[int
 	if not inside: return fail("REQUIREMENTS", "%s須建在聚落轄區內" % str(FEATURES[kind].name))
 	for feature: Dictionary in data.site.get("features", {}).values():
 		if str(feature.get("kind", "")) == kind: return fail("LIMIT", "每座聚落只能有一座%s" % str(FEATURES[kind].name))
-	if kind == "state_academy": return fail("TECH_REQUIRED", "國學須國家已知技藝傳習制度（考試學校 E3）")
+	if kind == "state_academy":
+		var nation := settlement_nation(data)
+		if nation.is_empty() or not Technology.scope_known(nation.get("technology", {}), "N07"): return fail("TECH_REQUIRED", "國學須國家已知技藝傳習制度（N07）")
 	if not formal_building_art_available(kind, quarter):
 		return fail("MISSING_ART", "%s缺正式美術資產；不以占位圖替代" % str(FEATURES[kind].name))
 	return ok()
+
+## The nation whose faction owns this Site's settlement ({} when none).
+static func settlement_nation(data: TerrainData) -> Dictionary:
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if settlement.is_empty(): return {}
+	for nation: Variant in data.site.get("equipment_nations", {}).values():
+		if nation is Dictionary and int(nation.get("faction_id", -1)) == int(settlement.get("owner_faction", -2)): return nation
+	return {}
 
 static func survey_stakes_art_available(quarter: int) -> bool:
 	if quarter < 0 or quarter > 3: return false

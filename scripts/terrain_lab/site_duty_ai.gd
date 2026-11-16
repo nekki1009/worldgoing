@@ -9,6 +9,7 @@ extends RefCounted
 const RegionPolicy = preload("res://scripts/region_lab/region_gameplay_ai.gd")
 const TrainingGround = preload("res://scripts/terrain_lab/site_training_ground.gd")
 const CivilPromotion = preload("res://scripts/terrain_lab/site_civil_promotion.gd")
+const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const REVIEW_GAME_SECONDS := 60.0
 # Military axes (risk 勇猛↔謹慎, casualty 愛兵↔不惜損失, achievement 好功↔淡泊)
@@ -268,6 +269,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 	if not settlement_offices.is_empty() and bool(settlement_offices.duty_ai):
 		review_settlement_personnel(lab, controlled)
 		review_prison(lab, controlled)
+		review_schools(lab, controlled)
 	if not cadence.is_empty():
 		cadence.round = review_round
 		cadence.seat_waits = _seat_waits.duplicate(true)
@@ -1165,3 +1167,71 @@ static func _technology_native_work_consent(team: TerrainArmy, physical: Variant
 	# locally. Do not rewrite, snapshot/restore or assign the disabled Army registry.
 	# The original PA alone records this named decision after scope revalidation.
 	return SiteRuntime.ok("", {"consent": consent})
+
+
+## 考試學校 E4 (§7): the NPC 學正's school round. One action per round; never for the controlled decider.
+const SCHOOL_FILL_DAYS := 30
+static var _school_filled_day: Dictionary = {}
+
+static func review_schools(lab: Variant, controlled: int) -> Dictionary:
+	var resolved: Dictionary = Settlement.duty_resolve(lab, Schools.DUTY, true)
+	if not bool(resolved.ok) or int(resolved.decider) <= 0 or int(resolved.decider) == controlled: return {}
+	var decider := int(resolved.decider)
+	var data: TerrainData = lab.terrain
+	var settlement: Dictionary = Settlement.record(data)
+	var today := int(floorf(float(data.site.get("minute", 0)) / 1440.0))
+	var people: Array[int] = []
+	for identity: int in _faction_people(lab, int(settlement.owner_faction)):
+		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+		if identity == controlled or person.is_empty() or person.get("body") == null or Schools.is_seated(data, identity): continue
+		if Settlement.cell_in_jurisdiction(data, Vector2i(person.cell)): people.append(identity)
+	var keys: Array = []
+	for key: String in data.site.get("features", {}):
+		var feature: Dictionary = data.site.features[key]
+		if Schools.KINDS.has(str(feature.get("kind", ""))) and int(feature.get("owner_faction", -1)) == int(settlement.owner_faction) and str(feature.get("stage", "")) == "complete": keys.append(key)
+	keys.sort()
+	for key: String in keys:
+		var record: Dictionary = Schools.records(data).get(key, Schools.empty_record())
+		var spec := Schools.spec_of(data, key)
+		if record.teachers.size() < int(spec.teachers):
+			var best := -1
+			var best_learning := -1
+			for identity: int in people:
+				var body: Variant = lab.site_controller.person_actions._person(identity, false).body
+				if Schools.teacher_refusal(data, key, body).is_empty() and PersonSocial.learning(body) > best_learning:
+					best = identity
+					best_learning = PersonSocial.learning(body)
+			if best > 0: return lab.site_controller.school_seat(key, best, "teacher", true, decider)
+		var fill_key := "%s:%s" % [str(data.site.get("id", "")), key]
+		if record.students.size() < int(spec.students) and today - int(_school_filled_day.get(fill_key, -SCHOOL_FILL_DAYS)) >= SCHOOL_FILL_DAYS:
+			var pool: Array[int] = []
+			for identity: int in people:
+				if PersonSocial.learning(lab.site_controller.person_actions._person(identity, false).body) < int(spec.cap): pool.append(identity)
+			pool.sort_custom(func(a: int, b: int) -> bool:
+				var la := PersonSocial.learning(lab.site_controller.person_actions._person(a, false).body)
+				var lb := PersonSocial.learning(lab.site_controller.person_actions._person(b, false).body)
+				if la != lb: return la < lb
+				var da := int(personality(a, null, lab).get("diligence", 50))
+				var db := int(personality(b, null, lab).get("diligence", 50))
+				return da > db if da != db else a < b)
+			var seated := 0
+			for identity: int in pool:
+				if record.students.size() + seated >= int(spec.students): break
+				if bool(lab.site_controller.school_seat(key, identity, "student", true, decider).get("ok", false)): seated += 1
+			_school_filled_day[fill_key] = today
+			if seated > 0: return SiteRuntime.ok("學正補足學生 %d 名" % seated)
+		if str(lab.terrain.site.features[key].kind) == "district_school" and record.exam.is_empty() \
+				and (int(record.last_exam_day) < 0 or today - int(record.last_exam_day) >= int(Schools.EXAMS.district.cooldown_days)) \
+				and int(data.site.get("inventory", {}).get("grain", 0)) >= 20:
+			var candidates: Array[int] = []
+			for identity: int in _faction_people(lab, int(settlement.owner_faction)):
+				var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+				if identity == controlled or person.is_empty() or person.get("body") == null or not Settlement.cell_in_jurisdiction(data, Vector2i(person.cell)): continue
+				if Schools.candidate_refusal("district", person.body, today).is_empty(): candidates.append(identity)
+			if candidates.size() >= 3:
+				candidates.sort_custom(func(a: int, b: int) -> bool:
+					var la := PersonSocial.learning(lab.site_controller.person_actions._person(a, false).body)
+					var lb := PersonSocial.learning(lab.site_controller.person_actions._person(b, false).body)
+					return la > lb if la != lb else a < b)
+				return lab.site_controller.open_school_exam(key, candidates.slice(0, int(spec.students) * 2), decider)
+	return {}

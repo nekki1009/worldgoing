@@ -52,6 +52,7 @@ func _run() -> void:
 	SiteOffices.position(offices, registry).holder = clerk
 	SiteOffices.position(offices, prison).holder = plain
 	PersonSocial.set_civil_role(actions._person(clerk).body, "clerk")
+	PersonSocial.set_learning(actions._person(clerk).body, 0) # 考試學校 E3: an illiterate clerk keeps the 60-day rule (literate: 45)
 	var first := _day(data, lab, 10)
 	if not _ok(int(first.counting) == 1 and PersonSocial.civil_service(actions._person(clerk).body).since == 10 and PersonSocial.civil_service(actions._person(plain).body).is_empty(), "the clerk starts counting; a person with no civil role does not", first): return
 	if not _ok(int(_day(data, lab, 10).counting) == 1 and PersonSocial.civil_service(actions._person(clerk).body).seen == 10, "the same day counts once"): return

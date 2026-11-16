@@ -12,6 +12,8 @@ const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
 const PROMOTE_DAYS := 60
+## 考試學校 E3 (§4.5): a literate clerk (learning ≥ PersonSocial.LITERATE) needs 45 days.
+const LITERATE_PROMOTE_DAYS := 45
 const DAY_MINUTES := 1440
 
 ## [{key, offices}] for every organization with offices on this Site, sorted by key.
@@ -81,7 +83,8 @@ static func daily(lab: Variant) -> Dictionary:
 			service = {"seat": str(seats[identity]), "since": today, "seen": today}
 		elif int(service.seen) != today:
 			service["seen"] = today
-		if today - int(service.since) >= PROMOTE_DAYS:
+		var needed := LITERATE_PROMOTE_DAYS if PersonSocial.learning(body) >= PersonSocial.LITERATE else PROMOTE_DAYS
+		if today - int(service.since) >= needed:
 			PersonSocial.set_civil_role(body, "official")
 			PersonSocial.set_civil_service(body, {})
 			promoted.append(identity)

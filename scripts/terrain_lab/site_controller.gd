@@ -2775,7 +2775,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan), checked_runtime_clock_interval())
 		_advance_settlement(delta, work_interval, combat_before)
 		ResearchInstitutions.advance(data, person_actions, work_interval)
-		Schools.advance(data, person_actions, work_interval) # 考試學校 E1
+		_school_results(Schools.advance(data, person_actions, work_interval)) # 考試學校 E1–E3
 		if checked_runtime_clock_interval().is_empty() and worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
@@ -7606,6 +7606,7 @@ func _build_building_actions(column: VBoxContainer) -> void:
 	building_actions.housing = _button(column, "住宅名單／分配／返家／離住", "ManageHousing", _open_housing)
 	building_actions.training = _button(column, "在校場開始本隊訓練", "TrainAtGround", func() -> void: show_result(order_controlled_training(true, feature_key)))
 	building_actions.shipyard = _button(column, "在車輛與運輸視窗造船…", "OpenSelectedShipyard", _open_selected_shipyard)
+	building_actions.school = _button(column, "學校名單／指派師生／開考", "ManageSchool", _open_school) # 考試學校 E4
 
 func _feature_stock_choices(choice: OptionButton, preferred: String = "") -> void:
 	choice.clear()
@@ -8092,6 +8093,7 @@ func _sync_building_actions() -> void:
 	var training_facility := kind == "training_ground" or (kind == "barracks" and Runtime.barracks_type(feature) == "standard")
 	building_actions.training.disabled = not complete or not training_facility
 	building_actions.shipyard.disabled = not complete or kind != "shipyard"
+	building_actions.school.disabled = not complete or not Schools.KINDS.has(kind)
 	building_actions.training.text = "在西式軍營開始本隊訓練" if kind == "barracks" and training_facility else "在校場開始本隊訓練"
 	building_actions.resize.disabled = not complete or kind == "bridge" or int(feature.get("layout_version", 0)) != 1 or str(Runtime.FEATURES.get(kind, {}).get("placement", "fixed")) == "fixed"
 	building_actions.cancel_resize.disabled = modes.selected != 5
@@ -15199,6 +15201,30 @@ func school_seat(key: String, identity: int, role: String, seated: bool, request
 	if seated and (int(person.faction) != int(settlement.owner_faction) or not Settlement.cell_in_jurisdiction(lab.terrain, Vector2i(person.cell))): return Runtime.fail("NO_AUTHORITY", "須是本聚落轄區內的同陣營人物")
 	return Schools.set_seat(lab.terrain, key, identity, person.body, role, seated)
 
+## 考試學校 E3 (§5.3): a 國試 pass gives the new 文官 +2 prestige and its host +1.
+func _school_results(results: Dictionary) -> void:
+	var hosts := {}
+	for result: Dictionary in results.get("exams", []):
+		if str(result.exam) != "state" or not bool(result.passed): continue
+		adjust_reputation(int(result.person), 2.0, 0.0)
+		hosts[int(result.host)] = true
+	for host: int in hosts: adjust_reputation(host, 1.0, 0.0)
+
+## 考試學校 E3 (§5.1, §6): the 教養 duty (nation.education; the nation head acts while vacant) opens a 國試 at the
+## nation's 國學 for clerks of the nation inside the settlement's jurisdiction.
+func open_state_exam(key: String, candidate_ids: Array, requester_id: int) -> Dictionary:
+	var nation := Runtime.settlement_nation(lab.terrain)
+	if nation.is_empty(): return Runtime.fail("UNESTABLISHED", "沒有國家")
+	var resolved: Dictionary = equipment_orders.nation_duty_resolve(nation, "nation.education", true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, EquipmentOrders.nation_offices(nation, true))
+	var people: Array = []
+	for identity: Variant in candidate_ids:
+		var person: Dictionary = person_actions._person(int(identity), false)
+		if person.is_empty() or person.get("body") == null or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)) or int(person.faction) != int(nation.get("faction_id", -1)) or not Settlement.cell_in_jurisdiction(lab.terrain, Vector2i(person.cell)):
+			return Runtime.fail("NOT_ELIGIBLE", "#%d 須是本國在國都轄區內清醒自由的人物" % int(identity))
+		people.append(person)
+	return Schools.open_exam(lab.terrain, key, "state", requester_id, people)
+
 ## 考試學校 E2 (§5): the 學正 (or the acting head) opens a 鄉試 at the settlement's 鄉學 for `candidate_ids`.
 func open_school_exam(key: String, candidate_ids: Array, requester_id: int) -> Dictionary:
 	var settlement: Dictionary = Settlement.record(lab.terrain)
@@ -15214,3 +15240,84 @@ func open_school_exam(key: String, candidate_ids: Array, requester_id: int) -> D
 			return Runtime.fail("NOT_ELIGIBLE", "#%d 須是本聚落轄區內清醒自由的同陣營人物" % int(identity))
 		people.append(person)
 	return Schools.open_exam(lab.terrain, key, "district", requester_id, people)
+
+
+## 考試學校 E4 (§8.2–§8.3): the school page.
+func _open_school(host: Window = null) -> void:
+	var key := feature_key
+	if _existing_dialog("school", key, host): return
+	var spec := Schools.spec_of(lab.terrain, key)
+	if spec.is_empty(): show_result(Runtime.fail("NO_TARGET", "不是學校")); return
+	var requester_id := int(lab.controlled_person_id())
+	var dialog := Window.new()
+	dialog.title = "%s #%s" % [str(Runtime.FEATURES[str(lab.terrain.site.features[key].kind)].name), key]
+	dialog.size = Vector2i(600, 520)
+	dialog.min_size = Vector2i(460, 400)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 14)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	var summary := _label(column, "", 15)
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var listing := ItemList.new()
+	listing.name = "SchoolSeats"
+	listing.custom_minimum_size.y = 150
+	listing.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(listing)
+	var choice := _options(column, [], "SchoolPerson")
+	var status := _label(column, "", 15)
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var people: Array[int] = []
+	var update := func() -> void:
+		var record: Dictionary = Schools.records(lab.terrain).get(key, Schools.empty_record())
+		listing.clear()
+		var unpaid := ""
+		for identity: int in record.teachers:
+			if not record.paid.has(identity) and int(record.paid_day) >= 0: unpaid = " · 缺糧停課"
+		var exam_text := "無" if record.exam.is_empty() else "%s進行中 %.0f／%.0f 有效秒" % ["鄉試" if str(record.exam.kind) == "district" else "國試", float(record.exam.elapsed), Schools.EXAM_SECONDS]
+		summary.text = "老師 %d／%d · 學生 %d／%d · 學業上限 %d%s\n老師每日 1 糧；師生同在門口每 %.0f 有效秒學生學業 +1。\n考試：%s · 上次第 %s 日" % [record.teachers.size(), int(spec.teachers), record.students.size(), int(spec.students), int(spec.cap), unpaid, Schools.LESSON_SECONDS, exam_text, str(int(record.last_exam_day) + 1) if int(record.last_exam_day) >= 0 else "—"]
+		for identity: int in record.teachers + record.students:
+			var person := person_actions._person(identity, false)
+			var learned := PersonSocialPacket.learning(person.body) if not person.is_empty() and person.get("body") != null else 0
+			listing.add_item("%s #%d%s · 學業 %d%s" % ["老師" if record.teachers.has(identity) else "學生", identity, qualification_tag(identity), learned, "（識字）" if learned >= PersonSocialPacket.LITERATE else ""])
+		choice.clear()
+		people.clear()
+		for identity: int in _vital_people():
+			var person := person_actions._person(identity, false)
+			if person.is_empty() or person.get("body") == null or int(person.faction) != int(lab.terrain.site.features[key].get("owner_faction", -1)): continue
+			choice.add_item("#%d%s · 學業 %d · 預估分 %.0f" % [identity, qualification_tag(identity), PersonSocialPacket.learning(person.body), Schools.preview_score(person.body)])
+			choice.set_item_metadata(choice.item_count - 1, identity)
+			people.append(identity)
+	var invoke := func(action: String) -> void:
+		if people.is_empty() and action != "exam": return
+		var identity := int(choice.get_item_metadata(choice.selected)) if choice.item_count > 0 else -1
+		var result: Dictionary
+		match action:
+			"teacher": result = school_seat(key, identity, "teacher", true, requester_id)
+			"student": result = school_seat(key, identity, "student", true, requester_id)
+			"leave":
+				var record: Dictionary = Schools.records(lab.terrain).get(key, Schools.empty_record())
+				result = school_seat(key, identity, "teacher" if record.teachers.has(identity) else "student", false, requester_id)
+			"exam":
+				var kind := "state" if str(lab.terrain.site.features[key].kind) == "state_academy" else "district"
+				var day := int(int(lab.terrain.site.get("minute", 0)) / 1440)
+				var eligible: Array = []
+				for each: int in people:
+					var person := person_actions._person(each, false)
+					if Schools.candidate_refusal(kind, person.body, day).is_empty(): eligible.append(each)
+				eligible = eligible.slice(0, int(spec.students) * 2)
+				result = open_state_exam(key, eligible, requester_id) if kind == "state" else open_school_exam(key, eligible, requester_id)
+		status.text = str(result.get("message", ""))
+		show_result(result)
+		update.call()
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	_button(row, "任為老師", "SchoolTeacher", func() -> void: invoke.call("teacher"))
+	_button(row, "收為學生", "SchoolStudent", func() -> void: invoke.call("student"))
+	_button(row, "離席", "SchoolLeave", func() -> void: invoke.call("leave"))
+	_button(column, "開考（全部合格考生，至多學生席兩倍）", "SchoolExam", func() -> void: invoke.call("exam"))
+	dialog.close_requested.connect(dialog.queue_free)
+	update.call()
+	_show_dialog(dialog, "school", key, host)

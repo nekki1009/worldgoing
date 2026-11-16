@@ -274,7 +274,7 @@ static func _advance_exam(data: TerrainData, actions: Variant, key: String, reco
 			PersonSocial.set_civil_role(person.body, str(exam_spec.role))
 			passed.append(identity)
 		if not results.has("exams"): results["exams"] = []
-		results.exams.append({"person": identity, "exam": str(record.exam.kind), "score": score, "passed": score >= float(exam_spec.pass)})
+		results.exams.append({"person": identity, "host": host, "exam": str(record.exam.kind), "score": score, "passed": score >= float(exam_spec.pass)})
 	record.last_exam_day = day
 	record.exam = {}
 	if data.site.get("notices") is Array: data.site.notices.append("%s放榜：%d 人及格" % ["鄉試" if exam_spec.role == "clerk" else "國試", passed.size()])
