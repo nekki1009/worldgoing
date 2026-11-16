@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-17 01:15（台北）
+更新：2026-11-17 02:00（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,13 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-17 02:00（台北）交接給新指揮中心
+- 本串（cmsg_…4rnoahY36kCET7y6gphsCW）停止施工，不再跑 Godot。工作樹沒有未提交的程式改動；HEAD 之後全部未推送。
+- 最後提交：b5f9c35 土匪 B4d 規則層（每日決策、劫掠條件與選目標、潰兵成伙資格；尚無呼叫者）。
+- 接手順序建議：B4c 買路錢接大地圖相遇（先搭「玩家在途＋土匪在途」的測試情境，搭法見記憶 bandit-b4-progress）→ B4d 接每日結算與畫面外戰鬥、潰兵成伙接戰鬥結束 → B5 → TC11（等接舷 B5）→ P3b（等 NPC 商隊）→ 平民 C1c／C3+。
+- 先備好未接上的項目見 11/16 23:00 段；薪稅實作取捨見 reports/pay-and-tax-plan.md §15。
+- 待 Nekki 回覆（不擋工）：PT-02 糧餉受 20 件載量限制是否維持；是否推送。
 
 ## 2026-11-17 01:15（台北）土匪 B4b／B4c
 - 已提交（未推送）：6a3e282 TC10；2f4ca8b B4b 保護費（SiteBanditProtection、財政頁付／拒）；698bd3d B4c 買路錢規則；18221f8 在途隊伍的勢力／人數／扣糧工具。
