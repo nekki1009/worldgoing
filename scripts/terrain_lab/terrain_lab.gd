@@ -11515,6 +11515,8 @@ func _region_original_family_reference(slot: RegionSaveSlot, original: TerrainLa
 
 ## Nekki 2026-11-03: a new game starts with the player plus this many cadres in one neutral team.
 const INITIAL_CADRES := 5
+## 文武官 W4 (§5.5): how many of the start cadres also hold the civil track (文武兼備, 文吏); the rest are 武官 only.
+const INITIAL_CIVIL_CADRES := 1
 
 ## The start cell, then the nearest cells reachable from it by the walk graph, up to `count`.
 func _initial_team_cells(data: TerrainData, start: Vector2i, count: int) -> Array[Vector2i]:
@@ -11601,16 +11603,30 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 		cadre["item_state"] = {}
 		var cadre_items: Dictionary = SiteRuntime.seed_person_equipment(candidate, cadre.item_state, team.combat_identity(index), cadre.appearance)
 		if not cadre_items.ok: return _initial_artisan_birth_dispose(staging, cadre_items)
+	# 文武官 W4: the last INITIAL_CIVIL_CADRES cadres are 文武兼備 (officer + 文吏).
+	var civil_from := team.combat_units.size() - INITIAL_CIVIL_CADRES
+	for index: int in range(maxi(1, civil_from), team.combat_units.size()):
+		TerrainTestCharacter.PersonSocial.set_civil_role(team.combat_units[index], "clerk")
 	# Cadre follow posts (R1b): each cadre holds a vacant non-head team post in catalog order (工頭, 後勤官, ...), so no
-	# cadre is left 待分職 (which crowd admission refuses MIGRATION_REQUIRED).
+	# cadre is left 待分職 (which crowd admission refuses MIGRATION_REQUIRED). W4: a civil seat takes a 文吏 cadre first,
+	# a military seat an officer; a cadre takes the first vacant seat he qualifies for.
 	var team_offices: Dictionary = team.team_offices()
-	for index: int in range(1, team.combat_units.size()):
+	var order: Array = range(maxi(1, civil_from), team.combat_units.size()) + range(1, maxi(1, civil_from))
+	for index: int in order:
 		var seated := false
+		var civil: bool = TerrainTestCharacter.PersonSocial.civil_role(team.combat_units[index]) != "none"
 		for seat: Dictionary in team_offices.positions:
-			if not bool(seat.head) and int(seat.holder) <= 0:
-				seat.holder = team.combat_identity(index)
-				seated = true
-				break
+			if bool(seat.head) or int(seat.holder) > 0: continue
+			if str(seat.get("office_class", "civil")) == "civil" and not civil: continue
+			seat.holder = team.combat_identity(index)
+			seated = true
+			break
+		if not seated:
+			for seat: Dictionary in team_offices.positions:
+				if not bool(seat.head) and int(seat.holder) <= 0 and str(seat.get("office_class", "civil")) != "civil":
+					seat.holder = team.combat_identity(index)
+					seated = true
+					break
 		if not seated: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_SPACE", "隊伍職位不足以安置開局幹部；未改變"))
 	var body: Dictionary = team.combat_units[0]
 	body["military_role"] = "officer"

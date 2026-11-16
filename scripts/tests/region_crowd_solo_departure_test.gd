@@ -148,6 +148,16 @@ func _run() -> void:
 		if crowd._roster_index_for_person(candidate, player) >= 0: roster = candidate
 	if not _check(not roster.is_empty() and roster.units.size() == 1 + TerrainLab.INITIAL_CADRES and int(roster.formal_commander) == 0 and int(roster.faction_id) == RegionFactionQuery.NEUTRAL_FACTION_ID,
 		"the player is the formal captain of the neutral start team with its cadres", roster.get("units", []).size()): return
+	# 文武官 W4 (§5.5): 4 武官 cadres and 1 文武兼備 (officer + 文吏), and every civil seat a cadre holds is held by a 文吏.
+	var civil_cadres := 0
+	var unqualified_civil := 0
+	for unit_index: int in range(1, roster.units.size()):
+		var row: Dictionary = roster.units[unit_index]
+		var civil := str(row.get("social_state", {}).get("civil_role", "none")) in ["clerk", "official"]
+		if civil and str(row.get("military_role", "")) == "officer": civil_cadres += 1
+		var seat: Dictionary = SiteOffices.position_of(roster.get("offices", {}), int(row.get("person_id", -1))) if roster.get("offices") is Dictionary else {}
+		if not seat.is_empty() and str(seat.get("office_class", "")) == "civil" and not civil: unqualified_civil += 1
+	if not _check(civil_cadres == TerrainLab.INITIAL_CIVIL_CADRES and unqualified_civil == 0, "the start cadres are 4 武 and 1 文武兼備; civil seats go to the 文吏", [civil_cadres, unqualified_civil]): return
 	var team_size: int = roster.units.size()
 	var team_id: int = int(roster.team_id)
 	var team_entry: Dictionary = {}
