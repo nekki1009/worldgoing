@@ -30,6 +30,7 @@ const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
+const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd") # 土匪 B4d-1: the band chiefs' daily move.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -5198,6 +5199,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 	settle_diplomacy()
 	npc_diplomacy_day()
 	npc_rebellion_day()
+	BanditDay.day(self)
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
