@@ -25,6 +25,9 @@ const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const Climate = preload("res://scripts/terrain_lab/site_climate.gd")
+## 時間與氣候 TC8 (§4.7): heavy rain and storms send residents home (drizzle does not).
+const SHELTER_WEATHER := ["rain", "storm"]
 
 ## 時間與氣候 TC1: the schedule reads the one calendar (SiteCalendar), not its own minute arithmetic.
 static func minute_of_day(minute: float) -> int:
@@ -77,6 +80,7 @@ static func drive(controller: Variant, minute: float) -> Dictionary:
 	var actions: RefCounted = controller.person_actions
 	var result := {"started": 0, "refused": 0, "home": 0, "working": 0, "sent": 0}
 	var work_team: Variant = controller.work_team
+	var shelter := str(Climate.for_site(lab.terrain).get("weather", "")) in SHELTER_WEATHER
 	var ids: Array = lab.terrain.site.get("housing", {}).keys()
 	ids.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
 	for key: String in ids:
@@ -84,6 +88,7 @@ static func drive(controller: Variant, minute: float) -> Dictionary:
 		var person: Dictionary = actions._person(identity, false)
 		if person.is_empty() or float(person.hp) <= 0.0 or not Housing.schedule_authority(lab, person): continue
 		var place := place_at(minute_of_day(minute), diligence_of(person))
+		if shelter and place in ["work", "out"]: place = "home"
 		if place == "work":
 			if work_team.is_assigned(identity):
 				result.working = int(result.working) + 1

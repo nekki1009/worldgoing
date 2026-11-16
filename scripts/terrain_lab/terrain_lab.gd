@@ -776,6 +776,9 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	_duty_ai_elapsed = 0.0
 	DutyAI.reset_site_state() # F02: AI rounds, waits and traces belong to one Site.
 	if site_controller != null: site_controller.captive_escort.reset_site_state()
+	# 時間與氣候 TC3: a world's climate stays on for a Site reached from a Site where it is on (a Site that never
+	# recorded the switch inherits it; one that saved it keeps its own).
+	if terrain != null and terrain != value and terrain.site.get("climate_enabled") == true and not value.site.has("climate_enabled"): value.site["climate_enabled"] = true
 	_exchange_round = 0
 	ranged_shots = 0
 	ranged_resolutions = 0

@@ -10,6 +10,12 @@ extends RefCounted
 ## the work phases and back home in the home phases.
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Season = preload("res://scripts/terrain_lab/site_season.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+## 時間與氣候 TC8 (§7 risk 4): an NPC settlement stores food for the winter. In autumn, while the camp holds less food
+## than WINTER_DAYS of one ration per registered resident, its 戶曹 puts every household on a food job.
+const WINTER_DAYS := 90
+const FOOD_ITEMS := ["grain", "wild_food", "fish", "meat"]
 const FOOD_KINDS := ["farm"]
 const DUTY := "settlement.registry"
 
@@ -39,10 +45,13 @@ static func households_of(state: Dictionary, faction: int) -> Array:
 	return result
 
 ## {house_id: feature} for the households of `faction` that need a new job. Existing valid jobs are kept and counted.
-static func plan(state: Dictionary, faction: int) -> Dictionary:
+static func plan(state: Dictionary, faction: int, food_first: bool = false) -> Dictionary:
 	var candidates := job_features(state, faction)
 	var result := {}
 	if candidates.is_empty(): return result
+	if food_first:
+		var food: Array = candidates.filter(func(key: String) -> bool: return str(state.features[key].get("kind", "")) in FOOD_KINDS)
+		if not food.is_empty(): candidates = food
 	var taken := {}
 	for key: String in candidates: taken[key] = 0
 	var houses := households_of(state, faction)
@@ -58,6 +67,13 @@ static func plan(state: Dictionary, faction: int) -> Dictionary:
 		taken[best] = int(taken[best]) + 1
 		result[house_id] = best
 	return result
+
+## TC8: autumn, climate on, and the camp holds less than WINTER_DAYS rations per registered resident.
+static func autumn_store(state: Dictionary) -> bool:
+	if state.get("climate_enabled") != true or str(Calendar.date(float(state.get("minute", 0))).season) != "autumn": return false
+	var food := 0
+	for item: String in FOOD_ITEMS: food += int(state.get("inventory", {}).get(item, 0))
+	return food < state.get("housing", {}).size() * WINTER_DAYS
 
 ## Applies a plan through Households.set_job; returns the number of households changed.
 static func apply(state: Dictionary, planned: Dictionary) -> int:
@@ -105,7 +121,8 @@ static func daily_production(state: Dictionary, minutes: Dictionary) -> int:
 		if not recipe.has("cycle") or float(recipe.cycle) <= 0.0 or not recipe.get("output") is Dictionary: continue
 		var workers := Households.members(state, house_id).size()
 		if workers <= 0: continue
-		minutes[house_id] = float(minutes.get(house_id, 0.0)) + float(workers) * WORK_HOURS * 60.0
+		var season := Season.farm_factor_of_state(state) if str(feature.get("kind", "")) in Runtime.FARM_KINDS else 1.0 # TC8
+		minutes[house_id] = float(minutes.get(house_id, 0.0)) + float(workers) * WORK_HOURS * 60.0 * season
 		while float(minutes[house_id]) >= float(recipe.cycle):
 			if not Runtime.can_pay(stock, {"tools": 1}) or not Runtime.can_pay(stock, recipe.get("input", {})): break
 			var room := int(state.get("capacity", 0)) - Runtime.inventory_size(stock)

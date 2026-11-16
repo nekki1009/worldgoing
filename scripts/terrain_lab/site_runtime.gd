@@ -2,6 +2,7 @@ class_name SiteRuntime
 extends RefCounted
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
+const Season = preload("res://scripts/terrain_lab/site_season.gd") # 時間與氣候 TC8: season multipliers (1.0 with climate off).
 const Ships = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const EquipmentDye = preload("res://scripts/ui/equipment_dye.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
@@ -4499,6 +4500,8 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	var water_ratio := 1.0
 	if demand > 0.0:
 		water_ratio = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0)
+		# 時間與氣候 TC8: rain waters an open farm or pasture (rain × its demand on top of the pumped supply).
+		if kind in FARM_KINDS + PASTURE_KINDS: water_ratio = Season.wet_ratio(data, float(water.get("supplied", 0.0)), demand)
 	if water_ratio <= 0.0:
 		feature["status"] = "缺水，暫停運作"
 		worker["status"] = feature.status
@@ -4516,6 +4519,9 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 			total_service += slot.service_cells.size()
 		productivity = _pasture_scale(data, feature, total_service) * float(service.size()) / maxf(1.0, total_service)
 	productivity *= building_productivity(feature)
+	# 時間與氣候 TC8: the season's farm / pasture multiplier (1.0 while climate is off).
+	if kind in FARM_KINDS: productivity *= Season.farm_factor(data)
+	elif kind in PASTURE_KINDS: productivity *= Season.pasture_factor(data)
 	if productivity <= 0.0:
 		worker["status"] = "沒有到位的照料工作量"
 		return
@@ -4561,7 +4567,7 @@ static func _regenerate(data: TerrainData, occupied: Callable) -> void:
 			continue
 		var remaining := capacity if int(r.kind) in [Env.Kind.TIMBER, Env.Kind.FOOD, Env.Kind.HERB] else mini(capacity, int(r.remaining) + 1)
 		if int(r.kind) == Env.Kind.TIMBER: remaining = _fire_resource_regenerated(data, key, int(r.remaining), remaining, capacity)
-		Env.change(data, key, {"remaining": remaining, "next_recovery": int(data.site.minute) + int(r.recover) if remaining < capacity else -1})
+		Env.change(data, key, {"remaining": remaining, "next_recovery": int(data.site.minute) + Season.recover_minutes(data, int(r.kind), int(r.recover)) if remaining < capacity else -1})
 		rebuild = true
 	if rebuild:
 		Env.rebuild_indexes(data)
@@ -4630,9 +4636,11 @@ static func rebuild_water(data: TerrainData) -> void:
 static func allocate_water(data: TerrainData) -> void:
 	data.site["water_status"] = _water_allocation_candidate(data, _water_schedule_categories(data))
 
-## 時間與氣候 TC1: the one clock text of the solar calendar (SiteCalendar).
+## 時間與氣候 TC1: the one clock text of the solar calendar (SiteCalendar); TC3 adds the band and the weather when the
+## Site's climate is on (SiteClimate).
 static func date_text(data: TerrainData) -> String:
-	return preload("res://scripts/terrain_lab/site_calendar.gd").clock_text(float(int(data.site.get("minute", 0))))
+	return preload("res://scripts/terrain_lab/site_calendar.gd").clock_text(float(int(data.site.get("minute", 0)))) \
+		+ preload("res://scripts/terrain_lab/site_climate.gd").clock_suffix(data)
 
 
 # Ship-relative ground_loot stays in the original item container collection.
@@ -7625,7 +7633,7 @@ static func prepare_feature_output(data: TerrainData, feature: Dictionary, worke
 		if receipt.is_empty(): return fail("STALE_SOURCE", "原農事試驗須有真原paid/output完成收據")
 		protocol_prepared = prepare_farm_trial_protocol_output(data, key, feature, worker, person, receipt)
 		if not protocol_prepared.ok: return protocol_prepared
-	return ok("", {"farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
+	return ok("", {"feature_key": key, "farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
 		"cargo_ref": cargo, "cargo_before": cargo.duplicate(true), "output": output.duplicate(true), "products": item_prepared,
 		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared, "public_operation": public_prepared, "military_operation": military_prepared, "settlement_operation": processing_prepared})
 
@@ -7634,7 +7642,12 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	assert(prepared.holder_ref.is_empty() or prepared.holder_ref == prepared.holder_before)
 	if not prepared.products.is_empty(): _publish_equipment_creation(data, prepared.products)
 	var deposit: Dictionary = prepared.get("settlement_operation", {}).get("deposit", {})
-	if deposit.is_empty(): add_items(prepared.cargo_ref, prepared.output)
+	if deposit.is_empty():
+		# 軍餉與稅收 P2: a settlement building's batch pays its production tax as it is published (only with a levy).
+		var kept: Dictionary = prepared.output
+		if data.site.has("finance") and not str(prepared.get("feature_key", "")).is_empty():
+			kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, str(prepared.feature_key), prepared.feature_ref, prepared.output)
+		add_items(prepared.cargo_ref, kept)
 	else:
 		add_items(deposit.cargo, prepared.output)
 		deposit.holder.version = int(deposit.holder.version) + 1
@@ -11595,7 +11608,7 @@ static func _water_allocation_candidate(data: TerrainData, priority: Array) -> D
 			var cell := data.cell_from_index(int(feature.cells[0]))
 			source = "ground:%d:%d" % [floori(float(cell.x) / 16.0), floori(float(cell.y) / 16.0)]
 		pump_sources[key] = source
-		budgets[source] = 2.0 if str(feature.kind) == "well" else 6.0
+		budgets[source] = (2.0 if str(feature.kind) == "well" else 6.0) * Season.supply_factor(data) # TC8: drought ×0.7
 	var consumers: Array[String] = _water_consumer_order(data, keys, priority)
 	var water_status := {}
 	for key: String in consumers:
@@ -11615,7 +11628,7 @@ static func _water_allocation_candidate(data: TerrainData, priority: Array) -> D
 				var scale := float(served) if kind in FARM_KINDS else _pasture_scale(data, feature, served)
 				for slot: Dictionary in slots:
 					var portion := float(slot.service_cells.size()) / maxf(1.0, served)
-					requests.append({"slot": int(slot.slot), "target": int(slot.cell), "demand": float(FEATURES[kind].water) * scale * portion})
+					requests.append({"slot": int(slot.slot), "target": int(slot.cell), "demand": float(FEATURES[kind].water) * scale * portion * (Season.water_factor(data) if kind in FARM_KINDS else 1.0)})
 			else:
 				requests.append({"slot": -1, "target": int(feature.entrance), "demand": water_demand(feature)})
 		var status := {"demand": 0.0, "supplied": 0.0, "slots": {}}

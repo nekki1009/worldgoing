@@ -21,6 +21,10 @@ const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
 ## Learning (考試學校 E1, §4.1/§9): optional `learning` 0..100 and `last_exam_day` (-1 never). Missing learning reads 0,
 ## or 20 for a 文吏/文官 (the plan's migration: existing civil officers are literate), never written back until changed.
 const LITERATE := 20
+## Arrears (軍餉與稅收 P0, reports/pay-and-tax-plan.md §2, §8): optional `arrears` {org_key → {periods, tenths}}: unpaid
+## paydays in a row and the owed value in tenths of a point, per paying team / settlement / nation. A debt record, not
+## money; sparse (a settled organization is removed). Missing = owed nothing.
+const ARREARS_KINDS := ["team", "settlement", "nation"]
 
 const VERSION := 3
 const RANKS := ["commoner", "officer", "head", "unknown"]
@@ -53,6 +57,9 @@ static func valid(packet: Variant) -> bool:
 		extra += 1
 	if packet.has("last_exam_day"):
 		if not _integer(packet.last_exam_day, -1, 2147483647): return false
+		extra += 1
+	if packet.has("arrears"):
+		if not valid_arrears(packet.arrears): return false
 		extra += 1
 	if _integer(packet.get("version"), 1, 1): return packet.size() == 2 + extra
 	if _integer(packet.get("version"), 2, 2): return extra == 0 and _valid_common(packet, 7, 5) and not packet.has("evidence")
@@ -117,6 +124,7 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 	if Vital.valid(packet.get("vital")): result["vital"] = Vital.normalized(packet.vital)
 	if _integer(packet.get("learning"), 0, 100): result["learning"] = int(packet.learning)
 	if _integer(packet.get("last_exam_day"), -1, 2147483647): result["last_exam_day"] = int(packet.last_exam_day)
+	if valid_arrears(packet.get("arrears")): result["arrears"] = packet.arrears.duplicate(true)
 	return result
 
 ## v2 → v3: keeps every v2 field; no proven political day exists yet, so the
@@ -162,6 +170,10 @@ static func normalized(packet: Dictionary) -> Dictionary:
 		for field: String in ["prestige", "credit", "day"]: result.reputation[field] = int(result.reputation[field])
 	if result.get("combat_record") is Dictionary:
 		for field: String in COMBAT_FIELDS: result.combat_record[field] = int(result.combat_record[field])
+	if result.get("arrears") is Dictionary:
+		for entry: Variant in result.arrears.values():
+			if entry is Dictionary:
+				for field: String in ["periods", "tenths"]: entry[field] = int(entry.get(field, 0))
 	return result
 
 static func valid_reputation(value: Variant) -> bool:
@@ -236,6 +248,53 @@ static func set_learning(body: Variant, value: int) -> bool:
 	var packet := read(body).duplicate(true)
 	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
 	packet["learning"] = value
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
+	return true
+
+## An org key "kind:site_id:org_id" of a paying organization (the SiteSocial.org_key form).
+static func valid_arrears_key(key: Variant) -> bool:
+	if not key is String: return false
+	var first := str(key).find(":")
+	var last := str(key).rfind(":")
+	return first > 0 and last > first and last < str(key).length() - 1 and ARREARS_KINDS.has(str(key).substr(0, first))
+
+static func valid_arrears(value: Variant) -> bool:
+	if not value is Dictionary or value.size() > MAX_ORGS: return false
+	for key: Variant in value:
+		var entry: Variant = value[key]
+		if not valid_arrears_key(key) or not entry is Dictionary or entry.size() != 2: return false
+		if not _integer(entry.get("periods"), 0, 1000000) or not _integer(entry.get("tenths"), 0, 1000000000): return false
+		if int(entry.periods) == 0 and int(entry.tenths) == 0: return false
+	return true
+
+## The person's arrears {org_key → {periods, tenths}} (a copy; empty when owed nothing).
+static func arrears(body: Variant) -> Dictionary:
+	var stored: Variant = read(body).get("arrears")
+	if not valid_arrears(stored): return {}
+	var result := {}
+	for key: String in stored: result[key] = {"periods": int(stored[key].periods), "tenths": int(stored[key].tenths)}
+	return result
+
+## What `org_key` owes the person: {periods, tenths}, zeros when nothing.
+static func arrears_for(body: Variant, org_key: String) -> Dictionary:
+	return arrears(body).get(org_key, {"periods": 0, "tenths": 0})
+
+## Sets what `org_key` owes the person; zero periods and zero tenths remove the entry (sparse). A person with no packet
+## and nothing owed stays without one. Refuses a bad key, a negative value or a seventeenth organization.
+static func set_arrears(body: Variant, org_key: String, periods: int, tenths: int) -> bool:
+	if not valid_arrears_key(org_key) or periods < 0 or periods > 1000000 or tenths < 0 or tenths > 1000000000: return false
+	var packet := read(body).duplicate(true)
+	var owed: Dictionary = packet.get("arrears", {}) if packet.get("arrears") is Dictionary else {}
+	if periods == 0 and tenths == 0:
+		if not owed.has(org_key): return true
+		owed.erase(org_key)
+	else:
+		if not owed.has(org_key) and owed.size() >= MAX_ORGS: return false
+		owed[org_key] = {"periods": periods, "tenths": tenths}
+	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
+	if owed.is_empty(): packet.erase("arrears")
+	else: packet["arrears"] = owed
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 	return true

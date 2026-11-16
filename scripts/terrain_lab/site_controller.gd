@@ -33,6 +33,8 @@ const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+const Climate = preload("res://scripts/terrain_lab/site_climate.gd")
+const Season = preload("res://scripts/terrain_lab/site_season.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
 const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
@@ -3288,6 +3290,7 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 	if sleeping(): clock_label.text = Runtime.date_text(data) + "\n睡眠中，%s · 預計 %s 醒" % [rate_text, Calendar.clock_text(float(sleep_record.until))]
 	elif float(data.site.combat_left) > 0: clock_label.text = Runtime.date_text(data) + "\n戰鬥中：%s · 脫戰 %.0f 秒" % [rate_text, float(data.site.combat_left)]
 	else: clock_label.text = Runtime.date_text(data) + "\n和平：" + rate_text
+	clock_label.tooltip_text = _forecast_text(data)
 	speed_label.text = "%s×" % speed_text
 	pause_button.text = "繼續" if bool(data.site.paused) else "暫停"
 	var condition := Env.land(data, selected)
@@ -10407,6 +10410,8 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if _boot_request.is_empty() or str(result.get("code", "")) == "PENDING": return
 	var request: Dictionary = _boot_request
 	_boot_request = {}
+	# 時間與氣候 TC3: a world created from the menu has climate on (old saves and tests stay off).
+	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
 	if result.ok and not request.get("character", {}).is_empty():
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
@@ -15025,11 +15030,11 @@ func assign_household_job(house_id: String, feature_key: String, requester_id: i
 	return Households.set_job(lab.terrain.site, house_id, feature_key)
 
 ## 平民 C2: the decider fills every household without a valid job (SiteResidentWork.plan).
-func plan_household_jobs(requester_id: int) -> Dictionary:
+func plan_household_jobs(requester_id: int, food_first: bool = false) -> Dictionary:
 	var checked := registry_authority(requester_id)
 	if not checked.ok: return checked
 	Households.reconcile(lab.terrain.site)
-	var changed := ResidentWork.apply(lab.terrain.site, ResidentWork.plan(lab.terrain.site, int(checked.faction)))
+	var changed := ResidentWork.apply(lab.terrain.site, ResidentWork.plan(lab.terrain.site, int(checked.faction), food_first))
 	return Runtime.ok("已分派 %d 戶主業" % changed, {"changed": changed})
 
 ## The duty AI plans once a day for a decider who is not the controlled person.
@@ -15038,8 +15043,29 @@ func _registry_ai_day() -> void:
 	if current.is_empty() or not bool(current.get("duty_ai", false)): return
 	var resolved: Dictionary = Settlement.duty_resolve(lab, ResidentWork.DUTY, true)
 	if not bool(resolved.ok) or int(resolved.decider) <= 0 or int(resolved.decider) == int(lab.controlled_person_id()): return
-	plan_household_jobs(int(resolved.decider))
+	plan_household_jobs(int(resolved.decider), ResidentWork.autumn_store(lab.terrain.site)) # TC8: autumn stores for winter
 
+
+## 時間與氣候 TC8 (§4.8, D10 A): the clock's hover text: today's weather for everyone, three more days while the
+## settlement's 虞衡 (settlement.ecology) holds his seat. Rebuilt once a game hour.
+var _forecast_cache := {}
+const FORECAST_SLOTS := {4: "晨", 6: "午", 8: "下午", 10: "夜"}
+func _forecast_text(data: TerrainData) -> String:
+	if not Climate.enabled(data): return ""
+	var hour := int(data.site.get("minute", 0)) / 60
+	if int(_forecast_cache.get("hour", -1)) == hour: return str(_forecast_cache.text)
+	var offices: Dictionary = Settlement.offices(lab, true)
+	var seated: bool = not offices.is_empty() and offices.get("duties", {}).has("settlement.ecology") 		and int(SiteOffices.position(offices, str(offices.duties["settlement.ecology"])).get("holder", -1)) > 0
+	var lines: Array = []
+	for entry: Dictionary in Season.forecast(data, seated):
+		var parts: Array = []
+		for slot: int in FORECAST_SLOTS: parts.append("%s %s" % [FORECAST_SLOTS[slot], Climate.WEATHER_NAMES[entry.weathers[slot]]])
+		lines.append("%s：%s" % [Calendar.date_text(float(Calendar.day_start_minute(int(entry.day)))), "、".join(parts)])
+	if not seated: lines.append("（聚落有虞衡任職時可看未來 %d 日）" % Season.FORECAST_DAYS)
+	if Season.drought(data): lines.append("乾旱：連續 %d 日無雨，水井與取水口供水 ×%.1f" % [Season.dry_days(data), Season.DROUGHT_FACTOR])
+	_forecast_cache = {"hour": hour, "text": "
+".join(lines)}
+	return str(_forecast_cache.text)
 
 ## 時間與氣候 TC2: the controlled person goes to sleep; the Site stays live at `speed` (×8 / ×16) until the target time.
 func start_sleep(mode: String, amount: int = 1, speed: float = 16.0) -> Dictionary:
