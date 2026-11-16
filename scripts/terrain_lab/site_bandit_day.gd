@@ -11,6 +11,7 @@ const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
+const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # B4d-2: routed survivors form a band.
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
@@ -27,6 +28,7 @@ static func day(controller: Variant) -> Dictionary:
 static func run(controller: Variant, today: int) -> Dictionary:
 	var result := {"day": today, "actions": []}
 	var slot: Variant = controller.region_slot
+	result["rout"] = BanditRout.day(controller, today)
 	var registry: Dictionary = slot.control.get("faction_registry", {})
 	if registry.get("version") != RegionFactionQuery.VERSION: return result
 	var bands: Array[int] = []

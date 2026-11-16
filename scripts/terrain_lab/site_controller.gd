@@ -31,6 +31,7 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd") # 土匪 B4d-1: the band chiefs' daily move.
+const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed teams are watched for 7 days.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -10580,6 +10581,7 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 		var captain := team_captain_of_team(int(largest[faction].team_id))
 		if captain > 0: commanders[int(faction)] = {"person": captain, "ref": region_slot.peerage_person_ref(captain) if region_slot != null else null}
 	var closed: Dictionary = tracker.close(now, standing, commanders)
+	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
