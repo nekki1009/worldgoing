@@ -15198,3 +15198,19 @@ func school_seat(key: String, identity: int, role: String, seated: bool, request
 	if person.is_empty() or person.get("body") == null or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)): return Runtime.fail("NO_TARGET", "須是清醒自由的人")
 	if seated and (int(person.faction) != int(settlement.owner_faction) or not Settlement.cell_in_jurisdiction(lab.terrain, Vector2i(person.cell))): return Runtime.fail("NO_AUTHORITY", "須是本聚落轄區內的同陣營人物")
 	return Schools.set_seat(lab.terrain, key, identity, person.body, role, seated)
+
+## 考試學校 E2 (§5): the 學正 (or the acting head) opens a 鄉試 at the settlement's 鄉學 for `candidate_ids`.
+func open_school_exam(key: String, candidate_ids: Array, requester_id: int) -> Dictionary:
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if settlement.is_empty(): return Runtime.fail("UNESTABLISHED", "尚未建制聚落")
+	var resolved: Dictionary = Settlement.duty_resolve(lab, Schools.DUTY, true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, Settlement.offices(lab, true))
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(key, {})
+	if int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "須是本聚落的鄉學")
+	var people: Array = []
+	for identity: Variant in candidate_ids:
+		var person: Dictionary = person_actions._person(int(identity), false)
+		if person.is_empty() or person.get("body") == null or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)) or int(person.faction) != int(settlement.owner_faction) or not Settlement.cell_in_jurisdiction(lab.terrain, Vector2i(person.cell)):
+			return Runtime.fail("NOT_ELIGIBLE", "#%d 須是本聚落轄區內清醒自由的同陣營人物" % int(identity))
+		people.append(person)
+	return Schools.open_exam(lab.terrain, key, "district", requester_id, people)
