@@ -15,6 +15,7 @@ const EntryPolicy = preload("res://scripts/region_lab/region_entry.gd")
 
 var source: RegionData
 var pin: Dictionary = {}
+const RegionWeather = preload("res://scripts/region_lab/region_weather.gd") # 時間與氣候 TC9
 var folder := ""
 var control: Dictionary = {"logical_game_seconds": 0.0, "active_site_id": "", "fire_clock": {}}
 # The original clock and sea initialization owners provide these candidates.
@@ -8694,9 +8695,18 @@ func _region_land_route_preview(party: Dictionary, plan: Dictionary, path: Strin
 	if source_component >= 0: node.component = source_component
 	input.upkeep.route_node = node
 	var options := {"moving": moving and blocked.is_empty() and source_component >= 0, "safe_rest": true, "speed_multiplier": float(leg.speed_multiplier)}
-	var endpoint := RegionTravel.next_upkeep_event(input, options.merged({"until": to}, true))
+	# 時間與氣候 TC9: with the world's climate on, the Region slot's weather slows travel and open-air rest; one
+	# weather per advance, so an advance stops at the slot's end.
+	var weather_end := to
+	var registry: Variant = control.get("faction_registry", {})
+	if registry is Dictionary and RegionWeather.enabled(registry):
+		var now := RegionWeather.at(str(pin.get("world_instance_id", "")), str(pin.get("atlas_id", "")), Vector2i(int(node.site[0]), int(node.site[1])), world)
+		options.speed_multiplier = float(options.speed_multiplier) * RegionWeather.speed_factor(now)
+		options["rest_factor"] = RegionWeather.rest_factor(now, RegionWeather.sheltered(input))
+		weather_end = minf(to, RegionWeather.slot_end(world))
+	var endpoint := RegionTravel.next_upkeep_event(input, options.merged({"until": weather_end}, true))
 	if not endpoint.ok: return endpoint
-	var end := minf(to, float(endpoint.at))
+	var end := minf(weather_end, float(endpoint.at))
 	var outcome := RegionTravel.advance_upkeep(input, end, options)
 	if not outcome.ok: return outcome
 	var boundary := 0.0

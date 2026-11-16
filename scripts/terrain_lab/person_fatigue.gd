@@ -34,7 +34,8 @@ static func advance(value: float, rested: float, seconds: float, rate: float, sa
 		return [minf(LIMIT, value + seconds * rate), 0.0]
 	if not safe_rest:
 		return [value, 0.0]
-	if not is_finite(recovery_multiplier) or recovery_multiplier < 1.0 or recovery_multiplier > 1.25:
+	# 1.0–1.25: a house's rest bonus; 時間與氣候 TC9 adds 0.7 for open-air rest in rain or at night.
+	if not is_finite(recovery_multiplier) or recovery_multiplier < 0.5 or recovery_multiplier > 1.25:
 		recovery_multiplier = 1.0
 	var recovering := maxf(0.0, seconds - maxf(0.0, REST_DELAY - rested))
 	return [maxf(0.0, value - recovering * RECOVERY_RATE * recovery_multiplier), minf(REST_DELAY, rested + seconds)]

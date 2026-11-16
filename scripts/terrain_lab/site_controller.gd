@@ -10427,6 +10427,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
 		if not founded.ok: result = founded
 	if result.ok and bool(request.get("create_new", false)): _start_finance(str(start_faction.get("mode", "neutral")))
+	if result.ok and bool(request.get("create_new", false)): _start_climate()
 	if result.ok:
 		lab._audio_boot_complete()
 		_record_world(str(request.get("world_name", "")))
@@ -15073,6 +15074,18 @@ func _forecast_text(data: TerrainData) -> String:
 	_forecast_cache = {"hour": hour, "text": "
 ".join(lines)}
 	return str(_forecast_cache.text)
+
+## 時間與氣候 TC9: a world created from the menu turns the world's climate switch on in its faction registry (the Region
+## map's travel and rest read it; every Site of the world inherits it at bind). Old worlds and tests stay off.
+func _start_climate() -> void:
+	if region_slot == null or lab.terrain == null: return
+	var registry: Variant = region_slot.control.get("faction_registry", {})
+	if not registry is Dictionary or registry.is_empty() or registry.get("climate") is Dictionary: return
+	var candidate: Dictionary = registry.duplicate(true)
+	candidate["climate"] = {"version": 1, "enabled": true}
+	candidate.revision = int(candidate.get("revision", 0)) + 1
+	var captured: Dictionary = capture_region_checkpoint("region_checkpoint", true)
+	if captured.ok: region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners, candidate, false, captured)
 
 ## 軍餉與稅收 P4 (§7): a new game starts with the scenario's coin in the camp (a neutral one-person team 10, a founded
 ## faction or band 30) and the player's team gets its finance record (paydays start once a pay source is bound).

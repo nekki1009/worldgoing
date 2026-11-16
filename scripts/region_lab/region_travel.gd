@@ -1105,7 +1105,7 @@ static func next_upkeep_event(party: Dictionary, options: Dictionary = {}) -> Di
 		var rested := float(pool.state.get("fatigue_rest", 0.0))
 		if resting:
 			if bool(options.get("safe_rest", true)) and value > Fatigue.WORK_RESUME_AT + EPS:
-				delta = minf(delta, Fatigue.REST_DELAY - rested if rested < Fatigue.REST_DELAY - EPS else (value - Fatigue.WORK_RESUME_AT) / Fatigue.RECOVERY_RATE)
+				delta = minf(delta, Fatigue.REST_DELAY - rested if rested < Fatigue.REST_DELAY - EPS else (value - Fatigue.WORK_RESUME_AT) / (Fatigue.RECOVERY_RATE * float(options.get("rest_factor", 1.0))))
 		elif value < Fatigue.WORK_REST_AT - EPS:
 			var rate := _pool_rate(pool, people, true, crew_roles)
 			if rate > EPS: delta = minf(delta, ((Fatigue.THRESHOLD if value < Fatigue.THRESHOLD - EPS else Fatigue.WORK_REST_AT) - value) / rate)
@@ -1210,7 +1210,7 @@ static func advance_upkeep(party: Dictionary, to_game_seconds: float, options: D
 					upkeep.events.append(event)
 		for pool_index: int in range(pools.size()):
 			var pool: Dictionary = pools[pool_index]
-			var advanced := Fatigue.advance(float(pool.state.get("fatigue", 0.0)), float(pool.state.get("fatigue_rest", 0.0)), seconds, rates[pool_index], safe and rates[pool_index] <= 0.0)
+			var advanced := Fatigue.advance(float(pool.state.get("fatigue", 0.0)), float(pool.state.get("fatigue_rest", 0.0)), seconds, rates[pool_index], safe and rates[pool_index] <= 0.0, float(options.get("rest_factor", 1.0)))
 			pool.state.fatigue = advanced[0]
 			pool.state.fatigue_rest = advanced[1]
 			if pool.state.has("active"): pool.state.active = moving and rates[pool_index] > 0.0

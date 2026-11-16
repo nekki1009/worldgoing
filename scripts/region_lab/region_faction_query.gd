@@ -50,6 +50,7 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	if value is Dictionary and value.has("diplomacy"): registry_fields.append("diplomacy")
 	if value is Dictionary and value.has("battles"): registry_fields.append("battles")
 	if value is Dictionary and value.has("finance"): registry_fields.append("finance") # 軍餉與稅收 P3 (RegionFinance)
+	if value is Dictionary and value.has("climate"): registry_fields.append("climate") # 時間與氣候 TC9: the world's climate switch
 	if not value is Dictionary or not keys(value, registry_fields): return fail("CORRUPT_SAVE", "faction registry fields")
 	if not whole(value.version, VERSION, VERSION): return fail("SAVE_VERSION", "unknown faction registry version")
 	if not whole(value.revision, 0, MAX_REVISION) or not whole(value.next_faction_id, 0, MAX_ID + 1) or not value.migration_complete is bool or value.migration_complete != true or not value.entries is Dictionary or not value.coverage is Dictionary: return fail("CORRUPT_SAVE", "incomplete faction migration")
@@ -87,6 +88,7 @@ static func validate(value: Variant, now: float) -> Dictionary:
 	if value.has("finance"):
 		var finance: Dictionary = (load("res://scripts/region_lab/region_finance.gd") as Script).call("validate", value.finance)
 		if not finance.ok: return finance
+	if value.has("climate") and not bool((load("res://scripts/region_lab/region_weather.gd") as Script).call("valid", value.climate)): return fail("CORRUPT_SAVE", "climate switch")
 	if value.has("diplomacy"):
 		var relations: Dictionary = RegionDiplomacy.validate(value.diplomacy, value, now)
 		if not relations.ok: return relations
