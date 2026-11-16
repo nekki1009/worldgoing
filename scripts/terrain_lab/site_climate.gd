@@ -159,10 +159,13 @@ static func site_keys(data: TerrainData) -> Dictionary:
 	var pin: Variant = data.site.get("world_pin", {})
 	var world_key := str(pin.get("world_instance_id", "")) if pin is Dictionary else ""
 	if world_key.is_empty(): world_key = "seed:%d" % int(data.seed_value)
-	var base: Variant = data.parameters.get("fixed_base", {})
-	var region_key := ""
-	if base is Dictionary and base.has("region_cell"): region_key = str(base.region_cell)
-	if region_key.is_empty(): region_key = "site:" + str(data.site.get("id", ""))
+	# One weather per Region (D1 A): a world Site id is "atlas:x:y"; its Region is RegionGrid.region_of(x, y).
+	var site_id := str(data.site.get("id", ""))
+	var parts := site_id.split(":")
+	var region_key := "site:" + site_id
+	if parts.size() >= 3 and parts[parts.size() - 2].is_valid_int() and parts[parts.size() - 1].is_valid_int():
+		var region := RegionGrid.region_of(Vector2i(int(parts[parts.size() - 2]), int(parts[parts.size() - 1])))
+		region_key = "%s:%d:%d" % [":".join(parts.slice(0, parts.size() - 2)), region.x, region.y]
 	return {"world": world_key, "region": region_key, "altitude": float(data.parameters.get("altitude_m", 0.0))}
 
 static func enabled(data: TerrainData) -> bool:

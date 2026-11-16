@@ -4,7 +4,7 @@ extends RefCounted
 ## SiteSocial.org_key of a team, settlement or nation (a family is not an employer). A missing section or record means
 ## "no tax levied, no pay source bound, 1.0× pay" (§8 old-save rule), so old saves need no migration.
 ## Record v1: {version, ref, since_day, pay_source, tax_source, treasury, pay_rate, tax_rate, last_payday, last_taxday,
-## tax_lord, auto_fund, exemptions, served, accrued_day, tax_carry, receipts}.
+## tax_lord, auto_fund, exemptions, served, accrued_day, tax_carry, receipts, paid_seasons, unpaid_seasons}.
 ## - ref: the organization's {kind, site_id, org_id}; the key must be its org_key.
 ## - since_day: the calendar day the record began; arrears events start GRACE_DAYS after it (PT-14).
 ## - pay_source / tax_source / treasury: {} (unbound) or a holder reference {kind "stock", site_id, feature_id} (a Site
@@ -20,6 +20,8 @@ extends RefCounted
 ##   hundredths and every full hundred is one whole unit taxed (§4.2: no fraction of an item is taken; it carries).
 ## - receipts: {season, current, previous} season totals in tenths of a point per receipt kind (RECEIPT_KINDS); a new
 ##   season moves current to previous (§8: only this season and the last are kept). Totals, never a balance.
+## - paid_seasons / unpaid_seasons: a settlement's tribute streaks (P3: every fourth on-time season +2 prestige; the
+##   second unpaid season stops the liege's funding, the third is the rebellion omen).
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const PayTable = preload("res://scripts/terrain_lab/site_pay_table.gd")
 
@@ -33,7 +35,7 @@ const MAX_SERVED := 20000
 const MAX_CARRY_FEATURES := 512
 const RECEIPT_KINDS := ["produce_tax", "market", "tariff", "tribute_in", "tribute_out", "pay", "fund"]
 const FIELDS := ["version", "ref", "since_day", "pay_source", "tax_source", "treasury", "pay_rate", "tax_rate",
-	"last_payday", "last_taxday", "tax_lord", "auto_fund", "exemptions", "served", "accrued_day", "tax_carry", "receipts"]
+	"last_payday", "last_taxday", "tax_lord", "auto_fund", "exemptions", "served", "accrued_day", "tax_carry", "receipts", "paid_seasons", "unpaid_seasons"]
 
 static func org_key(ref: Dictionary) -> String:
 	return "%s:%s:%s" % [str(ref.kind), str(ref.site_id), str(ref.org_id)]
@@ -43,7 +45,7 @@ static func empty_record(ref: Dictionary, day: int) -> Dictionary:
 	return {"version": VERSION, "ref": ref.duplicate(), "since_day": maxi(0, day), "pay_source": {}, "tax_source": {},
 		"treasury": {}, "pay_rate": 100, "tax_rate": 0, "last_payday": -1, "last_taxday": -1, "tax_lord": {},
 		"auto_fund": str(ref.get("kind", "")) == "nation", "exemptions": [], "served": {}, "accrued_day": -1,
-		"tax_carry": {}, "receipts": {"season": -1, "current": {}, "previous": {}}}
+		"tax_carry": {}, "receipts": {"season": -1, "current": {}, "previous": {}}, "paid_seasons": 0, "unpaid_seasons": 0}
 
 static func records(data: TerrainData) -> Dictionary:
 	var value: Variant = data.site.get("finance", {}) if data != null else {}
@@ -114,6 +116,7 @@ static func valid_record(key: Variant, record: Variant) -> bool:
 		if not feature_id is String or str(feature_id).is_empty() or not carry is Dictionary or carry.is_empty(): return false
 		for resource: Variant in carry:
 			if not resource is String or str(resource).is_empty() or not _integer(carry[resource], 1, 99): return false
+	if not _integer(record.paid_seasons, 0, 1000000) or not _integer(record.unpaid_seasons, 0, 1000000): return false
 	return valid_receipts(record.receipts)
 
 static func valid_receipts(receipts: Variant) -> bool:
@@ -174,7 +177,7 @@ static func normalize(state: Dictionary) -> void:
 	if not raw is Dictionary: return
 	for record: Variant in raw.values():
 		if not record is Dictionary: continue
-		for field: String in ["version", "since_day", "pay_rate", "tax_rate", "last_payday", "last_taxday", "accrued_day"]:
+		for field: String in ["version", "since_day", "pay_rate", "tax_rate", "last_payday", "last_taxday", "accrued_day", "paid_seasons", "unpaid_seasons"]:
 			if record.get(field) is float: record[field] = int(record[field])
 		if record.get("exemptions") is Array:
 			for index: int in record.exemptions.size(): record.exemptions[index] = int(record.exemptions[index])

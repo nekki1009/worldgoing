@@ -28,6 +28,7 @@ const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adop
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const Payroll = preload("res://scripts/terrain_lab/site_payroll.gd") # 軍餉與稅收 P1: paydays ride the day review at peace.
 const ProduceTax = preload("res://scripts/terrain_lab/site_produce_tax.gd") # 軍餉與稅收 P2: residents' tax grievance.
+const Tribute = preload("res://scripts/terrain_lab/site_tribute.gd") # 軍餉與稅收 P3: deliveries, tribute, funding.
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
 # Nation equipment templates (NPC plan 7.8), lightest first.
@@ -68,6 +69,7 @@ static func reset_site_state() -> void:
 	SiteSocial.reset_site_state()
 	Payroll.reset()
 	ProduceTax.reset()
+	Tribute.reset()
 	review_round = 0
 	_seat_waits.clear()
 	_inmate_since.clear()
@@ -209,6 +211,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		CivilPromotion.day(lab) # 文武官 W3: civil tenure rides the day settlement.
 		if not lab.site_controller.person_actions.crowd_peace_guard([]).ok: return
 		settle_family_vacancy(lab)
+		Tribute.day(lab)
 		Payroll.day(lab)
 		ProduceTax.day(lab)
 		# P1d: team personnel at peace, on the grid review's own cadence: the same stamp gate, round counter (due() reads it)
@@ -232,6 +235,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 	SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.
 	CivilPromotion.day(lab) # 文武官 W3: civil tenure rides the day settlement.
 	settle_family_vacancy(lab) # R5 S6: family vacancy episodes ride the same tick, after the G0 day settlement.
+	Tribute.day(lab) # 軍餉與稅收 P3: deliveries, the tax day and the funding before a payday (before the payday itself).
 	Payroll.day(lab) # 軍餉與稅收 P1: a payday on the 1st of the month.
 	ProduceTax.day(lab) # 軍餉與稅收 P2: residents' grievance at a 15%/20% levy.
 	var controller: Variant = lab.site_controller
