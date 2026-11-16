@@ -23,6 +23,14 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
 
+## 2026-11-17 04:10（台北）土匪 B4c 買路錢接上大地圖相遇（新指揮中心）
+- CURRENT 指揮中心：新串（cmsg_…CmB9nUuknpt82jaj7trrXb），11/16 16:30Z 由協調者開、接手 05d62f6／717a9bf 交接。
+- 已提交（未推送）：79103a5 土匪 B4c 買路錢。土匪在途隊伍遇到在途玩家、人數 ≥ 玩家 1.5 倍且無有效放行時，相遇停住成為買路錢提議；旅隊面板「付買路錢（N 糧）／不付，開打」。付＝隊伍共用存糧（或玩家行囊）扣「人數 × 2」糧進土匪庫藏、記 3 日放行、相遇跳過，三者同一次發布；打＝原相遇流程。「逃」未做。
+- 順手修的既有問題：(1) 在途玩家的路線讀檔後座標是小數，RegionRoute.route_contact_candidates 用 Array == 比對，在途玩家從來不會和 NPC 隊相遇；(2) 一出發當下就到期的相遇事件沒人處理，旅程卡住。
+- 新測試 region_bandit_toll_road_test（-- --toll-case=pay|fight，各約 4 分鐘）；回歸 TOLL_REG_A（output/project_command_center/CONTINUOUS_SWITCH/TOLL_REG.json，Region 全部 48＋土匪 8＋買路錢 2）58/58，6 支長測試並行撞時限、單獨全過。
+- 付款存回的做法與踩過的坑記在記憶 bandit-b4-progress（不要重綁旅隊實體、不要在出發後第一段前走實體擷取存檔）。
+- 進行中：B4d-1 每日決策資料層（site_bandit_day.gd：每 10 日 heat −5、heat ≥ 70 換寨到相鄰陸地 Site、頭目在場達門檻起義；玩家當頭目的伙不動），掛在 settle_person_deaths。之後 B4d-2 戰鬥結束潰兵成伙（site_battle_tracker.close 的 routed_teams）、B4d-3 劫掠（在場群眾戰鬥、畫面外公式戰鬥）。
+
 ## 2026-11-17 02:00（台北）交接給新指揮中心
 - 本串（cmsg_…4rnoahY36kCET7y6gphsCW）停止施工，不再跑 Godot。工作樹沒有未提交的程式改動；HEAD 之後全部未推送。
 - 最後提交：b5f9c35 土匪 B4d 規則層（每日決策、劫掠條件與選目標、潰兵成伙資格；尚無呼叫者）。
