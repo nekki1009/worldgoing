@@ -2,7 +2,8 @@ extends RefCounted
 ## 土匪 B4d-1 (reports/bandit-faction-spec.md §5.2, §9.1, §11, §12): once a game day, every NPC band chief makes one move.
 ## This step wires the record-level moves: heat cools by 5 every 10th day, a band at heat >= 70 moves its lair to the
 ## nearest land Site next to it (heat back to 30), and an NPC chief standing in the active Site rises when the §9.1 gate
-## and his ambition allow. Raids (B4d-3) and amnesty offers are not wired yet; protection money is asked from the
+## and his ambition allow. B4d-3a: a chief here raids this Site's settlement of another faction (raid_facts / raid).
+## Amnesty offers are not wired yet; protection money is asked from the
 ## settlement side (SiteBanditProtection). A band the controlled person chiefs never acts here (the player decides), and
 ## nothing is decided for a chief who is not in the active Site where the decision needs his person ("no made-up
 ## history", §11).
@@ -12,6 +13,7 @@ const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # B4d-2: routed survivors form a band.
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
@@ -57,16 +59,20 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			var mind: Dictionary = DutyAI.personality(chief, null, controller.lab)
 			var prestige := Reputation.shown(int(controller.reputation_of(chief).prestige))
 			can_rise = Bandit.may_rise(registry, band, prestige, BanditAmnesty._members(controller.lab, band).size(), int(mind.get("ambition", 50))).ok
+		var seen := raid_facts(controller, band) if here else {"targets": [], "strength": 0.0}
 		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "can_rise": can_rise,
-			"amnesty_score": -1.0, "protection_due": [], "targets": [], "strength": 0.0})
+			"amnesty_score": -1.0, "protection_due": [], "targets": seen.targets, "strength": float(seen.strength)})
 		var done := {}
 		match str(decision.action):
 			"move_lair": done = move_lair(controller, band)
 			"rise":
 				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
+			"raid": done = raid(controller, band, decision.target)
 			_: continue
-		result.actions.append({"band": band, "action": str(decision.action), "ok": bool(done.get("ok", false)), "code": str(done.get("code", ""))})
+		var row := {"band": band, "action": str(decision.action), "ok": bool(done.get("ok", false)), "code": str(done.get("code", ""))}
+		if str(decision.action) == "raid": row.merge({"orders": done.get("orders", []), "heat_saved": bool(done.get("heat_saved", false))})
+		result.actions.append(row)
 	return result
 
 ## The nearest land neighbour of the lair Site (east, north, west, south) keeps the same cell inside its Site; with no
@@ -89,3 +95,49 @@ static func move_lair(controller: Variant, band: int) -> Dictionary:
 		if not moved.ok: return moved
 		return controller._commit_diplomacy(moved, "")
 	return {"ok": false, "code": "NO_LAND_NEIGHBOUR"}
+
+# --- B4d-3a: a raid on the settlement of the band's own Site (bandit spec §5.1, §11, §12) ------------------------------
+## What the chief sees here: the band's visible people against the settlement owner's (one target: this Site's
+## settlement of another faction). Other Sites are not raided yet: no intelligence records their strength.
+static func raid_facts(controller: Variant, band: int) -> Dictionary:
+	var lab: Variant = controller.lab
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	var visible: Dictionary = controller.visible_strength()
+	var result := {"targets": [], "strength": float(visible.get(band, 0))}
+	if settlement.is_empty() or not settlement.has("owner_faction"): return result
+	var owner := int(settlement.owner_faction)
+	if owner == band: return result
+	var site_id := str(lab.terrain.site.get("id", ""))
+	result.targets.append({"kind": "settlement", "id": site_id, "site_id": site_id, "strength": float(visible.get(owner, 0)), "faction": owner})
+	return result
+
+## Every team of the band attacks the defender nearest to its captain; heat rises by 10 (saved with the Site when the
+## Site can be saved). Returns {ok, orders: [{team, target}], heat_saved}.
+static func raid(controller: Variant, band: int, target: Dictionary) -> Dictionary:
+	var lab: Variant = controller.lab
+	if lab.crowd_site == null or not lab.crowd_site.active: return {"ok": false, "code": "UNSUPPORTED"}
+	var defenders: Array[Dictionary] = []
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or int(team.get("faction", -1)) != int(target.get("faction", -1)): continue
+		for person: Variant in team.get("person_ids", []):
+			var body: Dictionary = lab.crowd_site.combat_target(int(person))
+			if not body.is_empty() and float(body.get("hp", 0.0)) > 0.0: defenders.append({"id": int(person), "cell": body.cell})
+	if defenders.is_empty(): return {"ok": false, "code": "NO_TARGET"}
+	var orders: Array = []
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or bool(team.get("solo", false)) or int(team.get("faction", -1)) != band: continue
+		var captain := int(controller.team_captain_of_team(int(team.team_id)))
+		var from: Dictionary = lab.crowd_site.combat_target(captain if captain > 0 else int(team.person_ids[0]))
+		if from.is_empty(): continue
+		var best: Dictionary = defenders[0]
+		for defender: Dictionary in defenders:
+			if Vector2(defender.cell - from.cell).length_squared() < Vector2(best.cell - from.cell).length_squared(): best = defender
+		var ordered: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.ATTACK, best.cell, int(best.id), "bandit_raid")
+		if ordered.ok: orders.append({"team": int(team.team_id), "target": int(best.id)})
+	if orders.is_empty(): return {"ok": false, "code": "NO_ORDER"}
+	var slot: Variant = controller.region_slot
+	var registry: Dictionary = slot.control.faction_registry
+	var hotter := Bandit.set_heat(registry, band, Bandit.heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "raid"), float(slot.control.logical_game_seconds))
+	var saved: Dictionary = controller._commit_diplomacy(hotter, "") if hotter.ok else hotter
+	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("%s 劫掠本地聚落" % str(RegionFactionQuery.display(registry, band).name))
+	return {"ok": true, "orders": orders, "heat_saved": bool(saved.get("ok", false))}
