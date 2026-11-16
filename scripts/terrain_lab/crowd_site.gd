@@ -2288,6 +2288,7 @@ func _battle_event(kind: int, identity: int, other: int) -> void:
 	var rank: String = lab.site_controller.peerage_rank_of(identity) if lab.site_controller.has_method("peerage_rank_of") else ""
 	battle.on_event(kind, identity, _faction_of_person(identity), striker, _faction_of_person(striker), other if kind == 4 else -1,
 		_faction_of_person(other) if kind == 4 else -1, rank != "" and rank != "none")
+	if kind in [0, 1] and striker > 0 and lab.site_controller.has_method("civilian_harmed"): lab.site_controller.civilian_harmed(kind, identity, striker)
 
 func _battle_tick(combat_left: float) -> void:
 	var now := _battle_now()

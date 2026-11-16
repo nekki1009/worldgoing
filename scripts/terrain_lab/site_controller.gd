@@ -10502,6 +10502,18 @@ func reputation_day() -> int:
 	return int(float(region_slot.control.logical_game_seconds) / 86400.0) if region_slot != null else 0
 
 ## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
+## 平民 C3 (civilian plan §4.5): the striker who kills (kind 0) or knocks out (kind 1) a civilian of another faction loses
+## credit. Returns the striker's reputation after the change, or {} when nothing changes.
+func civilian_harmed(kind: int, victim_id: int, striker_id: int) -> Dictionary:
+	if kind not in [0, 1] or striker_id <= 0 or striker_id == victim_id: return {}
+	var victim: Dictionary = person_actions._person(victim_id, false)
+	var striker: Dictionary = person_actions._person(striker_id, false)
+	if victim.is_empty() or striker.is_empty() or int(victim.faction) == int(striker.faction) and int(victim.faction) != RegionFactionQuery.NEUTRAL_FACTION_ID: return {}
+	var body: Variant = victim.get("body")
+	var role: String = str(body.get("military_role", "soldier")) if body is Dictionary else (str(body.military_role) if body is Object and "military_role" in body else "soldier")
+	if role != "civilian": return {}
+	return adjust_reputation(striker_id, 0.0, float(Reputation.CIVILIAN_KILLED if kind == 0 else Reputation.CIVILIAN_KO))
+
 func adjust_reputation(person_id: int, prestige_delta: float, credit_delta: float) -> Dictionary:
 	var person: Dictionary = person_actions._person(person_id, false)
 	if person.is_empty(): return {}

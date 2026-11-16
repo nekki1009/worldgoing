@@ -34,6 +34,9 @@ const REBEL_DEFECT := -40
 const DESERT := -10
 ## Bandit spec §12: going outlaw (落草, also the 落草 start) costs credit once.
 const OUTLAW := -20
+## 平民 C3 (civilian plan §4.5): credit lost by whoever kills or knocks out a civilian of another faction (each person).
+const CIVILIAN_KILLED := -2
+const CIVILIAN_KO := -1
 const BREAK_TREATY := -20
 const TREATY_KEPT := 2
 const TAX_SEASON := 1
