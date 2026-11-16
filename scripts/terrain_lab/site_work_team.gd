@@ -3,6 +3,7 @@ extends RefCounted
 ## Original Army rows perform the existing Site worker pipeline. This helper
 ## keeps only active identity handles/retry delays; no people, cargo or clock.
 
+const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: slow work at high discontent.
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const RETRY_SECONDS := 30.0
@@ -438,7 +439,8 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 				"work_slot": int(task.get("work_slot", -1)), "hit": int(row.get("hit_revision", 0)), "cargo": row.cargo, "item_state": row.item_state})
 			continue # Selection/routes belong to this original pipeline; no work yet.
 		var work_time := func(_manual: bool, minutes: float) -> float:
-			if _native_person(person): return _native_work_minutes(person, manual, minutes, handled)
+			var mood := ResidentMood.work_factor(lab, identity, row) # 平民 C4a: a resident at G >= 40 works at 80%.
+			if _native_person(person): return _native_work_minutes(person, manual, minutes, handled) * mood
 			var work_rate := PersonFatigue.effort_rate(row)
 			var effort := minutes * 60.0 if manual else minf(minutes * 60.0, maxf(0.0, (PersonFatigue.WORK_REST_AT - PersonFatigue.read(row)) / work_rate))
 			var productive := PersonFatigue.work_seconds(PersonFatigue.read(row), effort, work_rate)
@@ -449,7 +451,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if effort > 0.0:
 				handled[identity] = float(handled.get(identity, 0.0)) + effort
 				_working[identity] = true
-			return productive / 60.0
+			return productive / 60.0 * mood
 		var work_target := SiteRuntime.work_claim_key(task)
 		if str(task.target).begins_with("vehicle:"):
 			var key := str(task.target).trim_prefix("vehicle:")

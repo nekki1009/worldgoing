@@ -28,6 +28,7 @@ const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adop
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const Payroll = preload("res://scripts/terrain_lab/site_payroll.gd") # 軍餉與稅收 P1: paydays ride the day review at peace.
 const ProduceTax = preload("res://scripts/terrain_lab/site_produce_tax.gd") # 軍餉與稅收 P2: residents' tax grievance.
+const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' daily grievance.
 const Tribute = preload("res://scripts/terrain_lab/site_tribute.gd") # 軍餉與稅收 P3: deliveries, tribute, funding.
 const FinanceAI = preload("res://scripts/terrain_lab/site_finance_ai.gd") # 軍餉與稅收 P6: NPC pay sources and levies.
 const BanditProtection = preload("res://scripts/terrain_lab/site_bandit_protection.gd") # 土匪 B4b: protection money.
@@ -74,6 +75,7 @@ static func reset_site_state() -> void:
 	Tribute.reset()
 	FinanceAI.reset()
 	BanditProtection.reset()
+	ResidentMood.reset()
 	review_round = 0
 	_seat_waits.clear()
 	_inmate_since.clear()
@@ -220,6 +222,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		Tribute.day(lab)
 		Payroll.day(lab)
 		ProduceTax.day(lab)
+		ResidentMood.day(lab)
 		# P1d: team personnel at peace, on the grid review's own cadence: the same stamp gate, round counter (due() reads it)
 		# and seat waits. Logistics and training stay refused under crowd.
 		var crowd_cadence := _cadence_state(lab, ledger)
@@ -246,6 +249,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 	Tribute.day(lab) # 軍餉與稅收 P3: deliveries, the tax day and the funding before a payday (before the payday itself).
 	Payroll.day(lab) # 軍餉與稅收 P1: a payday on the 1st of the month.
 	ProduceTax.day(lab) # 軍餉與稅收 P2: residents' grievance at a 15%/20% levy.
+	ResidentMood.day(lab) # 平民 C4a: hunger, homelessness and content.
 	var controller: Variant = lab.site_controller
 	var controlled: int = lab.controlled_person_id()
 	var cadence := _cadence_state(lab, ledger)

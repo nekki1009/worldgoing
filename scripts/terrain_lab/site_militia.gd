@@ -8,11 +8,12 @@ extends RefCounted
 ## The Site section `militia` {drafted: [person id], at: Site minute} remembers who was drafted, so the release turns back
 ## exactly them (save rules below). An NPC decider drafts at the start of an alarm and releases after it (SiteController);
 ## a controlled decider uses draft / release.
-## Not built: moving the drafted into the garrison team (a crowd team merge does not exist yet), and the +5 discontent of
-## the draft (residents' discontent is C4).
+## The draft costs each drafted resident +5 discontent once (SiteResidentMood, C4a).
+## Not built: moving the drafted into the garrison team.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Schedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
+const Mood = preload("res://scripts/terrain_lab/site_resident_mood.gd")
 
 const SECTION := "militia"
 const MAX_DRAFTED := 512
@@ -66,6 +67,7 @@ static func draft(lab: Variant, requester_id: int) -> Dictionary:
 	if changed.is_empty(): return Runtime.fail("NO_TARGET", "沒有可徵召的居民")
 	drafted.sort()
 	lab.terrain.site[SECTION] = {"drafted": drafted, "at": int(record.get("at", int(lab.terrain.site.get("minute", 0))))}
+	Mood.drafted(lab, changed, int(lab.terrain.site[SECTION].at)) # 平民 C4a: +5 discontent, once.
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("營務徵召鄉勇 %d 人" % changed.size())
 	return Runtime.ok("已徵召鄉勇 %d 人" % changed.size(), {"drafted": changed})
 

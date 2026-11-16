@@ -33,6 +33,7 @@ const BanditRegistry = preload("res://scripts/region_lab/region_bandit.gd")
 const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd") # 土匪 B4d-1: the band chiefs' daily move.
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed teams are watched for 7 days.
 const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: the 營務 drafts residents in danger.
+const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' grievance.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -10503,6 +10504,10 @@ func reputation_day() -> int:
 	return int(float(region_slot.control.logical_game_seconds) / 86400.0) if region_slot != null else 0
 
 ## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
+## 平民 C4a: a registered resident killed in a fight grieves every other resident once (SiteResidentMood).
+func resident_died(victim_id: int) -> int:
+	return ResidentMood.resident_killed(lab, victim_id)
+
 ## 平民 C3 (civilian plan §4.5): the striker who kills (kind 0) or knocks out (kind 1) a civilian of another faction loses
 ## credit. Returns the striker's reputation after the change, or {} when nothing changes.
 func civilian_harmed(kind: int, victim_id: int, striker_id: int) -> Dictionary:
