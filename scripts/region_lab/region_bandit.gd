@@ -257,3 +257,65 @@ static func toll_paid(registry: Dictionary, band: int, party_token: String, day:
 		for item: String in paid: hoard[item] = int(hoard.get(item, 0)) + int(paid[item])
 		if not hoard.is_empty(): table["hoard"] = hoard, now)
 
+# --- B4c step two: the toll on a travelling party's own content -------------------------------------------------------
+const TOLL_FOODS := ["grain", "wild_food", "fish", "meat"]
+
+## The faction of a travelling party: its first army's (a party of actors only has none: -1).
+static func party_faction(party: Dictionary) -> int:
+	for army: Variant in party.get("content", {}).get("armies", []):
+		if army is Dictionary and army.has("faction_id"): return int(army.faction_id)
+	return -1
+
+## Living bodies of a travelling party (its strength for the toll: one per person able to stand).
+static func party_people(party: Dictionary) -> int:
+	var count := 0
+	var content: Dictionary = party.get("content", {})
+	for actor: Variant in content.get("actors", {}).values():
+		if actor is Dictionary and float(actor.get("hp", 0.0)) > 0.0: count += 1
+	for army: Variant in content.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and float(unit.get("hp", 0.0)) > 0.0: count += 1
+	return count
+
+## The unopened food inventories of a party's shared supplies (the same dictionaries; whole units only).
+static func _party_food_stores(party: Dictionary) -> Array:
+	var stores: Array = []
+	var supplies: Dictionary = party.get("content", {}).get("team_supply", {})
+	var keys: Array = supplies.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var supply: Variant = supplies[key]
+		if not supply is Dictionary: continue
+		if int(supply.get("version", 0)) == 3:
+			var places: Array = supply.get("locations", {}).keys()
+			places.sort()
+			for place: Variant in places:
+				var location: Variant = supply.locations[place]
+				if location is Dictionary and location.get("inventory") is Dictionary: stores.append(location.inventory)
+		elif supply.get("inventory") is Dictionary: stores.append(supply.inventory)
+	return stores
+
+static func party_food(party: Dictionary) -> int:
+	var total := 0
+	for store: Dictionary in _party_food_stores(party):
+		for food: String in TOLL_FOODS: total += int(store.get(food, 0))
+	return total
+
+## Takes `fee` whole units of food from the party's shared supplies (grain first). Returns what was taken, or {} (and
+## changes nothing) when the party carries less than the fee.
+static func take_party_food(party: Dictionary, fee: int) -> Dictionary:
+	if fee <= 0 or party_food(party) < fee: return {}
+	var taken := {}
+	var rest := fee
+	for food: String in TOLL_FOODS:
+		for store: Dictionary in _party_food_stores(party):
+			if rest <= 0: break
+			var units := mini(rest, int(store.get(food, 0)))
+			if units <= 0: continue
+			store[food] = int(store[food]) - units
+			if int(store[food]) == 0: store.erase(food)
+			taken[food] = int(taken.get(food, 0)) + units
+			rest -= units
+	return taken
+

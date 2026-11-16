@@ -36,5 +36,12 @@ func _run() -> void:
 	var broken: Dictionary = paid.registry.duplicate(true)
 	broken.entries["2"].bandit.passes["p9"] = -4
 	if not _ok(not RegionFactionQuery.validate(broken, 1.0e9).ok, "a broken pass is refused"): return
+	# Step two: a travelling party's own content.
+	var party := {"content": {"actors": {"player": {"person_id": 1, "hp": 100.0}}, "armies": [{"faction_id": 7, "units": [{"hp": 100.0}, {"hp": 0.0}, {"hp": 40.0}]}],
+		"team_supply": {"1": {"version": 3, "locations": {"vehicle:a": {"inventory": {"grain": 3, "fish": 2}}, "person:1": {"inventory": {"grain": 1, "meat": 4}}}}, "2": {"version": 2, "inventory": {"grain": 2}}}}}
+	if not _ok(Bandit.party_faction(party) == 7 and Bandit.party_people(party) == 3 and Bandit.party_food(party) == 12, "a party's faction, living people and whole food"): return
+	if not _ok(Bandit.take_party_food(party, 13).is_empty() and Bandit.party_food(party) == 12, "a party short of the fee pays nothing"): return
+	var taken := Bandit.take_party_food(party, 8)
+	if not _ok(taken == {"grain": 6, "fish": 2} and Bandit.party_food(party) == 4 and not party.content.team_supply["2"].inventory.has("grain"), "the fee leaves the shared supplies, grain first", [taken, party.content.team_supply]): return
 	print("REGION_BANDIT_TOLL_B4C_PASS checks=", checks)
 	quit(0)
