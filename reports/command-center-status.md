@@ -23,6 +23,12 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
 
+## 2026-11-17 06:55（台北）平民 C3a／C3b／C3c
+- 已提交（未推送）：c48f7f0 C3a 遇敵回家（Site 戰鬥中或有敵對武裝人物 → 警報，居民停工、可穿過戰鬥走回家；戰鬥開始立即反應；危險解除後留 30 分鐘）；62b8f53 C3b 打平民扣信譽（別方平民被殺 −2、被擊倒 −1；計畫寫「數值另定」，先用這組，常數在 person_reputation.gd）；C3c 鄉勇（site_militia.gd）。
+- **決定（協調者 11/16 22:11Z 依慣例採建議 A，Nekki 可改）**：鄉勇只在敵人進入、尚未開戰時徵召，不放寬既有「軍職變更須脫戰」；NPC 營務自動徵召、警報結束解編；玩家當營務時自己決定（尚無按鈕，只有 SiteMilitia.draft／release）。
+- 回歸：C3A_REG_A 97/100（3 支不在維護清單的舊測試，基準同樣失敗：site_housing_test 撞 GRID_SIMULATION_RETIRED；site_resident_birth、site_housing_crowd 為既有失敗）、C3B_REG_A 98/98、C3C_REG_A 99/99。
+- 未做：住宅毀改到中心避難（沒有走到中心的動作）、屋內居民原生「在家」不可選為目標（併 C1c／平民圖集）、鄉勇編入守軍隊（缺群眾併隊，與土匪潰兵同一缺口）、徵召不滿 +5（C4）。
+
 ## 2026-11-17 05:25（台北）土匪 B4d-1／B4d-2／B4d-3a
 - 已提交（未推送）：9167d50 B4d-1 每日決策（site_bandit_day.gd：每 10 日 heat −5、heat ≥ 70 換寨到相鄰陸地 Site、在場 NPC 頭目達門檻起義；玩家當頭目的伙不動；掛在 settle_person_deaths）；12e7750 B4d-2 潰兵成伙（site_bandit_rout.gd：close_battle 記下潰逃隊伍的人到 Site 段 bandit_rout_watch，7 日後原勢力滅或原隊不在、在此 Site 的自由生還者 ≥ 3 → 新土匪 origin rout）；B4d-3a 同 Site 劫掠（頭目在場、本 Site 別家聚落、看得到的人數 ≥ 1.2 倍、未付保護費 → 土匪隊對最近守軍下攻擊令、heat +10）。
 - 回歸：BDAY_REG_A 100/100、BROUT_REG_A 101/101、BRAID_REG_A 102/102（土匪家族＋冒煙 91＋戰鬥紀錄；RUNNER_CAUGHT 單獨重跑過）。
