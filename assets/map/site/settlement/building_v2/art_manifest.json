@@ -13632,6 +13632,498 @@
       "sha256": "0F41156E093CBE794B7D398045BD95D09E5D06CF2A90C51CB6B9A6D2A39F1C7F",
       "origin": "Built-in image_gen; PNG bytes and alpha unchanged. Exact prompts, source paths, revisions and QA: output/project_command_center/evidence/CC-20261107-191/generation.json",
       "qa": "Individual images and final contact sheet viewed. Source art only; Godot/GPU/runtime NOT_RUN."
+    },
+    "village_school": {
+      "file": "village_school_v1.png",
+      "name": "蒙學",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        10,
+        165,
+        1235,
+        993
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        10,
+        165,
+        9,
+        96
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 452319,
+      "low_alpha_pixels": 16606,
+      "opaque_pixels": 1115,
+      "sha256": "A4461757B90335093856B14D2D5131D1D6F919731E830D412E5C9165D61BE4DF",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "village_school_west": {
+      "file": "village_school_west_v1.png",
+      "name": "蒙學",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        44,
+        49,
+        1143,
+        1160
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        44,
+        49,
+        67,
+        45
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 532512,
+      "low_alpha_pixels": 11070,
+      "opaque_pixels": 393,
+      "sha256": "10F585D2E2551E5E85B9E785D56CDCAEFB24EFD85F59C88DE67F8BB15D91AF14",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "village_school_north": {
+      "file": "village_school_north_v1.png",
+      "name": "蒙學",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        9,
+        165,
+        1237,
+        993
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        9,
+        165,
+        8,
+        96
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 450296,
+      "low_alpha_pixels": 11851,
+      "opaque_pixels": 1657,
+      "sha256": "4FF3D782C64DC09E18D3E2BA8DB0C1406159F7645F4C185239A5AFCA6AEB5EBF",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "village_school_east": {
+      "file": "village_school_east_v1.png",
+      "name": "蒙學",
+      "mode": "structure",
+      "art_size": [
+        3,
+        3
+      ],
+      "base_art_size": [
+        3,
+        3
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        102,
+        30,
+        1051,
+        1171
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        102,
+        30,
+        101,
+        53
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 626841,
+      "low_alpha_pixels": 14824,
+      "opaque_pixels": 567,
+      "sha256": "5E96C46C29A62BB6F408BBEF5C14B6D0B174D062609ED1EBBE7BA3B109BC7AD8",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "district_school": {
+      "file": "district_school_v1.png",
+      "name": "鄉學",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        123,
+        209,
+        1009,
+        855
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        123,
+        209,
+        122,
+        190
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 770610,
+      "low_alpha_pixels": 13682,
+      "opaque_pixels": 377,
+      "sha256": "A2908F609D07BBCF3FC820054F7EE6312E49241A2120C2788350387C2ADE3164",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "district_school_west": {
+      "file": "district_school_west_v1.png",
+      "name": "鄉學",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        121,
+        167,
+        983,
+        978
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        121,
+        167,
+        150,
+        109
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 658555,
+      "low_alpha_pixels": 17285,
+      "opaque_pixels": 777,
+      "sha256": "47D515B1B9BED9C31EE138020C3FFECBBA9363F141303578AD8EFAE4DC888CEA",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "district_school_north": {
+      "file": "district_school_north_v1.png",
+      "name": "鄉學",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        81,
+        151,
+        1092,
+        972
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        81,
+        151,
+        81,
+        131
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 666931,
+      "low_alpha_pixels": 18526,
+      "opaque_pixels": 578,
+      "sha256": "48DB5F3BB6C3026A8F9E9036BF5FB8E040A052EDF1190A40F5E8FAD3F6F67042",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "district_school_east": {
+      "file": "district_school_east_v1.png",
+      "name": "鄉學",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        98,
+        111,
+        1058,
+        1070
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        98,
+        111,
+        98,
+        73
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 520368,
+      "low_alpha_pixels": 19948,
+      "opaque_pixels": 715,
+      "sha256": "3DE252BDF841A9EAFA3D3BE6B9A482BEEC24533C9B90FCE816063EA85AF8F6D0",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "state_academy": {
+      "file": "state_academy_v1.png",
+      "name": "國學",
+      "mode": "structure",
+      "art_size": [
+        5,
+        5
+      ],
+      "base_art_size": [
+        5,
+        5
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        133,
+        215,
+        990,
+        842
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        133,
+        215,
+        131,
+        197
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 818062,
+      "low_alpha_pixels": 17524,
+      "opaque_pixels": 272,
+      "sha256": "A840C2BCD433D89FB6C6912A24B13F5B9B4E51A2BCA8EED702EA477B97E2E9F9",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "state_academy_west": {
+      "file": "state_academy_west_v1.png",
+      "name": "國學",
+      "mode": "structure",
+      "art_size": [
+        5,
+        5
+      ],
+      "base_art_size": [
+        5,
+        5
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        82,
+        161,
+        1052,
+        948
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        82,
+        161,
+        120,
+        145
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 654033,
+      "low_alpha_pixels": 13374,
+      "opaque_pixels": 618,
+      "sha256": "F997AD6ECA66F5968A57D111D4E651784E2CFEB044A982F8513FFC52C7340D04",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "state_academy_north": {
+      "file": "state_academy_north_v1.png",
+      "name": "國學",
+      "mode": "structure",
+      "art_size": [
+        5,
+        5
+      ],
+      "base_art_size": [
+        5,
+        5
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        89,
+        165,
+        1077,
+        954
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        89,
+        165,
+        88,
+        135
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 665121,
+      "low_alpha_pixels": 23307,
+      "opaque_pixels": 492,
+      "sha256": "28181C560042355982B43B35FFD8BD9E8359FF23F9CCECD5EDB368E6D2256A89",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "state_academy_east": {
+      "file": "state_academy_east_v1.png",
+      "name": "國學",
+      "mode": "structure",
+      "art_size": [
+        5,
+        5
+      ],
+      "base_art_size": [
+        5,
+        5
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        99,
+        131,
+        1073,
+        993
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        99,
+        131,
+        82,
+        130
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 590956,
+      "low_alpha_pixels": 14241,
+      "opaque_pixels": 1156,
+      "sha256": "022622A5C9850974A68600DC066F48409B446FE72F5004549037C45047339FCC",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
     }
   },
   "auxiliary_images": {
