@@ -926,8 +926,10 @@ static func _shore_contact(first: TerrainData, second: TerrainData, shift: Vecto
 ## boundaries are translated by the Slot's existing war/peace journal later.
 ## Fleet steps are serialized, so every sweep is checked against other original
 ## hulls at their actually completed poses instead of ignoring fleet collision.
+## `weather` (時間與氣候 TC11): {wind: Vector2, storm: bool} of the departure, or {} for still air: a forward or reverse
+## step's duration is divided by Ship.weather_factor of its heading.
 static func sea_action_steps(first: TerrainData, second: TerrainData, vehicles: Array,
-		poses: Dictionary, paths: Dictionary, edge: int, content: Dictionary, ocean_memo: Variant = null) -> Dictionary:
+		poses: Dictionary, paths: Dictionary, edge: int, content: Dictionary, ocean_memo: Variant = null, weather: Dictionary = {}) -> Dictionary:
 	var memo := _memo_of(ocean_memo)
 	var shift: Vector2i = TerrainData.DIRECTIONS[edge] * Adapter.SIDE
 	var moving := {}
@@ -978,6 +980,9 @@ static func sea_action_steps(first: TerrainData, second: TerrainData, vehicles: 
 			var action := "turn" if anchor == from else ("reverse" if anchor - from == -from_facing else "forward")
 			var docking := action != "turn" and _shore_contact(first, second, shift, str(vehicle.ship_type), from, from_facing, occupied)
 			var speed := Ship.speed(str(vehicle.ship_type), int(metrics.people), float(metrics.load), int(metrics.crew), docking, action == "reverse")
+			if not weather.is_empty() and action != "turn" and not docking:
+				var heading := Vector2(anchor - from)
+				speed *= Ship.weather_factor(str(vehicle.ship_type), heading, weather.get("wind", Vector2.ZERO), bool(weather.get("storm", false)))
 			var duration := Ship.turn_seconds(str(vehicle.ship_type), int(metrics.crew)) if action == "turn" else (1.0 / speed if speed > 0.0 else INF)
 			if not is_finite(duration) or duration <= 0.0: return {"ok": false, "code": "NO_CREW"}
 			var distance := Vector2(anchor - from).length() * float(Grid.CELL_MM) / 1000.0

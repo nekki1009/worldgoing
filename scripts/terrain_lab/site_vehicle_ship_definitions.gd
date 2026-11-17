@@ -137,6 +137,24 @@ static func speed(kind: String, people: int, load_amount: float, crew: int, dock
 	if reverse: result *= 0.25
 	return minf(result, 0.5) if docking else result
 
+## 時間與氣候 TC11 (day-weather-season plan §4.7, D8 A): the wind on a ship's way. Sailing types (coastal, troop, tower)
+## gain up to +25% running before the wind and lose up to 40% beating into it, by the cosine between their heading and
+## the wind (whose length is its strength, at most 1); oared types (ferry, river, patrol) feel half of it. A storm at
+## sea halves every type's speed on top.
+const SAIL_KINDS: Array[String] = ["coastal", "troop", "tower"]
+const WIND_GAIN := 0.25
+const WIND_LOSS := 0.40
+const OAR_SHARE := 0.5
+const STORM_SPEED := 0.5
+
+static func weather_factor(kind: String, heading: Vector2, wind: Vector2, storm: bool = false) -> float:
+	var factor := 1.0
+	if heading.length_squared() > 0.0 and wind.length_squared() > 0.0:
+		var along := heading.normalized().dot(wind.limit_length(1.0))
+		factor = 1.0 + WIND_GAIN * maxf(0.0, along) - WIND_LOSS * maxf(0.0, -along)
+		if not SAIL_KINDS.has(kind): factor = 1.0 + (factor - 1.0) * OAR_SHARE
+	return factor * (STORM_SPEED if storm else 1.0)
+
 static func turn_seconds(kind: String, crew: int) -> float:
 	var spec := definition(kind)
 	var multiplier := _crew_multiplier(spec, crew)

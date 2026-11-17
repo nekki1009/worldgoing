@@ -5301,6 +5301,13 @@ func _region_sea_timeline(steps: Array, party: Dictionary) -> Dictionary:
 	var metres := 0.0
 	var content: Dictionary = party.content
 	var vehicles: Array = content.get("vehicles", {}).values()
+	# 時間與氣候 TC11: the wind and storm of the departure slot set every leg's sailing speed.
+	var weather := {}
+	var registry: Variant = control.get("faction_registry", {})
+	if registry is Dictionary and RegionWeather.enabled(registry) and steps.size() >= 1:
+		var start := Vector2i(int(steps[0].site[0]), int(steps[0].site[1]))
+		var now := RegionWeather.at(str(pin.get("world_instance_id", "")), str(pin.get("atlas_id", "")), start, float(control.logical_game_seconds))
+		weather = {"wind": now.get("wind", Vector2.ZERO), "storm": str(now.get("weather", "")) == "storm"}
 	for leg: int in range(1, steps.size()):
 		var from := Vector2i(int(steps[leg - 1].site[0]), int(steps[leg - 1].site[1]))
 		var to := Vector2i(int(steps[leg].site[0]), int(steps[leg].site[1]))
@@ -5309,7 +5316,7 @@ func _region_sea_timeline(steps: Array, party: Dictionary) -> Dictionary:
 		if not first.ok or not second.ok: return first if not first.ok else second
 		var timeline := RegionRoute.sea_action_steps(first.data, second.data, vehicles,
 			steps[leg - 1].vehicle_poses, steps[leg].vehicle_paths,
-			RegionRoute.opposite(int(steps[leg].edge)), content)
+			RegionRoute.opposite(int(steps[leg].edge)), content, null, weather)
 		if not timeline.ok: return timeline
 		for raw: Dictionary in timeline.actions:
 			var action := raw.duplicate(true)
