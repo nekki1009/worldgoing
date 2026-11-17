@@ -4034,7 +4034,10 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 		return result
 	var target_id := Grid.site_id(str(pin.atlas_id), target_coordinate)
 	var authorized: Dictionary
-	if carried_nation_report.is_empty():
+	if nation_id.begins_with("captain:"):
+		# A band or an emigrating household leaves on its captain's own word (RegionAI.prepare_captain_dispatch).
+		authorized = RegionAI.prepare_captain_dispatch(lab, team_id, target_id, token, preflight, nation_id.trim_prefix("captain:"))
+	elif carried_nation_report.is_empty():
 		var context := RegionAI.dispatch_context(lab, nation_id, team_id, target_id, token, preflight)
 		if not context.ok: return context
 		authorized = RegionAI.prepare_dispatch(context.context)

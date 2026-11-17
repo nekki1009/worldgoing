@@ -61,8 +61,9 @@ func _toll_dispatch_band() -> bool:
 	var person: Dictionary = controller.person_actions._person(team.combat_identity(team.current_commander), false)
 	var component: int = RegionTravelSite.start_component(slot, Vector2i.ZERO, person.cell, lab.terrain)
 	toll_token = "toll_band_%d" % OS.get_process_id()
-	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, nation_id, int(team.team_id), action_coordinate, component, [], toll_token)
-	if not _check(prepared.ok, "the band's party is admitted to the road", prepared): return false
+	# A band answers to no nation office: its captain sends it out himself (RegionAI.prepare_captain_dispatch).
+	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:band", int(team.team_id), action_coordinate, component, [], toll_token)
+	if not _check(prepared.ok and str(prepared.request.get("captain_dispatch", "")) == "band" and str(prepared.request.nation_id).is_empty(), "the band's captain sends the party onto the road", prepared): return false
 	if not _check(TollRules.party_faction(prepared.party) == toll_band, "the travelling party carries the band's faction", TollRules.party_faction(prepared.party)): return false
 	return _check(slot.commit_npc_region_dispatch(prepared).ok, "the band's party leaves on the road")
 

@@ -123,6 +123,30 @@ static func reports_due(ledger: Dictionary, game_time: float) -> Array[Dictionar
 
 ## The dispatch intent is validated against original nation and commander owners.
 ## Travel still owns removal/arrival and Slot still owns token/idempotence.
+## A team that answers to no nation office leaves on its captain's own word (2026-11-17: a band, a household that
+## emigrates). The captain is the team's current NPC commander; the player's team, a routed team or one without a
+## commander cannot. `reason` names the cause in the request (band, emigrate). No known-target receipt is needed: the
+## caller names a neighbouring Site from public geography. Returns the same {request, owner_preview} as prepare_dispatch.
+const CAPTAIN_DISPATCH_REASONS := ["band", "emigrate"]
+static func prepare_captain_dispatch(lab: TerrainLab, team_id: int, target_site: String, transfer_token: String, preflight: Callable, reason: String) -> Dictionary:
+	if lab == null or lab.terrain == null or lab.site_controller == null or not preflight.is_valid(): return _fail("MISSING_DISPATCH_OWNER")
+	if reason not in CAPTAIN_DISPATCH_REASONS: return _fail("INVALID_DISPATCH")
+	var team: Variant = command_team_by_id(lab, team_id)
+	if team == null or not team.combat_enabled: return _fail("NO_TEAM")
+	var player := int(lab.controlled_person_id())
+	if _team_has_person(lab, team, player): return _fail("PLAYER_PARTY")
+	if lab.site_controller.region_slot != null and not lab.site_controller.region_slot.region_player_barrier().is_empty(): return _fail("PLAYER_BARRIER")
+	if team is TerrainArmy: team.settle_combat_command()
+	if not team.command_eligible(team.current_commander) or team.is_sustain_routed(): return _fail("NO_COMMANDER")
+	var commander: int = team.combat_identity(team.current_commander)
+	if commander == player: return _fail("PLAYER_HOLDER")
+	if transfer_token.is_empty() or target_site.is_empty() or target_site == str(lab.terrain.site.id): return _fail("INVALID_DISPATCH")
+	var request := {"nation_id": "", "captain_dispatch": reason, "decider": commander, "commander": commander,
+		"team_id": int(team.team_id), "target_site": target_site, "transfer_token": transfer_token, "offices_revision": 0, "known_receipt": ""}
+	var checked: Dictionary = preflight.call(request)
+	if not bool(checked.get("ok", false)): return _fail("DISPATCH_UNAVAILABLE")
+	return {"ok": true, "code": "", "request": request, "owner_preview": checked}
+
 static func prepare_dispatch(context: Dictionary) -> Dictionary:
 	var equipment: Variant = context.get("equipment_orders")
 	var team: Variant = context.get("team")
