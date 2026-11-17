@@ -34,6 +34,7 @@ const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd") # 土�
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed teams are watched for 7 days.
 const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: the 營務 drafts residents in danger.
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' grievance.
+const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.gd") # 平民 C4b: households leave or go outlaw.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -5203,6 +5204,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 	npc_diplomacy_day()
 	npc_rebellion_day()
 	BanditDay.day(self)
+	resident_exodus_day()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
@@ -10504,6 +10506,14 @@ func reputation_day() -> int:
 	return int(float(region_slot.control.logical_game_seconds) / 86400.0) if region_slot != null else 0
 
 ## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
+## 平民 C4b: once a game day on the active Site, every 30th day judges the households (SiteResidentExodus).
+func resident_exodus_day() -> Dictionary:
+	if region_slot == null or lab == null or lab.terrain == null: return {}
+	var today := int(float(region_slot.control.logical_game_seconds) / 86400.0)
+	if int(get_meta(&"resident_exodus_day", -1)) == today: return {}
+	set_meta(&"resident_exodus_day", today)
+	return ResidentExodus.day(self, today, _vital_world_seed())
+
 ## 平民 C4a: a registered resident killed in a fight grieves every other resident once (SiteResidentMood).
 func resident_died(victim_id: int) -> int:
 	return ResidentMood.resident_killed(lab, victim_id)
@@ -15046,6 +15056,7 @@ var _resident_fighting := false
 ## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
 func resident_schedule_tick() -> void:
 	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)) or coarse_offline: return
+	if has_meta(ResidentExodus.PENDING): ResidentExodus.dispatch_pending(self) # 平民 C4b: gathered emigrants leave once seated.
 	if lab.terrain.site.get("housing", {}).is_empty(): return
 	var minute := float(lab.terrain.site.get("minute", 0))
 	var check := ResidentSchedule.check_index(minute)
