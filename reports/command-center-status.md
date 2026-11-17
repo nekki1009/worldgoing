@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-17 23:50（台北）
+更新：2026-11-18 00:10（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,11 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-18 00:10（台北）土匪成伙來源 C 逃兵、D 逃出的俘虜
+- 已提交（未推送）：e5caf4b 來源 C（site_desertion.gd：SiteSocial 每日在群眾 Site 結算不滿、三日預兆與離開意向，但從沒人真的離隊；現在每日把意向成立、可行動、非受控、非隊長或官職、非俘虜的成員退隊，成為同 Site 獨自一人的無所屬者，國籍不動，每日最多 10 人，寫提示）；來源 D（原勢力已不是 active 的獨自者也算無所屬，B4e 一併收）。回歸 DESERT_REG_A 141/141、ESC_REG_A 93/93。
+- 注意：退隊會在任何群眾 Site 上真的發生（玩家隊伍有人不滿到門檻就會走），提示會寫在 notices。
+- B4 剩：流民（冷 Site 民生摘要供養不足，需 10A D5 公式）、山寨可見度（BA-12 顯示）。B5 等 NPC 商隊；C1c 等平民圖集。
 
 ## 2026-11-17 23:50（台北）土匪 B4e 無所屬者聚集成伙
 - 已提交（未推送）：b035ad3 買路錢「逃」（FLEE_REG_A 74/74）；B4e（site_bandit_drifters.gd：活群眾 Site 上獨自一人、可行動、非平民、非居民、非俘虜的無所屬者記入 Site 段 bandit_drift_watch；滿 7 日且 ≥ 3 人 → 以威望最高者為頭目成立 origin refugee 的土匪，山寨在此；有人在打鬥或動作中就整筆延後，不先建勢力）。回歸 DRIFT_REG_A 140/140（大地圖＋土匪＋短測試＋本串新測試）。
