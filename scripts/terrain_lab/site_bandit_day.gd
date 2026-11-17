@@ -15,6 +15,7 @@ const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd"
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # B4d-2: routed survivors form a band.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Aftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: away teams go home.
+const Desertion = preload("res://scripts/terrain_lab/site_desertion.gd")
 const Drifters = preload("res://scripts/terrain_lab/site_bandit_drifters.gd")
 const FarRaid = preload("res://scripts/terrain_lab/site_bandit_far_raid.gd") # B4d-3c: raids on another Site.
 
@@ -34,6 +35,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	var result := {"day": today, "actions": []}
 	var slot: Variant = controller.region_slot
 	result["rout"] = BanditRout.day(controller, today)
+	result["deserted"] = Desertion.day(controller) # source C: a standing leave intent is carried out (退隊).
 	result["drifters"] = Drifters.day(controller, today) # B4e: unaffiliated people gather into a band.
 	var registry: Dictionary = slot.control.get("faction_registry", {})
 	if registry.get("version") != RegionFactionQuery.VERSION: return result

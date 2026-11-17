@@ -137,5 +137,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "B4e drifters"
+ },
+ {
+  "script": "res://scripts/tests/site_desertion_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4 desertion"
  }
 ]
