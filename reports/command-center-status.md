@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-17 02:00（台北）
+更新：2026-11-17 15:10（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,11 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-17 15:10（台北）原生隊形上限重做；平民 C4c 流民遷入
+- 已提交（未推送）：6abcd91 原生群眾隊形上限放寬為「人數＋1025」（先前崩潰是並行載入的存取違規，兩版 DLL 單獨都過；舊 DLL c9a9c1dd… 備份留在 evidence/formation_bound_20261117/previous_dll，現用 3c516ab2…）；2d77b5b C4c-1 CrowdSite.add_new_person（進行中的群眾 Site 生出新人物：世界編號、原生士兵、名冊、隊伍、供養）；C4c-2 流民遷入（site_resident_migrants.gd：每 30 日，有完工住宅空床、存糧夠「(居民＋新人) × 30」、居民平均不滿 < 40 → 一戶最多 4 人生進居民隊為平民並登記門前格；接在每日出走之後）。
+- 回歸：NEWP_REG_A 138/138、MIGR_REG_A 139/139（RUNNER_CAUGHT 皆單獨重跑過）。
+- 下一步：跨 Site 兵力情報（官員在每次大地圖評估記下本 Site 看得到的別方武裝人數，跟著人走 7 天；當面轉告同陣營官職持有人；國家出兵挑目標讀得到 power）。順手修：群眾 Site 的 scoped_region_intel 只看 GD 軍隊，群眾上沒有任何情報。C1c 仍等平民圖集；B5 等 NPC 商隊（貿易 T5）。
 
 ## 2026-11-17 12:30（台北）平民 C6；原生隊形上限試做撤回
 - 已提交（未推送）：6d68cf1 C6 畫面外（長期補算每日記錄並結算居民不滿、戶主業工時依不滿打折）。回歸 C6_REG_A 123/123（P4 冷研究並行崩潰、單獨 1999 秒過）。
