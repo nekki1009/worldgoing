@@ -11469,8 +11469,9 @@ func _open_region_map() -> void:
 	if region_slot != null:
 		var world_id := str(region_slot.pin.world_instance_id)
 		var slot_id := str(region_slot.pin.slot_id)
-		RegionEntry.view = {"world_id": world_id, "slot_id": slot_id, "active": _current_region_site(),
-			"visited": RegionEntry.visited_sites(world_id, slot_id)}
+		var visited: Array[Vector2i] = RegionEntry.visited_sites(world_id, slot_id)
+		RegionEntry.view = {"world_id": world_id, "slot_id": slot_id, "active": _current_region_site(), "visited": visited,
+			"lairs": BanditRegistry.known_lairs(region_slot.control.get("faction_registry", {}), visited)} # BA-12: lairs only where known
 	_request_exit(REGION_MAP_SCENE)
 
 

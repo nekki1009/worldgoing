@@ -1018,6 +1018,14 @@ func _draw_overlay() -> void:
 			var here := _site_rect(active)
 			_overlay.draw_rect(here.grow(maxf(2.0, here.size.x * 0.1)), Color("ffb347"), false, 3.0)
 			_overlay.draw_circle(here.get_center(), maxf(5.0, here.size.x * 0.25), Color("ffb347"))
+		# BA-12: a known bandit lair is a red cross on its Site (only lairs on Sites the player has visited).
+		for lair: Variant in RegionEntry.view.get("lairs", []):
+			var at := _site_rect(lair.site)
+			var arm := maxf(4.0, at.size.x * 0.3)
+			var center := at.get_center()
+			_overlay.draw_line(center - Vector2(arm, arm), center + Vector2(arm, arm), Color("d9443a"), 3.0)
+			_overlay.draw_line(center + Vector2(-arm, arm), center + Vector2(arm, -arm), Color("d9443a"), 3.0)
+			if at.size.x >= 24.0: _overlay.draw_string(ThemeDB.fallback_font, center + Vector2(arm + 2.0, 4.0), str(lair.name), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("ffd2cc"))
 	if _travel != null: _travel.call("draw_on", _overlay)
 	var map_note := "N ↑   Region 網格：20 km・查看附近地形可辨識 Site"
 	if not _preview_visible_sites.is_empty():

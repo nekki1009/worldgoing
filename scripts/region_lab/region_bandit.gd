@@ -257,6 +257,24 @@ static func toll_paid(registry: Dictionary, band: int, party_token: String, day:
 		for item: String in paid: hoard[item] = int(hoard.get(item, 0)) + int(paid[item])
 		if not hoard.is_empty(): table["hoard"] = hoard, now)
 
+## BA-12: the lairs a player may see on the Region map: active bands whose lair stands on a Site the player has visited
+## (a saved generation there). [{site: Vector2i, name}], in faction id order. Pure.
+static func known_lairs(registry: Dictionary, visited: Array) -> Array:
+	var result: Array = []
+	if registry.get("version") != RegionFactionQuery.VERSION: return result
+	var keys: Array = registry.get("entries", {}).keys()
+	keys.sort_custom(func(a: Variant, b: Variant) -> bool: return int(a) < int(b))
+	for key: Variant in keys:
+		var entry: Dictionary = registry.entries[key]
+		if str(entry.get("status", "")) != "active" or not RegionFactionQuery.is_bandit(registry, int(entry.faction_id)): continue
+		var lair: Variant = RegionFactionQuery.bandit_of(registry, int(entry.faction_id)).get("lair")
+		if not lair is Dictionary: continue
+		var parts := str(lair.get("site_id", "")).split(":")
+		if parts.size() < 3 or not parts[parts.size() - 2].is_valid_int() or not parts[parts.size() - 1].is_valid_int(): continue
+		var site := Vector2i(int(parts[parts.size() - 2]), int(parts[parts.size() - 1]))
+		if site in visited: result.append({"site": site, "name": str(RegionFactionQuery.display(registry, int(entry.faction_id)).get("name", ""))})
+	return result
+
 # --- B4c step two: the toll on a travelling party's own content -------------------------------------------------------
 const TOLL_FOODS := ["grain", "wild_food", "fish", "meat"]
 
