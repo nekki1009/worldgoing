@@ -151,5 +151,19 @@
   "mode": "headless",
   "timeout": 360,
   "note": "BA-12 lair map"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_formation_reuse_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "formation reuse"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_npc_chief_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "NPC chief raids"
  }
 ]

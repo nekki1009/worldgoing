@@ -51,7 +51,14 @@ static func run(controller: Variant, today: int) -> Dictionary:
 		var entry: Dictionary = registry.entries[str(band)]
 		if not player_ref.is_empty() and RegionPeerage.same_ref(entry.get("leader_ref"), player_ref): continue
 		var table: Dictionary = RegionFactionQuery.bandit_of(registry, band)
-		if not bool(table.get("raid_ai", true)): continue
+		# raid_ai false is a player-made band (落草) whose chief decides himself. Once an NPC holds the chief's seat (the player
+		# is not its leader: checked above) the band runs on its own, and the switch is saved so it stays on.
+		if not bool(table.get("raid_ai", true)):
+			var switched := Bandit._with_table(registry, band, func(row: Dictionary) -> void: row.raid_ai = true, now)
+			if not switched.ok or not controller._commit_diplomacy(switched, "").ok: continue
+			registry = slot.control.faction_registry
+			table = RegionFactionQuery.bandit_of(registry, band)
+			result.actions.append({"band": band, "action": "npc_takes_over", "ok": true, "code": ""})
 		var heat := int(table.get("heat", 0))
 		if heat > 0 and today > 0 and today % COOL_EVERY_DAYS == 0:
 			var cooled := Bandit.set_heat(registry, band, Bandit.heat_after(heat, "quiet", COOL_EVERY_DAYS), now)
