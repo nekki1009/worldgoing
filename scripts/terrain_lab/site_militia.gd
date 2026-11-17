@@ -9,7 +9,9 @@ extends RefCounted
 ## exactly them (save rules below). An NPC decider drafts at the start of an alarm and releases after it (SiteController);
 ## a controlled decider uses draft / release.
 ## The draft costs each drafted resident +5 discontent once (SiteResidentMood, C4a).
-## Not built: moving the drafted into the garrison team.
+## On a crowd Site the drafted also leave the residents' team for the defenders' team (the settlement faction's largest
+## captained, ungarrisoned team other than theirs) and go back on release (CrowdSite.detach_to_new_team + join_team);
+## the record keeps both team ids (`home`, `into`). Without such a team they stay in the residents' team.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Schedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
@@ -66,7 +68,15 @@ static func draft(lab: Variant, requester_id: int) -> Dictionary:
 		changed.append(identity)
 	if changed.is_empty(): return Runtime.fail("NO_TARGET", "沒有可徵召的居民")
 	drafted.sort()
-	lab.terrain.site[SECTION] = {"drafted": drafted, "at": int(record.get("at", int(lab.terrain.site.get("minute", 0))))}
+	var stored := {"drafted": drafted, "at": int(record.get("at", int(lab.terrain.site.get("minute", 0))))}
+	var moved := _into_defenders(lab, changed, int(allowed.owner))
+	if moved.ok:
+		stored["home"] = int(moved.home)
+		stored["into"] = int(moved.into)
+	elif record.has("home"):
+		stored["home"] = int(record.home)
+		stored["into"] = int(record.into)
+	lab.terrain.site[SECTION] = stored
 	Mood.drafted(lab, changed, int(lab.terrain.site[SECTION].at)) # 平民 C4a: +5 discontent, once.
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("營務徵召鄉勇 %d 人" % changed.size())
 	return Runtime.ok("已徵召鄉勇 %d 人" % changed.size(), {"drafted": changed})
@@ -89,24 +99,72 @@ static func release(lab: Variant, requester_id: int) -> Dictionary:
 		var done := _set_role(lab, identity, "civilian")
 		if done.ok: released.append(identity)
 		else: kept.append(identity)
+	if record.has("home"): _back_home(lab, released, int(record.home), int(record.into))
 	if kept.is_empty(): lab.terrain.site.erase(SECTION)
-	else: lab.terrain.site[SECTION] = {"drafted": kept, "at": int(record.get("at", 0))}
+	else:
+		var stored := {"drafted": kept, "at": int(record.get("at", 0))}
+		if record.has("home"):
+			stored["home"] = int(record.home)
+			stored["into"] = int(record.into)
+		lab.terrain.site[SECTION] = stored
 	if lab.terrain.site.get("notices") is Array and not released.is_empty(): lab.terrain.site.notices.append("鄉勇 %d 人解編歸鄉" % released.size())
 	return Runtime.ok("鄉勇 %d 人解編" % released.size(), {"released": released, "kept": kept})
 
-## Save rules (SiteStore): {drafted: [whole person ids], at: whole minute}.
+## The team of `identity` on the crowd Site ({} when none).
+static func _team_of(lab: Variant, identity: int) -> Dictionary:
+	for team: Dictionary in lab.crowd_site.teams:
+		if not bool(team.get("departed", false)) and team.get("person_ids", []).has(identity): return team
+	return {}
+
+## Moves the drafted from their residents' team into the defenders' team. {ok, home, into} or a refusal (nothing moved
+## for the person refused; the others already moved stay moved and are released through the record).
+static func _into_defenders(lab: Variant, people: Array, owner: int) -> Dictionary:
+	if lab.crowd_site == null or not lab.crowd_site.active or people.is_empty(): return Runtime.fail("UNSUPPORTED")
+	var home := int(_team_of(lab, int(people[0])).get("team_id", -1))
+	var into := -1
+	var best := -1
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or int(team.get("faction", -1)) != owner or int(team.team_id) == home: continue
+		var roster: Dictionary = lab.crowd_site.native_roster(int(team.team_id))
+		if roster.is_empty() or int(roster.get("formal_commander", -1)) < 0 or not str(roster.get("garrison_feature_id", "")).is_empty(): continue
+		if team.get("person_ids", []).size() > best:
+			best = team.person_ids.size()
+			into = int(team.team_id)
+	if home < 0 or into < 0: return Runtime.fail("NO_TARGET", "沒有守軍隊伍")
+	for raw: Variant in people:
+		var identity := int(raw)
+		if int(_team_of(lab, identity).get("team_id", -1)) != home: continue
+		var own: Dictionary = lab.crowd_site.detach_to_new_team(identity, owner)
+		if not own.ok: continue
+		lab.crowd_site.join_team(identity, into)
+	return Runtime.ok("", {"home": home, "into": into})
+
+## The released go back from the defenders' team to the residents' team.
+static func _back_home(lab: Variant, people: Array, home: int, into: int) -> void:
+	if lab.crowd_site == null or not lab.crowd_site.active: return
+	for raw: Variant in people:
+		var identity := int(raw)
+		if int(_team_of(lab, identity).get("team_id", -1)) != into: continue
+		var own: Dictionary = lab.crowd_site.detach_to_new_team(identity, int(_team_of(lab, identity).faction))
+		if own.ok: lab.crowd_site.join_team(identity, home)
+
+## Save rules (SiteStore): {drafted: [whole person ids], at: whole minute[, home: team id, into: team id]}.
 static func validate(state: Dictionary) -> Dictionary:
 	if not state.has(SECTION): return Runtime.ok()
 	var raw: Variant = state[SECTION]
-	if not raw is Dictionary or raw.keys().size() != 2 or not raw.get("drafted") is Array or raw.drafted.size() > MAX_DRAFTED or not raw.has("at"): return Runtime.fail("CORRUPT_SAVE", "鄉勇紀錄")
-	for value: Variant in raw.drafted + [raw.at]:
+	var extra: Array = []
+	if raw is Dictionary and raw.has("home") != raw.has("into"): return Runtime.fail("CORRUPT_SAVE", "鄉勇紀錄")
+	if raw is Dictionary and raw.has("home"): extra = [raw.home, raw.into]
+	if not raw is Dictionary or raw.keys().size() != 2 + extra.size() or not raw.get("drafted") is Array or raw.drafted.size() > MAX_DRAFTED or not raw.has("at"): return Runtime.fail("CORRUPT_SAVE", "鄉勇紀錄")
+	for value: Variant in raw.drafted + [raw.at] + extra:
 		if not (value is int or value is float) or float(value) != floorf(float(value)) or float(value) < 0.0: return Runtime.fail("CORRUPT_SAVE", "鄉勇紀錄")
 	return Runtime.ok()
 
 static func normalize(state: Dictionary) -> void:
 	var raw: Variant = state.get(SECTION)
 	if not raw is Dictionary: return
-	if raw.get("at") is float: raw["at"] = int(raw.at)
+	for field: String in ["at", "home", "into"]:
+		if raw.get(field) is float: raw[field] = int(raw[field])
 	if raw.get("drafted") is Array:
 		for index: int in raw.drafted.size():
 			if raw.drafted[index] is float: raw.drafted[index] = int(raw.drafted[index])
