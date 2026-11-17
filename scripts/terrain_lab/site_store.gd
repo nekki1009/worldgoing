@@ -3830,6 +3830,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not rout_validation.ok: return rout_validation
 	var drift_validation := BanditDrifters.validate(state)
 	if not drift_validation.ok: return drift_validation
+	var preset_validation: Dictionary = (load("res://scripts/terrain_lab/crowd_site.gd") as Script).call("validate_presets", state)
+	if not preset_validation.ok: return preset_validation
 	var militia_validation := Militia.validate(state)
 	if not militia_validation.ok: return militia_validation
 	var fallen_validation: Dictionary = (load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("validate", state) # 平民 C5

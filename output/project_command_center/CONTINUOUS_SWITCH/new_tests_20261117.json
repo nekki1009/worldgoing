@@ -165,5 +165,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "NPC chief raids"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_formation_preset_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "crowd presets"
  }
 ]

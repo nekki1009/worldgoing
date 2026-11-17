@@ -2109,14 +2109,51 @@ func set_team_preset(team_id: int, preset_id: String, source: String = "ui") -> 
 	var offsets := preset_offsets(preset_id, count)
 	if preset_id != "auto" and offsets.size() != 2 * count: return SiteRuntime.fail("TOO_LARGE", "此陣形容納不下全隊（上限 200 人）")
 	if not bool(crowd.set_formation_shape(formation, offsets)): return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此陣形；未改陣")
-	_team_presets[team_id] = preset_id
+	_remember_preset(team_id, preset_id)
 	return SiteRuntime.ok("已改為%s" % preset_id, {"preset": preset_id})
 
-## The UI label only; the native shape is the saved truth (a loaded Site shows "auto" until the next change).
-var _team_presets := {}
+## The preset each team was given, saved with the Site (section crowd_formation_presets {team id: preset}); the native
+## shape holds the slots. "auto" is not stored.
+const PRESET_SECTION := "crowd_formation_presets"
+
+func _remember_preset(team_id: int, preset_id: String) -> void:
+	var presets: Dictionary = lab.terrain.site.get(PRESET_SECTION, {})
+	if preset_id == "auto": presets.erase(str(team_id))
+	else: presets[str(team_id)] = preset_id
+	if presets.is_empty(): lab.terrain.site.erase(PRESET_SECTION)
+	else: lab.terrain.site[PRESET_SECTION] = presets
 
 func team_preset(team_id: int) -> String:
-	return str(_team_presets.get(team_id, "auto"))
+	return str(lab.terrain.site.get(PRESET_SECTION, {}).get(str(team_id), "auto"))
+
+## A team with a preset whose size changed (someone joined, left or moved) is laid out in the same preset for its new
+## size; a preset the team outgrew (over 200 people) or a team of one ends as "auto" (rows). A garrisoned or routed team
+## keeps its slots until the next change.
+func refresh_team_shape(team_id: int) -> void:
+	var preset := team_preset(team_id)
+	if preset == "auto" or crowd == null or not crowd.has_method("set_formation_shape"): return
+	var team := _team_by_id(team_id)
+	if team.is_empty() or bool(team.get("departed", false)):
+		_remember_preset(team_id, "auto")
+		return
+	var formation := int(team.formation)
+	var count := int(team.get("person_ids", []).size())
+	if crowd.has_method("get_formation_shape") and int(crowd.get_formation_shape(formation)) == count: return
+	if bool(crowd.get_garrisoned(formation)) or bool(formation_state(formation).get("routed", false)): return
+	var offsets := preset_offsets(preset, count)
+	if count < 2 or offsets.size() != 2 * count:
+		crowd.set_formation_shape(formation, PackedFloat32Array())
+		_remember_preset(team_id, "auto")
+		return
+	crowd.set_formation_shape(formation, offsets)
+
+static func validate_presets(state: Dictionary) -> Dictionary:
+	var raw: Variant = state.get(PRESET_SECTION, {})
+	if not raw is Dictionary or raw.size() > 4096: return SiteRuntime.fail("CORRUPT_SAVE", "群眾陣形紀錄")
+	for key: Variant in raw:
+		if not key is String or not str(key).is_valid_int() or not raw[key] is String or not FormationGeometry.is_valid_preset(str(raw[key])) or str(raw[key]) == "auto":
+			return SiteRuntime.fail("CORRUPT_SAVE", "群眾陣形紀錄")
+	return SiteRuntime.ok()
 
 func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1, source: String = "ui", facing: Vector2i = Vector2i.ZERO) -> Dictionary:
 	var team := _team_by_id(team_id)
@@ -3001,6 +3038,7 @@ func _retire_empty_team(team: Dictionary) -> void:
 		lab.terrain.site.get("armies", []).erase(roster)
 	var supply: Variant = lab.terrain.site.get("team_supply", {})
 	if supply is Dictionary: supply.erase(str(team_id))
+	_remember_preset(team_id, "auto")
 
 func native_add_team(team_id: int, faction: int, troop: int, training: float, cell: Vector2, garrison_feature_id: String) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
@@ -3209,6 +3247,9 @@ func native_transfer_records(identities: Array, source: Dictionary, destination:
 	source_team["person_ids"] = kept_ids
 	for identity: Variant in identities: destination_team.person_ids.append(int(identity))
 	_bind_people()
+	# Both teams changed size: a preset team is laid out again for its new size.
+	refresh_team_shape(int(source_team.get("team_id", -1)))
+	refresh_team_shape(int(destination_team.get("team_id", -1)))
 
 
 ## NEKKI 2026-10-30 persuasion: a captive of another team joins `destination_formation` (the captor's formation) as a normal
