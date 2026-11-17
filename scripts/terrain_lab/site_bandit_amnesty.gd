@@ -16,6 +16,7 @@ const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 
 static func _teams_of(lab: Variant, faction: int) -> Array:
 	var result: Array = []
+	if lab.crowd_site == null or not lab.crowd_site.active: return result # a cold original Lab has no live crowd
 	for team: Dictionary in lab.crowd_site.teams:
 		if int(team.get("faction", -1)) == faction and not bool(team.get("departed", false)) and not bool(team.get("solo", false)): result.append(team)
 	return result

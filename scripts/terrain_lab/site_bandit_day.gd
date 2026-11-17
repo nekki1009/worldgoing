@@ -14,6 +14,7 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # B4d-2: routed survivors form a band.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const FarRaid = preload("res://scripts/terrain_lab/site_bandit_far_raid.gd") # B4d-3c: raids on another Site.
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
@@ -53,13 +54,15 @@ static func run(controller: Variant, today: int) -> Dictionary:
 				registry = slot.control.faction_registry
 				heat = int(RegionFactionQuery.bandit_of(registry, band).heat)
 		var chief := RegionPeerage.world_person_id(entry.get("leader_ref"))
-		var here: bool = chief > 0 and not controller.lab._original_person_target(chief).is_empty()
+		# Only the live crowd Site decides for a chief standing there (a cold original Lab settling points does not).
+		var here: bool = chief > 0 and controller.lab.crowd_site != null and controller.lab.crowd_site.active and not controller.lab._original_person_target(chief).is_empty()
 		var can_rise := false
 		if here:
 			var mind: Dictionary = DutyAI.personality(chief, null, controller.lab)
 			var prestige := Reputation.shown(int(controller.reputation_of(chief).prestige))
 			can_rise = Bandit.may_rise(registry, band, prestige, BanditAmnesty._members(controller.lab, band).size(), int(mind.get("ambition", 50))).ok
 		var seen := raid_facts(controller, band) if here else {"targets": [], "strength": 0.0}
+		if here: seen.targets.append_array(FarRaid.targets(controller, band, chief))
 		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "can_rise": can_rise,
 			"amnesty_score": -1.0, "protection_due": [], "targets": seen.targets, "strength": float(seen.strength)})
 		var done := {}
@@ -68,10 +71,10 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			"rise":
 				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
-			"raid": done = raid(controller, band, decision.target)
+			"raid": done = FarRaid.raid(controller, band, decision.target) if bool(decision.target.get("far", false)) else raid(controller, band, decision.target)
 			_: continue
 		var row := {"band": band, "action": str(decision.action), "ok": bool(done.get("ok", false)), "code": str(done.get("code", ""))}
-		if str(decision.action) == "raid": row.merge({"orders": done.get("orders", []), "heat_saved": bool(done.get("heat_saved", false))})
+		if str(decision.action) == "raid": row.merge({"orders": done.get("orders", []), "sent": done.get("sent", []), "refusals": done.get("refusals", []), "target": str(decision.target.get("site_id", "")), "heat_saved": bool(done.get("heat_saved", false))})
 		result.actions.append(row)
 	return result
 
@@ -98,7 +101,7 @@ static func move_lair(controller: Variant, band: int) -> Dictionary:
 
 # --- B4d-3a: a raid on the settlement of the band's own Site (bandit spec §5.1, §11, §12) ------------------------------
 ## What the chief sees here: the band's visible people against the settlement owner's (one target: this Site's
-## settlement of another faction). Other Sites are not raided yet: no intelligence records their strength.
+## settlement of another faction). Other Sites: B4d-3c (site_bandit_far_raid.gd).
 static func raid_facts(controller: Variant, band: int) -> Dictionary:
 	var lab: Variant = controller.lab
 	var settlement: Dictionary = Settlement.record(lab.terrain)

@@ -107,5 +107,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "cross-Site strength intel"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_far_raid_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3c far raid"
  }
 ]

@@ -10,6 +10,7 @@ extends RefCounted
 ## person who is not physically present.
 const Sight = preload("res://scripts/terrain_lab/site_army_ai.gd")
 const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 
 const KIND := "officer_site_strength"
 const GAME_SECONDS := 7.0 * 86400.0
@@ -93,6 +94,7 @@ static func record(slot: Variant, lab: TerrainLab) -> Dictionary:
 		var faction := int(faction_of[officer])
 		if not seen.has(faction): seen[faction] = seen_by(lab, faction, everyone)
 		var value: Dictionary = seen[faction].duplicate(true)
+		value["settlement_owner"] = int(Settlement.record(lab.terrain).get("owner_faction", -1)) # public: whose settlement this is
 		var known := RegionAI.view(registry, officer, now, scope, reference)
 		var prior: Dictionary = known.get(scope, {})
 		if prior.get("observation_kind") == KIND and prior.get("value") == value and str(prior.get("source", "")) == "site_observation": continue

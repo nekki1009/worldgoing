@@ -26,7 +26,6 @@ var fleet_step_request: float = TerrainLab.ACTION_STEP
 const FLEET_FINE_MEAL_MARGIN := 16.0
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 600000
 	out = "res://.godot-temp/region_c06_two_npc_sea/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
@@ -35,12 +34,13 @@ func _initialize() -> void:
 	# Nekki 2026-10-27: the friendly case waits for a real meal and runs 592-610 s; in-file 720 s, outer 780 s.
 	# 2026-11-14: it now runs 687-745 s alone (crowd/cold fixes since 10/27); in-file 900 s, outer 960 s (standing rule:
 	# loosen test timeouts directly).
-	if fleet_case == "friendly": deadline = Time.get_ticks_msec() + 900000
+	# 2026-11-17: the hostile case runs 580-616 s (637 s beside other runs); in-file 900 s, outer 960 s (same rule).
+	deadline = Time.get_ticks_msec() + 900000
 	action_speed = 1.0
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
-	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "%d-second genuine two-NPC sea deadline" % (720 if fleet_case == "friendly" else 600))
+	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "%d-second genuine two-NPC sea deadline" % 900)
 	return false
 
 func _write_manifest() -> bool:
