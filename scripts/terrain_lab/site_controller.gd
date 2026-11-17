@@ -35,6 +35,7 @@ const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # �
 const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: the 營務 drafts residents in danger.
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' grievance.
 const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.gd") # 平民 C4b: households leave or go outlaw.
+const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -10512,7 +10513,10 @@ func resident_exodus_day() -> Dictionary:
 	var today := int(float(region_slot.control.logical_game_seconds) / 86400.0)
 	if int(get_meta(&"resident_exodus_day", -1)) == today: return {}
 	set_meta(&"resident_exodus_day", today)
-	return ResidentExodus.day(self, today, _vital_world_seed())
+	var fallen := FallenResidents.day(self, today) # 平民 C5: residents of a fallen settlement submit or leave.
+	var result := ResidentExodus.day(self, today, _vital_world_seed())
+	result["fallen"] = fallen
+	return result
 
 ## 平民 C4a: a registered resident killed in a fight grieves every other resident once (SiteResidentMood).
 func resident_died(victim_id: int) -> int:

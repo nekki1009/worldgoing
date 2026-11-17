@@ -68,9 +68,9 @@ func _run() -> void:
 	var second := cadres[1]
 	var raider := cadres[2]
 	var apart: Dictionary = lab.crowd_site.detach_to_new_team(first, own)
-	if not _check(apart.ok and lab.crowd_site.join_team(second, int(apart.team_id)).get("code", "") == "WHOLE_TEAM", "the first resident stands apart (a member cannot join without leaving first)", apart): return
-	var second_apart: Dictionary = lab.crowd_site.detach_to_new_team(second, own)
-	if not _check(second_apart.ok and lab.crowd_site.join_team(second, int(apart.team_id)).ok, "the second resident joins him: the residents' team", second_apart): return
+	if not _check(apart.ok, "the first resident stands apart", apart): return
+	var moved: Dictionary = lab.crowd_site.join_team(second, int(apart.team_id))
+	if not _check(moved.ok and lab.crowd_site.join_team(player, int(apart.team_id)).get("code", "") == "CAPTAIN_REQUIRED", "the second resident moves straight across to him; a formal captain cannot", moved): return
 	var home := int(apart.team_id)
 	if not _check(lab.crowd_site.native_set_military_role(first, "civilian").ok and lab.crowd_site.native_set_military_role(second, "civilian").ok, "both are civilians"): return
 	if not _check(lab.crowd_site.detach_to_new_team(raider, RegionFactionQuery.NEUTRAL_FACTION_ID).ok, "an armed neutral stands on the Site"): return

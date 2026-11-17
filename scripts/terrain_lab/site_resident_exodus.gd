@@ -75,16 +75,17 @@ static func depart(controller: Variant, people: Array, outlaw: bool) -> Dictiona
 	if free.is_empty(): return Runtime.fail("NO_TARGET", "沒有可離開的成員")
 	var head := free[0]
 	# Gather: the head leaves into his own neutral team, the others join him.
-	var left: Dictionary = crowd.detach_to_new_team(head, RegionFactionQuery.NEUTRAL_FACTION_ID)
-	if not left.ok and str(left.get("code", "")) != "WHOLE_TEAM": return left
-	var team_id := int(left.get("team_id", -1))
-	if team_id < 0:
-		for team: Dictionary in crowd.teams:
-			if team.get("person_ids", []).has(head): team_id = int(team.team_id)
+	# A head who already stands alone (his own one-person team) keeps it; otherwise he leaves into his own neutral team.
+	var own_team: Dictionary = _team_of_crowd(crowd, head)
+	var team_id := -1
+	if own_team.get("person_ids", []).size() == 1: team_id = int(own_team.team_id)
+	else:
+		var left: Dictionary = crowd.detach_to_new_team(head, RegionFactionQuery.NEUTRAL_FACTION_ID)
+		if not left.ok: return left
+		team_id = int(left.team_id)
 	for identity: int in free.slice(1):
-		var own: Dictionary = crowd.detach_to_new_team(identity, RegionFactionQuery.NEUTRAL_FACTION_ID)
-		if not own.ok and str(own.get("code", "")) != "WHOLE_TEAM": return own
-		var joined: Dictionary = crowd.join_team(identity, team_id)
+		# Straight across into the head's neutral team (no new native formation).
+		var joined: Dictionary = crowd.join_team(identity, team_id, true)
 		if not joined.ok: return joined
 	# Seat the head as the native World would at its next step: formal captain, present and able.
 	var formation := -1
@@ -95,6 +96,11 @@ static func depart(controller: Variant, people: Array, outlaw: bool) -> Dictiona
 	Households.reconcile(lab.terrain.site)
 	if outlaw: return _outlaw(controller, head, team_id)
 	return _emigrate(controller, head, team_id)
+
+static func _team_of_crowd(crowd: Variant, identity: int) -> Dictionary:
+	for team: Dictionary in crowd.teams:
+		if not bool(team.get("departed", false)) and team.get("person_ids", []).has(identity): return team
+	return {}
 
 static func _outlaw(controller: Variant, head: int, team_id: int) -> Dictionary:
 	var lab: Variant = controller.lab

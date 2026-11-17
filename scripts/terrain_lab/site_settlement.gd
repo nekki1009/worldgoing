@@ -727,11 +727,15 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 		feature["owner_faction"] = attacker
 		changed.append(key)
 	var released: Array[int] = []
+	var old_homes := {}
 	for identity: String in data.site.get("housing", {}).keys():
 		if str(data.site.housing[identity].house_id) in changed:
+			old_homes[identity] = data.site.housing[identity].duplicate()
 			data.site.housing.erase(identity)
 			released.append(int(identity))
 	if not released.is_empty(): preload("res://scripts/terrain_lab/site_households.gd").reconcile(data.site)
+	# 平民 C5: the released residents submit or leave over the next 30 days (SiteFallenResidents).
+	if not old_homes.is_empty(): (load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("remember", data, defender, attacker, old_homes)
 	for supply: Dictionary in data.site.get("team_supply", {}).values():
 		if str(supply.get("training_feature_id", "")) in changed:
 			supply.training_order = false

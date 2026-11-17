@@ -108,7 +108,7 @@ func _run() -> void:
 	if not _check(controller.team_captain_of_team(int(band_team.team_id)) == best and band_team.person_ids.size() == cadres.size(), "the chief captains the band's team", band_team): return
 	var other_side: Dictionary = lab.crowd_site.join_team(player, int(band_team.team_id))
 	var not_alone: Dictionary = lab.crowd_site.join_team(best, int(_team_of(lab, player).team_id))
-	if not _check(not other_side.ok and str(other_side.code) == "WRONG_FACTION" and not not_alone.ok and str(not_alone.code) == "WHOLE_TEAM" and int(_team_of(lab, player).faction) != new_band, "a join into another faction or out of a full team is refused", [other_side, not_alone]): return
+	if not _check(not other_side.ok and str(other_side.code) == "WRONG_FACTION" and not not_alone.ok and str(not_alone.code) == "CAPTAIN_REQUIRED" and int(_team_of(lab, player).faction) != new_band, "a join into another faction, or a captain leaving his team, is refused", [other_side, not_alone]): return
 	if not _check(int(_team_of(lab, player).faction) != new_band and not lab.terrain.site.has(Rout.SECTION), "the player is left out; the watch is cleared", _team_of(lab, player)): return
 	var noticed := false
 	for notice: Variant in lab.terrain.site.get("notices", []):

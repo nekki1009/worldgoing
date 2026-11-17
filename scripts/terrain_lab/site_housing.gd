@@ -68,7 +68,10 @@ static func schedule_authority(lab: Variant, person: Dictionary) -> bool:
 	if person.is_empty() or int(person.person_id) == int(lab.controlled_person_id()): return false
 	var body: Variant = person.get("body")
 	var role: String = str(body.get("military_role", "soldier")) if body is Dictionary else (str(body.military_role) if body is Object and "military_role" in body else "soldier")
-	return role == "civilian" and int(_formation(lab, person).get("current_person", -1)) < 0
+	if role != "civilian": return false
+	var current := int(_formation(lab, person).get("current_person", -1))
+	# A civilian alone in his own team captains it (no leaderless solo): he still keeps his own daily schedule.
+	return current < 0 or current == int(person.person_id) and person.owner != null and "combat_units" in person.owner and person.owner.combat_units.size() == 1
 
 static func _commands_current(lab: Variant, requester_id: int, person: Dictionary) -> bool:
 	if requester_id != int(lab.controlled_person_id()): return false

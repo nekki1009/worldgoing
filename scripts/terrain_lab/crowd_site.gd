@@ -3484,18 +3484,33 @@ func detach_to_new_team(identity: int, faction: int, remember_origin: bool = fal
 	var holds := roster_post_holders(team_id).has(identity)
 	if holds != held_before and not bool(crowd.set_post_holder(int(_index_by_id[identity]), int(holds))):
 		return SiteRuntime.fail("INVALID_ROLE", "原生職位旗標寫入失敗")
+	# The native loader refuses a leaderless one-person team (the 11/01 rule): a captainless team left with one member makes
+	# him its captain (2026-11-17, found when residents left a captainless residents' team).
+	var seated := _seat_lone_member(roster, int(owner.formation_index))
+	if not seated.ok: return seated
 	_refresh_bodies()
 	var synced: Dictionary = sync_to_site()
 	if not synced.ok: return synced
 	return SiteRuntime.ok("", {"team_id": team_id, "formation": formation})
 
+func _seat_lone_member(roster: Dictionary, formation: int) -> Dictionary:
+	if roster.get("units", []).size() != 1 or int(roster.get("formal_commander", -1)) >= 0: return SiteRuntime.ok()
+	var lone := int(roster.units[0].person_id)
+	if not set_formation_fields(formation, {"formal_person": lone, "acting_person": lone, "current_person": lone}):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定留下的一人為隊長")
+	for field: String in ["formal_commander", "acting_commander", "current_commander"]: roster[field] = 0
+	return SiteRuntime.ok()
 
-## 土匪 B4d／平民 C3 (2026-11-17): the captain of a one-person team joins another team of the same faction as an ordinary
-## member (the merge rout bands and militia need). The native soldier moves into that formation (move_member inside one
+
+## 土匪 B4d／平民 C3 (2026-11-17): a person joins another team of the same faction as an ordinary member (the merge
+## rout bands, militia and households need): the captain of a one-person team, or any member of a larger team who is not
+## its formal captain. The native soldier moves into that formation (move_member inside one
 ## slot, leave_member across slots, as detach_to_new_team), its supply membership, row and posts follow; the emptied
 ## one-person team keeps its native formation and an empty roster (formations are never removed). Refusals before the
 ## native move change nothing.
-func join_team(identity: int, team_id: int) -> Dictionary:
+## `change_faction`: the person may join a team of another faction (he takes its faction: a submission, a household
+## gathering under a neutral head). Without it the factions must match.
+func join_team(identity: int, team_id: int, change_faction: bool = false) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
 	if _actors.has(identity) or not _index_by_id.has(identity) or not _owner_by_id.has(identity): return SiteRuntime.fail("UNSUPPORTED", "此人不在原生群眾名冊")
 	if not pending_captivity.is_empty() or has_pending_capture(identity): return SiteRuntime.fail("BUSY", "群眾俘虜事件尚未結束")
@@ -3505,8 +3520,10 @@ func join_team(identity: int, team_id: int) -> Dictionary:
 		if _roster_index_for_person(candidate, identity) >= 0: source = candidate
 		if int(candidate.get("team_id", -1)) == team_id: destination = candidate
 	if source.is_empty() or destination.is_empty() or source == destination: return SiteRuntime.fail("NO_TARGET", "找不到來源或目標隊伍")
-	if source.units.size() != 1: return SiteRuntime.fail("WHOLE_TEAM", "只有一人隊的隊長可以併入別隊")
-	if int(source.get("faction_id", -1)) != int(destination.get("faction_id", -2)): return SiteRuntime.fail("WRONG_FACTION", "只能併入同勢力的隊伍")
+	var index := _roster_index_for_person(source, identity)
+	var alone: bool = source.units.size() == 1
+	if not alone and index == int(source.get("formal_commander", -1)): return SiteRuntime.fail("CAPTAIN_REQUIRED", "正式隊長不能單獨轉隊")
+	if not change_faction and int(source.get("faction_id", -1)) != int(destination.get("faction_id", -2)): return SiteRuntime.fail("WRONG_FACTION", "只能併入同勢力的隊伍")
 	if not str(source.get("garrison_feature_id", "")).is_empty() or not str(destination.get("garrison_feature_id", "")).is_empty(): return SiteRuntime.fail("BUSY", "駐營隊伍不能併隊")
 	if destination.units.size() >= TerrainArmy.MAX_ROSTER_SIZE: return SiteRuntime.fail("NO_SPACE", "目標隊伍名冊已滿")
 	var owner: Variant = _owner_by_id[identity]
@@ -3522,19 +3539,62 @@ func join_team(identity: int, team_id: int) -> Dictionary:
 	var same_slot := int(source_entry.get("native_faction", -1)) == int(destination_entry.get("native_faction", -2))
 	var moved_native: bool = bool(crowd.move_member(native_index, formation)) if same_slot 		else crowd.has_method("leave_member") and bool(crowd.leave_member(native_index, formation))
 	if not moved_native: return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕此人併隊；此人未移動")
+	# A member of a larger team moves straight across (no new formation: the native World holds at most one formation more
+	# than people, and formations are never removed). The old roster's indices are remapped as detach_to_new_team does.
+	var keep_map := {}
+	for at in range(source.units.size()):
+		if at != index: keep_map[at] = keep_map.size()
+	var old_abilities: Array = source.get("abilities", []).duplicate(true)
 	native_transfer_records(ids, source, destination)
 	for row: Dictionary in destination.units:
 		if int(row.person_id) == identity: row["member"] = true
-	for field: String in ["formal_commander", "acting_commander", "current_commander"]:
-		if source.has(field): source[field] = -1
+	if alone:
+		for field: String in ["formal_commander", "acting_commander", "current_commander"]:
+			if source.has(field): source[field] = -1
+	else:
+		for field: String in ["formal_commander", "acting_commander", "current_commander"]:
+			if source.has(field): source[field] = _remap_index(int(source[field]), keep_map)
+		if source.has("officers"): source["officers"] = _remap_list(source.officers, keep_map)
+		source["abilities"] = _remap_abilities(old_abilities, keep_map)
+		var officer_persons: Array = []
+		for officer: Variant in source.get("officers", []):
+			if int(officer) >= 0 and int(officer) < source.units.size(): officer_persons.append(int(source.units[int(officer)].person_id))
+		if not set_formation_fields(int(owner.formation_index), {"officer_persons": officer_persons}): return SiteRuntime.fail("INVALID_ROLE", "原生軍官列表寫入失敗")
 	if source.has("offices"): SiteOffices.vacate_unless(source.offices, func(holder: int) -> bool: return holder != identity)
 	source.erase("left_from_team_id")
+	var lone := _seat_lone_member(source, int(owner.formation_index))
+	if not lone.ok: return lone
 	var holds := roster_post_holders(team_id).has(identity)
 	if not bool(crowd.set_post_holder(int(_index_by_id[identity]), int(holds))): return SiteRuntime.fail("INVALID_ROLE", "原生職位旗標寫入失敗")
 	_refresh_bodies()
 	var synced: Dictionary = sync_to_site()
 	if not synced.ok: return synced
 	return SiteRuntime.ok("已併入隊伍；原人物與持物不變", {"team_id": team_id})
+
+
+## 平民 C5 (2026-11-17): a team becomes captainless, as a residents' team is (the schedule commands only civilians of a
+## team with no current person). The native formal / acting / current person and officers clear, the roster's commander
+## indices go to -1 and its offices are vacated. Refused for the controlled person's team and a garrison.
+func clear_captain(team_id: int) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	var roster: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if int(candidate.get("team_id", -1)) == team_id: roster = candidate
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "找不到群眾隊伍")
+	if not str(roster.get("garrison_feature_id", "")).is_empty(): return SiteRuntime.fail("BUSY", "駐營隊伍不能沒有隊長")
+	for row: Dictionary in roster.get("units", []):
+		if int(row.person_id) == int(lab.controlled_person_id()): return SiteRuntime.fail("NO_AUTHORITY", "受控人物的隊伍不能撤去隊長")
+	if not set_formation_fields(int(roster.crowd_formation), {"formal_person": -1, "acting_person": -1, "current_person": -1, "officer_persons": []}):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕撤去隊長")
+	for field: String in ["formal_commander", "acting_commander", "current_commander"]: roster[field] = -1
+	roster["officers"] = []
+	if roster.get("offices") is Dictionary and not roster.offices.is_empty():
+		SiteOffices.vacate_unless(roster.offices, func(_holder: int) -> bool: return false)
+	for row: Dictionary in roster.get("units", []):
+		if _index_by_id.has(int(row.person_id)): crowd.set_post_holder(int(_index_by_id[int(row.person_id)]), 0)
+	var synced: Dictionary = sync_to_site()
+	if not synced.ok: return synced
+	return SiteRuntime.ok("", {"team_id": team_id})
 
 
 ## Nekki 2026-11-11 (A): a member who leaves its team stays on the Site as the captain of its own one-person team of the

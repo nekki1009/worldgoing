@@ -134,9 +134,7 @@ static func _into_defenders(lab: Variant, people: Array, owner: int) -> Dictiona
 	for raw: Variant in people:
 		var identity := int(raw)
 		if int(_team_of(lab, identity).get("team_id", -1)) != home: continue
-		var own: Dictionary = lab.crowd_site.detach_to_new_team(identity, owner)
-		if not own.ok: continue
-		lab.crowd_site.join_team(identity, into)
+		lab.crowd_site.join_team(identity, into) # same faction: straight across, no new formation
 	return Runtime.ok("", {"home": home, "into": into})
 
 ## The released go back from the defenders' team to the residents' team.
@@ -145,8 +143,7 @@ static func _back_home(lab: Variant, people: Array, home: int, into: int) -> voi
 	for raw: Variant in people:
 		var identity := int(raw)
 		if int(_team_of(lab, identity).get("team_id", -1)) != into: continue
-		var own: Dictionary = lab.crowd_site.detach_to_new_team(identity, int(_team_of(lab, identity).faction))
-		if own.ok: lab.crowd_site.join_team(identity, home)
+		lab.crowd_site.join_team(identity, home)
 
 ## Save rules (SiteStore): {drafted: [whole person ids], at: whole minute[, home: team id, into: team id]}.
 static func validate(state: Dictionary) -> Dictionary:

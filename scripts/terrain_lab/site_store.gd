@@ -1361,6 +1361,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	Finance.normalize(state)
 	BanditRout.normalize(state)
 	Militia.normalize(state)
+	(load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("normalize", state) # 平民 C5
 	for registered: Dictionary in state.housing.values():
 		registered.version = int(registered.version)
 		registered.cell = int(registered.cell)
@@ -3827,6 +3828,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not rout_validation.ok: return rout_validation
 	var militia_validation := Militia.validate(state)
 	if not militia_validation.ok: return militia_validation
+	var fallen_validation: Dictionary = (load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("validate", state) # 平民 C5
+	if not fallen_validation.ok: return fallen_validation
 	if state.has("climate_enabled") and not state.climate_enabled is bool: return Runtime.fail("CORRUPT_SAVE", "氣候開關")
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
