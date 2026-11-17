@@ -8,6 +8,8 @@ extends RefCounted
 ##   (a settlement to its head's liege, to = person_key) or "fund" (to = "team:<id>"). Delivered on or after
 ##   arrive_day when the destination Site is live; never instant across Sites (§3.4).
 ## - exemptions: {site_id → [season]} seasons a faction head waived a fief's tribute (§4.3).
+## - requests (optional; absent in older saves = none): [{id, from_site, to_site, team, coins, payday, payer}] a team's
+##   request for pay funding from its faction head's seat on another Site (SiteFundRequests).
 ## Pure candidates; the Site code commits them.
 const VERSION := 1
 const KINDS := ["tribute", "fund"]
@@ -28,7 +30,8 @@ static func _fail(message: String) -> Dictionary:
 	return RegionFactionQuery.fail("CORRUPT_SAVE", message)
 
 static func validate(value: Variant) -> Dictionary:
-	if not value is Dictionary or not RegionFactionQuery.keys(value, ["version", "next_id", "seats", "transit", "exemptions"]): return _fail("finance fields")
+	if not value is Dictionary or not (RegionFactionQuery.keys(value, ["version", "next_id", "seats", "transit", "exemptions"])
+		or RegionFactionQuery.keys(value, ["version", "next_id", "seats", "transit", "exemptions", "requests"])): return _fail("finance fields")
 	if not RegionFactionQuery.whole(value.version, VERSION, VERSION) or not RegionFactionQuery.whole(value.next_id, 1, 2147483646): return _fail("finance version")
 	if not value.seats is Dictionary or value.seats.size() > MAX_SEATS: return _fail("finance seats")
 	for key: Variant in value.seats:
@@ -45,6 +48,15 @@ static func validate(value: Variant) -> Dictionary:
 		for item: Variant in entry.items:
 			if not item is String or not RegionFactionQuery.whole(entry.items[item], 1, 1000000): return _fail("finance transit goods")
 		if not RegionFactionQuery.whole(entry.tenths, 0, 2000000000) or not RegionFactionQuery.whole(entry.arrive_day, 0, 2147483646) or not RegionFactionQuery.whole(entry.season, -1, 2147483646): return _fail("finance transit time")
+	if value.has("requests"):
+		if not value.requests is Array or value.requests.size() > MAX_TRANSIT: return _fail("finance requests")
+		for entry: Variant in value.requests:
+			if not entry is Dictionary or not RegionFactionQuery.keys(entry, ["id", "from_site", "to_site", "team", "coins", "payday", "payer"]): return _fail("finance request fields")
+			if not RegionFactionQuery.whole(entry.id, 1, int(value.next_id) - 1) or ids.has(int(entry.id)): return _fail("finance request id")
+			ids[int(entry.id)] = true
+			for field: String in ["from_site", "to_site", "payer"]:
+				if not entry[field] is String or str(entry[field]).is_empty(): return _fail("finance request endpoint")
+			if not RegionFactionQuery.whole(entry.team, 0, 2147483646) or not RegionFactionQuery.whole(entry.coins, 1, 1000000) or not RegionFactionQuery.whole(entry.payday, 0, 2147483646): return _fail("finance request amount")
 	if not value.exemptions is Dictionary or value.exemptions.size() > MAX_SEATS: return _fail("finance exemptions")
 	for site_id: Variant in value.exemptions:
 		var seasons: Variant = value.exemptions[site_id]
@@ -66,6 +78,9 @@ static func normalize(value: Dictionary) -> void:
 	for site_id: Variant in value.get("exemptions", {}):
 		var seasons: Array = value.exemptions[site_id]
 		for index: int in seasons.size(): seasons[index] = int(seasons[index])
+	for entry: Variant in value.get("requests", []):
+		if not entry is Dictionary: continue
+		for field: String in ["id", "team", "coins", "payday"]: entry[field] = int(entry.get(field, 0))
 
 ## A registry candidate with its finance section ready to edit and its revision advanced.
 static func candidate(registry: Dictionary) -> Dictionary:
@@ -109,6 +124,28 @@ static func remove_transit(candidate_registry: Dictionary, ids: Array) -> void:
 	for entry: Dictionary in candidate_registry.finance.transit:
 		if not ids.has(int(entry.id)): kept.append(entry)
 	candidate_registry.finance.transit = kept
+
+static func requests(registry: Dictionary) -> Array:
+	var value: Variant = section(registry).get("requests", [])
+	return value if value is Array else []
+
+static func add_request(candidate_registry: Dictionary, entry: Dictionary) -> Dictionary:
+	var finance: Dictionary = candidate_registry.finance
+	if not finance.get("requests") is Array: finance["requests"] = []
+	if finance.requests.size() >= MAX_TRANSIT: return RegionFactionQuery.fail("FULL", "請款單已滿")
+	var stored := entry.duplicate(true)
+	stored["id"] = int(finance.next_id)
+	finance.next_id = int(finance.next_id) + 1
+	finance.requests.append(stored)
+	return {"ok": true, "id": int(stored.id)}
+
+static func remove_requests(candidate_registry: Dictionary, ids: Array) -> void:
+	var finance: Dictionary = candidate_registry.finance
+	var kept: Array = []
+	for entry: Dictionary in finance.get("requests", []):
+		if not ids.has(int(entry.id)): kept.append(entry)
+	if kept.is_empty(): finance.erase("requests")
+	else: finance["requests"] = kept
 
 static func seat_of(registry: Dictionary, person_key: String) -> String:
 	return str(section(registry).seats.get(person_key, ""))

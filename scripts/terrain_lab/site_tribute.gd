@@ -12,8 +12,8 @@ extends RefCounted
 ##   head without a liege: nothing is due.
 ## - Funding (§3.4): the day before a payday a nation with a bound treasury here (R4) and auto_fund on tops up the pay
 ##   source of each team on this Site whose captain is a member: the coming wage bill less what the source holds, in
-##   coin, at most FUND_DAILY a day and never below FUND_RESERVE in the treasury. Cross-Site funding and a lord's own
-##   funding are later work.
+##   coin, at most FUND_DAILY a day and never below FUND_RESERVE in the treasury. Funding across Sites: SiteFundRequests
+##   (the faction head's seat pays a request on the road). A lord's own funding is later work.
 ## Every registry change (transit, seats) commits with a Region checkpoint; a refused checkpoint rolls the Site
 ## change back and the day is retried.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -135,7 +135,11 @@ static func day(lab: Variant) -> Dictionary:
 	var result := {"delivered": deliver(lab, today, context_of(lab))}
 	result["tribute"] = tax_day(lab, today, context_of(lab))
 	result["funded"] = fund(lab, today)
-	if not bool(result.delivered.get("retry", false)) and not bool(result.tribute.get("retry", false)): _done[key] = today
+	# Funding across Sites (SiteFundRequests): short teams here ask their faction head's seat; requests to this seat are paid.
+	var Requests: Script = load("res://scripts/terrain_lab/site_fund_requests.gd")
+	result["requested"] = Requests.call("request", lab, today, context_of(lab))
+	result["served"] = Requests.call("serve", lab, today, context_of(lab))
+	if not bool(result.delivered.get("retry", false)) and not bool(result.tribute.get("retry", false)) and not bool(result.requested.get("retry", false)) 		and not bool(result.served.get("retry", false)): _done[key] = today
 	return result
 
 ## Delivers the transit due here: tribute into this settlement's treasury (as tribute_in), funds into a team's pay

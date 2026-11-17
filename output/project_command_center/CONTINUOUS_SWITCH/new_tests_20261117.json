@@ -186,5 +186,19 @@
   "mode": "headless",
   "timeout": 360,
   "note": "TC11 typhoon"
+ },
+ {
+  "script": "res://scripts/tests/region_ship_wind_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "TC11 wind"
+ },
+ {
+  "script": "res://scripts/tests/site_fund_requests_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "cross-Site funding"
  }
 ]
