@@ -160,7 +160,10 @@ static func bind(lab: Variant, org: Dictionary, field: String, source: Dictionar
 
 static func set_auto_fund(lab: Variant, org: Dictionary, on: bool) -> Dictionary:
 	var me := int(lab.controlled_person_id())
-	if str(org.ref.kind) != "nation" or (me != Payroll.authority(lab, org.ref) and me != Payroll._nation_finance(lab, org.ref)): return Runtime.fail("NO_AUTHORITY", "只有元首或財產徵支能改自動撥餉")
+	if str(org.ref.kind) == "settlement":
+		# A lord's own funding (SiteLordFund): the settlement head or its 度支 switches it.
+		if me != int(Settlement.head_executor(lab, true)) and me != ProduceTax.decider(lab): return Runtime.fail("NO_AUTHORITY", "只有聚落長或度支能改封地撥餉")
+	elif str(org.ref.kind) != "nation" or (me != Payroll.authority(lab, org.ref) and me != Payroll._nation_finance(lab, org.ref)): return Runtime.fail("NO_AUTHORITY", "只有元首或財產徵支能改自動撥餉")
 	var made := Finance.ensure(lab.terrain, org.ref, _today(lab))
 	if not made.ok: return made
 	made.record.auto_fund = on
@@ -260,7 +263,7 @@ static func open(controller: Variant, host: Window = null) -> void:
 		["綁定為封地庫", "FinanceBindTreasury", ["settlement"], func() -> void: act.call(bind(lab, current.call(), "treasury", picked.call()))],
 		["付保護費", "FinancePayProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, true))],
 		["拒絕保護費", "FinanceRefuseProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, false))],
-		["切換自動撥餉", "FinanceAutoFund", ["nation"], func() -> void:
+		["切換自動撥餉", "FinanceAutoFund", ["nation", "settlement"], func() -> void:
 			var record := Finance.record_of(lab.terrain, current.call().ref, _today(lab))
 			act.call(set_auto_fund(lab, current.call(), not bool(record.auto_fund)))],
 		["豁免所選封地下一季上繳", "FinanceExempt", ["nation"], func() -> void:

@@ -200,5 +200,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "cross-Site funding"
+ },
+ {
+  "script": "res://scripts/tests/site_lord_fund_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "lord funding"
  }
 ]

@@ -13,7 +13,7 @@ extends RefCounted
 ## - Funding (§3.4): the day before a payday a nation with a bound treasury here (R4) and auto_fund on tops up the pay
 ##   source of each team on this Site whose captain is a member: the coming wage bill less what the source holds, in
 ##   coin, at most FUND_DAILY a day and never below FUND_RESERVE in the treasury. Funding across Sites: SiteFundRequests
-##   (the faction head's seat pays a request on the road). A lord's own funding is later work.
+##   (the faction head's seat pays a request on the road). A lord's own funding: SiteLordFund.
 ## Every registry change (transit, seats) commits with a Region checkpoint; a refused checkpoint rolls the Site
 ## change back and the day is retried.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -135,6 +135,8 @@ static func day(lab: Variant) -> Dictionary:
 	var result := {"delivered": deliver(lab, today, context_of(lab))}
 	result["tribute"] = tax_day(lab, today, context_of(lab))
 	result["funded"] = fund(lab, today)
+	# A lord funds the teams of his fief (after the nation: a filled team is not short).
+	result["lord_funded"] = (load("res://scripts/terrain_lab/site_lord_fund.gd") as Script).call("fund", lab, today, context_of(lab))
 	# Funding across Sites (SiteFundRequests): short teams here ask their faction head's seat; requests to this seat are paid.
 	var Requests: Script = load("res://scripts/terrain_lab/site_fund_requests.gd")
 	result["requested"] = Requests.call("request", lab, today, context_of(lab))
