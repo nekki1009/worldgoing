@@ -281,7 +281,9 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	const size_t n = px.size(), nf = formations.size();
 	CHECK_VALID(terrain.w > 0 && terrain.h > 0 && terrain.w <= 1024 && terrain.h <= 1024);
 	const size_t cells = (size_t)terrain.w * terrain.h;
-	CHECK_VALID(n <= 65536 && nf <= n + 1);
+	// Formations are never removed (a team that leaves keeps its empty formation), so a Site that splits and merges
+	// teams gathers empty ones: allow up to 1024 beyond the people (touch_ is nf x nf bytes). 2026-11-17.
+	CHECK_VALID(n <= 65536 && nf <= n + 1025);
 	for (auto *v : {&terrain.height, &terrain.flags, &terrain.ramp_edges, &terrain.static_blocked, &terrain.facility, &terrain.edge_ok}) CHECK_VALID(v->size() == cells);
 	CHECK_VALID(terrain.base_height.empty() || terrain.base_height.size() == cells);
 	for (uint8_t v : terrain.static_blocked) CHECK_VALID(v <= 1);

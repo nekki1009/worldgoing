@@ -480,7 +480,8 @@ func _retained_adapter(source: TerrainData, target: float, expected: Dictionary)
 func _run() -> void:
 	started = true
 	if not _require(OS.get_cmdline_user_args().has("--crowd") and OS.get_cmdline_user_args().has("--crowd-test"), "explicit isolated crowd startup"): return
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "e09788315d303457d4bb0be529390232359e16f881e341a86b59381005d9a2cd", "fixed KW21 serializer state.cpp for typed byte comparison"): return
+	# 11/17: World::validate allows 1024 empty formations beyond the people (validation only; the KW21 layout is unchanged).
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "7f8e66fd6e1e2c3cbf53ad4893b270d5b7b0333400317b24d9bd39647ee4230f", "fixed KW21 serializer state.cpp for typed byte comparison"): return
 	# TCM 11/16: crowd_core.hpp gained the runtime-only step_combat_start (not serialized); the KW21 layout is unchanged.
 	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "e1005556018e416f4d1e0a770cb5ad4a24506d20bbc5cd2fa7dbb7e528677bfc", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
 	root.gui_embed_subwindows = true
