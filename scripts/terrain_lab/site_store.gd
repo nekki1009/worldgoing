@@ -15,6 +15,7 @@ const ResearchInstitutions = preload("res://scripts/terrain_lab/site_research_in
 const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
 const Finance = preload("res://scripts/terrain_lab/site_finance.gd") # 軍餉與稅收 P0: organization finance records.
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # 土匪 B4d-2: routed survivors under watch.
+const BanditDrifters = preload("res://scripts/terrain_lab/site_bandit_drifters.gd") # 土匪 B4e: unaffiliated people under watch.
 const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3c: drafted residents.
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
@@ -1360,6 +1361,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	Schools.normalize(state)
 	Finance.normalize(state)
 	BanditRout.normalize(state)
+	BanditDrifters.normalize(state)
 	Militia.normalize(state)
 	(load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("normalize", state) # 平民 C5
 	for registered: Dictionary in state.housing.values():
@@ -3826,6 +3828,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not finance_validation.ok: return finance_validation
 	var rout_validation := BanditRout.validate(state)
 	if not rout_validation.ok: return rout_validation
+	var drift_validation := BanditDrifters.validate(state)
+	if not drift_validation.ok: return drift_validation
 	var militia_validation := Militia.validate(state)
 	if not militia_validation.ok: return militia_validation
 	var fallen_validation: Dictionary = (load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("validate", state) # 平民 C5

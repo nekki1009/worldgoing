@@ -130,5 +130,12 @@
   "mode": "headless",
   "timeout": 600,
   "note": "B4c flee"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_drifters_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4e drifters"
  }
 ]
