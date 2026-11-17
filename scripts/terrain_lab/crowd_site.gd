@@ -890,6 +890,71 @@ func _append_actor(actor: TerrainTestCharacter, runtime: bool = true) -> Diction
 	return SiteRuntime.ok()
 
 
+## 平民 C4c (2026-11-17): a new person is born into a team on a live crowd Site (a migrant household joins the residents).
+## `row` is the new person's roster row (person_id from the world allocator, appearance, item_state, military_role; the
+## caller builds it). The native soldier is appended to the team's formation at `at` (Site cells), as _append_actor
+## appends an actor: every refusal before the native append changes nothing; a later one restores the native snapshot
+## and the bookkeeping. The team's supply ledger (when it has one) takes him in as a new cohort.
+func add_new_person(team_id: int, row: Dictionary, at: Vector2) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	var siege_guard := siege_admission_guard()
+	if not siege_guard.ok: return siege_guard
+	var identity := int(row.get("person_id", -1))
+	if identity <= 0 or _index_by_id.has(identity) or int(crowd.soldier_index(identity)) >= 0: return SiteRuntime.fail("INVALID", "新人物編號非法或已存在")
+	var team := _team_by_id(team_id)
+	var roster: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if int(candidate.get("team_id", -1)) == team_id: roster = candidate
+	if team.is_empty() or roster.is_empty() or bool(team.get("solo", false)) or not str(roster.get("garrison_feature_id", "")).is_empty():
+		return SiteRuntime.fail("NO_TARGET", "找不到可加入的群眾隊伍")
+	if roster.units.size() >= TerrainArmy.MAX_ROSTER_SIZE: return SiteRuntime.fail("NO_SPACE", "隊伍名冊已滿")
+	if not at.is_finite() or at.x < 0.0 or at.y < 0.0 or at.x >= lab.terrain.size.x or at.y >= lab.terrain.size.y: return SiteRuntime.fail("INVALID", "新人物位置非法")
+	var appearance: Dictionary = row.get("appearance", {})
+	if _kit_ids.size() != int(crowd.soldier_count()) or not bool(crowd.validate()): return SiteRuntime.fail("INVALID", "原群眾狀態或外觀數量非法")
+	var before := {"native": crowd.save_state(), "teams": teams.duplicate(true), "owners": owners.duplicate(), "owner_by_id": _owner_by_id.duplicate(),
+		"index_by_id": _index_by_id.duplicate(), "kit_ids": _kit_ids.duplicate(), "kit_appearances": _kit_appearances.duplicate(),
+		"units": roster.units.duplicate(), "supply": lab.terrain.site.get("team_supply", {}).get(str(team_id), {}).duplicate(true)}
+	var restore := func(failure: Dictionary) -> Dictionary:
+		crowd.load_state(before.native)
+		teams.assign(before.teams)
+		owners.assign(before.owners)
+		_owner_by_id = before.owner_by_id
+		_index_by_id = before.index_by_id
+		_kit_ids = before.kit_ids
+		_kit_appearances = before.kit_appearances
+		roster.units = before.units
+		_records.erase(identity)
+		if not before.supply.is_empty(): lab.terrain.site.team_supply[str(team_id)] = before.supply
+		_bind_people()
+		return failure
+	var index: int = crowd.add_soldiers(int(team.formation), PackedInt64Array([identity]), PackedInt32Array([_packed_equip(appearance)]), PackedByteArray([0]), PackedInt32Array([0]))
+	if index < 0: return restore.call(SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕新人物"))
+	if not bool(crowd.set_military_role(index, military_role_code(str(row.get("military_role", "civilian"))))) or not bool(crowd.set_post_holder(index, 0)):
+		return restore.call(SiteRuntime.fail("INVALID_ROLE", "新人物軍職寫入失敗"))
+	crowd.set_start_positions(index, PackedFloat32Array([at.x, at.y]))
+	row["member"] = true
+	_records[identity] = row
+	roster.units.append(row)
+	for entry: Dictionary in teams:
+		if int(entry.team_id) == team_id: entry.person_ids.append(identity)
+	_bind_people()
+	_kit_ids.append(-1)
+	_kit_appearances.append(appearance)
+	_update_kit(index, appearance, identity)
+	if not _flush_kit_ids(): return restore.call(last_event_error)
+	var supply: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(team_id), {})
+	if not supply.is_empty() and supply.get("sustain") is Dictionary:
+		var members := {}
+		for person: Variant in team.person_ids:
+			members[int(person)] = {"hp": float(combat_target(int(person)).get("hp", 100.0))}
+		var joined: Dictionary = preload("res://scripts/terrain_lab/site_sustain.gd").add_members(supply.sustain, members, [identity])
+		if not bool(joined.get("ok", false)): return restore.call(SiteRuntime.fail("INVALID_SUSTAIN", "新人物無法加入隊伍供養"))
+	_refresh_bodies()
+	var synced: Dictionary = sync_to_site()
+	if not synced.ok: return restore.call(synced)
+	return SiteRuntime.ok("", {"index": index, "team_id": team_id})
+
+
 func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary:
 	_clear_mounted_contact_visuals()
 	if before.is_empty(): return failure # Initial deployment discards its whole candidate.

@@ -1,0 +1,97 @@
+[
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=pay"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=fight"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_day_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-1"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_rout_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-2"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_raid_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3a"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_alarm_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C3a"
+ },
+ {
+  "script": "res://scripts/tests/site_civilian_harm_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C3b"
+ },
+ {
+  "script": "res://scripts/tests/site_militia_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C3c"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_mood_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C4a"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_exodus_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4b"
+ },
+ {
+  "script": "res://scripts/tests/site_militia_crowd_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C3c crowd"
+ },
+ {
+  "script": "res://scripts/tests/site_fallen_residents_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C5"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_new_person_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4c-1"
+ }
+]
