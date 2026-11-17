@@ -5,12 +5,14 @@ extends SceneTree
 ##   passes the save rules and malformed sections are refused;
 ## - on day 6 nothing forms; on day 7 the three found one band (origin refugee, lair here) in one team, chief = the
 ##   highest prestige, with a notice; the watch is cleared;
-## - the Site saves and the native blob reloads.
+## - the Site saves and the native blob reloads;
+## - source D: a loner of a faction that is no longer active (an escaped captive of a destroyed faction) is a drifter.
 ## Output: SITE_BANDIT_DRIFTERS_PASS on success; quit(1) on any failure or the deadline.
 
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Drifters = preload("res://scripts/terrain_lab/site_bandit_drifters.gd")
+const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const START := Vector2i(1170, 13252)
 
 var checks := 0
@@ -66,7 +68,7 @@ func _run() -> void:
 	for person: Variant in _team_of(lab, player).person_ids:
 		if int(person) != player: cadres.append(int(person))
 	cadres.sort()
-	if not _check(cadres.size() >= 4, "the player has four cadres", cadres): return
+	if not _check(cadres.size() >= 5, "the player has five cadres", cadres): return
 	var loners: Array[int] = cadres.slice(0, 3)
 	var civilian := cadres[3]
 	for person: int in cadres.slice(0, 4):
@@ -106,6 +108,21 @@ func _run() -> void:
 	if not _check(noticed, "a notice tells of the band"): return
 	var saved: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
 	if not _check(saved.ok and _blob_loads(lab) and lab.crowd_site.crowd.validate(), "the Site saves and the native blob reloads", saved): return
+	# Source D: a loner whose faction is gone (an escaped captive of a destroyed faction) is unaffiliated too.
+	var registry: Dictionary = slot.control.faction_registry
+	if not _check(Drifters.unaffiliated(registry, RegionFactionQuery.NEUTRAL_FACTION_ID) and not Drifters.unaffiliated(registry, band), "neutral is unaffiliated; a living band is not"): return
+	var prepared: Dictionary = slot.prepare_faction_creation(lab.terrain, int(registry.revision), [],
+		{"name": "乙國", "kind": "npc", "leader_ref": JoinFaction._world_ref(controller, cadres[4]), "founded_at": float(slot.control.logical_game_seconds)})
+	if not _check(prepared.ok and controller._commit_diplomacy(prepared, "").ok, "乙國 is saved", prepared): return
+	var fallen := int(prepared.faction_id)
+	if not _check(lab.crowd_site.detach_to_new_team(cadres[4], fallen).ok, "a loner of 乙國 stands apart"): return
+	var entry: Dictionary = slot.control.faction_registry.entries[str(fallen)]
+	if not _check(not Drifters.drifters(controller).any(func(p: Dictionary) -> bool: return int(p.id) == cadres[4]), "while 乙國 lives he is not a drifter"): return
+	var status_before := str(entry.status)
+	entry["status"] = "extinct" # test-only, in memory; restored before anything saves
+	var adrift: bool = Drifters.drifters(controller).any(func(p: Dictionary) -> bool: return int(p.id) == cadres[4])
+	entry["status"] = status_before
+	if not _check(adrift and Drifters.unaffiliated({"version": RegionFactionQuery.VERSION, "entries": {str(fallen): {"status": "extinct"}}}, fallen), "with 乙國 gone he is a drifter"): return
 	_finished = true
 	print("SITE_BANDIT_DRIFTERS_PASS: ", checks, " checks; unaffiliated loners gather into a band")
 	quit(0)

@@ -13,14 +13,23 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const SECTION := "bandit_drift_watch"
 const MAX_WATCH := 512
 
-## The neutral drifters standing here now: [{id, prestige}], sorted by id.
+## Source D (escaped captives) and the remnants of a dead faction: a loner whose faction is no longer an active entry
+## of the registry (extinct, merged) is as unaffiliated as a neutral one.
+static func unaffiliated(registry: Dictionary, faction: int) -> bool:
+	if faction == RegionFactionQuery.NEUTRAL_FACTION_ID: return true
+	if registry.get("version") != RegionFactionQuery.VERSION: return false
+	var entry: Variant = registry.get("entries", {}).get(str(faction))
+	return entry is Dictionary and str(entry.get("status", "")) != "active"
+
+## The unaffiliated drifters standing here now: [{id, prestige}], sorted by id.
 static func drifters(controller: Variant) -> Array:
 	var lab: Variant = controller.lab
 	var player := int(lab.controlled_person_id())
 	var housing: Dictionary = lab.terrain.site.get("housing", {})
 	var result: Array = []
+	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {}) if controller.region_slot != null else {}
 	for team: Dictionary in lab.crowd_site.teams:
-		if bool(team.get("departed", false)) or int(team.get("faction", -1)) != RegionFactionQuery.NEUTRAL_FACTION_ID: continue
+		if bool(team.get("departed", false)) or not unaffiliated(registry, int(team.get("faction", -1))): continue
 		# A neutral party under a captain (the player's own start, a trader's team) is not adrift: only people standing
 		# alone count.
 		if team.get("person_ids", []).size() != 1: continue
@@ -96,7 +105,7 @@ static func gather(controller: Variant, chief: int, members: Array) -> Dictionar
 	var second := int(members[1])
 	var chief_team := int(BanditRout._team_of(lab, chief).get("team_id", -1))
 	var steps: Array = [
-		func() -> Dictionary: return lab.crowd_site.join_team(second, chief_team),
+		func() -> Dictionary: return lab.crowd_site.join_team(second, chief_team, true), # loners may come from different dead factions
 		func() -> Dictionary: return lab.crowd_site.detach_to_new_team(second, band),
 		func() -> Dictionary: return lab.crowd_site.join_team(chief, int(BanditRout._team_of(lab, second).get("team_id", -1)), true),
 		func() -> Dictionary: return lab.crowd_site.hand_over_captain(int(BanditRout._team_of(lab, second).get("team_id", -1)), chief),
