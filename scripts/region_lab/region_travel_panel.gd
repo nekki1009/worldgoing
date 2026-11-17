@@ -35,6 +35,7 @@ var _mode_button: Button
 var _toll_row: HBoxContainer
 var _toll_pay_button: Button
 var _toll_fight_button: Button
+var _toll_flee_button: Button
 var _toll_event := ""
 var _toll_error := ""
 var _speed_buttons: Array[Button] = []
@@ -73,6 +74,7 @@ func setup(owner_map: Control) -> void:
 	add_child(_toll_row)
 	_toll_pay_button = _button("付買路錢", "TravelTollPay", answer_toll.bind(true), _toll_row)
 	_toll_fight_button = _button("不付，開打", "TravelTollFight", answer_toll.bind(false), _toll_row)
+	_toll_flee_button = _button("逃", "TravelTollFlee", flee_toll, _toll_row)
 	var speeds := HBoxContainer.new()
 	add_child(speeds)
 	for value: float in SPEEDS:
@@ -327,6 +329,23 @@ func answer_toll(pay: bool) -> void:
 		return
 	_refresh()
 
+## Bandit B4c: the party tries to outrun the band; a slower party is caught and fights.
+func flee_toll() -> void:
+	if slot == null or _arriving or _toll_event.is_empty(): return
+	var answered: Dictionary = slot.flee_region_toll(_toll_event)
+	if not answered.ok:
+		_toll_error = "逃跑未處理：%s %s" % [str(answered.get("code", "")), str(answered.get("message", ""))]
+		_refresh()
+		return
+	_toll_event = ""
+	_toll_error = ""
+	if str(answered.get("toll", "")) == "fled":
+		_status.text = "甩開了土匪；可繼續行進（他們之後仍可能再攔）。"
+		_refresh()
+		return
+	_status.text = "沒跑掉；與土匪交戰。"
+	_toll_row.visible = false
+
 func pause_moving() -> void:
 	_accumulated = 0.0
 	if not running: return
@@ -534,8 +553,9 @@ func _refresh() -> void:
 		_toll_pay_button.text = "付買路錢（%d 糧）" % int(toll.fee)
 		_toll_pay_button.disabled = _arriving or not bool(toll.can_pay)
 		_toll_fight_button.disabled = _arriving
+		_toll_flee_button.disabled = _arriving
 		_go_button.disabled = true
-		_status.text = "%s %d 人攔路，索要買路錢 %d 糧（隊伍存糧 %d）。付了放行，3 日內不再攔；不付就開打。" % [str(toll.band_name), int(toll.band_people), int(toll.fee), int(toll.food)]
+		_status.text = "%s %d 人攔路，索要買路錢 %d 糧（隊伍存糧 %d）。付了放行，3 日內不再攔；不付就開打；比土匪快才逃得掉。" % [str(toll.band_name), int(toll.band_people), int(toll.fee), int(toll.food)]
 		if not _toll_error.is_empty(): _status.text += "\n" + _toll_error
 	_mode_button.text = "回到原旅隊實體操作" if party.ok and str(party.party.upkeep.get("live", {}).get("upkeep", "")) == "mapBody" else "在此停靠／上下船"
 

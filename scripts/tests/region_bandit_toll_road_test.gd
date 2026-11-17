@@ -5,7 +5,9 @@ extends "res://scripts/tests/region_remote_nation_original_test.gd"
 ## - case "pay":   the panel's pay button takes people x 2 food from the party, adds it to the band's hoard, writes a
 ##                 3-day pass, skips the contact, and the journey goes on without being stopped again;
 ## - case "fight": the panel's fight button sends the same held contact on to the ordinary encounter consumer.
-## Run: -- --toll-case=pay|fight (default pay).
+## Run: -- --toll-case=pay|fight|flee (default pay). flee: a party strictly faster on the road than the band gets away
+## (TOLL_FLED: the contact is skipped, no fee, no pass); one that is not is caught and fights (as fight). In this world
+## both walk at the same speed, so the party is caught; a worn-out band edited in memory breaks the NPC party proof.
 const TollPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 const TollRules = preload("res://scripts/region_lab/region_bandit.gd")
 const TollJoin = preload("res://scripts/terrain_lab/site_join_faction.gd")
@@ -160,7 +162,7 @@ func _toll_until_held() -> bool:
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _check(toll_case in ["pay", "fight"], "one toll case", toll_case): _finish(); return
+	if not _check(toll_case in ["pay", "fight", "flee"], "one toll case", toll_case): _finish(); return
 	if not _write_manifest() or not await _setup_action_world() or not _toll_make_band() or not _nation_initial_bodies(): _finish(); return
 	if not _toll_dispatch_band(): _finish(); return
 	if not _toll_player_departs(): _finish(); return
@@ -230,6 +232,20 @@ func _run() -> void:
 		for event: Dictionary in slot.region_registry().events:
 			if str(event.id).begins_with("npc:%s:player-contact:" % toll_token) and str(event.status) == "pending": requeued = true
 		if not _check(again.ok and not requeued, "while the pass lasts no new road contact with that band is queued", again): _finish(); return
+	elif toll_case == "flee":
+		var mine: float = RegionSaveSlot._region_road_speed(slot.region_travel_party().party)
+		var theirs: float = RegionSaveSlot._region_road_speed(slot._region_npc_party(toll_token).party)
+		report["flee_speeds"] = [mine, theirs]
+		if not _check(mine > 0.0 and theirs > 0.0 and not toll_panel._toll_flee_button.disabled, "both road speeds are known and the flee button is open", [mine, theirs]): _finish(); return
+		toll_panel.flee_toll()
+		report["flee_text"] = toll_panel._status.text
+		var table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, toll_band)
+		if not _check(table.get("passes", {}).is_empty() and table.get("hoard", {}).is_empty() and (mine <= theirs or _toll_food() == food_before), "fleeing pays nothing and writes no pass", [table, _toll_food(), food_before]): _finish(); return
+		var last: Dictionary = toll_results.back()
+		if mine > theirs:
+			if not _check(bool(last.receipt.get("skipped_contact", false)) and str(last.receipt.get("reason", "")) == "TOLL_FLED" and not slot.has_meta(&"region_player_materialized") and slot.region_player_barrier().is_empty(), "the faster party gets away: the contact is skipped", last): _finish(); return
+		else:
+			if not _check(not bool(last.receipt.get("skipped_contact", false)) and slot.has_meta(&"region_player_materialized") and slot._region_toll_refused.has(str(toll_event.id)), "a party no faster than the band is caught and fights", [last.ok, last.get("code"), toll_panel._status.text]): _finish(); return
 	else:
 		toll_panel.answer_toll(false)
 		report["fight_text"] = toll_panel._status.text

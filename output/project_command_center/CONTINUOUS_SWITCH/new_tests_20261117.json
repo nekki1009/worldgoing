@@ -121,5 +121,14 @@
   "mode": "headless",
   "timeout": 360,
   "note": "B4d-3b aftermath"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=flee"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c flee"
  }
 ]

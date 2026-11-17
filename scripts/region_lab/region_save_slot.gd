@@ -5693,6 +5693,8 @@ func consume_region_player_event(event: Dictionary) -> Dictionary:
 	# holds this event (nothing is materialised, no time passes) until the player answers; a refusal is the fight below.
 	var toll: Dictionary = region_toll_offer(event)
 	if not toll.ok: return toll
+	if bool(toll.get("fled", false)):
+		return {"ok": true, "receipt": {"effects_complete": true, "complete": true, "skipped_contact": true, "reason": "TOLL_FLED", "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
 	if bool(toll.get("passed", false)):
 		return {"ok": true, "receipt": {"effects_complete": true, "complete": true, "skipped_contact": true, "reason": "TOLL_PAID", "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
 	if bool(toll.get("offer", false)) and not bool(toll.get("refused", false)):
@@ -5758,6 +5760,7 @@ func region_toll_offer(event: Dictionary) -> Dictionary:
 	if not TollBandit.toll_offer(registry, band, player_token, float(band_people), float(people), day): return none
 	var fee := TollBandit.toll_fee(people)
 	var food := TollBandit.party_food(player.party)
+	if _region_toll_fled.has(str(event.get("id", ""))): return {"ok": true, "offer": false, "passed": false, "fled": true, "band": band}
 	return {"ok": true, "offer": true, "passed": false, "band": band, "band_name": str(RegionFactionQuery.display(registry, band).name),
 		"band_people": band_people, "people": people, "event_id": str(event.get("id", "")), "token": token, "fee": fee, "food": food,
 		"can_pay": food >= fee, "refused": _region_toll_refused.has(str(event.get("id", ""))), "day": day}
@@ -5775,6 +5778,46 @@ func region_toll_pending() -> Dictionary:
 ## The player's answer. Paying takes the fee from the party's shared food, adds it to the band's hoard and writes a
 ## pass of TOLL_PASS_DAYS, all in one publication, and the held contact is then skipped. Refusing is the fight: the
 ## held contact goes on to the ordinary encounter.
+## Bandit B4c "flee": the party outruns the band when its road speed (slowest able walker, carts' carry factor) is
+## strictly faster than the band's; the held contact is then skipped (TOLL_FLED) with no fee and no pass, so the band may
+## stop it again on a later contact. A party that is not faster must fight (the refusal path). Not saved: like a
+## refusal, an answer made and not yet carried by a later publication is asked again after a reload.
+var _region_toll_fled := {}
+
+static func _region_road_speed(party: Dictionary) -> float:
+	var transport := RegionTravel.prepare_transport(party)
+	if not transport.ok: return 0.0
+	return RegionTravel.party_speed(party.content) * float(transport.get("carry_factor", 1.0))
+
+func flee_region_toll(event_id: String) -> Dictionary:
+	var event: Dictionary = {}
+	for pending: Dictionary in pending_region_events():
+		if str(pending.id) == event_id: event = pending
+	if event.is_empty(): return fail("NO_TARGET", "沒有待答覆的買路錢")
+	var offer := region_toll_offer(event)
+	if not offer.ok: return offer
+	if not bool(offer.offer): return fail("NO_TARGET", "沒有待答覆的買路錢")
+	var player := region_travel_party()
+	if not player.ok: return player
+	var npc := _region_npc_party(str(offer.token))
+	if not npc.ok: return npc
+	var mine := _region_road_speed(player.party)
+	var theirs := _region_road_speed(npc.party)
+	if not (mine > theirs):
+		var fought := answer_region_toll(event_id, false)
+		if fought.ok:
+			fought["toll"] = "caught"
+			fought["speeds"] = [mine, theirs]
+		return fought
+	_region_toll_fled[event_id] = true
+	var passed := consume_due_region_events()
+	if not passed.ok:
+		_region_toll_fled.erase(event_id)
+		return passed
+	passed["toll"] = "fled"
+	passed["speeds"] = [mine, theirs]
+	return passed
+
 func answer_region_toll(event_id: String, pay: bool) -> Dictionary:
 	var event: Dictionary = {}
 	for pending: Dictionary in pending_region_events():
