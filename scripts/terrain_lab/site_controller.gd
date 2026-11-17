@@ -36,6 +36,7 @@ const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' grievance.
 const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.gd") # 平民 C4b: households leave or go outlaw.
 const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
+const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd") # 平民 C4c: a migrant household moves in.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -10507,7 +10508,8 @@ func reputation_day() -> int:
 	return int(float(region_slot.control.logical_game_seconds) / 86400.0) if region_slot != null else 0
 
 ## Adds shown points of prestige and credit to a person present here. Returns the new value, or {} when absent.
-## 平民 C4b: once a game day on the active Site, every 30th day judges the households (SiteResidentExodus).
+## 平民 C4b: once a game day on the active Site, every 30th day judges the households (SiteResidentExodus); C4c then
+## lets a migrant household move into free beds (SiteResidentMigrants).
 func resident_exodus_day() -> Dictionary:
 	if region_slot == null or lab == null or lab.terrain == null: return {}
 	var today := int(float(region_slot.control.logical_game_seconds) / 86400.0)
@@ -10516,6 +10518,7 @@ func resident_exodus_day() -> Dictionary:
 	var fallen := FallenResidents.day(self, today) # 平民 C5: residents of a fallen settlement submit or leave.
 	var result := ResidentExodus.day(self, today, _vital_world_seed())
 	result["fallen"] = fallen
+	result["migrants"] = Migrants.day(self, today) # 平民 C4c: after departures, so their beds are free.
 	return result
 
 ## 平民 C4a: a registered resident killed in a fight grieves every other resident once (SiteResidentMood).

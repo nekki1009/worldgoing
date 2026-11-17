@@ -93,5 +93,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "C4c-1"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_migrants_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4c-2"
  }
 ]
