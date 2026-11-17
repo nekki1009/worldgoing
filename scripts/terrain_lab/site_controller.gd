@@ -37,6 +37,7 @@ const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") 
 const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.gd") # 平民 C4b: households leave or go outlaw.
 const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
 const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
+const Typhoon = preload("res://scripts/terrain_lab/site_typhoon.gd") # 時間與氣候 TC11
 const BanditAftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: plunder and the way home. # 平民 C4c: a migrant household moves in.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
@@ -10520,6 +10521,8 @@ func resident_exodus_day() -> Dictionary:
 	var result := ResidentExodus.day(self, today, _vital_world_seed())
 	result["fallen"] = fallen
 	result["migrants"] = Migrants.day(self, today) # 平民 C4c: after departures, so their beds are free.
+	# 時間與氣候 TC11: the typhoon omen and strike, on the Site's own calendar day.
+	result["typhoon"] = Typhoon.day(lab.terrain, (load("res://scripts/terrain_lab/site_calendar.gd") as Script).call("day_index", float(lab.terrain.site.get("minute", 0))))
 	return result
 
 ## 平民 C4a: a registered resident killed in a fight grieves every other resident once (SiteResidentMood).

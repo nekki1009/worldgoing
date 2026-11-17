@@ -1280,8 +1280,22 @@ func _was_cancelled(token: String) -> bool:
 		if document.ok and str(document.payload.get("transfer_token", "")) == receipt: return true
 	return false
 
+## 時間與氣候 TC11 (day-weather-season plan §4.7, D8 A): with the world's climate on, no ship puts out from a Site whose
+## weather slot is a storm. {} when ships may leave, else the refusal.
+func region_storm_port(site: Vector2i, at_seconds: float = -1.0) -> Dictionary:
+	var registry: Variant = control.get("faction_registry", {})
+	if not registry is Dictionary or not RegionWeather.enabled(registry): return {}
+	var now := RegionWeather.at(str(pin.get("world_instance_id", "")), str(pin.get("atlas_id", "")), site,
+		float(control.logical_game_seconds) if at_seconds < 0.0 else at_seconds)
+	if str(now.get("weather", "")) != "storm": return {}
+	return fail("STORM_PORT", "暴風雨，船不能出港；待風雨過後再出海")
+
 func prepare_ship_transfer(source_data: TerrainData, destination_site: Vector2i, boat_ids: Array[String], destination_anchor: Vector2i, destination_facing: Vector2i, edge_only: bool = false) -> Dictionary:
 	if source_data == null: return fail("INVALID", "Original source required")
+	var storm_from := _coordinate(source_data)
+	if storm_from.ok:
+		var storm := region_storm_port(storm_from.site)
+		if not storm.is_empty(): return storm
 	var boarding_guard: Dictionary = RegionTravel.boarding_travel_guard(source_data.site, boat_ids)
 	if not boarding_guard.ok: return boarding_guard
 	var recovered := _recover_control()
@@ -4020,7 +4034,10 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 		crowd_spec = {"crowd_departure": true, "crowd_control_successor": {}}
 	var departure_mode := _region_npc_dispatch_mode(original, team_id)
 	if not departure_mode.ok: return departure_mode
-	if str(departure_mode.spec.mode) == "sea": start_component = 0
+	if str(departure_mode.spec.mode) == "sea":
+		start_component = 0
+		var storm := region_storm_port(coordinate.site) # TC11: NPCs do not put out into a storm either
+		if not storm.is_empty(): return storm
 	var extracted: Dictionary = {}
 	var identity_namespace := str(pin.world_instance_id) + ":" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var preflight := func(request: Dictionary) -> Dictionary:
@@ -5316,6 +5333,8 @@ func set_region_sea_travel_plan(steps: Array) -> Dictionary:
 	if not loaded.ok: return loaded
 	var candidate: Dictionary = loaded.party.duplicate(true)
 	if str(candidate.get("mode", "")) != "sea": return fail("NOT_EMBARKED", "先由原登船 owner 完成全隊上船")
+	var storm := region_storm_port(status.site) # TC11: a storm holds the ships in port
+	if not storm.is_empty(): return storm
 	var timeline := _region_sea_timeline(steps, candidate)
 	if not timeline.ok: return timeline
 	var journey := region_travel_journey()

@@ -1362,6 +1362,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	Finance.normalize(state)
 	BanditRout.normalize(state)
 	BanditDrifters.normalize(state)
+	(load("res://scripts/terrain_lab/site_typhoon.gd") as Script).call("normalize", state)
 	Militia.normalize(state)
 	(load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("normalize", state) # 平民 C5
 	for registered: Dictionary in state.housing.values():
@@ -3830,6 +3831,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not rout_validation.ok: return rout_validation
 	var drift_validation := BanditDrifters.validate(state)
 	if not drift_validation.ok: return drift_validation
+	var typhoon_validation: Dictionary = (load("res://scripts/terrain_lab/site_typhoon.gd") as Script).call("validate", state)
+	if not typhoon_validation.ok: return typhoon_validation
 	var preset_validation: Dictionary = (load("res://scripts/terrain_lab/crowd_site.gd") as Script).call("validate_presets", state)
 	if not preset_validation.ok: return preset_validation
 	var militia_validation := Militia.validate(state)

@@ -172,5 +172,19 @@
   "mode": "headless",
   "timeout": 360,
   "note": "crowd presets"
+ },
+ {
+  "script": "res://scripts/tests/region_storm_port_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "TC11 storm port"
+ },
+ {
+  "script": "res://scripts/tests/site_typhoon_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "TC11 typhoon"
  }
 ]
