@@ -100,5 +100,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "C4c-2"
+ },
+ {
+  "script": "res://scripts/tests/region_site_strength_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "cross-Site strength intel"
  }
 ]

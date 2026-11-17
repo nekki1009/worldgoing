@@ -4919,6 +4919,8 @@ func consume_due_region_events() -> Dictionary:
 				var lab: TerrainLab = original.lab
 				var observed_features := record_region_officer_feature_observations(lab)
 				if not observed_features.ok: return observed_features
+				var observed_strength := SiteStrength.record(self, lab) # 跨 Site 兵力情報: officers record and tell.
+				if not observed_strength.ok: return observed_strength
 				lab.review_region_duty(float(event.at), registry)
 				var proposed := {"ok": true, "intents": []}
 				if region_dispatch_intents.is_valid():
@@ -4991,9 +4993,10 @@ func scoped_region_intel(lab: TerrainLab, at: float) -> Dictionary:
 	var present: Array[int] = []
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if is_instance_valid(actor) and not lab._combat_target_in_site(actor.person_id).is_empty(): present.append(actor.person_id)
-	for team: TerrainArmy in lab.combat_armies:
-		for index: int in team.combat_units.size():
-			var identity := team.combat_identity(index)
+	# A live crowd Site's people are its person owners (lab.team_owners), not GD armies.
+	for team: Variant in lab.team_owners():
+		for index: int in SiteStrength.indices(team):
+			var identity: int = team.combat_identity(index)
 			if not lab._combat_target_in_site(identity).is_empty() and not present.has(identity): present.append(identity)
 	for receiver: int in present:
 		var known := RegionAI.view(region_registry(), receiver, at, site_id, RegionAI.person_ref(lab.terrain.site, receiver))
@@ -5081,6 +5084,7 @@ func _finish_original_cold_region_points() -> Dictionary:
 	return {"ok": true, "complete": true}
 
 const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
+const SiteStrength = preload("res://scripts/region_lab/region_site_strength.gd")
 
 const RegionBattle = preload("res://scripts/region_lab/region_gameplay_battle.gd")
 
