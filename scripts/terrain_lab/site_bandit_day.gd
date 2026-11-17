@@ -14,6 +14,7 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const BanditAmnesty = preload("res://scripts/terrain_lab/site_bandit_amnesty.gd")
 const BanditRout = preload("res://scripts/terrain_lab/site_bandit_rout.gd") # B4d-2: routed survivors form a band.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const Aftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: away teams go home.
 const FarRaid = preload("res://scripts/terrain_lab/site_bandit_far_raid.gd") # B4d-3c: raids on another Site.
 
 const COOL_EVERY_DAYS := 10
@@ -53,6 +54,11 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			if cooled.ok and controller._commit_diplomacy(cooled, "").ok:
 				registry = slot.control.faction_registry
 				heat = int(RegionFactionQuery.bandit_of(registry, band).heat)
+		# B4d-3b: teams away from the lair (after a raid) go home first, one team a day.
+		if controller.lab.crowd_site != null and controller.lab.crowd_site.active and not Aftermath.away_teams(controller, band).is_empty():
+			var home: Dictionary = Aftermath.go_home(controller, band)
+			result.actions.append({"band": band, "action": "go_home", "ok": bool(home.get("ok", false)), "code": str(home.get("code", "")), "team": int(home.get("team", -1)), "refusals": home.get("refusals", [])})
+			continue
 		var chief := RegionPeerage.world_person_id(entry.get("leader_ref"))
 		# Only the live crowd Site decides for a chief standing there (a cold original Lab settling points does not).
 		var here: bool = chief > 0 and controller.lab.crowd_site != null and controller.lab.crowd_site.active and not controller.lab._original_person_target(chief).is_empty()

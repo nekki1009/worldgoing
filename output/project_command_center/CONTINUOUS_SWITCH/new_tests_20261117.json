@@ -114,5 +114,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "B4d-3c far raid"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_aftermath_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3b aftermath"
  }
 ]

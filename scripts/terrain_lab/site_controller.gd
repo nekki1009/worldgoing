@@ -36,7 +36,8 @@ const Militia = preload("res://scripts/terrain_lab/site_militia.gd") # 平民 C3
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: residents' grievance.
 const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.gd") # 平民 C4b: households leave or go outlaw.
 const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
-const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd") # 平民 C4c: a migrant household moves in.
+const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
+const BanditAftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: plunder and the way home. # 平民 C4c: a migrant household moves in.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
@@ -10618,6 +10619,7 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	var closed: Dictionary = tracker.close(now, standing, commanders)
 	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
+	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
