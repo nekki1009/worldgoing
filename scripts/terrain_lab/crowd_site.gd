@@ -2980,11 +2980,42 @@ func _ensure_team_containers() -> void:
 		container.team_id = team_id
 
 
+## The first team (lowest formation) everyone has left on this Site: no person, not departed (a departed team's people
+## come back to its formation), not a one-person solo record, not garrisoned. {} when there is none.
+func _reusable_team() -> Dictionary:
+	var best: Dictionary = {}
+	for team: Dictionary in teams:
+		if bool(team.get("departed", false)) or bool(team.get("solo", false)) or not team.get("person_ids", []).is_empty(): continue
+		var roster: Dictionary = native_roster(int(team.team_id))
+		if roster.is_empty() or not roster.get("units", []).is_empty() or not str(roster.get("garrison_feature_id", "")).is_empty(): continue
+		if best.is_empty() or int(team.formation) < int(best.formation): best = team
+	return best
+
+## Drops an emptied team's record, roster and empty supply entry once its formation serves a new team.
+func _retire_empty_team(team: Dictionary) -> void:
+	var team_id := int(team.team_id)
+	teams.erase(team)
+	for roster: Dictionary in rosters.duplicate():
+		if int(roster.get("team_id", -1)) != team_id: continue
+		rosters.erase(roster)
+		lab.terrain.site.get("armies", []).erase(roster)
+	var supply: Variant = lab.terrain.site.get("team_supply", {})
+	if supply is Dictionary: supply.erase(str(team_id))
+
 func native_add_team(team_id: int, faction: int, troop: int, training: float, cell: Vector2, garrison_feature_id: String) -> Dictionary:
 	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
 	var native_faction := _native_faction(faction)
 	if native_faction < 0: return SiteRuntime.fail("NO_SPACE", "群眾原生陣營槽已滿")
-	var formation: int = crowd.add_formation(native_faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)
+	# Formations are never removed and the native World holds at most people + 1025 of them: a team everyone left (not
+	# departed, not garrisoned) gives its formation to the new team (native site_formation_reuse refuses unless the
+	# formation has no member and no formal roster), and its empty record goes. Only when none is free is one added.
+	var formation := -1
+	var emptied: Dictionary = _reusable_team()
+	if not emptied.is_empty() and crowd.has_method("site_formation_reuse") 			and bool(crowd.site_formation_reuse(int(emptied.formation), native_faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)):
+		formation = int(emptied.formation)
+		_retire_empty_team(emptied)
+	else:
+		formation = crowd.add_formation(native_faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)
 	if formation < 0: return SiteRuntime.fail("NO_SPACE", "原生群眾無法新增隊伍")
 	crowd.set_order_owner(formation, false)
 	var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": team_id, "faction_id": faction,
