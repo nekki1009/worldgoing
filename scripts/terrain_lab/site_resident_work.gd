@@ -108,7 +108,8 @@ static func excluded_for(state: Dictionary, identity: int) -> Dictionary:
 ## them and each full recipe cycle becomes one batch: the inputs are paid from the camp stock, the outputs added while
 ## the camp has room, as long as the camp has a tool. Returns the batches made.
 const WORK_HOURS := 10.0
-static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null) -> int:
+## `factor` (平民 C6): identity → work speed of a member (SiteResidentMood.work_factor); none = everyone at full speed.
+static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null, factor: Callable = Callable()) -> int:
 	var made := 0
 	var stock: Dictionary = state.get("inventory", {})
 	var houses: Array = state.get("households", {}).keys()
@@ -119,10 +120,12 @@ static func daily_production(state: Dictionary, minutes: Dictionary, data: Terra
 		if feature.is_empty() or str(feature.get("stage", "")) != "complete" or not Runtime.feature_usable(feature): continue
 		var recipe := Runtime.feature_recipe(feature)
 		if not recipe.has("cycle") or float(recipe.cycle) <= 0.0 or not recipe.get("output") is Dictionary: continue
-		var workers := Households.members(state, house_id).size()
-		if workers <= 0: continue
+		var members: Array = Households.members(state, house_id)
+		if members.is_empty(): continue
+		var workers := 0.0
+		for identity: Variant in members: workers += float(factor.call(int(identity))) if factor.is_valid() else 1.0
 		var season := Season.farm_factor_of_state(state) if str(feature.get("kind", "")) in Runtime.FARM_KINDS else 1.0 # TC8
-		minutes[house_id] = float(minutes.get(house_id, 0.0)) + float(workers) * WORK_HOURS * 60.0 * season
+		minutes[house_id] = float(minutes.get(house_id, 0.0)) + workers * WORK_HOURS * 60.0 * season
 		while float(minutes[house_id]) >= float(recipe.cycle):
 			if not Runtime.can_pay(stock, {"tools": 1}) or not Runtime.can_pay(stock, recipe.get("input", {})): break
 			var room := int(state.get("capacity", 0)) - Runtime.inventory_size(stock)

@@ -4,11 +4,13 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 ## - the day records hunger +3 for a hungry resident and content -1 for a fed, housed, calm one, once a day;
 ## - a resident whose house is gone records homeless +2 the next day;
 ## - a resident killed grieves every other resident +5, once per victim; a draft records +5 once;
-## - a resident at G >= 40 works at 80%; one below, and anyone not registered, at full speed.
+## - a resident at G >= 40 works at 80%; one below, and anyone not registered, at full speed;
+## - C6: the long-absence catch-up's household work uses the same speeds (one slow and one full member: 1.8 shares).
 ## Output: SITE_RESIDENT_MOOD_PASS on success; quit(1) on failure.
 
 const Mood = preload("res://scripts/terrain_lab/site_resident_mood.gd")
 const ProduceTax = preload("res://scripts/terrain_lab/site_produce_tax.gd")
+const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 
 var checks := 0
@@ -24,6 +26,9 @@ func _ok(condition: bool, message: String, detail: Variant = null) -> bool:
 
 func _pending(body: Variant, kind: String) -> Array:
 	return SiteSocial.state_of(body).pending.filter(func(entry: Dictionary) -> bool: return str(entry.kind) == kind)
+
+func _season(data: TerrainData) -> float:
+	return (load("res://scripts/terrain_lab/site_season.gd") as Script).call("farm_factor_of_state", data.site)
 
 func _run() -> void:
 	var data := _building_fixture()
@@ -69,6 +74,20 @@ func _run() -> void:
 	SiteSocial.relation(SiteSocial.state_of(fed_body), ref).G = 45
 	var head_body: Dictionary = actions._person(head, false).body
 	if not _ok(is_equal_approx(Mood.work_factor(lab, fed, fed_body), Mood.SLOW_FACTOR) and is_equal_approx(Mood.work_factor(lab, hungry, hungry_body), 1.0) and is_equal_approx(Mood.work_factor(lab, head, head_body), 1.0), "G >= 40 works at 80%; others at full speed"): return
+	# C6: offline household work follows the same speeds.
+	var farm := _formal_feature(data, "farm", Vector2i(46, 14), Vector2i(6, 6))
+	data.site["households"] = {house: {"job": {"feature": farm}}}
+	var factor := func(identity: int) -> float: return Mood.work_factor(lab, identity, actions._person(identity, false).body)
+	var slow := {}
+	var full := {}
+	ResidentWork.daily_production(data.site, slow, data, factor)
+	ResidentWork.daily_production(data.site, full, data)
+	var cycle := float(Runtime.feature_recipe(data.site.features[farm]).get("cycle", 1.0))
+	if not _ok(slow.has(house) and full.has(house), "both runs put work into the household's farm", [slow, full]): return
+	var slow_total := float(slow[house])
+	var full_total := float(full[house])
+	if not _ok(is_equal_approx(fposmod(slow_total, cycle), fposmod(1.8 * ResidentWork.WORK_HOURS * 60.0 * _season(data), cycle)) and is_equal_approx(fposmod(full_total, cycle), fposmod(2.0 * ResidentWork.WORK_HOURS * 60.0 * _season(data), cycle)), "offline work: 1.8 shares with one slow member, 2 without", [slow_total, full_total, cycle]): return
+	data.site.erase("households")
 	data.site.erase("team_supply")
 	print("SITE_RESIDENT_MOOD_PASS checks=", checks)
 	for _frame: int in range(3): await process_frame
