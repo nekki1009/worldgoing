@@ -144,7 +144,10 @@ static func prepare_captain_dispatch(lab: TerrainLab, team_id: int, target_site:
 	var request := {"nation_id": "", "captain_dispatch": reason, "decider": commander, "commander": commander,
 		"team_id": int(team.team_id), "target_site": target_site, "transfer_token": transfer_token, "offices_revision": 0, "known_receipt": ""}
 	var checked: Dictionary = preflight.call(request)
-	if not bool(checked.get("ok", false)): return _fail("DISPATCH_UNAVAILABLE")
+	if not bool(checked.get("ok", false)):
+		var refused := _fail("DISPATCH_UNAVAILABLE")
+		refused["preflight"] = {"code": str(checked.get("code", "")), "message": str(checked.get("message", ""))} # why the travel owner refused
+		return refused
 	return {"ok": true, "code": "", "request": request, "owner_preview": checked}
 
 static func prepare_dispatch(context: Dictionary) -> Dictionary:
@@ -187,7 +190,10 @@ static func prepare_dispatch(context: Dictionary) -> Dictionary:
 		"team_id": int(team.team_id), "target_site": target_site, "transfer_token": token,
 		"offices_revision": int(resolved.revision), "known_receipt": str(known.get("id", ""))}
 	var checked: Dictionary = preflight.call(request)
-	if not bool(checked.get("ok", false)): return _fail("DISPATCH_UNAVAILABLE")
+	if not bool(checked.get("ok", false)):
+		var refused := _fail("DISPATCH_UNAVAILABLE")
+		refused["preflight"] = {"code": str(checked.get("code", "")), "message": str(checked.get("message", ""))} # why the travel owner refused
+		return refused
 	return {"ok": true, "code": "", "request": request, "owner_preview": checked}
 
 ## Durable SiteDutyAI cadence. Caller hands over the same Slot ledger at every bind.

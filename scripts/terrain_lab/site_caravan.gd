@@ -26,6 +26,8 @@ const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
+const Risk = preload("res://scripts/region_lab/region_caravan_risk.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
 const REACH_SITES := 3
 ## The last evaluation that changed or refused something (read by tests and diagnostics only; never saved).
@@ -57,6 +59,19 @@ static func destinations(controller: Variant, head: int, faction: int) -> Array:
 	return result
 
 ## The goods a caravan takes from `warehouse`, at most `room` units.
+## 土匪 B5 slice 1: the risk in percent of the trip to each of `targets`, from what `head` knows (RegionCaravanRisk).
+static func route_risks(controller: Variant, head: int, faction: int, targets: Array) -> Dictionary:
+	var lab: Variant = controller.lab
+	var slot: Variant = controller.region_slot
+	var scope := str(lab.terrain.site.id)
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	var known := RegionAI.view(slot.region_registry(), head, float(slot.control.logical_game_seconds), scope, RegionAI.person_ref(lab.terrain.site, head))
+	var bands := Risk.known_bands(known, registry, Caravans.lost(slot.region_registry()), faction)
+	var today := int(Calendar.day_index(float(lab.terrain.site.get("minute", 0))))
+	var result := {}
+	for target: Variant in targets: result[str(target)] = Risk.risk(scope, str(target), bands, registry, today)
+	return result
+
 static func goods_for(data: TerrainData, warehouse: String, cargo: Dictionary, room: int) -> Dictionary:
 	var source: Dictionary = Settlement.record(data).get("trade_sources", {}).get(warehouse, {})
 	var goods := {}
@@ -72,14 +87,25 @@ static func goods_for(data: TerrainData, warehouse: String, cargo: Dictionary, r
 		room -= n
 	return goods
 
+## A team the head can send: every member may leave the Site, and the team stands at hold (not marching, pursuing or
+## retreating: the travel owner refuses that BUSY, found 2026-11-18 when the first team was on the move).
 static func _team_ready(lab: Variant, team: Dictionary) -> bool:
 	for person: Variant in team.person_ids:
 		var owner: Variant = lab.crowd_site.person_owner(int(person))
 		if owner == null or not lab.crowd_site._split_exit_ready(owner, int(lab.crowd_site._index_by_id.get(int(person), -1))): return false
+		if int(owner.combat_order) != TerrainArmy.CombatOrder.HOLD: return false
 	return true
 
-## Today's dispatch on the live Site. Returns {sent: {token, to, goods}} or {reason}.
+## The last daily decision of a settlement that trades (read by tests and diagnostics only; never saved).
+static var last_dispatch := {}
+
+## Today's dispatch on the live Site. Returns {sent: {token, to, goods, team, risk}} or {reason}.
 static func dispatch(controller: Variant) -> Dictionary:
+	var result := _dispatch(controller)
+	if not str(result.get("reason", "")) in ["no_crowd", "no_trade"]: last_dispatch = result.duplicate(true)
+	return result
+
+static func _dispatch(controller: Variant) -> Dictionary:
 	var lab: Variant = controller.lab
 	var slot: Variant = controller.region_slot
 	if slot == null or lab.crowd_site == null or not lab.crowd_site.active: return {"reason": "no_crowd"}
@@ -95,10 +121,17 @@ static func dispatch(controller: Variant) -> Dictionary:
 	var faction := int(settlement.owner_faction)
 	var targets := destinations(controller, head, faction)
 	if targets.is_empty(): return {"reason": "no_destination"}
+	# 土匪 B5: the less risky road first (then the nearer, as before).
+	var risks := route_risks(controller, head, faction, targets)
+	targets.sort_custom(func(a: String, b: String) -> bool:
+		if int(risks[a]) != int(risks[b]): return int(risks[a]) < int(risks[b])
+		var da := Bandit.site_distance(scope, a)
+		var db := Bandit.site_distance(scope, b)
+		return da < db or da == db and a < b)
 	var team: Dictionary = {}
 	for candidate: Dictionary in lab.crowd_site.teams:
 		if bool(candidate.get("departed", false)) or int(candidate.get("faction", -1)) != faction or candidate.get("person_ids", []).size() < 2: continue
-		if candidate.person_ids.has(player) or not str(lab.crowd_site.native_roster(int(candidate.team_id)).get("garrison_feature_id", "")).is_empty(): continue
+		if candidate.person_ids.has(player) or candidate.person_ids.has(head) or not str(lab.crowd_site.native_roster(int(candidate.team_id)).get("garrison_feature_id", "")).is_empty(): continue # the head stays home
 		if int(controller.team_captain_of_team(int(candidate.team_id))) <= 0 or not _team_ready(lab, candidate): continue
 		team = candidate
 		break
@@ -116,6 +149,17 @@ static func dispatch(controller: Variant) -> Dictionary:
 			warehouse = key
 			break
 	if goods.is_empty(): return {"reason": "no_goods"}
+	# 土匪 B5: he sends (100 - risk) percent of it; a road that leaves nothing worth sending is not taken.
+	var to := ""
+	var risk := 0
+	for candidate: String in targets:
+		var worth := Risk.discounted(goods, int(risks[candidate]))
+		if worth.is_empty(): continue
+		to = candidate
+		risk = int(risks[candidate])
+		goods = worth
+		break
+	if to.is_empty(): return {"reason": "too_risky"}
 	# Load: the goods leave the warehouse into the members' own cargo, CARRY each.
 	var loads: Array = []
 	var left := goods.duplicate()
@@ -152,24 +196,74 @@ static func dispatch(controller: Variant) -> Dictionary:
 	var person: Dictionary = lab.crowd_site.combat_target(captain)
 	var component: int = RegionTravelSite.start_component(slot, here.site, person.cell, lab.terrain)
 	var token := "caravan_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
-	var to := str(targets[0])
-	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:trade", int(team.team_id), _coordinate(to), component, [], token)
-	if not prepared.ok:
-		undo.call()
-		return {"reason": "dispatch_refused", "code": str(prepared.get("code", ""))}
-	# The mission is in the ledger before the departure publishes, so both are saved together.
-	var added := Caravans.add(slot.region_registry(), {"token": token, "faction": faction, "from_site": scope, "warehouse": warehouse, "to_site": to,
-		"captain_ref": captain_ref, "goods": goods, "phase": "out", "day": int(float(slot.control.logical_game_seconds) / 86400.0)})
+	# The reservation and the mission are written before the departure is prepared: the preparation captures the Site
+	# body the commit then binds, and a Site changed in between is refused STALE_BIND (found 2026-11-18: the reservation
+	# written after it made every real caravan departure fail). The mission is in the ledger before the departure
+	# publishes, so both are saved together.
+	var source: Dictionary = Settlement.record(lab.terrain).get("trade_sources", {}).get(warehouse, {})
+	var used_before: Dictionary = source.get("used", {}).duplicate(true)
+	var mission := {"token": token, "faction": faction, "from_site": scope, "warehouse": warehouse, "to_site": to,
+		"captain_ref": captain_ref, "goods": goods, "phase": "out", "day": int(float(slot.control.logical_game_seconds) / 86400.0)}
+	if risk > 0: mission["risk"] = risk
+	var added := Caravans.add(slot.region_registry(), mission)
 	if not added.ok:
 		undo.call()
 		return {"reason": "full"}
 	Settlement.record_trade_payout(lab.terrain, warehouse, goods)
+	var revert := func() -> void:
+		Caravans.remove(slot.region_registry(), int(added.id))
+		if source.has("used"): source["used"] = used_before
+		undo.call()
+	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:trade", int(team.team_id), _coordinate(to), component, [], token)
+	if not prepared.ok:
+		revert.call()
+		return {"reason": "dispatch_refused", "code": str(prepared.get("code", "")), "preflight": prepared.get("preflight", {})}
 	var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
 	if not committed.ok:
-		Caravans.remove(slot.region_registry(), int(added.id))
+		if not slot.region_registry().parties.has(token): revert.call() # nothing left: the team is still here with the goods
 		return {"reason": "dispatch_failed", "code": str(committed.get("code", ""))}
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("商隊出發前往 %s" % to)
-	return {"sent": {"token": token, "to": to, "goods": goods, "team": int(team.team_id)}}
+	return {"sent": {"token": token, "to": to, "goods": goods, "team": int(team.team_id), "risk": risk}}
+
+## 土匪 B5 slice 2 (TR-55): the caravans beaten on this Site. A mission whose captain is here and whose team has nobody
+## left able (alive and free) ends unfinished: its place in the cap is free, the home warehouse's reservation is not
+## given back, nothing is moved (the goods lie with the bodies, for whoever picks them up) and the loss is remembered with
+## the band standing here (the lowest bandit faction with able people; -1 when there is none). Returns [lost record].
+static func sweep_lost(slot: Variant, lab: Variant) -> Array:
+	var result: Array = []
+	if slot == null or lab == null or lab.crowd_site == null or not lab.crowd_site.active: return result
+	var ledger: Dictionary = slot.region_registry()
+	if Caravans.missions(ledger).is_empty(): return result
+	var scope := str(lab.terrain.site.id)
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	for mission: Dictionary in Caravans.missions(ledger).duplicate(true):
+		var captain: int = slot.person_id_of_ref(mission.captain_ref)
+		if captain <= 0: continue
+		var own: Dictionary = {}
+		for team: Dictionary in lab.crowd_site.teams:
+			if not bool(team.get("departed", false)) and team.get("person_ids", []).has(captain): own = team
+		if own.is_empty() or _able(lab, own) > 0: continue
+		var band := -1
+		for team: Dictionary in lab.crowd_site.teams:
+			var faction := int(team.get("faction", -1))
+			if bool(team.get("departed", false)) or not RegionFactionQuery.is_bandit(registry, faction) or _able(lab, team) <= 0: continue
+			if band < 0 or faction < band: band = faction
+		var lost: Dictionary = Caravans.lose(ledger, int(mission.id), scope, int(float(slot.control.logical_game_seconds) / 86400.0), band)
+		if not lost.ok: continue
+		if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("商隊在此覆沒" + ("，為土匪所劫" if band >= 0 else ""))
+		result.append(lost.record)
+	return result
+
+## The people of a crowd team entry who are alive and not captive.
+static func _able(lab: Variant, team: Dictionary) -> int:
+	var count := 0
+	for person: Variant in team.get("person_ids", []):
+		var target: Dictionary = lab._original_person_target(int(person))
+		if target.is_empty() or float(target.get("hp", 0.0)) <= 0.0: continue
+		var index := int(lab.crowd_site._index_by_id.get(int(person), -1))
+		if index >= 0 and float(lab.crowd_site.soldier_state(index).get("captive", 0.0)) > 0.0: continue
+		count += 1
+	return count
 
 ## Each Region evaluation of `lab`'s Site: turns arrived caravans back and ends the ones that came home. Returns
 ## {turned: [id], home: [id]}.
@@ -179,6 +273,8 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 	if Caravans.missions(ledger).is_empty() or lab.site_controller == null: return result
 	var controller: Variant = lab.site_controller
 	var scope := str(lab.terrain.site.id)
+	var beaten := sweep_lost(slot, lab) # 土匪 B5: a caravan with nobody left standing here is lost
+	if not beaten.is_empty(): result["lost"] = beaten
 	for mission: Dictionary in Caravans.missions(ledger).duplicate(true):
 		var captain: int = slot.person_id_of_ref(mission.captain_ref) # a world ref or a Site lineage ref (authored people)
 		if captain <= 0 or lab._original_person_target(captain).is_empty(): continue
@@ -194,7 +290,7 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 			else: result["refused"] = {"mission": int(mission.id), "code": str(home.get("code", "")), "message": str(home.get("message", ""))}
 		elif str(mission.phase) == "back" and str(mission.from_site) == scope:
 			if _unload(slot, lab, controller, mission, captain).ok: result.home.append(int(mission.id))
-	if not result.turned.is_empty() or not result.home.is_empty() or result.has("refused"): last_evaluation = result.duplicate(true)
+	if not result.turned.is_empty() or not result.home.is_empty() or result.has("refused") or result.has("lost"): last_evaluation = result.duplicate(true)
 	return result
 
 ## Slice 2: the caravan's best-loaded member barters his share of the mission's goods with this settlement. Returns
@@ -203,6 +299,14 @@ static func sell_here(lab: Variant, controller: Variant, mission: Dictionary, ca
 	var data: TerrainData = lab.terrain
 	var settlement: Dictionary = Settlement.record(data)
 	if settlement.is_empty() or (settlement.get("trade_sources", {}) as Dictionary).is_empty(): return {"ok": false, "code": "NO_MARKET"}
+	# 土匪 B5 (bandit spec §7): the market is the settlement's; it does not deal with a side hostile to its owner, the
+	# same rule as a person's trade (SiteTradeSession.hostile). A band is hostile to every settlement.
+	var slot: Variant = controller.region_slot if controller != null else null
+	var buyer := int(settlement.get("owner_faction", -1))
+	var seller_side := int(mission.get("faction", -1))
+	if slot != null and not RegionFactionQuery.same_side(seller_side, buyer) \
+			and RegionDiplomacy.hostile(slot.control.get("faction_registry", {}), seller_side, buyer, float(slot.control.logical_game_seconds)):
+		return {"ok": false, "code": "HOSTILE"}
 	var team_id := _team_of_person(lab, captain)
 	if team_id < 0: return {"ok": false, "code": "NO_TEAM"}
 	# The seller: the member carrying most of the mission's goods (one endpoint per side).

@@ -10637,6 +10637,7 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
 	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
+	closed["caravans_lost"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab) # 土匪 B5: TR-55
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
