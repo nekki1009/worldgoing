@@ -8,8 +8,11 @@ extends RefCounted
 ##   the team carries (CARRY per person); they leave the warehouse into the members' own cargo (TR-50: never in both)
 ##   and count against the source's used total (the reservation). A multi-person team of the settlement's faction (not
 ##   the player's, not garrisoned) leaves on its captain's word (captain:trade).
-## - Turn back (each Region evaluation of a Site, live or cold): a mission "out" whose captain stands on its destination
-##   is sent home (phase "back").
+## - Trade (slice 2) and turn back (each Region evaluation of a Site, live or cold): a mission "out" whose captain stands on
+##   its destination first sells, once, what its best-loaded member carries of its goods to the settlement there for
+##   coin from a warehouse bound to its trade with a coin limit, on the settlement's own T2 terms (SiteTrade.counter_offer
+##   on that warehouse's stock and a residents × 14 days food target, within the warehouse's quota); a counter offer is
+##   taken as given, a refusal sells nothing. Then it is sent home (phase "back").
 ## - Home (each Region evaluation of its home Site): a mission "back" whose captain stands home unloads the mission's
 ##   goods its people still carry into the warehouse, gives back the unused reservation, and ends.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -20,6 +23,9 @@ const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
 const Caravans = preload("res://scripts/region_lab/region_caravans.gd")
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
+const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
+const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
+const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
 
 const REACH_SITES := 3
 const CARRY := Runtime.CARRY_CAPACITY
@@ -175,10 +181,79 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 		var captain := RegionPeerage.world_person_id(mission.captain_ref)
 		if captain <= 0 or lab._original_person_target(captain).is_empty(): continue
 		if str(mission.phase) == "out" and str(mission.to_site) == scope:
+			if not mission.has("sold"):
+				var sold := sell_here(lab, controller, mission, captain)
+				var stored: Dictionary = Caravans.find(ledger, int(mission.id))
+				if not stored.is_empty(): stored["sold"] = sold.get("got", {}).duplicate()
+				mission = stored if not stored.is_empty() else mission
+				result["sold"] = sold
 			if _send_home(slot, lab, controller, mission, captain).ok: result.turned.append(int(mission.id))
 		elif str(mission.phase) == "back" and str(mission.from_site) == scope:
 			if _unload(slot, lab, controller, mission, captain).ok: result.home.append(int(mission.id))
 	return result
+
+## Slice 2: the caravan's best-loaded member barters his share of the mission's goods with this settlement. Returns
+## {ok, decision, gave {item: n}, got {item: n}, warehouse} or {ok false, code, tried}.
+static func sell_here(lab: Variant, controller: Variant, mission: Dictionary, captain: int) -> Dictionary:
+	var data: TerrainData = lab.terrain
+	var settlement: Dictionary = Settlement.record(data)
+	if settlement.is_empty() or (settlement.get("trade_sources", {}) as Dictionary).is_empty(): return {"ok": false, "code": "NO_MARKET"}
+	var team_id := _team_of_person(lab, captain)
+	if team_id < 0: return {"ok": false, "code": "NO_TEAM"}
+	# The seller: the member carrying most of the mission's goods (one endpoint per side).
+	var seller := -1
+	var carried := {}
+	for team: Variant in lab.team_owners():
+		if int(team.team_id) != team_id: continue
+		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
+			var identity: int = team.combat_identity(int(index))
+			var body: Dictionary = controller.person_actions._person(identity, false)
+			if body.is_empty(): continue
+			var share := {}
+			for resource: String in mission.goods:
+				if int(body.cargo.get(resource, 0)) > 0: share[resource] = mini(int(mission.goods[resource]), int(body.cargo[resource]))
+			if Trade._unit_count(TradeSession.goods(share)) > Trade._unit_count(TradeSession.goods(carried)):
+				seller = identity
+				carried = share
+	if seller < 0 or carried.is_empty(): return {"ok": false, "code": "NOTHING_TO_SELL"}
+	var warehouses: Array = settlement.trade_sources.keys()
+	warehouses.sort()
+	var tried: Array = []
+	for key: String in warehouses:
+		var limits: Dictionary = settlement.trade_sources[key].get("limits", {})
+		var endpoint: Dictionary = Runtime.trade_endpoint(data, Stockpiles.identity(key))
+		if not endpoint.get("ok", false): continue
+		# Barter (T2 values carry no coin): the caravan asks for the first bound resource the warehouse holds that it
+		# does not bring, half as many units as it offers.
+		var wanted := ""
+		var names: Array = limits.keys()
+		names.sort()
+		for resource: String in names:
+			if resource == "coin" or carried.has(resource) or int(limits[resource].per_trade) <= 0 or int(endpoint.cargo.get(resource, 0)) <= 0: continue
+			wanted = resource
+			break
+		if wanted.is_empty(): continue
+		var receive := TradeSession.goods(carried)
+		var ask := mini(mini(maxi(1, Trade._unit_count(receive) / 2), int(endpoint.cargo[wanted])), int(limits[wanted].per_trade))
+		var give := TradeSession.goods({wanted: ask})
+		var targets := {"food": float(Settlement.residents(lab).size() * TradeSession.SETTLEMENT_FOOD_DAYS)}
+		var seller_ref := {"holder": "person:%d" % seller, "expected_version": int(Runtime.trade_endpoint(data, "person:%d" % seller).holder.version)}
+		var warehouse_ref := {"holder": Stockpiles.identity(key), "expected_version": int(endpoint.holder.version)}
+		var legal := func(r: Dictionary, g: Dictionary) -> bool:
+			if not Settlement.trade_quota_refusal(data, key, g.resources).is_empty(): return false
+			return bool(Runtime.exchange_items(data, seller_ref, warehouse_ref, r, g, true).ok)
+		var answer: Dictionary = Trade.counter_offer(receive, give, endpoint.cargo, targets, controller.person_actions._person(seller, false).cargo, legal, 50.0, 0, data.site)
+		tried.append([key, str(answer.get("decision", answer.get("code", "")))])
+		if not answer.ok or str(answer.decision) == "REJECT": continue
+		if Trade._unit_count(answer.receive) == 0 or Trade._unit_count(answer.give) == 0: continue
+		var done: Dictionary = Runtime.exchange_items(data, seller_ref, warehouse_ref, answer.receive, answer.give)
+		if not done.ok:
+			tried.append([key, str(done.get("code", ""))])
+			continue
+		Settlement.record_trade_payout(data, key, answer.give.resources)
+		if data.site.get("notices") is Array: data.site.notices.append("外來商隊在此成交")
+		return {"ok": true, "decision": str(answer.decision), "gave": answer.receive.resources.duplicate(), "got": answer.give.resources.duplicate(), "warehouse": key}
+	return {"ok": false, "code": "NO_DEAL", "tried": tried}
 
 static func _team_of_person(lab: Variant, person: int) -> int:
 	for team: Variant in lab.team_owners():
@@ -211,6 +286,7 @@ static func _unload(slot: Variant, lab: Variant, controller: Variant, mission: D
 	var team_id := _team_of_person(lab, captain)
 	if stock.is_empty() or team_id < 0: return {"ok": false}
 	var owing: Dictionary = mission.goods.duplicate()
+	for resource: Variant in mission.get("sold", {}): owing[str(resource)] = int(owing.get(str(resource), 0)) + int(mission.sold[resource])
 	var returned := {}
 	for team: Variant in lab.team_owners():
 		if int(team.team_id) != team_id: continue
@@ -228,10 +304,11 @@ static func _unload(slot: Variant, lab: Variant, controller: Variant, mission: D
 				owing[resource] = int(owing[resource]) - int(share[resource])
 				returned[resource] = int(returned.get(resource, 0)) + int(share[resource])
 				if int(owing[resource]) <= 0: owing.erase(resource)
-	# The reservation of what came back is given back (nothing was sold yet in this slice).
+	# The reservation of the goods that came back unsold is given back; what was sold stays used. What it got is unloaded too.
 	var source: Dictionary = Settlement.record(lab.terrain).get("trade_sources", {}).get(str(mission.warehouse), {})
 	for resource: String in returned:
-		if source.get("used", {}).has(resource): source.used[resource] = maxi(0, int(source.used[resource]) - int(returned[resource]))
+		if not mission.goods.has(resource) or not source.get("used", {}).has(resource): continue
+		source.used[resource] = maxi(0, int(source.used[resource]) - mini(int(returned[resource]), int(mission.goods[resource])))
 	Caravans.remove(slot.region_registry(), int(mission.id))
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("商隊返回並卸貨")
 	return {"ok": true, "returned": returned}

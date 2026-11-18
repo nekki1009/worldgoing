@@ -221,5 +221,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "T5 caravans slice 1"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_trade_t5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "T5 caravans slice 2"
  }
 ]

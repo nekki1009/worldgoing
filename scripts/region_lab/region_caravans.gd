@@ -2,7 +2,8 @@ extends RefCounted
 ## 貿易 T5 slice 1 (trade plan §7.2): NPC caravan missions, an optional `caravans` field of the Region gameplay
 ## registry (RegionSaveSlot.region_registry(); absent in older saves = none), edited in place and published with it like
 ## parties and events. {version, next_id, missions}
-## mission: {id, token, faction, from_site, warehouse, to_site, captain_ref, goods {item: n}, phase "out"|"back", day}
+## mission: {id, token, faction, from_site, warehouse, to_site, captain_ref, goods {item: n}, phase "out"|"back", day,
+##   sold {item: n} (optional: what the destination paid, set once when the caravan traded there)}
 ## At most MAX_ACTIVE missions in the world (the plan's initial cap: loading, on the road, at the destination, returning).
 const VERSION := 1
 const MAX_ACTIVE := 8
@@ -27,7 +28,13 @@ static func validate(value: Variant) -> Dictionary:
 	if not value.missions is Array or value.missions.size() > MAX_ACTIVE: return _fail("caravans missions")
 	var ids := {}
 	for mission: Variant in value.missions:
-		if not mission is Dictionary or not RegionFactionQuery.keys(mission, ["id", "token", "faction", "from_site", "warehouse", "to_site", "captain_ref", "goods", "phase", "day"]): return _fail("caravan fields")
+		var fields := ["id", "token", "faction", "from_site", "warehouse", "to_site", "captain_ref", "goods", "phase", "day"]
+		if mission is Dictionary and mission.has("sold"): fields.append("sold") # slice 2: what the destination paid
+		if not mission is Dictionary or not RegionFactionQuery.keys(mission, fields): return _fail("caravan fields")
+		if mission.has("sold"):
+			if not mission.sold is Dictionary or mission.sold.size() > 32: return _fail("caravan sale")
+			for item: Variant in mission.sold:
+				if not item is String or not RegionFactionQuery.whole(mission.sold[item], 1, 100000): return _fail("caravan sale")
 		if not RegionFactionQuery.whole(mission.id, 1, int(value.next_id) - 1) or ids.has(int(mission.id)): return _fail("caravan id")
 		ids[int(mission.id)] = true
 		for field: String in ["token", "from_site", "warehouse", "to_site"]:
@@ -46,6 +53,7 @@ static func normalize(value: Dictionary) -> void:
 		if not mission is Dictionary: continue
 		for field: String in ["id", "faction", "day"]: mission[field] = int(mission.get(field, 0))
 		for item: Variant in mission.get("goods", {}): mission.goods[item] = int(mission.goods[item])
+		for item: Variant in mission.get("sold", {}): mission.sold[item] = int(mission.sold[item])
 
 ## The ledger's caravans field, created when missing.
 static func ensure(ledger: Dictionary) -> Dictionary:
