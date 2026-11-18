@@ -21,8 +21,13 @@ static func empty_registry() -> Dictionary:
 	return {"version": VERSION, "revision": 0, "next_sequence": 1, "parties": {}, "battles": {}, "modes": {}, "events": [], "observations": {}, "reports": [], "evaluation": {}}
 
 static func validate_registry(raw: Variant, world: float) -> Dictionary:
-	if not raw is Dictionary or raw.size() != REGISTRY_FIELDS.size() or not seconds(world):
+	# 貿易 T5: `caravans` (RegionCaravans) is the one optional field; older registries have none.
+	var extra := 1 if raw is Dictionary and raw.has("caravans") else 0
+	if not raw is Dictionary or raw.size() != REGISTRY_FIELDS.size() + extra or not seconds(world):
 		return fail("REGION_SCHEMA", "Region 登記版本／欄位非法")
+	if extra == 1:
+		var caravans: Dictionary = (load("res://scripts/region_lab/region_caravans.gd") as Script).call("validate", raw.caravans)
+		if not caravans.get("ok", false): return fail("REGION_SCHEMA", "Region 商隊任務非法")
 	for field: String in REGISTRY_FIELDS:
 		if not raw.has(field): return fail("REGION_SCHEMA", "Region 登記缺必要欄位")
 	if not whole(raw.version, 1) or int(raw.version) != VERSION or not whole(raw.revision) or not whole(raw.next_sequence, 1):

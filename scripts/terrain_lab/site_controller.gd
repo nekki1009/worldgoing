@@ -10521,6 +10521,7 @@ func resident_exodus_day() -> Dictionary:
 	var result := ResidentExodus.day(self, today, _vital_world_seed())
 	result["fallen"] = fallen
 	result["migrants"] = Migrants.day(self, today) # 平民 C4c: after departures, so their beds are free.
+	result["caravan"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("dispatch", self) # 貿易 T5: a caravan sets out
 	# 時間與氣候 TC11: the typhoon omen and strike, on the Site's own calendar day.
 	result["typhoon"] = Typhoon.day(lab.terrain, (load("res://scripts/terrain_lab/site_calendar.gd") as Script).call("day_index", float(lab.terrain.site.get("minute", 0))))
 	return result

@@ -214,5 +214,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "B4 source E famine"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_t5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "T5 caravans slice 1"
  }
 ]

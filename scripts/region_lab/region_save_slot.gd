@@ -4948,6 +4948,7 @@ func consume_due_region_events() -> Dictionary:
 				if not observed_features.ok: return observed_features
 				var observed_strength := SiteStrength.record(self, lab) # 跨 Site 兵力情報: officers record and tell.
 				if not observed_strength.ok: return observed_strength
+				(load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("evaluate", self, lab) # 貿易 T5: caravans turn back / come home
 				lab.review_region_duty(float(event.at), registry)
 				var proposed := {"ok": true, "intents": []}
 				if region_dispatch_intents.is_valid():
