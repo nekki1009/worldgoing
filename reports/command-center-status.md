@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-19 02:30（台北）
+更新：2026-11-19 03:20（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -28,6 +28,8 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 - NPC 稅使由職責 AI 自動補位（隊中有文吏即可）。
 - 測試：site_tax_envoy_p3b_test、region_tax_team_test（--tax-case=pay／refuse／room／npc_day，各約 6.5 分）、site_tax_lost_p3b_test；已加入 new_tests_20261117.json。
 - 回歸：P3B_REG_B 168/168（5 支並行超時／保留競態，單獨重跑全過）；TAXCART_FAM_A 13/13。第一輪 P3B_REG_A 被 Claude 更新中斷。
+- 03:20 補：a47dfbf 領主層也用稅隊收（Q9-A）：收稅者＝治所在出發 Site 的國王或有封臣的領主，站點＝其直屬封臣；派過稅隊的領主其封臣稅日不再帳面上繳。新情境 region_tax_team_test --tax-case=lord；回歸 TAXLORD_FAM_A 17/17。
+- 清單盤點：平民 C0–C6 完成（C1c 等平民圖集）；群眾陣型完成；市集 T3 等正式美術（MISSING_ART 規則）；T6 協定與稅有明示阻擋（多端點原子候選等）；銷贓照土匪規格延後。
 - 下一步：清單其他未阻塞項目（依指揮中心判斷）。
 
 ## 2026-11-18 21:15（台北）NPC 從玩家所在 Site 出發、土匪 B5 完成
