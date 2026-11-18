@@ -6,7 +6,7 @@ extends RefCounted
 ## party it names. {version, next_id, routes, collected}
 ## route: {id, token (the party on the road), faction, season, home_site (the capital: the treasury), captain_ref,
 ##   envoy_ref (the team's 稅使), stops [site_id] (direct fiefs in visiting order), done {site_id: outcome}, phase
-##   "out" | "back", day}. outcome: "full" | "partial" | "refused" | "room" (only part fitted) | "none" (nothing due).
+##   "out" | "back", day, carried {item: n} (optional: the tax goods its people carry home)}. outcome: "full" | "partial" | "refused" | "room" (only part fitted) | "none" (nothing due).
 ## collected: per (faction, site, season) what the fief owed and what tax teams took: [{faction, site, season, due,
 ##   paid}] (tenths of a point). A second team the same season takes only due − paid (PT-19); one fief is never
 ##   collected twice for the same share. The last MAX_COLLECTED are kept.
@@ -39,7 +39,13 @@ static func validate(value: Variant) -> Dictionary:
 	if not value.routes is Array or value.routes.size() > MAX_ROUTES or not value.collected is Array or value.collected.size() > MAX_COLLECTED: return _fail("tax routes lists")
 	var ids := {}
 	for route: Variant in value.routes:
-		if not route is Dictionary or not RegionFactionQuery.keys(route, ["id", "token", "faction", "season", "home_site", "captain_ref", "envoy_ref", "stops", "done", "phase", "day"]): return _fail("tax route fields")
+		var fields := ["id", "token", "faction", "season", "home_site", "captain_ref", "envoy_ref", "stops", "done", "phase", "day"]
+		if route is Dictionary and route.has("carried"): # slice 2: the tax goods its people carry home {item: n}
+			fields.append("carried")
+			if not route.carried is Dictionary or route.carried.size() > 8: return _fail("tax route carried")
+			for item: Variant in route.carried:
+				if not item is String or not RegionFactionQuery.whole(route.carried[item], 1, 100000): return _fail("tax route carried")
+		if not route is Dictionary or not RegionFactionQuery.keys(route, fields): return _fail("tax route fields")
 		if not RegionFactionQuery.whole(route.id, 1, int(value.next_id) - 1) or ids.has(int(route.id)): return _fail("tax route id")
 		ids[int(route.id)] = true
 		if not _site_id(route.token) or not _site_id(route.home_site) or not RegionFactionQuery.whole(route.faction, 0, RegionFactionQuery.MAX_ID) \
@@ -66,6 +72,7 @@ static func normalize(value: Dictionary) -> void:
 	for route: Variant in value.get("routes", []):
 		if not route is Dictionary: continue
 		for field: String in ["id", "faction", "season", "day"]: route[field] = int(route.get(field, 0))
+		for item: Variant in route.get("carried", {}): route.carried[item] = int(route.carried[item])
 	for record: Variant in value.get("collected", []):
 		if not record is Dictionary: continue
 		for field: String in ["faction", "season", "due", "paid"]: record[field] = int(record.get(field, 0))

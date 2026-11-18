@@ -121,3 +121,229 @@ static func settle(controller: Variant, head: int, record: Dictionary, result: D
 			if head > 0: controller.adjust_reputation(head, 0.0, Tribute.LATE_CREDIT)
 			return ("聚落拒繳本季上繳" if str(result.outcome) == "refused" else "本季上繳不足（只交 %.1f 點）" % (float(result.paid) / PayTable.TENTHS)) + "，聚落長信譽 −2"
 	return ""
+
+# --- Slice 2: the round (dispatch from the capital, stop by stop, home to the treasury) -------------------------------
+const Caravan = preload("res://scripts/terrain_lab/site_caravan.gd")
+const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
+const ProduceTax = preload("res://scripts/terrain_lab/site_produce_tax.gd")
+const Payroll = preload("res://scripts/terrain_lab/site_payroll.gd")
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+const CARRY := Runtime.CARRY_CAPACITY
+
+## The last round decision or handover (read by tests and diagnostics only; never saved).
+static var last_event := {}
+
+static func _army_of(lab: Variant, team_id: int) -> Variant:
+	for army: Variant in lab.combat_armies:
+		if is_instance_valid(army) and int(army.team_id) == team_id: return army
+	return null
+
+static func _crowd_team(lab: Variant, team_id: int) -> Dictionary:
+	for team: Dictionary in lab.crowd_site.teams:
+		if int(team.team_id) == team_id and not bool(team.get("departed", false)): return team
+	return {}
+
+static func _season(lab: Variant) -> int:
+	return PayTable.season_index(Calendar.day_index(float(lab.terrain.site.get("minute", 0))))
+
+## The faction head's seat: the capital, where the treasury is.
+static func capital_of(registry: Dictionary, faction: int) -> String:
+	var head: Dictionary = RegionPeerage.head_of(registry, faction)
+	if not head.get("ok", false) or head.get("person_ref") == null: return ""
+	return RegionFinance.seat_of(registry, RegionPeerage.key_of(head.person_ref))
+
+## The direct fiefs still to visit this season: not planned by another team and not collected in full (PT-19: a fief
+## that paid only part, or whose goods did not all fit, may be visited again).
+static func due_stops(registry: Dictionary, ledger: Dictionary, faction: int, home: String, season: int) -> Array:
+	return fief_stops(registry, faction, home, season, ledger).filter(func(site: String) -> bool:
+		var taken: Dictionary = TaxRoutes.collected_of(ledger, faction, site, season)
+		return taken.is_empty() or int(taken.paid) < int(taken.due))
+
+## 派收稅: `team_id` on this live Site (the capital) sets out on this season's round of the direct fiefs.
+## Returns {ok, token, stops, route} or a refusal.
+static func dispatch(controller: Variant, team_id: int) -> Dictionary:
+	var lab: Variant = controller.lab
+	var slot: Variant = controller.region_slot
+	if slot == null or lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "沒有世界或群眾")
+	var crowd_team := _crowd_team(lab, team_id)
+	var army: Variant = _army_of(lab, team_id)
+	if crowd_team.is_empty() or army == null: return Runtime.fail("NO_TEAM", "沒有這支隊伍")
+	var refused := dispatch_refusal(army)
+	if not refused.is_empty(): return refused
+	if crowd_team.get("person_ids", []).has(int(lab.controlled_person_id())): return Runtime.fail("PLAYER_PARTY", "受控人物不隨稅隊出發")
+	var faction := int(crowd_team.get("faction", -1))
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	var home := str(lab.terrain.site.id)
+	if capital_of(registry, faction) != home: return Runtime.fail("NOT_CAPITAL", "稅隊須從國都出發")
+	var season := _season(lab)
+	var ledger: Dictionary = slot.region_registry()
+	var stops := due_stops(registry, ledger, faction, home, season)
+	if stops.is_empty(): return Runtime.fail("NO_FIEFS", "本季沒有要巡收的直屬封地")
+	if not Caravan._team_ready(lab, crowd_team): return Runtime.fail("NOT_READY", "稅隊須停在守位、可以出發")
+	var captain := int(army.combat_identity(int(army.formal_commander)))
+	var captain_ref: Dictionary = JoinFaction._world_ref(controller, captain)
+	var envoy_ref: Dictionary = JoinFaction._world_ref(controller, envoy_of(army))
+	if captain_ref.is_empty() or envoy_ref.is_empty(): return Runtime.fail("NO_REFERENCE", "稅隊人物沒有世界參照")
+	var token := "tax_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+	# The route is in the ledger before the departure is prepared (nothing on the Site changes between the preparation
+	# and the commit: a changed Site is refused STALE_BIND).
+	var added := TaxRoutes.add(ledger, {"token": token, "faction": faction, "season": season, "home_site": home, "captain_ref": captain_ref,
+		"envoy_ref": envoy_ref, "stops": stops, "done": {}, "phase": "out", "day": int(float(slot.control.logical_game_seconds) / 86400.0)})
+	if not added.ok: return added
+	var sent := _send(slot, lab, team_id, captain, str(stops[0]), token)
+	if not sent.ok:
+		TaxRoutes.remove(ledger, int(added.id))
+		return sent
+	last_event = {"dispatched": token, "stops": stops}
+	return {"ok": true, "token": token, "stops": stops, "route": int(added.id)}
+
+static func _send(slot: Variant, lab: Variant, team_id: int, captain: int, to_site: String, token: String) -> Dictionary:
+	var here: Dictionary = slot._coordinate(lab.terrain)
+	var person: Dictionary = lab._original_person_target(captain)
+	if person.is_empty(): return Runtime.fail("NO_CAPTAIN", "隊長不在此地")
+	var component: int = RegionTravelSite.start_component(slot, here.site, person.cell, lab.terrain)
+	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:tax", team_id, Caravan._coordinate(to_site), component, [], token)
+	if not prepared.ok: return prepared
+	return slot.commit_npc_region_dispatch(prepared)
+
+## The room the team's people still have for tax goods (units).
+static func _room(lab: Variant, controller: Variant, team_id: int) -> int:
+	var room := 0
+	for team: Variant in lab.team_owners():
+		if int(team.team_id) != team_id: continue
+		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
+			var body: Dictionary = controller.person_actions._person(team.combat_identity(int(index)), false)
+			if not body.is_empty(): room += maxi(0, CARRY - Runtime.inventory_size(body.cargo))
+	return room
+
+## Moves `goods` between the team's people and `stock` (to the people when `to_people`), member by member.
+static func _move(lab: Variant, controller: Variant, team_id: int, stock: Dictionary, goods: Dictionary, to_people: bool) -> Dictionary:
+	var left := goods.duplicate()
+	var moved := {}
+	for team: Variant in lab.team_owners():
+		if int(team.team_id) != team_id: continue
+		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
+			var body: Dictionary = controller.person_actions._person(team.combat_identity(int(index)), false)
+			if body.is_empty(): continue
+			var share := {}
+			var room := CARRY - Runtime.inventory_size(body.cargo)
+			for item: String in left.keys():
+				var n := mini(int(left[item]), room) if to_people else mini(int(left[item]), int(body.cargo.get(item, 0)))
+				if n <= 0: continue
+				share[item] = n
+				if to_people: room -= n
+			if share.is_empty(): continue
+			var done: Dictionary
+			if to_people: done = Runtime.transfer_items(lab.terrain, stock.holder, stock.cargo, body.holder, body.cargo, share, [], int(stock.holder.version), int(body.holder.version))
+			else: done = Runtime.transfer_items(lab.terrain, body.holder, body.cargo, stock.holder, stock.cargo, share, [], int(body.holder.version), int(stock.holder.version), 2000000000)
+			if not done.ok: continue
+			for item: String in share:
+				moved[item] = int(moved.get(item, 0)) + int(share[item])
+				left[item] = int(left[item]) - int(share[item])
+				if int(left[item]) <= 0: left.erase(item)
+	return moved
+
+## Each Region evaluation of `lab`'s Site: a tax team standing on its next stop collects and moves on; one standing
+## home unloads into the treasury and its round ends. Returns {collected: [{site, outcome, paid}], home: [token]}.
+static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
+	var result := {"collected": [], "home": []}
+	var ledger: Dictionary = slot.region_registry()
+	if TaxRoutes.routes(ledger).is_empty() or lab.site_controller == null or lab.crowd_site == null or not lab.crowd_site.active: return result
+	var controller: Variant = lab.site_controller
+	var scope := str(lab.terrain.site.id)
+	for route: Dictionary in TaxRoutes.routes(ledger).duplicate(true):
+		var captain: int = slot.person_id_of_ref(route.captain_ref)
+		if captain <= 0 or lab._original_person_target(captain).is_empty(): continue
+		var team_id := Caravan._team_of_person(lab, captain)
+		if team_id < 0: continue
+		if str(route.phase) == "out" and route.stops.has(scope) and not route.done.has(scope):
+			var collected := _collect(slot, lab, controller, route, team_id)
+			result.collected.append({"site": scope, "outcome": str(collected.get("outcome", "")), "paid": int(collected.get("paid", 0))})
+			var stored: Dictionary = TaxRoutes.find(ledger, int(route.id))
+			if stored.is_empty(): continue
+			var next := ""
+			for stop: Variant in stored.stops:
+				if not stored.done.has(stop):
+					next = str(stop)
+					break
+			var going_home := next.is_empty()
+			if going_home: next = str(stored.home_site)
+			var before := str(stored.token)
+			stored["token"] = "tax_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+			if going_home: stored["phase"] = "back"
+			var sent := _send(slot, lab, team_id, captain, next, str(stored.token))
+			if not sent.ok:
+				# Collected here already; the team waits and the next evaluation sends it on.
+				stored["token"] = before
+				if going_home: stored["phase"] = "out"
+				result["refused"] = {"code": str(sent.get("code", "")), "message": str(sent.get("message", ""))}
+		elif str(route.phase) == "out" and route.stops.has(scope) and route.done.has(scope):
+			# Collected here, but the way on was refused: try again.
+			var stored_again: Dictionary = TaxRoutes.find(ledger, int(route.id))
+			var next_again := ""
+			for stop: Variant in stored_again.stops:
+				if not stored_again.done.has(stop):
+					next_again = str(stop)
+					break
+			var home_again := next_again.is_empty()
+			if home_again: next_again = str(stored_again.home_site)
+			var before_again := str(stored_again.token)
+			stored_again["token"] = "tax_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+			if home_again: stored_again["phase"] = "back"
+			if not _send(slot, lab, team_id, captain, next_again, str(stored_again.token)).ok:
+				stored_again["token"] = before_again
+				if home_again: stored_again["phase"] = "out"
+		elif str(route.phase) == "back" and str(route.home_site) == scope:
+			var unloaded := _unload(slot, lab, controller, route, team_id)
+			if unloaded.ok: result.home.append(str(route.token))
+	if not result.collected.is_empty() or not result.home.is_empty() or result.has("refused"): last_event = result.duplicate(true)
+	return result
+
+## The handover at this stop (the fief's head answers; an NPC by character; the player's own answer is slice 3).
+static func _collect(slot: Variant, lab: Variant, controller: Variant, route: Dictionary, team_id: int) -> Dictionary:
+	var ledger: Dictionary = slot.region_registry()
+	var scope := str(lab.terrain.site.id)
+	var stored: Dictionary = TaxRoutes.find(ledger, int(route.id))
+	var record: Dictionary = ProduceTax.record_of(lab.terrain)
+	var source: Dictionary = {}
+	if not record.is_empty() and record.get("tax_source") is Dictionary and not record.tax_source.is_empty(): source = Payroll.source_of(lab, record.tax_source)
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if record.is_empty() or source.is_empty() or int(settlement.get("owner_faction", -1)) != int(route.faction):
+		stored.done[scope] = "none"
+		return {"outcome": "none", "paid": 0}
+	var season := int(route.season)
+	var taken: Dictionary = TaxRoutes.collected_of(ledger, int(route.faction), scope, season)
+	var owing := owed(record, season, int(taken.get("paid", 0)))
+	var head := int(Settlement.head_executor(lab, true))
+	var person: Dictionary = controller.person_actions._person(head, false) if head > 0 else {}
+	var decision := "pay"
+	if not person.is_empty() and not bool(person.get("player", false)): decision = npc_decision(person.body.get("personality") if person.get("body") is Dictionary else null)
+	var answer := handover(int(owing.owed), source.cargo, _room(lab, controller, team_id), decision)
+	var moved: Dictionary = _move(lab, controller, team_id, source, answer.goods, true) if not answer.goods.is_empty() else {}
+	var paid := Tribute.goods_tenths(moved)
+	if moved != answer.goods: answer["pending"] = int(answer.pending) + int(answer.paid) - paid
+	answer["paid"] = paid
+	answer["goods"] = moved
+	TaxRoutes.record_collection(ledger, int(route.faction), scope, season, int(owing.due), paid)
+	if paid > 0: Finance.add_receipt(record, "tribute_out", paid, season)
+	var carried: Dictionary = stored.get("carried", {})
+	for item: String in moved: carried[item] = int(carried.get(item, 0)) + int(moved[item])
+	if not carried.is_empty(): stored["carried"] = carried
+	stored.done[scope] = str(answer.outcome)
+	var notice := settle(controller, head, record, answer) if str(answer.outcome) != "none" else ""
+	if not notice.is_empty() and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append(notice)
+	return answer
+
+## Home: the carried tax goods go into the capital's treasury as tribute_in; the round ends.
+static func _unload(slot: Variant, lab: Variant, controller: Variant, route: Dictionary, team_id: int) -> Dictionary:
+	var record: Dictionary = ProduceTax.record_of(lab.terrain)
+	var treasury: Dictionary = {}
+	if not record.is_empty() and record.get("treasury") is Dictionary and not record.treasury.is_empty(): treasury = Payroll.source_of(lab, record.treasury)
+	if treasury.is_empty(): return Runtime.fail("NO_TREASURY", "國都沒有國庫")
+	var carried: Dictionary = route.get("carried", {})
+	var moved: Dictionary = _move(lab, controller, team_id, treasury, carried, false) if not carried.is_empty() else {}
+	if not moved.is_empty(): Finance.add_receipt(record, "tribute_in", Tribute.goods_tenths(moved), _season(lab))
+	TaxRoutes.remove(slot.region_registry(), int(route.id))
+	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("稅隊返回國都，入庫 %.1f 點" % (float(Tribute.goods_tenths(moved)) / PayTable.TENTHS))
+	return {"ok": true, "moved": moved}
