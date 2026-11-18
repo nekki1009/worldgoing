@@ -8,6 +8,7 @@ extends RefCounted
 ## - nation: its treasury (R4), auto-funding of its teams, last funding; a faction head exempts a vassal's fief for the
 ##   next season.
 ## The data calls live here so tests can drive them without the dialog.
+const TaxEnvoy = preload("res://scripts/terrain_lab/site_tax_envoy.gd") # 軍餉與稅收 P3b: the answer to the tax team
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Finance = preload("res://scripts/terrain_lab/site_finance.gd")
 const PayTable = preload("res://scripts/terrain_lab/site_pay_table.gd")
@@ -121,6 +122,7 @@ static func summary(lab: Variant, org: Dictionary) -> String:
 			var asked: Dictionary = BanditProtection.pending.get(str(lab.terrain.site.get("id", "")), {})
 			for band: Variant in asked: lines.append("土匪（勢力 %d）索要保護費 %d 糧，尚未答覆" % [int(band), int(asked[band])])
 			if int(record.tax_rate) > PayTable.FREE_TAX_MAX or not ProduceTax.high_rate_allowed(lab.terrain): lines.append("15%／20% 需要國家已知「稅籍與財政制度」（N09）")
+			lines.append("國家稅隊來收稅時：%s" % {"pay": "足額交付", "partial": "只交一半", "refuse": "拒繳"}[str(record.get("tax_answer", "pay"))]) # 軍餉與稅收 P3b PT-18
 		"nation":
 			var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(str(ref.org_id), {})
 			var treasury_ref: Dictionary = nation.get("ransom_data", {}).get("treasury", {})
@@ -261,6 +263,11 @@ static func open(controller: Variant, host: Window = null) -> void:
 		["綁定為稅源", "FinanceBindTax", ["settlement"], func() -> void: act.call(bind(lab, current.call(), "tax_source", picked.call()))],
 		["定稅率", "FinanceSetTax", ["settlement"], func() -> void: act.call(ProduceTax.set_tax(lab, int(lab.controlled_person_id()), int(PayTable.TAX_RATES[tax_rate.selected])))],
 		["綁定為封地庫", "FinanceBindTreasury", ["settlement"], func() -> void: act.call(bind(lab, current.call(), "treasury", picked.call()))],
+		["稅隊來時：切換交／一半／拒", "FinanceTaxAnswer", ["settlement"], func() -> void:
+			var record := Finance.record_of(lab.terrain, current.call().ref, _today(lab))
+			var answers: Array = Finance.TAX_ANSWERS
+			var next_answer: String = answers[(answers.find(str(record.get("tax_answer", "pay"))) + 1) % answers.size()]
+			act.call(TaxEnvoy.set_answer(lab, int(lab.controlled_person_id()), next_answer))],
 		["付保護費", "FinancePayProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, true))],
 		["拒絕保護費", "FinanceRefuseProtection", ["settlement"], func() -> void: act.call(_answer_protection(lab, false))],
 		["切換自動撥餉", "FinanceAutoFund", ["nation", "settlement"], func() -> void:

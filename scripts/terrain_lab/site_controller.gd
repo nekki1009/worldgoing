@@ -10535,6 +10535,7 @@ func resident_exodus_day() -> Dictionary:
 	result["fallen"] = fallen
 	result["migrants"] = Migrants.day(self, today) # 平民 C4c: after departures, so their beds are free.
 	result["caravan"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("dispatch", self) # 貿易 T5: a caravan sets out
+	result["tax_team"] = (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("day", self) # 軍餉與稅收 P3b: the NPC nation's tax round
 	# 時間與氣候 TC11: the typhoon omen and strike, on the Site's own calendar day.
 	result["typhoon"] = Typhoon.day(lab.terrain, (load("res://scripts/terrain_lab/site_calendar.gd") as Script).call("day_index", float(lab.terrain.site.get("minute", 0))))
 	return result
@@ -10638,6 +10639,7 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	if closed.is_empty(): return {}
 	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
 	closed["caravans_lost"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab) # 土匪 B5: TR-55
+	closed["tax_teams_lost"] = (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab) # 軍餉與稅收 P3b: PT-17
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])

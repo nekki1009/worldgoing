@@ -93,8 +93,13 @@ static func _integer(value: Variant, lower: int, upper: int) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) == floorf(float(value)) \
 		and float(value) >= lower and float(value) <= upper
 
+## 軍餉與稅收 P3b slice 3: a settlement's standing answer to the nation's tax team (optional; absent = pay).
+const TAX_ANSWERS := ["pay", "partial", "refuse"]
+
 static func valid_record(key: Variant, record: Variant) -> bool:
-	if not key is String or not record is Dictionary or record.size() != FIELDS.size(): return false
+	var optional := 1 if record is Dictionary and record.has("tax_answer") else 0
+	if not key is String or not record is Dictionary or record.size() != FIELDS.size() + optional: return false
+	if optional == 1 and not str(record.tax_answer) in TAX_ANSWERS: return false
 	for field: String in FIELDS:
 		if not record.has(field): return false
 	if not _integer(record.version, VERSION, VERSION) or not valid_ref(record.ref) or org_key(record.ref) != key: return false

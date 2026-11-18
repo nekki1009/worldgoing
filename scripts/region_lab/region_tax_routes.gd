@@ -10,6 +10,8 @@ extends RefCounted
 ## collected: per (faction, site, season) what the fief owed and what tax teams took: [{faction, site, season, due,
 ##   paid}] (tenths of a point). A second team the same season takes only due − paid (PT-19); one fief is never
 ##   collected twice for the same share. The last MAX_COLLECTED are kept.
+## factions (optional, slice 3): the factions that collect their nation-level tribute by tax teams; from a faction's
+##   first round on, its direct fiefs owe no tribute on the road on their tax day (§4.3: the book transfer stops).
 const VERSION := 1
 const MAX_ROUTES := 16
 const MAX_STOPS := 16
@@ -34,7 +36,13 @@ static func _site_id(value: Variant) -> bool:
 	return value is String and not str(value).is_empty() and str(value).length() <= 256
 
 static func validate(value: Variant) -> Dictionary:
-	if not value is Dictionary or not RegionFactionQuery.keys(value, ["version", "next_id", "routes", "collected"]): return _fail("tax routes fields")
+	var section_fields := ["version", "next_id", "routes", "collected"]
+	if value is Dictionary and value.has("factions"): section_fields.append("factions")
+	if not value is Dictionary or not RegionFactionQuery.keys(value, section_fields): return _fail("tax routes fields")
+	if value.has("factions"):
+		if not value.factions is Array or value.factions.is_empty() or value.factions.size() > 256: return _fail("tax factions")
+		for faction: Variant in value.factions:
+			if not RegionFactionQuery.whole(faction, 0, RegionFactionQuery.MAX_ID): return _fail("tax factions")
 	if not RegionFactionQuery.whole(value.version, VERSION, VERSION) or not RegionFactionQuery.whole(value.next_id, 1, 2147483646): return _fail("tax routes version")
 	if not value.routes is Array or value.routes.size() > MAX_ROUTES or not value.collected is Array or value.collected.size() > MAX_COLLECTED: return _fail("tax routes lists")
 	var ids := {}
@@ -76,6 +84,8 @@ static func normalize(value: Dictionary) -> void:
 	for record: Variant in value.get("collected", []):
 		if not record is Dictionary: continue
 		for field: String in ["faction", "season", "due", "paid"]: record[field] = int(record.get(field, 0))
+	if value.get("factions") is Array:
+		for index: int in value.factions.size(): value.factions[index] = int(value.factions[index])
 
 ## The ledger's field, created when missing.
 static func ensure(ledger: Dictionary) -> Dictionary:
@@ -99,7 +109,19 @@ static func find(ledger: Dictionary, id: int) -> Dictionary:
 static func remove(ledger: Dictionary, id: int) -> void:
 	if not ledger.get("tax_routes") is Dictionary: return
 	ledger.tax_routes.routes = ledger.tax_routes.routes.filter(func(route: Dictionary) -> bool: return int(route.id) != id)
-	if ledger.tax_routes.routes.is_empty() and ledger.tax_routes.collected.is_empty(): ledger.erase("tax_routes")
+	if ledger.tax_routes.routes.is_empty() and ledger.tax_routes.collected.is_empty() and not ledger.tax_routes.has("factions"): ledger.erase("tax_routes")
+
+## Does `faction` collect its nation-level tribute by tax teams (it has sent one)?
+static func uses_teams(registry: Dictionary, faction: int) -> bool:
+	return section(registry).get("factions", []).has(faction)
+
+static func mark_faction(ledger: Dictionary, faction: int) -> void:
+	var section_value := ensure(ledger)
+	var factions: Array = section_value.get("factions", [])
+	if factions.has(faction): return
+	factions.append(faction)
+	factions.sort()
+	section_value["factions"] = factions
 
 ## What `faction` has collected from `site` for `season`: {due, paid} ({} when nothing yet).
 static func collected_of(registry: Dictionary, faction: int, site: String, season: int) -> Dictionary:

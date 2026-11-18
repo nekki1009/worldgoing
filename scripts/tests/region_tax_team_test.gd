@@ -158,36 +158,85 @@ func _tax_route() -> Dictionary:
 	var routes: Array = TaxRoutes.routes(slot.region_registry())
 	return routes[0] if not routes.is_empty() else {}
 
+## The case (-- --tax-case=<case>): "pay" (default: 派收稅 by the test, the baron pays in full), "npc_day" (the NPC
+## nation's own daily hook sends the team), "refuse" (a lawless, ambitious baron refuses: PT-18's outcome), "room" (the
+## team's people have room for only 3 coins: PT-19, the rest stays pending and the fief stays due).
+var tax_case := "pay"
+
+func _case_expect() -> Dictionary:
+	match tax_case:
+		"refuse": return {"outcome": "refused", "paid": 0, "coins_left": 12, "credit": -2, "carried": {}, "treasury": 0, "still_due": true}
+		"room": return {"outcome": "room", "paid": 300, "coins_left": 9, "credit": 1, "carried": {"coin": 3}, "treasury": 3, "still_due": true}
+	return {"outcome": "full", "paid": 500, "coins_left": 7, "credit": 1, "carried": {"coin": 5}, "treasury": 5, "still_due": false}
+
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--tax-case="): tax_case = argument.trim_prefix("--tax-case=")
+	if not _check(tax_case in ["pay", "npc_day", "refuse", "room"], "one tax case", tax_case): _finish(); return
 	if not _write_manifest() or not await _setup_action_world() or not _nation_initial_bodies(): _finish(); return
 	for _frame: int in range(10): await process_frame
 	if not _tax_world() or not _tax_team(): _finish(); return
+	var expect := _case_expect()
 	var goal := str(nation_goal.terrain.site.id)
 	var season := TaxEnvoy._season(lab)
-	var sent: Dictionary = TaxEnvoy.dispatch(controller, tax_team)
-	if not _check(sent.get("ok", false) and sent.stops == [goal] and _tax_route().get("phase", "") == "out", "派收稅: the team sets out for its one direct fief", [sent, _overloads()]): _finish(); return
+	if tax_case == "refuse":
+		var body: Variant = nation_goal.site_controller.person_actions._person(tax_baron, false).get("body")
+		var defiant: Dictionary = (body.get("personality") as Dictionary).duplicate()
+		defiant["lawful"] = 20
+		defiant["ambition"] = 80
+		if body is Dictionary: body["personality"] = defiant
+		else: body.set("personality", defiant)
+	if tax_case == "room":
+		var army: Variant = TaxEnvoy._army_of(lab, tax_team)
+		# Each member's room (gear counts) is filled with wood, all but 3 units in the last one.
+		var people: Array = []
+		for index: int in range(army.combat_units.size()):
+			if army.is_member(index): people.append(controller.person_actions._person(army.combat_identity(index), false))
+		for at: int in range(people.size()):
+			var person: Dictionary = people[at]
+			person.cargo.erase("wood")
+			var free := SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_size(person.cargo, person.holder) - (3 if at == people.size() - 1 else 0)
+			if free > 0: person.cargo["wood"] = free
+			person.holder.version = int(person.holder.version) + 1
+		if not _check(TaxEnvoy._room(lab, controller, tax_team) == 3, "the team's people have room for 3 units", TaxEnvoy._room(lab, controller, tax_team)): _finish(); return
+	if tax_case == "npc_day":
+		controller.set_meta(&"resident_exodus_day", -1) # the capital's day hook runs again
+		if not await _nation_until(func() -> bool: return not _tax_route().is_empty() or TaxEnvoy.last_event.has("dispatched"), "the NPC nation's own day sends its tax team"):
+			_check(false, "diagnosis", TaxEnvoy.day(controller))
+			_finish(); return
+	else:
+		var sent: Dictionary = TaxEnvoy.dispatch(controller, tax_team)
+		if not _check(sent.get("ok", false) and sent.stops == [goal], "派收稅: the team sets out for its one direct fief", [sent, _overloads()]): _finish(); return
+	if not _check(_tax_route().get("phase", "") == "out" and _tax_route().get("stops", []) == [goal] and TaxRoutes.uses_teams(slot.region_registry(), 1), "the round is on the road; the nation now collects by tax teams", _tax_route()): _finish(); return
 	var credit := int(nation_goal.site_controller.reputation_of(tax_baron).credit)
+	var unpaid := int(TaxProduce.record_of(nation_goal.terrain).get("unpaid_seasons", 0))
 	if not await _nation_until(func() -> bool: return _tax_route().get("done", {}).has(goal), "the team reaches the fief and its evaluation hands the tax over"):
 		_check(false, "diagnosis", {"route": _tax_route(), "last": TaxEnvoy.last_event, "parties": slot.region_registry().parties.keys()})
 		_finish(); return
 	var collected: Dictionary = TaxRoutes.collected_of(slot.region_registry(), 1, goal, season)
 	var fief: Dictionary = TaxProduce.record_of(nation_goal.terrain)
-	if not _check(str(_tax_route().done[goal]) == "full" and int(collected.get("due", 0)) == RECEIPTS / 10 and int(collected.get("paid", 0)) == RECEIPTS / 10
-		and int(nation_goal.terrain.site.stockpiles[tax_source_key].cargo.get("coin", 0)) == 7 and TaxFinance.receipts_of(fief, "tribute_out", season) == RECEIPTS / 10
-		and int(nation_goal.site_controller.reputation_of(tax_baron).credit) == credit + TaxEnvoy.Reputation.SCALE and _tax_route().get("carried", {}) == {"coin": 5},
-		"5 coins handed over in full: the fief pays on the spot, the baron gains credit, the team carries them",
-		{"route": _tax_route(), "collected": collected, "source": nation_goal.terrain.site.stockpiles[tax_source_key].cargo, "credit": [credit, nation_goal.site_controller.reputation_of(tax_baron)]}): _finish(); return
+	if not _check(str(_tax_route().done[goal]) == str(expect.outcome) and int(collected.get("due", 0)) == RECEIPTS / 10 and int(collected.get("paid", 0)) == int(expect.paid)
+		and int(nation_goal.terrain.site.stockpiles[tax_source_key].cargo.get("coin", 0)) == int(expect.coins_left) and TaxFinance.receipts_of(fief, "tribute_out", season) == int(expect.paid)
+		and int(nation_goal.site_controller.reputation_of(tax_baron).credit) == credit + int(expect.credit) * TaxEnvoy.Reputation.SCALE and _tax_route().get("carried", {}) == expect.carried
+		and int(fief.get("unpaid_seasons", 0)) == unpaid + (1 if tax_case == "refuse" else 0),
+		"the handover at the fief: %s" % str(expect.outcome),
+		{"route": _tax_route(), "collected": collected, "source": nation_goal.terrain.site.stockpiles[tax_source_key].cargo, "credit": [credit, nation_goal.site_controller.reputation_of(tax_baron)], "unpaid": fief.get("unpaid_seasons")}): _finish(); return
 	if not await _nation_until(func() -> bool: return TaxRoutes.routes(slot.region_registry()).is_empty(), "the team comes home and the capital's evaluation unloads it"):
 		_check(false, "diagnosis", {"route": _tax_route(), "last": TaxEnvoy.last_event})
 		_finish(); return
 	var capital: Dictionary = TaxProduce.record_of(lab.terrain)
 	var treasury: Dictionary = lab.terrain.site.stockpiles[tax_treasury].cargo # read now: a publication may replace the Site's dictionaries
-	if not _check(int(treasury.get("coin", 0)) == 5 and TaxFinance.receipts_of(capital, "tribute_in", TaxEnvoy._season(lab)) == RECEIPTS / 10,
-		"PT-15: the treasury holds the 5 coins as tribute_in", [treasury, capital.get("receipts")]): _finish(); return
+	if not _check(int(treasury.get("coin", 0)) == int(expect.treasury) and TaxFinance.receipts_of(capital, "tribute_in", TaxEnvoy._season(lab)) == int(expect.paid),
+		"PT-15: the treasury holds what was collected, as tribute_in", [treasury, capital.get("receipts")]): _finish(); return
 	for _frame: int in range(10): await process_frame
 	var left: Array = TaxEnvoy.due_stops(slot.control.faction_registry, slot.region_registry(), 1, str(lab.terrain.site.id), season)
-	if not _check(left.is_empty(), "nothing is left to collect this season (a second 派收稅 is refused NO_FIEFS)", left): _finish(); return
-	report["tax_team"] = {"world": float(slot.control.logical_game_seconds), "collected": collected}
+	if not _check(left == ([goal] if bool(expect.still_due) else []), "what is left to collect this season (a fief that paid in full is not visited again)", left): _finish(); return
+	# §4.3: a nation that collects by tax teams has its direct fiefs send nothing on the road on their next tax day.
+	var next_day := TaxCalendar.day_index(float(nation_goal.terrain.site.get("minute", 0))) + 120
+	while TaxPayTable.season_index(next_day) == season: next_day += 30
+	var tax_day: Dictionary = TaxTribute.tax_day(nation_goal, next_day, TaxTribute.context_of(nation_goal))
+	if not _check(str(tax_day.get("reason", "")) == "tax_team", "the fief's next tax day waits for the tax team", tax_day): _finish(); return
+	report["tax_team"] = {"case": tax_case, "world": float(slot.control.logical_game_seconds), "collected": collected}
 	_finish()

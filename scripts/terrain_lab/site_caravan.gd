@@ -281,7 +281,7 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 		if str(mission.phase) == "out" and str(mission.to_site) == scope:
 			if not mission.has("sold"):
 				var sold := sell_here(lab, controller, mission, captain)
-				var stored: Dictionary = Caravans.find(ledger, int(mission.id))
+				var stored: Dictionary = Caravans.find(slot.region_registry(), int(mission.id)) # a departure's publication replaces the ledger
 				if not stored.is_empty(): stored["sold"] = sold.get("got", {}).duplicate()
 				mission = stored if not stored.is_empty() else mission
 				result["sold"] = sold

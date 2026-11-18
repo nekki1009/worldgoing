@@ -188,6 +188,14 @@ static func _fits(lab: Variant, target: Dictionary, items: Dictionary) -> bool:
 			if vehicle is Dictionary and is_same(vehicle.get("cargo"), target.cargo): capacity = int(SiteVehicleTransport.capacity_of(vehicle))
 	return capacity >= 0 and Runtime.carried_size(target.cargo, target.holder) + Runtime.inventory_size(items) <= capacity
 
+## Is `liege` the head of `faction`, and does that faction collect its tribute by tax teams (RegionTaxRoutes)?
+static func _nation_collects(lab: Variant, registry: Dictionary, liege: Dictionary, faction: int) -> bool:
+	var slot: Variant = lab.site_controller.get("region_slot") if lab.site_controller != null else null
+	if slot == null or faction < 0: return false
+	var head: Dictionary = RegionPeerage.head_of(registry, faction)
+	if not head.get("ok", false) or head.get("person_ref") == null or RegionPeerage.key_of(head.person_ref) != str(liege.get("key", "")): return false
+	return (load("res://scripts/region_lab/region_tax_routes.gd") as Script).call("uses_teams", slot.region_registry(), faction)
+
 ## The settlement's tax day. Returns {due, paid, transit, on_time} or {} when nothing is due.
 static func tax_day(lab: Variant, today: int, ctx: Dictionary = {}) -> Dictionary:
 	if ctx.is_empty(): ctx = context_of(lab)
@@ -205,6 +213,11 @@ static func tax_day(lab: Variant, today: int, ctx: Dictionary = {}) -> Dictionar
 	if liege.is_empty() or seat.is_empty() or seat == site_id or RegionFinance.exempt(registry, site_id, season):
 		record.last_taxday = season
 		return {"due": 0, "reason": "none" if liege.is_empty() else ("exempt" if RegionFinance.exempt(registry, site_id, season) else "no_seat")}
+	# 軍餉與稅收 P3b (§4.3, §4.5): a direct fief of a faction head whose nation collects by tax teams sends nothing on the
+	# road; the nation's tax team comes for it this season (a season it does not come is not the fief's arrears).
+	if _nation_collects(lab, registry, liege, int(Settlement.record(lab.terrain).get("owner_faction", -1))):
+		record.last_taxday = season
+		return {"due": 0, "reason": "tax_team"}
 	var base := 0
 	for kind: String in TRIBUTE_KINDS: base += Finance.receipts_of(record, kind, season, true)
 	var due := base * TRIBUTE_PERCENT / 100
