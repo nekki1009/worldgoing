@@ -210,9 +210,21 @@ static func _send(slot: Variant, lab: Variant, team_id: int, captain: int, to_si
 	if not prepared.ok: return prepared
 	return slot.commit_npc_region_dispatch(prepared)
 
-## The room the team's people still have for tax goods (units).
+## The team's own carts and wagons here (§4.5: coin is one piece each, a tax team needs a cart): [vehicle record].
+static func _carts(lab: Variant, team_id: int) -> Array:
+	var result: Array = []
+	var keys: Array = lab.terrain.site.get("vehicles", {}).keys()
+	keys.sort()
+	for key: Variant in keys:
+		var vehicle: Variant = lab.terrain.site.vehicles[key]
+		if vehicle is Dictionary and int(vehicle.get("team_id", -1)) == team_id and str(vehicle.get("kind", "")) in ["cart", "wagon"] and vehicle.get("cargo") is Dictionary and vehicle.get("holder") is Dictionary:
+			result.append(vehicle)
+	return result
+
+## The room the team still has for tax goods (units): its carts first, then its people.
 static func _room(lab: Variant, controller: Variant, team_id: int) -> int:
 	var room := 0
+	for cart: Dictionary in _carts(lab, team_id): room += maxi(0, SiteVehicleTransport.capacity_of(cart) - Runtime.carried_size(cart.cargo, cart.holder))
 	for team: Variant in lab.team_owners():
 		if int(team.team_id) != team_id: continue
 		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
@@ -220,10 +232,29 @@ static func _room(lab: Variant, controller: Variant, team_id: int) -> int:
 			if not body.is_empty(): room += maxi(0, CARRY - Runtime.carried_size(body.cargo, body.holder))
 	return room
 
-## Moves `goods` between the team's people and `stock` (to the people when `to_people`), member by member.
+## Moves `goods` between the team (its carts first, then its people member by member) and `stock` (to the team when
+## `to_people`).
 static func _move(lab: Variant, controller: Variant, team_id: int, stock: Dictionary, goods: Dictionary, to_people: bool) -> Dictionary:
 	var left := goods.duplicate()
 	var moved := {}
+	for cart: Dictionary in _carts(lab, team_id):
+		var load := {}
+		var space := SiteVehicleTransport.capacity_of(cart) - Runtime.carried_size(cart.cargo, cart.holder)
+		for item: String in left.keys():
+			var n := mini(int(left[item]), space) if to_people else mini(int(left[item]), int(cart.cargo.get(item, 0)))
+			if n <= 0: continue
+			load[item] = n
+			if to_people: space -= n
+		if load.is_empty(): continue
+		var capacity := SiteVehicleTransport.capacity_of(cart)
+		var shipped: Dictionary
+		if to_people: shipped = Runtime.transfer_items(lab.terrain, stock.holder, stock.cargo, cart.holder, cart.cargo, load, [], int(stock.holder.version), int(cart.holder.version), capacity)
+		else: shipped = Runtime.transfer_items(lab.terrain, cart.holder, cart.cargo, stock.holder, stock.cargo, load, [], int(cart.holder.version), int(stock.holder.version), 2000000000)
+		if not shipped.ok: continue
+		for item: String in load:
+			moved[item] = int(moved.get(item, 0)) + int(load[item])
+			left[item] = int(left[item]) - int(load[item])
+			if int(left[item]) <= 0: left.erase(item)
 	for team: Variant in lab.team_owners():
 		if int(team.team_id) != team_id: continue
 		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):

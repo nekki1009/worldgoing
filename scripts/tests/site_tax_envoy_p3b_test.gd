@@ -7,6 +7,7 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 ##   source short (partial), refused, nothing owed; coin goes first;
 ## - the NPC answer: lawless and ambitious refuses, a neutral head pays;
 ## - settle: full gives the head +1 credit and a paid season, refused takes 2 credit and counts an unpaid one;
+## - the team's cart: its room counts first; the tax goes into it and comes out of it at home;
 ## - the ledger: routes and collections validate with the Region registry, a second visit owes only what is left
 ##   (never more than due), planned stops are known, a malformed route is refused, the field stays while collections
 ##   are remembered.
@@ -16,6 +17,7 @@ const Envoy = preload("res://scripts/terrain_lab/site_tax_envoy.gd")
 const TaxRoutes = preload("res://scripts/region_lab/region_tax_routes.gd")
 const GameplayClock = preload("res://scripts/region_lab/region_gameplay_clock.gd")
 const TaxTribute = preload("res://scripts/terrain_lab/site_tribute.gd")
+const TaxStocks = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 
 var checks := 0
 
@@ -113,6 +115,31 @@ func _run() -> void:
 	if not _ok(not GameplayClock.validate_registry(broken, world).ok and not GameplayClock.validate_registry(bad_outcome, world).ok, "the capital as a stop or an unknown outcome is refused"): return
 	TaxRoutes.remove(ledger, 1)
 	if not _ok(ledger.has("tax_routes") and TaxRoutes.routes(ledger).is_empty() and GameplayClock.validate_registry(ledger, world).ok, "the field stays while collections are remembered"): return
+
+	# The team's cart (§4.5): its room counts first, the tax goes into it and comes out of it. (A cart travels with its
+	# team only behind a driver: RegionTravel's VEHICLE_OPERATOR rule.)
+	var key := _formal_feature(data, "warehouse", Vector2i(14, 14))
+	if not _ok(TaxStocks.ensure_storage(data, key, 1).ok, "a warehouse holds the fief's tax"): return
+	var stock := {"holder": data.site.stockpiles[key].holder, "cargo": data.site.stockpiles[key].cargo}
+	stock.cargo.clear()
+	stock.cargo["coin"] = 12
+	for index: int in range(team.combat_units.size()):
+		if not team.is_member(index): continue
+		var person: Dictionary = controller.person_actions._person(team.combat_identity(index), false)
+		var free := SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_size(person.cargo, person.holder)
+		if free > 0: person.cargo["wood"] = int(person.cargo.get("wood", 0)) + free
+	if not _ok(Envoy._room(lab, controller, team.team_id) == 0, "the people's hands are full"): return
+	var cart := str(int(data.site.get("next_vehicle", 1)))
+	data.site["next_vehicle"] = int(cart) + 1
+	if not data.site.has("vehicles"): data.site["vehicles"] = {}
+	data.site.vehicles[cart] = {"id": cart, "kind": "cart", "team_id": team.team_id, "cell": data.index(Vector2i(30, 27)), "facing": [1, 0],
+		"holder": SiteRuntime.new_item_state("vehicle:" + cart), "cargo": {}, "move": {}, "operator_id": 0, "stop_pending": false}
+	if not _ok(Envoy._room(lab, controller, team.team_id) == SiteVehicleTransport.CAPACITY.cart, "the team's cart has room", Envoy._room(lab, controller, team.team_id)): return
+	var loaded := Envoy._move(lab, controller, team.team_id, stock, {"coin": 5}, true)
+	if not _ok(loaded == {"coin": 5} and data.site.vehicles[cart].cargo == {"coin": 5} and int(stock.cargo.coin) == 7, "the tax goes into the cart", [loaded, data.site.vehicles[cart].cargo, stock.cargo]): return
+	var unloaded := Envoy._move(lab, controller, team.team_id, stock, {"coin": 5}, false)
+	if not _ok(unloaded == {"coin": 5} and data.site.vehicles[cart].cargo.is_empty() and int(stock.cargo.coin) == 12, "home, it comes out of the cart", [unloaded, data.site.vehicles[cart].cargo, stock.cargo]): return
+	data.site.vehicles.erase(cart)
 	print("SITE_TAX_ENVOY_P3B_PASS checks=", checks)
 	for _frame: int in range(3): await process_frame
 	lab.free()
