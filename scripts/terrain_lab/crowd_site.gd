@@ -2291,7 +2291,12 @@ func person_fighting(identity: int) -> bool:
 		if float(state.get(field, 0.0)) > 0.0: return true
 	if not crowd.has_method("contact_pose_state"): return true
 	var native: PackedFloat64Array = crowd.contact_pose_state(index)
-	return native.size() != 2 or int(native[0]) in [2, 4]
+	return native.size() != 2 or int(native[0]) in FIGHT_POSES
+
+## The native VisualSlot codes of a fighting contact pose: V_ATTACK, V_ATTACK_HEAVY, V_GUARD, V_HIT, V_KNOCKBACK, V_SHOOT
+## (crowd_core.hpp; 0 idle, 1 walk, 2 run are movement). 2026-11-18: the check read [2, 4], so a member running back into
+## formation counted as fighting (false IN_COMBAT refusals for joining, amnesty and rising right after a team changed).
+const FIGHT_POSES := [3, 4, 5, 6, 7, 8]
 
 
 func equipment_recipe_guard(identity: int, appearance: Dictionary) -> Dictionary:
