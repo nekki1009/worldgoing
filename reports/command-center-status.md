@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-18 17:45（台北）
+更新：2026-11-18 21:15（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,13 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-18 21:15（台北）NPC 從玩家所在 Site 出發、土匪 B5 完成
+- 已提交（未推送）：29edb3e NPC 隊伍從玩家所在的活 Site 出發（每小時評估派遣先結算完成點；會派隊的每日動作——土匪日、外移、商隊——完成點開著時延到兩步之間執行；原本兩個時機都被防護拒絕而且靜默略過）；e7efc85 土匪 B5：路線風險折價（首長已知的土匪每處 +15%，路線 2 格內；已繳保護費免計；先走風險低的、只帶 (100−風險)%）、raided_by（商隊全員倒下即覆沒：釋出名額、額度不退、貨留原地、紀錄最近 16 筆與當地土匪）、市集拒絕敵對方商隊（到站交易與個人交易同一條敵對規則）。銷贓照規格延後。
+- 端到端測試 region_caravan_daily_test 抓到商隊第 1 片兩個問題：選隊未檢查停在守位；額度登記寫在出發準備與提交之間，讓每一次真實出發都 STALE_BIND——之前每日規則從未真的派出過商隊。已修，全程 367 秒通過。
+- 新測試：region_live_dispatch_test、region_caravan_risk_b5_test（12）、site_caravan_lost_b5_test（31）、site_market_bandit_b5_test（9）、region_caravan_daily_test；都已加入 new_tests_20261117.json。
+- 回歸：LIVEDEP_REG_A 158/158；B5_REG_A 162/162（一支保留競態單獨重跑通過）。
+- 下一步：P3b（收稅隊）。
 
 ## 2026-11-18 17:45（台北）商隊第 3 片完成、兩個真 bug
 - 已提交（未推送）：f38ece4 人物參照解析（原作人物的身分是 Site 譜系參照，商隊折返與土匪每日找頭目原本只認世界參照，找不到人；新增 RegionSaveSlot.person_id_of_ref 兩種都解）；a783a14 NPC 陸路隊伍抵達玩家所在的活 Site（原本在該 Site 自己的 Region 完成點內派送，轉移快照被火勢／完成點防護逐層拒絕，整步失敗＝NPC 隊伍永遠進不了玩家所在的 Site；現在照其他路徑的既有做法，先結算該 Site 完成點、再結算冷 Site 完成點、再發布該 Site 當下狀態，然後才綁定；不改任何防護與結算順序）。
