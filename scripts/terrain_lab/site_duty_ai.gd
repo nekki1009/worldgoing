@@ -43,7 +43,7 @@ const MATERIAL_RANK := {"cloth": 1, "wood": 1, "stone": 1, "leather": 2, "bronze
 const Visual = preload("res://scripts/ui/human_character_3d_editor.gd")
 # Which ability ranks a candidate for a seat; ties fall back to person ID.
 const DUTY_ABILITY := {"team.work": "leadership", "team.logistics": "leadership", "team.training": "coach", "team.equip": "tactics", "team.succession": "tactics",
-	"team.roster": "leadership", "team.salvage": "tactics", "team.ship": "tactics"}
+	"team.roster": "leadership", "team.salvage": "tactics", "team.ship": "tactics", "team.tax_envoy": "leadership"}
 const MAX_DUTIES_PER_MERGE := 2
 
 ## The decider's own packet: an Army row, the team's player member, or a

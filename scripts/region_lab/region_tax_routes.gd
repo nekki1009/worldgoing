@@ -1,0 +1,119 @@
+extends RefCounted
+## 軍餉與稅收 P3b (reports/pay-and-tax-plan.md §4.5): the nation's tax teams and what they collected. An optional
+## `tax_routes` field of the Region gameplay registry (RegionSaveSlot.region_registry(); absent in older saves = none),
+## edited in place and published with it, like the caravan ledger (RegionCaravans). The plan put the route on the tax
+## team's own finance record; a team on the road has no Site record, so the route lives in the world ledger with the
+## party it names. {version, next_id, routes, collected}
+## route: {id, token (the party on the road), faction, season, home_site (the capital: the treasury), captain_ref,
+##   envoy_ref (the team's 稅使), stops [site_id] (direct fiefs in visiting order), done {site_id: outcome}, phase
+##   "out" | "back", day}. outcome: "full" | "partial" | "refused" | "room" (only part fitted) | "none" (nothing due).
+## collected: per (faction, site, season) what the fief owed and what tax teams took: [{faction, site, season, due,
+##   paid}] (tenths of a point). A second team the same season takes only due − paid (PT-19); one fief is never
+##   collected twice for the same share. The last MAX_COLLECTED are kept.
+const VERSION := 1
+const MAX_ROUTES := 16
+const MAX_STOPS := 16
+const MAX_COLLECTED := 256
+const PHASES := ["out", "back"]
+const OUTCOMES := ["full", "partial", "refused", "room", "none"]
+
+static func empty() -> Dictionary:
+	return {"version": VERSION, "next_id": 1, "routes": [], "collected": []}
+
+static func section(registry: Dictionary) -> Dictionary:
+	var value: Variant = registry.get("tax_routes")
+	return value if value is Dictionary else empty()
+
+static func routes(registry: Dictionary) -> Array:
+	return section(registry).routes
+
+static func _fail(message: String) -> Dictionary:
+	return RegionFactionQuery.fail("CORRUPT_SAVE", message)
+
+static func _site_id(value: Variant) -> bool:
+	return value is String and not str(value).is_empty() and str(value).length() <= 256
+
+static func validate(value: Variant) -> Dictionary:
+	if not value is Dictionary or not RegionFactionQuery.keys(value, ["version", "next_id", "routes", "collected"]): return _fail("tax routes fields")
+	if not RegionFactionQuery.whole(value.version, VERSION, VERSION) or not RegionFactionQuery.whole(value.next_id, 1, 2147483646): return _fail("tax routes version")
+	if not value.routes is Array or value.routes.size() > MAX_ROUTES or not value.collected is Array or value.collected.size() > MAX_COLLECTED: return _fail("tax routes lists")
+	var ids := {}
+	for route: Variant in value.routes:
+		if not route is Dictionary or not RegionFactionQuery.keys(route, ["id", "token", "faction", "season", "home_site", "captain_ref", "envoy_ref", "stops", "done", "phase", "day"]): return _fail("tax route fields")
+		if not RegionFactionQuery.whole(route.id, 1, int(value.next_id) - 1) or ids.has(int(route.id)): return _fail("tax route id")
+		ids[int(route.id)] = true
+		if not _site_id(route.token) or not _site_id(route.home_site) or not RegionFactionQuery.whole(route.faction, 0, RegionFactionQuery.MAX_ID) \
+				or not RegionFactionQuery.whole(route.season, 0, 2147483646) or not RegionFactionQuery.whole(route.day, 0, 2147483646): return _fail("tax route")
+		if not RegionFactionQuery.ref_valid(route.captain_ref, "person") or not RegionFactionQuery.ref_valid(route.envoy_ref, "person"): return _fail("tax route people")
+		if not route.stops is Array or route.stops.is_empty() or route.stops.size() > MAX_STOPS: return _fail("tax route stops")
+		var seen := {}
+		for stop: Variant in route.stops:
+			if not _site_id(stop) or seen.has(stop) or str(stop) == str(route.home_site): return _fail("tax route stop")
+			seen[stop] = true
+		if not route.done is Dictionary: return _fail("tax route done")
+		for stop: Variant in route.done:
+			if not seen.has(stop) or not str(route.done[stop]) in OUTCOMES: return _fail("tax route outcome")
+		if not route.phase in PHASES: return _fail("tax route phase")
+	for record: Variant in value.collected:
+		if not record is Dictionary or not RegionFactionQuery.keys(record, ["faction", "site", "season", "due", "paid"]): return _fail("tax collected fields")
+		if not RegionFactionQuery.whole(record.faction, 0, RegionFactionQuery.MAX_ID) or not _site_id(record.site) or not RegionFactionQuery.whole(record.season, 0, 2147483646) \
+				or not RegionFactionQuery.whole(record.due, 0, 100000000) or not RegionFactionQuery.whole(record.paid, 0, int(record.due)): return _fail("tax collected")
+	return {"ok": true}
+
+static func normalize(value: Dictionary) -> void:
+	value["version"] = int(value.get("version", VERSION))
+	value["next_id"] = int(value.get("next_id", 1))
+	for route: Variant in value.get("routes", []):
+		if not route is Dictionary: continue
+		for field: String in ["id", "faction", "season", "day"]: route[field] = int(route.get(field, 0))
+	for record: Variant in value.get("collected", []):
+		if not record is Dictionary: continue
+		for field: String in ["faction", "season", "due", "paid"]: record[field] = int(record.get(field, 0))
+
+## The ledger's field, created when missing.
+static func ensure(ledger: Dictionary) -> Dictionary:
+	if not ledger.get("tax_routes") is Dictionary: ledger["tax_routes"] = empty()
+	return ledger.tax_routes
+
+static func add(ledger: Dictionary, route: Dictionary) -> Dictionary:
+	var section_value := ensure(ledger)
+	if section_value.routes.size() >= MAX_ROUTES: return RegionFactionQuery.fail("FULL", "稅隊已滿")
+	var stored := route.duplicate(true)
+	stored["id"] = int(section_value.next_id)
+	section_value.next_id = int(section_value.next_id) + 1
+	section_value.routes.append(stored)
+	return {"ok": true, "id": int(stored.id)}
+
+static func find(ledger: Dictionary, id: int) -> Dictionary:
+	for route: Dictionary in section(ledger).routes:
+		if int(route.id) == id: return route
+	return {}
+
+static func remove(ledger: Dictionary, id: int) -> void:
+	if not ledger.get("tax_routes") is Dictionary: return
+	ledger.tax_routes.routes = ledger.tax_routes.routes.filter(func(route: Dictionary) -> bool: return int(route.id) != id)
+	if ledger.tax_routes.routes.is_empty() and ledger.tax_routes.collected.is_empty(): ledger.erase("tax_routes")
+
+## What `faction` has collected from `site` for `season`: {due, paid} ({} when nothing yet).
+static func collected_of(registry: Dictionary, faction: int, site: String, season: int) -> Dictionary:
+	for record: Dictionary in section(registry).collected:
+		if int(record.faction) == faction and str(record.site) == site and int(record.season) == season: return record
+	return {}
+
+## Is `site` already on the road of another route of `faction` this season (not yet visited)?
+static func planned(registry: Dictionary, faction: int, site: String, season: int) -> bool:
+	for route: Dictionary in section(registry).routes:
+		if int(route.faction) == faction and int(route.season) == season and route.stops.has(site) and not route.done.has(site): return true
+	return false
+
+## Records a handover: the fief's due for the season (kept from the first visit) and what was taken in all.
+static func record_collection(ledger: Dictionary, faction: int, site: String, season: int, due: int, paid_now: int) -> Dictionary:
+	var section_value := ensure(ledger)
+	for record: Dictionary in section_value.collected:
+		if int(record.faction) == faction and str(record.site) == site and int(record.season) == season:
+			record.paid = mini(int(record.due), int(record.paid) + maxi(0, paid_now))
+			return record
+	var stored := {"faction": faction, "site": site, "season": season, "due": maxi(0, due), "paid": clampi(paid_now, 0, maxi(0, due))}
+	section_value.collected.append(stored)
+	while section_value.collected.size() > MAX_COLLECTED: section_value.collected.pop_front()
+	return stored

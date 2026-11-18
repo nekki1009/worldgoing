@@ -15,7 +15,7 @@ const CLASSES := ["civil", "military"]
 const OFFICIAL_DUTIES := ["nation.institutions", "nation.finance"]
 const MILITARY_DUTIES := ["team.succession", "team.training", "team.recruit", "nation.corps", "nation.dispatch", "nation.fleet"]
 # Class a seat gets when created for this duty (default layout, catalog growth, v1 upgrade).
-const DEFAULT_CLASS := {"team.succession": "military", "team.work": "civil", "team.roster": "civil", "team.logistics": "military",
+const DEFAULT_CLASS := {"team.succession": "military", "team.work": "civil", "team.roster": "civil", "team.logistics": "military", "team.tax_envoy": "civil",
 	"team.training": "military", "team.recruit": "military", "team.equip": "military", "team.salvage": "military", "team.ship": "military",
 	"nation.corps": "military", "nation.dispatch": "military", "nation.equip_standard": "military", "nation.culture": "civil", "nation.dye": "civil", "nation.institutions": "civil",
 	"nation.procurement": "civil", "nation.labor": "civil", "nation.relief": "civil", "nation.workshop": "civil", "nation.production": "civil", "nation.public_works": "civil", "nation.education": "civil", "nation.transport": "civil", "nation.finance": "civil", "nation.administration": "civil", "nation.arsenal": "civil", "nation.fleet": "military", "nation.admission": "civil", "nation.ransom": "civil",
@@ -38,6 +38,8 @@ const CATALOG := {
 		{"id": "team.ship", "name": "船頭"},
 		# v2 plan 3.1/3.4: formally enlist an existing original person (never makes one).
 		{"id": "team.recruit", "name": "募兵官"},
+		# 軍餉與稅收 P3b (§4.5): the tax team's envoy, a 文吏 or better; a team without one does not collect tax.
+		{"id": "team.tax_envoy", "name": "稅使"},
 	],
 	"nation": [
 		{"id": "nation.corps", "name": "元首", "head": true},
@@ -100,12 +102,12 @@ const DUTY_LABELS := {
 	"nation.corps": "軍團編成", "nation.dispatch": "跨地派遣", "nation.equip_standard": "配裝標準", "nation.culture": "國家裝備文化", "nation.dye": "本國人物配色", "nation.institutions": "制度研究",
 	"nation.procurement": "採購", "nation.labor": "勞役", "nation.relief": "賑濟", "nation.workshop": "作坊驗收", "nation.production": "標準生產", "nation.public_works": "公共工程", "nation.education": "教養", "nation.transport": "公共運輸", "nation.finance": "財產徵支", "nation.administration": "地方委任", "nation.arsenal": "軍器驗收", "nation.fleet": "船隊編入", "nation.admission": "收受歸降", "nation.ransom": "贖金收支",
 	"settlement.head": "聚落首長", "family.roster": "家族名冊", "family.research": "研習", "family.teach": "授徒", "family.estate": "家產",
-	"team.roster": "名冊調整", "team.salvage": "搜刮調度", "team.ship": "船務", "team.recruit": "募兵", "settlement.prison": "俘虜看管", "settlement.ecology": "生態管理", "settlement.garrison": "軍營名冊", "settlement.trade": "聚落交易", "settlement.registry": "戶籍派工", "settlement.education": "學校與鄉試", "settlement.finance": "度支稅收",
+	"team.roster": "名冊調整", "team.salvage": "搜刮調度", "team.ship": "船務", "team.recruit": "募兵", "team.tax_envoy": "收稅", "settlement.prison": "俘虜看管", "settlement.ecology": "生態管理", "settlement.garrison": "軍營名冊", "settlement.trade": "聚落交易", "settlement.registry": "戶籍派工", "settlement.education": "學校與鄉試", "settlement.finance": "度支稅收",
 }
 # Duties wired after a kind's first release. A saved record may lack them;
 # ensure_catalog() adds each as a vacant seat on first use (3.2), so the head
 # keeps exercising it and old saves behave exactly as before.
-const LATER_DUTIES := {"team": ["team.roster", "team.salvage", "team.ship", "team.recruit"], "settlement": ["settlement.prison", "settlement.ecology", "settlement.garrison", "settlement.trade", "settlement.registry", "settlement.education", "settlement.finance"], "nation": ["nation.dispatch", "nation.institutions", "nation.procurement", "nation.labor", "nation.relief", "nation.workshop", "nation.production", "nation.public_works", "nation.education", "nation.transport", "nation.finance", "nation.administration", "nation.arsenal", "nation.fleet", "nation.admission", "nation.ransom"], "family": ["family.research", "family.teach", "family.estate"]}
+const LATER_DUTIES := {"team": ["team.roster", "team.salvage", "team.ship", "team.recruit", "team.tax_envoy"], "settlement": ["settlement.prison", "settlement.ecology", "settlement.garrison", "settlement.trade", "settlement.registry", "settlement.education", "settlement.finance"], "nation": ["nation.dispatch", "nation.institutions", "nation.procurement", "nation.labor", "nation.relief", "nation.workshop", "nation.production", "nation.public_works", "nation.education", "nation.transport", "nation.finance", "nation.administration", "nation.arsenal", "nation.fleet", "nation.admission", "nation.ransom"], "family": ["family.research", "family.teach", "family.estate"]}
 # Duties the AI never executes (plan A.3, D15); the decider is always a player.
 const MANUAL_ONLY := ["family.roster", "family.teach"] # research uses original SiteDutyAI / PersonActions.
 
