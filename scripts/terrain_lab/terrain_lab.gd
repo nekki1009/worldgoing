@@ -1759,6 +1759,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		if not due.ok: return due
 		if not bool(due.get("complete", false)) and not bool(due.get("restricted_settlement", false)): return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
 		if terrain == null or terrain != _region_bound_data or get_tree().paused or bool(terrain.site.get("paused", false)): return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
+	if not replaying and _region_point_pending.is_empty() and site_controller.region_slot != null: _region_run_due_daily_hooks()
 	var native_begin: Dictionary = {}
 	var original_site := terrain
 	var permit := {}
@@ -12225,6 +12226,22 @@ func region_close_point_for_transfer() -> Dictionary:
 	if not finished.get("ok", false): return finished
 	if not finished.get("complete", false): return SiteRuntime.fail("REGION_POINT_INCOMPLETE", "原活動 Site endpoint 尚未完成，未移交")
 	return SiteRuntime.ok()
+
+
+## Between two steps of the live Site: the daily hooks that waited for a Region point to close (SiteController.
+## daily_hooks_due) run now, this Site first, then the cold owners in Site id order. Every point is closed and no world
+## event is being dispatched, so a team they send leaves as it does from a Site at rest.
+func _region_run_due_daily_hooks() -> void:
+	var slot: RegionSaveSlot = site_controller.region_slot
+	if slot == null or restore_only or str(slot.control.active_site_id) != str(terrain.site.get("id", "")): return
+	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
+	var owners: Array = slot._region_original_labs.keys()
+	owners.sort()
+	for owner: String in owners:
+		var original: Variant = slot._region_original_labs[owner]
+		if not is_instance_valid(original) or original == self or original.site_controller == null or not original.site_controller.daily_hooks_due: continue
+		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
+		original.site_controller.run_daily_hooks()
 
 
 func _region_gameplay_endpoint_checkpoint(payload: Dictionary = {}) -> Dictionary:

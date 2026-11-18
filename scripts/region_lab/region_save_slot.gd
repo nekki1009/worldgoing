@@ -4006,6 +4006,16 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	if region_registry().parties.has(token): return {"ok": true, "duplicate": true, "token": token, "reference": region_registry().parties[token]}
 	var coordinate := _coordinate(lab.terrain)
 	if not coordinate.ok: return coordinate
+	# A departure from the live Site decided inside that Site's own Region point (its hourly evaluation) first closes the
+	# Site's completed point and the cold owners' points, as an arrival into it does (prepare_npc_region_arrival): the
+	# transfer snapshot below is refused while the point's fire boundary and contact batch are open (2026-11-18: every
+	# evaluation dispatch out of the player's Site was refused BUSY and silently dropped).
+	if str(lab.terrain.site.id) == str(control.active_site_id) and not lab._region_point_pending.is_empty() and not lab._region_point_consuming:
+		var closed: Dictionary = lab.region_close_point_for_transfer()
+		if not closed.ok: return closed
+		var cold_points: Dictionary = _close_original_cold_region_points()
+		if not cold_points.get("ok", false): return cold_points
+		if not cold_points.get("complete", false): return fail("REGION_POINT_INCOMPLETE", "原冷 owner endpoint 尚未完成，未移交")
 	var window := validate_settlement(lab.terrain.site, control.logical_game_seconds)
 	if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.0000001:
 		return fail("UNSETTLED_SITE", "派遣前原 Site 須完成同一原區間")
@@ -4988,7 +4998,9 @@ func consume_due_region_events() -> Dictionary:
 					continue
 				for intent: Dictionary in proposed.get("intents", []):
 					var candidate := prepare_npc_region_dispatch(lab, str(intent.nation_id), int(intent.team_id), Vector2i(int(intent.target_coordinate[0]), int(intent.target_coordinate[1])), int(intent.start_component), intent.steps)
-					if not candidate.ok: continue
+					if not candidate.ok:
+						if region_dispatch_refusals.size() < 16: region_dispatch_refusals.append({"owner": str(event.owner), "team": int(intent.team_id), "at": float(event.at), "code": str(candidate.get("code", "")), "message": str(candidate.get("message", ""))})
+						continue
 					# The actual selected known receipt travels with the original captain.
 					var standing := prepare_region_carried_command(candidate, str(intent.known_receipt))
 					if not standing.ok: return standing
@@ -5153,6 +5165,8 @@ var region_formula_effect_owners: Callable
 var region_party_life_consumer: Callable
 
 var region_dispatch_intents: Callable
+## The evaluation intents this slot refused to dispatch (the first 16; diagnostics only, never saved).
+var region_dispatch_refusals: Array = []
 
 var region_player_event_consumer: Callable
 

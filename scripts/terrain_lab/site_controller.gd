@@ -5202,13 +5202,26 @@ func _open_family_registry(host: Window = null) -> void:
 func _person_died(identity: int) -> void:
 	_pending_deaths[identity] = float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
 
+## Set while the day's hooks wait for the Site's Region point to close (never saved: a reload runs them at once).
+var daily_hooks_due := false
+
+func run_daily_hooks() -> void:
+	daily_hooks_due = false
+	BanditDay.day(self)
+	resident_exodus_day()
+
 func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
 	settle_diplomacy()
 	npc_diplomacy_day()
 	npc_rebellion_day()
-	BanditDay.day(self)
-	resident_exodus_day()
+	# The daily hooks that may send a team onto the Region map (a band's raid or way home, emigrants, a caravan) need the
+	# Site at rest: inside the Site's own Region point every transfer snapshot is refused. While a point is open they are
+	# only marked due; TerrainLab runs them between two steps (run_daily_hooks), the state the hooks were written for.
+	if lab != null and region_slot != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching):
+		daily_hooks_due = true
+	else:
+		run_daily_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
