@@ -4239,6 +4239,28 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
 		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
 		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "到站前發布不得推進時鐘")
+	# A live destination (the Site the player stands in) first closes its own completed point, then publishes the progress
+	# its selected publication lacks at this same point, exactly as an NPC departure from a live Site does
+	# (prepare_npc_region_dispatch): capture, probe, publish; no clock moves. The bind preflight below needs that frame.
+	if requested_mode == "live":
+		var closed: Dictionary = lab.region_close_point_for_transfer()
+		if not closed.ok: return closed
+		# A player event is dispatched before the cold owners' points are finished; their full graphs join the publication
+		# below, so only those points close here (as the player materializer does before its checkpoint).
+		var cold_points: Dictionary = _close_original_cold_region_points()
+		if not cold_points.get("ok", false): return cold_points
+		if not cold_points.get("complete", false): return fail("REGION_POINT_INCOMPLETE", "原冷 owner endpoint 尚未完成，未移交")
+		var live_capture: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+			{"npc_arrival": true, "token": token, "event": str(event.get("id", ""))}, token)
+		if not live_capture.ok: return live_capture
+		var live_source: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
+		if not live_source.ok and str(live_source.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]:
+			if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
+			var live_clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
+			var live_published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
+			if not live_published is Dictionary or not live_published.get("ok", false): return live_published if live_published is Dictionary else fail("INVALID_REGION_RECEIPT")
+			if live_clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "到站前發布不得推進時鐘")
+			reference = region_registry().parties.get(token, {})
 	var party: Dictionary = loaded.party
 	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001:
 		return fail("UNSETTLED_PARTY", "原到站 party 與世界端點不同")

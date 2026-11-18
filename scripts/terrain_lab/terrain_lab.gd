@@ -12211,6 +12211,22 @@ func _region_flush_bound_point() -> Dictionary:
 	return SiteRuntime.ok()
 
 
+## A party moving into (or out of) this live Site needs the Site's own completed point closed first: its forced fire
+## boundary and siege contact batch stay open until consume_region_point settles them, and every transfer snapshot guard
+## refuses them (BUSY / REGION_FIRE_EFFECT_RUNNING). Same zero-time closer as _region_flush_bound_point, but also while
+## this Lab's own point is dispatching the world events: consume_region_point(false) dispatches nothing, and the outer
+## call then finds its point drained ("a world handoff may have legitimately drained this old owner's point").
+## 2026-11-18: an NPC caravan coming home to the player's live crowd Site failed the step every time.
+func region_close_point_for_transfer() -> Dictionary:
+	if _region_point_pending.is_empty(): return SiteRuntime.ok()
+	if _region_point_consuming: return SiteRuntime.fail("REENTRANT_REGION_ENDPOINT")
+	if not bool(_region_point_pending.get("interval_complete", false)): return SiteRuntime.fail("REGION_INTERVAL_INCOMPLETE")
+	var finished: Dictionary = consume_region_point(false)
+	if not finished.get("ok", false): return finished
+	if not finished.get("complete", false): return SiteRuntime.fail("REGION_POINT_INCOMPLETE", "原活動 Site endpoint 尚未完成，未移交")
+	return SiteRuntime.ok()
+
+
 func _region_gameplay_endpoint_checkpoint(payload: Dictionary = {}) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null: return SiteRuntime.fail("NO_REGION_SLOT")
