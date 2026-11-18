@@ -27,6 +27,7 @@ const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
 const Risk = preload("res://scripts/region_lab/region_caravan_risk.gd")
+const CartDriver = preload("res://scripts/terrain_lab/site_cart_driver.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
 const REACH_SITES := 3
@@ -92,8 +93,11 @@ static func goods_for(data: TerrainData, warehouse: String, cargo: Dictionary, r
 static func _team_ready(lab: Variant, team: Dictionary) -> bool:
 	for person: Variant in team.person_ids:
 		var owner: Variant = lab.crowd_site.person_owner(int(person))
-		if owner == null or not lab.crowd_site._split_exit_ready(owner, int(lab.crowd_site._index_by_id.get(int(person), -1))): return false
-		if int(owner.combat_order) != TerrainArmy.CombatOrder.HOLD: return false
+		if owner == null or int(owner.combat_order) != TerrainArmy.CombatOrder.HOLD: return false
+		# A cart's driver crews its convoy (the native exit gate refuses crew); a driver whose convoy stands complete leaves
+		# with it, as the crowd departure reads him.
+		if lab.crowd_site._convoy_driver_ready(owner, int(person), int(team.team_id)): continue
+		if not lab.crowd_site._split_exit_ready(owner, int(lab.crowd_site._index_by_id.get(int(person), -1))): return false
 	return true
 
 ## The last daily decision of a settlement that trades (read by tests and diagnostics only; never saved).
@@ -136,6 +140,9 @@ static func _dispatch(controller: Variant) -> Dictionary:
 		team = candidate
 		break
 	if team.is_empty(): return {"reason": "no_team"}
+	# Its carts need their drivers first (SiteCartDriver, one stage a day).
+	var driving: Dictionary = CartDriver.prepare(controller, int(team.team_id), int(controller.team_captain_of_team(int(team.team_id))))
+	if not bool(driving.get("ready", false)): return {"reason": "driver", "step": str(driving.get("step", "")), "code": str(driving.get("code", ""))}
 	var warehouses: Array = settlement.trade_sources.keys()
 	warehouses.sort()
 	var warehouse := ""
@@ -377,6 +384,9 @@ static func _send_home(slot: Variant, lab: Variant, controller: Variant, mission
 	var person: Dictionary = lab._original_person_target(captain)
 	var component: int = RegionTravelSite.start_component(slot, here.site, person.cell, lab.terrain)
 	var token := "caravan_back_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+	# Its carts go home behind their drivers: the convoy settles here again first (SiteCartDriver; asked again next hour).
+	var driving: Dictionary = CartDriver.prepare(controller, team_id, captain)
+	if not bool(driving.get("ready", false)): return {"ok": false, "code": "DRIVER", "driver": driving}
 	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:trade", team_id, _coordinate(str(mission.from_site)), component, [], token)
 	if not prepared.ok: return prepared
 	var stored: Dictionary = Caravans.find(slot.region_registry(), int(mission.id))

@@ -10225,6 +10225,28 @@ func crowd_npc_dispatch_origin(origin: Dictionary, team_id: int) -> Dictionary:
 	native.call("setup", 1, int(lab.terrain.seed_value))
 	if not bool(native.call("load_state", blob)): return Runtime.fail("INVALID_CROWD", "群眾候選原生內容非法")
 	var team_sea: bool = vehicles.team_has_embarked(team_id)
+	# A land team's carts and wagons leave with it, as in the live departure (CrowdSite.departure_release): their native
+	# convoys are removed from the copy first, so each driver is an ordinary soldier to release and the origin keeps no
+	# convoy of a departed driver; the records (operator kept) travel. (2026-11-19: a tax team with a driven cart was
+	# refused RELEASE_REFUSED here.)
+	if not team_sea:
+		for vehicle: Variant in origin.get("vehicles", {}).values():
+			if vehicle is Dictionary and str(vehicle.get("kind", "")) in ["cart", "wagon"] and int(vehicle.get("team_id", 0)) == team_id and int(vehicle.get("convoy_id", 0)) > 0:
+				native.call("convoy_remove", int(vehicle.convoy_id))
+				vehicle.erase("convoy_id")
+				vehicle.erase("convoy_body") # the removed convoy's cells, as SiteVehicleTransport._convoy_release
+		# A finance record here that draws on one of these vehicles (an NPC team's pay source is often its own cart,
+		# SiteFinanceAI) would point at a vehicle that left: the binding ends with the departure (2026-11-19: the record
+		# failed the origin's save, 財政來源車輛不存在, and the team could not leave).
+		var leaving := {}
+		for vehicle: Variant in origin.get("vehicles", {}).values():
+			if vehicle is Dictionary and int(vehicle.get("team_id", 0)) == team_id and str(vehicle.get("kind", "")) in ["cart", "wagon"]: leaving[str(vehicle.get("id", ""))] = true
+		for record: Variant in origin.get("finance", {}).values():
+			if not record is Dictionary: continue
+			for field: String in ["pay_source", "tax_source", "treasury"]:
+				var source: Variant = record.get(field)
+				if source is Dictionary and str(source.get("kind", "")) == "vehicle" and str(source.get("site_id", "")) == str(origin.get("id", "")) and leaving.has(str(source.get("vehicle_id", ""))):
+					record[field] = {}
 	for member: int in plan.people:
 		var index := int(native.call("soldier_index", member))
 		if index < 0: return Runtime.fail("INVALID_CROWD", "群眾候選原生人物缺失")

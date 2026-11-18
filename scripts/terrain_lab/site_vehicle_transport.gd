@@ -3109,6 +3109,9 @@ func _convoy_release(vehicle: Dictionary) -> void:
 	var id := int(vehicle.get("convoy_id", 0))
 	if id > 0 and convoy_native_supported(): lab.crowd_site.crowd.convoy_remove(id)
 	vehicle.erase("convoy_id")
+	# The body cells belong to the removed convoy; kept, they would stand for the vehicle's footprint wherever it goes next
+	# (2026-11-19: a cart that crossed to another Site still reported its old Site's cells and no convoy could be made).
+	vehicle.erase("convoy_body")
 	_convoy_checked.erase(key)
 	_convoy_sent.erase(key)
 	_convoy_goal_orders.erase(key)

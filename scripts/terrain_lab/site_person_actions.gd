@@ -516,9 +516,9 @@ func cancel(identity: int) -> Dictionary:
 		_cancel_fire_suppress(_jobs[key], Runtime.ok("已取消未提交滅火；原已承諾步進完成後釋放"))
 		_settle_cancelled_fire_suppress(key, _jobs[key])
 		return Runtime.ok("已取消；原半步仍由原移動協調器收束")
-	if str(_jobs[key].kind) == "housing_return":
+	if str(_jobs[key].kind) in ["housing_return", "cart_walk"]:
 		_cancel_housing_job(_jobs[key])
-		return Runtime.ok("已取消後續返家；原已承諾步進收束後即可保存")
+		return Runtime.ok("已取消後續步行；原已承諾步進收束後即可保存")
 	if bool(_jobs[key].get("link_crossing", false)):
 		# Q2 A: no new entry; the existing cross finishes, then the link clears (commit or release).
 		_jobs[key].cancelled = true
@@ -1206,7 +1206,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 				job.executor_owner.advance_suppress_approach(int(job.executor_id), int(job.job_token))
 			handled[int(job.executor_id)] = _fire_work_handled_seconds(job, seconds)
 			continue
-		if str(job.kind) in ["housing_return", "ground_boundary", "boarding_cross"] or str(job.kind).begins_with("ship_"): continue # Original ACTION boundary owns finite movement.
+		if str(job.kind) in ["housing_return", "cart_walk", "ground_boundary", "boarding_cross"] or str(job.kind).begins_with("ship_"): continue # Original ACTION boundary owns finite movement.
 		var accepted: Dictionary = _consume_shared_job_advance_prefix(key, job, seconds, work_plan)
 		if bool(accepted.get("duplicate", false)): continue
 		var check: Dictionary = Runtime.ok() if not accepted.is_empty() else _job_context(job)
@@ -1390,6 +1390,9 @@ func settle_after_contacts() -> Array[Dictionary]:
 			continue
 		if str(job.kind) == "housing_return":
 			_settle_housing_job(key, job)
+			continue
+		if str(job.kind) == "cart_walk":
+			_settle_cart_walk(key, job)
 			continue
 		if str(job.kind) == "ground_boundary":
 			_settle_ground_boundary(key, job)
@@ -2323,8 +2326,8 @@ func advance_housing_jobs(action_seconds: float) -> void:
 	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
 	for key: String in keys:
 		var job: Dictionary = _jobs[key]
-		if str(job.kind) != "housing_return" or bool(job.cancelled): continue
-		var checked := _housing_job_context(job)
+		if not str(job.kind) in ["housing_return", "cart_walk"] or bool(job.cancelled): continue
+		var checked := _housing_job_context(job) if str(job.kind) == "housing_return" else _cart_walk_context(job)
 		if not checked.ok:
 			_cancel_housing_job(job, str(checked.message))
 			continue
@@ -2344,6 +2347,43 @@ func advance_housing_jobs(action_seconds: float) -> void:
 		elif int(person.unit) >= 0: committed = person.owner._reserve_combat_step(int(person.unit), route[0])
 		else: committed = person.owner.step(route[0] - Vector2i(person.cell), false)
 		job["paused"] = "" if committed else "WAIT_OCCUPANCY"
+
+## A team member walks to its cart's driving place (the tax team's and the caravan's cart driver, SiteCartDriver), cell by
+## cell on the same original step as a housing return; nothing else happens on arrival (the driver is then assigned by
+## the vehicle owner's own entry).
+func begin_cart_walk(person_id: int, cell: Vector2i, requester_id: int) -> Dictionary:
+	if is_busy(person_id): return Runtime.fail("BUSY")
+	var person := _person(person_id, false)
+	if person.is_empty() or not _ready(person): return Runtime.fail("BUSY", "原人物須清醒、自由、未在其他動作中")
+	if person.owner is CrowdOwner and not person.owner.crowd_site.crowd.has_method("order_housing_step"): return Runtime.fail("CROWD_BUILD_MISMATCH")
+	if not lab.terrain.contains(cell) or not lab.terrain.is_walkable(cell): return Runtime.fail("UNREACHABLE")
+	if person.cell == cell: return Runtime.ok("原人物已在車旁")
+	var route: Array[Vector2i] = lab.terrain.path_between(person.cell, cell, func(step: Vector2i) -> bool: return prison_blocked(step, [person_id]))
+	if route.is_empty(): return Runtime.fail("UNREACHABLE")
+	var job := _new_job(person, "cart_walk", 0)
+	job.merge({"cell": int(lab.terrain.index(cell)), "requester_id": requester_id, "duration": 0.0, "terrain": lab.terrain, "site_state": lab.terrain.site,
+		"cancelled": false, "reason": "", "route_elapsed": 0.5})
+	_jobs[str(person_id)] = job
+	return Runtime.ok("原人物走向車旁")
+
+func _cart_walk_context(job: Dictionary) -> Dictionary:
+	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_SITE")
+	var person := _person(int(job.executor_id), false)
+	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("STALE_SOURCE", "原人物引用失效")
+	if int(person.hit) != int(job.executor_hit): return Runtime.fail("INTERRUPTED", "原人物受擊；收束原步進")
+	return Runtime.ok("", {"person": person})
+
+func _settle_cart_walk(key: String, job: Dictionary) -> void:
+	var person := _person(int(job.executor_id), false)
+	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): _finish(key, Runtime.fail("STALE_SITE")); return
+	if person.is_empty(): _cancel_housing_job(job, "原人物引用失效"); return
+	if bool(person.moving) or not _prison_stopped(person): return
+	if bool(job.cancelled):
+		_finish(key, Runtime.ok(str(job.reason)))
+		return
+	if lab.terrain.index(person.cell) != int(job.cell): return
+	if person.owner is CrowdOwner: person.owner.crowd_site.crowd.cancel_housing_step(int(person.unit))
+	_finish(key, Runtime.ok("原人物已到車旁"))
 
 func _settle_housing_job(key: String, job: Dictionary) -> void:
 	var person := _person(int(job.executor_id), false)

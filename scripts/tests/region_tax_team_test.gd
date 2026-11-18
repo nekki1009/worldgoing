@@ -173,8 +173,11 @@ func _tax_route() -> Dictionary:
 ## The case (-- --tax-case=<case>): "pay" (default: 派收稅 by the test, the baron pays in full), "npc_day" (the NPC
 ## nation's own daily hook sends the team), "refuse" (a lawless, ambitious baron refuses: PT-18's outcome), "room" (the
 ## team's people have room for only 3 coins: PT-19, the rest stays pending and the fief stays due), "lord" (Q9-A: the
-## source's head is a count whose baron owes him; the king sits elsewhere; the count's own tax team collects).
+## source's head is a count whose baron owes him; the king sits elsewhere; the count's own tax team collects), "cart" (the
+## people's hands are full; the team's parked cart gets a driver (he walks to it, takes it, settles it) and carries the tax
+## there and back across the Sites, §4.5's recommended cart).
 var tax_case := "pay"
+var tax_cart := ""
 
 func _case_expect() -> Dictionary:
 	match tax_case:
@@ -187,7 +190,7 @@ func _run() -> void:
 	RegionRoute.clear_memory_cache()
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--tax-case="): tax_case = argument.trim_prefix("--tax-case=")
-	if not _check(tax_case in ["pay", "npc_day", "refuse", "room", "lord"], "one tax case", tax_case): _finish(); return
+	if not _check(tax_case in ["pay", "npc_day", "refuse", "room", "lord", "cart"], "one tax case", tax_case): _finish(); return
 	if not _write_manifest() or not await _setup_action_world() or not _nation_initial_bodies(): _finish(); return
 	for _frame: int in range(10): await process_frame
 	if not _tax_world() or not _tax_team(): _finish(); return
@@ -201,7 +204,7 @@ func _run() -> void:
 		defiant["ambition"] = 80
 		if body is Dictionary: body["personality"] = defiant
 		else: body.set("personality", defiant)
-	if tax_case == "room":
+	if tax_case in ["room", "cart"]:
 		var army: Variant = TaxEnvoy._army_of(lab, tax_team)
 		# Each member's room (gear counts) is filled with wood, all but 3 units in the last one.
 		var people: Array = []
@@ -210,15 +213,41 @@ func _run() -> void:
 		for at: int in range(people.size()):
 			var person: Dictionary = people[at]
 			person.cargo.erase("wood")
-			var free := SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_size(person.cargo, person.holder) - (3 if at == people.size() - 1 else 0)
+			var free := SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_size(person.cargo, person.holder) - (3 if at == people.size() - 1 and tax_case == "room" else 0)
 			if free > 0: person.cargo["wood"] = free
 			person.holder.version = int(person.holder.version) + 1
-		if not _check(TaxEnvoy._room(lab, controller, tax_team) == 3, "the team's people have room for 3 units", TaxEnvoy._room(lab, controller, tax_team)): _finish(); return
+		if tax_case == "cart":
+			# A parked cart of the team, three cells from its captain, with no driver.
+			var captain := int(army.combat_identity(int(army.formal_commander)))
+			var near: Vector2i = controller.person_actions._person(captain, false).cell
+			var spot := Vector2i(-1, -1)
+			for offset: Vector2i in [Vector2i(3, 0), Vector2i(-3, 0), Vector2i(0, 3), Vector2i(0, -3), Vector2i(4, 1), Vector2i(-4, 1)]:
+				if lab.terrain.contains(near + offset) and lab.terrain.is_walkable(near + offset) and lab.terrain.is_walkable(near + offset + Vector2i(1, 0)):
+					spot = near + offset
+					break
+			tax_cart = str(int(lab.terrain.site.get("next_vehicle", 1)))
+			lab.terrain.site["next_vehicle"] = int(tax_cart) + 1
+			if not lab.terrain.site.has("vehicles"): lab.terrain.site["vehicles"] = {}
+			lab.terrain.site.vehicles[tax_cart] = {"id": tax_cart, "kind": "cart", "team_id": tax_team, "cell": lab.terrain.index(spot), "facing": [1, 0],
+				"holder": SiteRuntime.new_item_state("vehicle:" + tax_cart), "cargo": {}, "move": {}, "operator_id": 0, "stop_pending": false} # the Store's ten cart fields
+			if not _check(spot.x >= 0 and TaxEnvoy._room(lab, controller, tax_team) == SiteVehicleTransport.CAPACITY.cart, "the people's hands are full; the team's cart has room", TaxEnvoy._room(lab, controller, tax_team)): _finish(); return
+		elif not _check(TaxEnvoy._room(lab, controller, tax_team) == 3, "the team's people have room for 3 units", TaxEnvoy._room(lab, controller, tax_team)): _finish(); return
 	if tax_case == "npc_day":
 		controller.set_meta(&"resident_exodus_day", -1) # the capital's day hook runs again
 		if not await _nation_until(func() -> bool: return not _tax_route().is_empty() or TaxEnvoy.last_event.has("dispatched"), "the NPC nation's own day sends its tax team"):
 			_check(false, "diagnosis", TaxEnvoy.day(controller))
 			_finish(); return
+	elif tax_case == "cart":
+		# 派收稅 is asked again until the cart's driver has walked to it, taken it and settled it.
+		var attempts := {"last": {}}
+		var try_send := func() -> bool:
+			var tried: Dictionary = TaxEnvoy.dispatch(controller, tax_team)
+			attempts["last"] = tried
+			return bool(tried.get("ok", false)) or str(tried.get("code", "")) != "DRIVER"
+		if not await _nation_until(try_send, "the cart gets its driver and the team sets out"):
+			_finish(); return
+		var cart_now: Dictionary = lab.terrain.site.get("vehicles", {}).get(tax_cart, {})
+		if not _check(bool(attempts.last.get("ok", false)) and attempts.last.stops == [goal] and cart_now.is_empty(), "派收稅 with its cart: the cart leaves with the team", [attempts.last, cart_now]): _finish(); return
 	else:
 		var sent: Dictionary = TaxEnvoy.dispatch(controller, tax_team)
 		if not _check(sent.get("ok", false) and sent.stops == [goal], "派收稅: the team sets out for its one direct fief", [sent, _overloads()]): _finish(); return
@@ -237,6 +266,10 @@ func _run() -> void:
 		and int(fief.get("unpaid_seasons", 0)) == unpaid + (1 if tax_case == "refuse" else 0),
 		"the handover at the fief: %s" % str(expect.outcome),
 		{"route": _tax_route(), "collected": collected, "source": nation_goal.terrain.site.stockpiles[tax_source_key].cargo, "credit": [credit, nation_goal.site_controller.reputation_of(tax_baron)], "unpaid": fief.get("unpaid_seasons")}): _finish(); return
+	if tax_case == "cart":
+		var team_there := TaxEnvoy.Caravan._team_of_person(nation_goal, slot.person_id_of_ref(_tax_route().captain_ref))
+		var carts: Array = TaxEnvoy._carts(nation_goal, team_there)
+		if not _check(carts.size() == 1 and carts[0].cargo == {"coin": 5}, "the cart crossed with the team and carries the tax", [team_there, carts, nation_goal.terrain.site.get("vehicles", {}).keys()]): _finish(); return
 	if not await _nation_until(func() -> bool: return TaxRoutes.routes(slot.region_registry()).is_empty(), "the team comes home and the capital's evaluation unloads it"):
 		_check(false, "diagnosis", {"route": _tax_route(), "last": TaxEnvoy.last_event})
 		_finish(); return

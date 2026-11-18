@@ -228,5 +228,115 @@
   "mode": "headless",
   "timeout": 360,
   "note": "T5 caravans slice 2"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_trip_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "T5 caravans slice 3: whole trip (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_live_dispatch_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 900,
+  "note": "NPC team leaves the live Site inside real steps (in-file 840)"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_risk_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 1 route risk"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_lost_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 2 raided_by"
+ },
+ {
+  "script": "res://scripts/tests/site_market_bandit_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 3 market refuses bandits"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_daily_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "T5 daily rule sends a real caravan (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_tax_envoy_p3b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "P3b slice 1 rules"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=pay"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round pay (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=refuse"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round refuse (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=room"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round room (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=npc_day"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round npc_day (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_tax_lost_p3b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "P3b slice 3 robbery, mark, answer"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=lord"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b lord round (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=cart"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b tax team takes its cart across Sites behind an auto driver (in-file 900)"
  }
 ]

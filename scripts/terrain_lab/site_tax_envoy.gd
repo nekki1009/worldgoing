@@ -146,6 +146,7 @@ const Payroll = preload("res://scripts/terrain_lab/site_payroll.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const CARRY := Runtime.CARRY_CAPACITY
+const CartDriver = preload("res://scripts/terrain_lab/site_cart_driver.gd")
 
 ## The last round decision or handover (read by tests and diagnostics only; never saved).
 static var last_event := {}
@@ -197,6 +198,12 @@ static func dispatch(controller: Variant, team_id: int) -> Dictionary:
 	var ledger: Dictionary = slot.region_registry()
 	var stops := due_stops(registry, ledger, faction, home, season)
 	if stops.is_empty(): return Runtime.fail("NO_FIEFS", "本季沒有要巡收的直屬封地")
+	# §4.5's cart: its driver walks to it, takes it and settles it first (SiteCartDriver, one stage a call).
+	var driving: Dictionary = CartDriver.prepare(controller, team_id, int(army.combat_identity(int(army.formal_commander))), envoy_of(army))
+	if not bool(driving.get("ready", false)):
+		var waiting := Runtime.fail("DRIVER", "稅隊的車還在安排駕駛：%s" % str(driving.get("step", driving.get("code", ""))))
+		waiting["driver"] = driving
+		return waiting
 	if not Caravan._team_ready(lab, crowd_team): return Runtime.fail("NOT_READY", "稅隊須停在守位、可以出發")
 	var captain := int(army.combat_identity(int(army.formal_commander)))
 	var captain_ref: Dictionary = JoinFaction._world_ref(controller, captain)
@@ -223,6 +230,13 @@ static func _send(slot: Variant, lab: Variant, team_id: int, captain: int, to_si
 	var here: Dictionary = slot._coordinate(lab.terrain)
 	var person: Dictionary = lab._original_person_target(captain)
 	if person.is_empty(): return Runtime.fail("NO_CAPTAIN", "隊長不在此地")
+	# Its carts go on behind their drivers: on every Site they arrive at, the convoy settles again before the team leaves
+	# (SiteCartDriver; the evaluation asks again next hour while it is not ready).
+	var driving: Dictionary = CartDriver.prepare(lab.site_controller, team_id, captain)
+	if not bool(driving.get("ready", false)):
+		var waiting := Runtime.fail("DRIVER", "稅隊的車還在安排駕駛：%s" % str(driving.get("step", driving.get("code", ""))))
+		waiting["driver"] = driving
+		return waiting
 	var component: int = RegionTravelSite.start_component(slot, here.site, person.cell, lab.terrain)
 	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:tax", team_id, Caravan._coordinate(to_site), component, [], token)
 	if not prepared.ok: return prepared
@@ -331,7 +345,7 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 				# Collected here already; the team waits and the next evaluation sends it on.
 				stored["token"] = before
 				if going_home: stored["phase"] = "out"
-				result["refused"] = {"code": str(sent.get("code", "")), "message": str(sent.get("message", ""))}
+				result["refused"] = {"code": str(sent.get("code", "")), "message": str(sent.get("message", "")), "preflight": sent.get("preflight", {}), "driver": sent.get("driver", {})}
 		elif str(route.phase) == "out" and route.stops.has(scope) and route.done.has(scope):
 			# Collected here, but the way on was refused: try again.
 			var stored_again: Dictionary = TaxRoutes.find(slot.region_registry(), int(route.id))
@@ -345,9 +359,11 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 			var before_again := str(stored_again.token)
 			stored_again["token"] = "tax_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
 			if home_again: stored_again["phase"] = "back"
-			if not _send(slot, lab, team_id, captain, next_again, str(stored_again.token)).ok:
+			var sent_again := _send(slot, lab, team_id, captain, next_again, str(stored_again.token))
+			if not sent_again.ok:
 				stored_again["token"] = before_again
 				if home_again: stored_again["phase"] = "out"
+				result["refused"] = {"code": str(sent_again.get("code", "")), "message": str(sent_again.get("message", "")), "preflight": sent_again.get("preflight", {}), "driver": sent_again.get("driver", {})}
 		elif str(route.phase) == "back" and str(route.home_site) == scope:
 			var unloaded := _unload(slot, lab, controller, route, team_id)
 			if unloaded.ok: result.home.append(str(route.token))
