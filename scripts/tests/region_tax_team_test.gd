@@ -85,16 +85,28 @@ func _tax_world() -> bool:
 	var goal := str(nation_goal.terrain.site.id)
 	var candidate: Dictionary = slot.control.faction_registry.duplicate(true)
 	candidate.revision = int(candidate.revision) + 1
-	candidate.entries["1"]["leader_ref"] = king
 	candidate.entries["1"]["name"] = "甲國"
-	candidate["peerage"] = {RegionPeerage.key_of(king): {"person_ref": king, "faction_id": 1, "rank": "king", "liege_ref": null, "granted_at": 0.0},
-		RegionPeerage.key_of(baron): {"person_ref": baron, "faction_id": 1, "rank": "baron", "liege_ref": king, "granted_at": 0.0}}
-	var seated := TaxRegionFinance.candidate(candidate)
+	var seated: Dictionary
+	if tax_case == "lord":
+		# Q9-A: the source Nation's head is a count here; his king sits elsewhere; the baron is the count's vassal.
+		var far_king := RegionPeerage.world_person_ref(world, 999999)
+		candidate.entries["1"]["leader_ref"] = far_king
+		candidate["peerage"] = {RegionPeerage.key_of(far_king): {"person_ref": far_king, "faction_id": 1, "rank": "king", "liege_ref": null, "granted_at": 0.0},
+			RegionPeerage.key_of(king): {"person_ref": king, "faction_id": 1, "rank": "count", "liege_ref": far_king, "granted_at": 0.0},
+			RegionPeerage.key_of(baron): {"person_ref": baron, "faction_id": 1, "rank": "baron", "liege_ref": king, "granted_at": 0.0}}
+		seated = TaxRegionFinance.candidate(candidate)
+		seated.finance.seats[RegionPeerage.key_of(far_king)] = Grid.site_id(str(slot.pin.atlas_id), Vector2i(1, 0))
+	else:
+		candidate.entries["1"]["leader_ref"] = king
+		candidate["peerage"] = {RegionPeerage.key_of(king): {"person_ref": king, "faction_id": 1, "rank": "king", "liege_ref": null, "granted_at": 0.0},
+			RegionPeerage.key_of(baron): {"person_ref": baron, "faction_id": 1, "rank": "baron", "liege_ref": king, "granted_at": 0.0}}
+		seated = TaxRegionFinance.candidate(candidate)
 	seated.revision = candidate.revision
 	seated.finance.seats[RegionPeerage.key_of(king)] = home
 	seated.finance.seats[RegionPeerage.key_of(baron)] = goal
 	var committed: Dictionary = controller._commit_diplomacy({"ok": true, "registry": seated}, "")
-	if not _check(committed.get("ok", false) and TaxEnvoy.capital_of(slot.control.faction_registry, 1) == home, "faction 1 has its king (seat: the capital) and a baron (seat: the neighbour)", committed): return false
+	if not _check(committed.get("ok", false) and TaxEnvoy.collector_at(slot.control.faction_registry, 1, home).get("nation", null) == (tax_case != "lord"),
+		"faction 1's collector sits here (the king, or a count in the lord case) and a baron's seat is the neighbour", committed): return false
 	# The capital and its treasury.
 	tax_treasury = _found_with_warehouse(lab, nation_head, "國都")
 	if tax_treasury.is_empty(): return false
@@ -160,7 +172,8 @@ func _tax_route() -> Dictionary:
 
 ## The case (-- --tax-case=<case>): "pay" (default: 派收稅 by the test, the baron pays in full), "npc_day" (the NPC
 ## nation's own daily hook sends the team), "refuse" (a lawless, ambitious baron refuses: PT-18's outcome), "room" (the
-## team's people have room for only 3 coins: PT-19, the rest stays pending and the fief stays due).
+## team's people have room for only 3 coins: PT-19, the rest stays pending and the fief stays due), "lord" (Q9-A: the
+## source's head is a count whose baron owes him; the king sits elsewhere; the count's own tax team collects).
 var tax_case := "pay"
 
 func _case_expect() -> Dictionary:
@@ -174,7 +187,7 @@ func _run() -> void:
 	RegionRoute.clear_memory_cache()
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--tax-case="): tax_case = argument.trim_prefix("--tax-case=")
-	if not _check(tax_case in ["pay", "npc_day", "refuse", "room"], "one tax case", tax_case): _finish(); return
+	if not _check(tax_case in ["pay", "npc_day", "refuse", "room", "lord"], "one tax case", tax_case): _finish(); return
 	if not _write_manifest() or not await _setup_action_world() or not _nation_initial_bodies(): _finish(); return
 	for _frame: int in range(10): await process_frame
 	if not _tax_world() or not _tax_team(): _finish(); return
@@ -209,7 +222,8 @@ func _run() -> void:
 	else:
 		var sent: Dictionary = TaxEnvoy.dispatch(controller, tax_team)
 		if not _check(sent.get("ok", false) and sent.stops == [goal], "派收稅: the team sets out for its one direct fief", [sent, _overloads()]): _finish(); return
-	if not _check(_tax_route().get("phase", "") == "out" and _tax_route().get("stops", []) == [goal] and TaxRoutes.uses_teams(slot.region_registry(), 1), "the round is on the road; the nation now collects by tax teams", _tax_route()): _finish(); return
+	var marked: bool = TaxRoutes.lord_uses_teams(slot.region_registry(), RegionPeerage.key_of(RegionPeerage.world_person_ref(str(slot.pin.world_instance_id), nation_head))) and not TaxRoutes.uses_teams(slot.region_registry(), 1) 		if tax_case == "lord" else TaxRoutes.uses_teams(slot.region_registry(), 1)
+	if not _check(_tax_route().get("phase", "") == "out" and _tax_route().get("stops", []) == [goal] and marked, "the round is on the road; the nation (or the count) now collects by tax teams", _tax_route()): _finish(); return
 	var credit := int(nation_goal.site_controller.reputation_of(tax_baron).credit)
 	var unpaid := int(TaxProduce.record_of(nation_goal.terrain).get("unpaid_seasons", 0))
 	if not await _nation_until(func() -> bool: return _tax_route().get("done", {}).has(goal), "the team reaches the fief and its evaluation hands the tax over"):

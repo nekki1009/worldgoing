@@ -12,6 +12,7 @@ extends RefCounted
 ##   collected twice for the same share. The last MAX_COLLECTED are kept.
 ## factions (optional, slice 3): the factions that collect their nation-level tribute by tax teams; from a faction's
 ##   first round on, its direct fiefs owe no tribute on the road on their tax day (§4.3: the book transfer stops).
+## lords (optional, Q9-A): the same for lords (peerage person keys) who collect from their own vassals by tax teams.
 const VERSION := 1
 const MAX_ROUTES := 16
 const MAX_STOPS := 16
@@ -38,11 +39,16 @@ static func _site_id(value: Variant) -> bool:
 static func validate(value: Variant) -> Dictionary:
 	var section_fields := ["version", "next_id", "routes", "collected"]
 	if value is Dictionary and value.has("factions"): section_fields.append("factions")
+	if value is Dictionary and value.has("lords"): section_fields.append("lords")
 	if not value is Dictionary or not RegionFactionQuery.keys(value, section_fields): return _fail("tax routes fields")
 	if value.has("factions"):
 		if not value.factions is Array or value.factions.is_empty() or value.factions.size() > 256: return _fail("tax factions")
 		for faction: Variant in value.factions:
 			if not RegionFactionQuery.whole(faction, 0, RegionFactionQuery.MAX_ID): return _fail("tax factions")
+	if value.has("lords"):
+		if not value.lords is Array or value.lords.is_empty() or value.lords.size() > 1024: return _fail("tax lords")
+		for lord: Variant in value.lords:
+			if not _site_id(lord): return _fail("tax lords")
 	if not RegionFactionQuery.whole(value.version, VERSION, VERSION) or not RegionFactionQuery.whole(value.next_id, 1, 2147483646): return _fail("tax routes version")
 	if not value.routes is Array or value.routes.size() > MAX_ROUTES or not value.collected is Array or value.collected.size() > MAX_COLLECTED: return _fail("tax routes lists")
 	var ids := {}
@@ -109,11 +115,23 @@ static func find(ledger: Dictionary, id: int) -> Dictionary:
 static func remove(ledger: Dictionary, id: int) -> void:
 	if not ledger.get("tax_routes") is Dictionary: return
 	ledger.tax_routes.routes = ledger.tax_routes.routes.filter(func(route: Dictionary) -> bool: return int(route.id) != id)
-	if ledger.tax_routes.routes.is_empty() and ledger.tax_routes.collected.is_empty() and not ledger.tax_routes.has("factions"): ledger.erase("tax_routes")
+	if ledger.tax_routes.routes.is_empty() and ledger.tax_routes.collected.is_empty() and not ledger.tax_routes.has("factions") and not ledger.tax_routes.has("lords"): ledger.erase("tax_routes")
 
 ## Does `faction` collect its nation-level tribute by tax teams (it has sent one)?
 static func uses_teams(registry: Dictionary, faction: int) -> bool:
 	return section(registry).get("factions", []).has(faction)
+
+## Does the lord `person_key` collect from his vassals by tax teams?
+static func lord_uses_teams(registry: Dictionary, person_key: String) -> bool:
+	return section(registry).get("lords", []).has(person_key)
+
+static func mark_lord(ledger: Dictionary, person_key: String) -> void:
+	var section_value := ensure(ledger)
+	var lords: Array = section_value.get("lords", [])
+	if lords.has(person_key): return
+	lords.append(person_key)
+	lords.sort()
+	section_value["lords"] = lords
 
 static func mark_faction(ledger: Dictionary, faction: int) -> void:
 	var section_value := ensure(ledger)

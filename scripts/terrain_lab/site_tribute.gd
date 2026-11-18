@@ -188,13 +188,16 @@ static func _fits(lab: Variant, target: Dictionary, items: Dictionary) -> bool:
 			if vehicle is Dictionary and is_same(vehicle.get("cargo"), target.cargo): capacity = int(SiteVehicleTransport.capacity_of(vehicle))
 	return capacity >= 0 and Runtime.carried_size(target.cargo, target.holder) + Runtime.inventory_size(items) <= capacity
 
-## Is `liege` the head of `faction`, and does that faction collect its tribute by tax teams (RegionTaxRoutes)?
+## Is `liege` a collector by tax teams: a lord marked in the ledger (Q9-A), or the head of `faction` whose nation is?
 static func _nation_collects(lab: Variant, registry: Dictionary, liege: Dictionary, faction: int) -> bool:
 	var slot: Variant = lab.site_controller.get("region_slot") if lab.site_controller != null else null
 	if slot == null or faction < 0: return false
+	var TaxRoutes: Script = load("res://scripts/region_lab/region_tax_routes.gd")
+	# A lord who collects from his vassals by tax teams (Q9-A).
+	if TaxRoutes.call("lord_uses_teams", slot.region_registry(), str(liege.get("key", ""))): return true
 	var head: Dictionary = RegionPeerage.head_of(registry, faction)
 	if not head.get("ok", false) or head.get("person_ref") == null or RegionPeerage.key_of(head.person_ref) != str(liege.get("key", "")): return false
-	return (load("res://scripts/region_lab/region_tax_routes.gd") as Script).call("uses_teams", slot.region_registry(), faction)
+	return TaxRoutes.call("uses_teams", slot.region_registry(), faction)
 
 ## The settlement's tax day. Returns {due, paid, transit, on_time} or {} when nothing is due.
 static func tax_day(lab: Variant, today: int, ctx: Dictionary = {}) -> Dictionary:

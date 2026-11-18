@@ -49,12 +49,28 @@ static func dispatch_refusal(army: Variant) -> Dictionary:
 	if envoy_of(army) <= 0: return Runtime.fail("NO_TAX_ENVOY", "隊中沒有稅使（文吏以上）")
 	return {}
 
-## The direct fiefs of `faction`'s head to visit from `home_site` this season: [site_id], nearest first.
-static func fief_stops(registry: Dictionary, faction: int, home_site: String, season: int, ledger: Dictionary = {}) -> Array:
+## Who collects tribute by tax teams from `home_site` (§4.3 Q9-A): the faction head when it is his seat (the nation),
+## else a titled person of the faction whose seat it is and who has vassals (a lord). {ref, key, nation} or {}.
+static func collector_at(registry: Dictionary, faction: int, home_site: String) -> Dictionary:
 	var head: Dictionary = RegionPeerage.head_of(registry, faction)
-	if not head.get("ok", false) or head.get("person_ref") == null: return []
+	if head.get("ok", false) and head.get("person_ref") != null and RegionFinance.seat_of(registry, RegionPeerage.key_of(head.person_ref)) == home_site:
+		return {"ref": head.person_ref, "key": RegionPeerage.key_of(head.person_ref), "nation": true}
+	var keys: Array = registry.get("peerage", {}).keys()
+	keys.sort()
+	for key: String in keys:
+		var record: Variant = registry.peerage[key]
+		if not record is Dictionary or int(record.get("faction_id", -1)) != faction or RegionFinance.seat_of(registry, key) != home_site: continue
+		if RegionPeerage.vassals_of(registry, record.person_ref).is_empty(): continue
+		return {"ref": record.person_ref, "key": key, "nation": false}
+	return {}
+
+## The direct fiefs of the collector seated at `home_site` (the faction head, or a lord) to visit this season:
+## [site_id], nearest first.
+static func fief_stops(registry: Dictionary, faction: int, home_site: String, season: int, ledger: Dictionary = {}) -> Array:
+	var collector := collector_at(registry, faction, home_site)
+	if collector.is_empty(): return []
 	var sites: Array = []
-	for vassal: Variant in RegionPeerage.vassals_of(registry, head.person_ref):
+	for vassal: Variant in RegionPeerage.vassals_of(registry, collector.ref):
 		var site := RegionFinance.seat_of(registry, RegionPeerage.key_of(vassal))
 		if site.is_empty() or site == home_site or sites.has(site): continue
 		if not ledger.is_empty() and TaxRoutes.planned(ledger, faction, site, season): continue
@@ -175,7 +191,8 @@ static func dispatch(controller: Variant, team_id: int) -> Dictionary:
 	var faction := int(crowd_team.get("faction", -1))
 	var registry: Dictionary = slot.control.get("faction_registry", {})
 	var home := str(lab.terrain.site.id)
-	if capital_of(registry, faction) != home: return Runtime.fail("NOT_CAPITAL", "稅隊須從國都出發")
+	var collector := collector_at(registry, faction, home)
+	if collector.is_empty(): return Runtime.fail("NOT_CAPITAL", "稅隊須從國都或領主治所出發")
 	var season := _season(lab)
 	var ledger: Dictionary = slot.region_registry()
 	var stops := due_stops(registry, ledger, faction, home, season)
@@ -195,9 +212,10 @@ static func dispatch(controller: Variant, team_id: int) -> Dictionary:
 	if not sent.ok:
 		TaxRoutes.remove(ledger, int(added.id))
 		return sent
-	# From now on its direct fiefs owe no tribute on the road (slice 3). The departure's publication replaced the ledger:
-	# the mark goes into the current one.
-	TaxRoutes.mark_faction(slot.region_registry(), faction)
+	# From now on its direct fiefs owe no tribute on the road (slice 3; a lord's fiefs too, Q9-A). The departure's
+	# publication replaced the ledger: the mark goes into the current one.
+	if bool(collector.nation): TaxRoutes.mark_faction(slot.region_registry(), faction)
+	else: TaxRoutes.mark_lord(slot.region_registry(), str(collector.key))
 	last_event = {"dispatched": token, "stops": stops}
 	return {"ok": true, "token": token, "stops": stops, "route": int(added.id)}
 
@@ -432,8 +450,9 @@ static func day(controller: Variant) -> Dictionary:
 	var settlement: Dictionary = Settlement.record(lab.terrain)
 	if settlement.is_empty(): return {"reason": "no_settlement"}
 	var faction := int(settlement.get("owner_faction", -1))
-	if capital_of(registry, faction) != home: return {"reason": "not_capital"}
-	var head: Dictionary = RegionPeerage.head_of(registry, faction)
+	var collector := collector_at(registry, faction, home)
+	if collector.is_empty(): return {"reason": "not_capital"}
+	var head: Dictionary = {"person_ref": collector.ref}
 	if RegionPeerage.world_person_id(head.get("person_ref")) == player or slot.person_id_of_ref(head.get("person_ref")) == player: return {"reason": "player_head"}
 	var season := _season(lab)
 	var ledger: Dictionary = slot.region_registry()
