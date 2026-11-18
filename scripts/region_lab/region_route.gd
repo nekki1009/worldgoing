@@ -1186,7 +1186,8 @@ class Search:
 			paths[identity] = crossed.path
 		var result := {"ok": true, "poses": output, "paths": paths}
 		if sea:
-			var timeline := RegionRoute.sea_action_steps(first, second, _vehicles(), poses, paths, edge, context.get("party", {}).get("content", {}), _ocean_memo)
+			# 時間與氣候 TC11: an NPC sea route sails in the wind and storm its dispatch put in the context (or still air).
+			var timeline := RegionRoute.sea_action_steps(first, second, _vehicles(), poses, paths, edge, context.get("party", {}).get("content", {}), _ocean_memo, context.get("weather", {}))
 			if not timeline.ok: return timeline
 			result.merge(timeline, true)
 		return result

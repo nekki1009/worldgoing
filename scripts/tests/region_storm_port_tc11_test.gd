@@ -12,6 +12,7 @@ const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Climate = preload("res://scripts/terrain_lab/site_climate.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionWeather = preload("res://scripts/region_lab/region_weather.gd")
+const Ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const START := Vector2i(1170, 13252)
 
 var checks := 0
@@ -73,10 +74,60 @@ func _run() -> void:
 	var registry: Dictionary = slot.control.faction_registry
 	var climate_before: Variant = registry.get("climate")
 	registry.erase("climate")
-	if not _check(slot.region_storm_port(site, storm_at).is_empty(), "with the climate off ships always leave"): return
+	if not _check(slot.region_storm_port(site, storm_at).is_empty() and slot.region_sea_weather(site).is_empty(), "with the climate off ships always leave, in still air"): return
 	registry["climate"] = {"version": 1, "enabled": true} # test-only, in memory
 	var held: Dictionary = slot.region_storm_port(site, storm_at)
 	var open: Dictionary = slot.region_storm_port(site, clear_at)
+	var clock_before := float(slot.control.logical_game_seconds)
+	slot.control.logical_game_seconds = storm_at
+	var stormy: Dictionary = slot.region_sea_weather(site)
+	slot.control.logical_game_seconds = clock_before
+	var expected: Dictionary = RegionWeather.at(world, str(slot.pin.atlas_id), site, storm_at)
+	if not _check(bool(stormy.get("storm", false)) and stormy.get("wind") == expected.wind, "a sea timeline reads the slot's wind and storm (player and NPC alike)", stormy): return
+	# A sailing step is measured as it starts, in the weather of that moment: a storm caught at sea halves it (on top of
+	# the wind); a turn is not affected.
+	var ship := {"id": "1", "kind": "ship", "ship_type": "ferry", "team_id": 1, "operator_id": 1,
+		"cell": 5050, "facing": [1, 0], "cargo": {}, "holder": {"version": 1, "equipped": {}, "item_ids": []}}
+	var row := {"person_id": 1, "hp": 100.0, "ko": 0.0, "fatigue": 0.0, "embarked_vehicle_id": "1", "berth_id": 0, "cargo": {},
+		"item_state": SiteRuntime.new_item_state("person:1")}
+	var party := {"content": {"controlled_person_id": 1, "actors": {}, "armies": [{"team_id": 1, "units": [row]}], "vehicles": {"1": ship},
+		"item_records": {}, "person_supply": {}, "team_supply": {}}}
+	var step := {"vehicle_id": "1", "action": "forward", "from": [50, 50], "anchor": [51, 50], "from_site": [site.x, site.y]}
+	var turn := {"vehicle_id": "1", "action": "turn", "from": [51, 50], "anchor": [51, 50], "from_site": [site.x, site.y]}
+	registry.erase("climate")
+	var still: Dictionary = slot._region_sea_action_duration(party, step)
+	var still_turn: Dictionary = slot._region_sea_action_duration(party, turn)
+	registry["climate"] = {"version": 1, "enabled": true}
+	slot.control.logical_game_seconds = storm_at
+	var in_storm: Dictionary = slot._region_sea_action_duration(party, step)
+	var storm_turn: Dictionary = slot._region_sea_action_duration(party, turn)
+	# A step ending in a storm at sea may cost its ship 5% of its hull (30%, rolled on the token and the step), never
+	# below 1; out of a storm nothing.
+	var full := Ship.hull_hp("ferry")
+	var candidate := {"content": {"vehicles": {"1": {"ship_type": "ferry", "naval": {"hp": full}}}}}
+	var plan := {"token": "storm_test_token"}
+	slot.control.logical_game_seconds = storm_at
+	var hit := -1
+	var miss := -1
+	for index: int in range(200):
+		var rolled := hash(["storm_test_token", index, "storm_hull"]) % 100
+		if rolled < slot.STORM_DAMAGE_CHANCE and hit < 0: hit = index
+		if rolled >= slot.STORM_DAMAGE_CHANCE and miss < 0: miss = index
+	slot._region_storm_hull_damage(candidate, plan, step, hit)
+	var after_hit := float(candidate.content.vehicles["1"].naval.hp)
+	slot._region_storm_hull_damage(candidate, plan, step, miss)
+	var after_miss := float(candidate.content.vehicles["1"].naval.hp)
+	candidate.content.vehicles["1"].naval.hp = 1.5
+	slot._region_storm_hull_damage(candidate, plan, step, hit)
+	var floored := float(candidate.content.vehicles["1"].naval.hp)
+	slot.control.logical_game_seconds = clock_before
+	candidate.content.vehicles["1"].naval.hp = full
+	slot._region_storm_hull_damage(candidate, plan, step, hit)
+	if not _check(hit >= 0 and miss >= 0 and absf(after_hit - full * 0.95) < 0.000001 and absf(after_miss - after_hit) < 0.000001 and absf(floored - 1.0) < 0.000001
+		and absf(float(candidate.content.vehicles["1"].naval.hp) - full) < 0.000001, "a stormy step may cost 5% hull, never below 1; calm water costs nothing", [hit, miss, after_hit, after_miss, floored]): return
+	var factor := Ship.weather_factor("ferry", Vector2.RIGHT, expected.wind, true)
+	if not _check(still.ok and in_storm.ok and absf(float(in_storm.duration) - float(still.duration) / factor) < 0.000001 and factor < 0.75
+		and absf(float(storm_turn.duration) - float(still_turn.duration)) < 0.000001, "a step started in a storm at sea is slowed by the storm and the wind; a turn is not", [still, in_storm, factor]): return
 	if climate_before == null: registry.erase("climate")
 	else: registry["climate"] = climate_before
 	if not _check(str(held.get("code", "")) == "STORM_PORT" and not bool(held.get("ok", true)), "in a storm the port is shut", held): return

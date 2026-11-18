@@ -1290,6 +1290,13 @@ func region_storm_port(site: Vector2i, at_seconds: float = -1.0) -> Dictionary:
 	if str(now.get("weather", "")) != "storm": return {}
 	return fail("STORM_PORT", "暴風雨，船不能出港；待風雨過後再出海")
 
+## TC11: {wind, storm} of `site`'s weather slot now for a sea timeline, or {} (still air) with the climate off.
+func region_sea_weather(site: Vector2i) -> Dictionary:
+	var registry: Variant = control.get("faction_registry", {})
+	if not registry is Dictionary or not RegionWeather.enabled(registry): return {}
+	var now := RegionWeather.at(str(pin.get("world_instance_id", "")), str(pin.get("atlas_id", "")), site, float(control.logical_game_seconds))
+	return {"wind": now.get("wind", Vector2.ZERO), "storm": str(now.get("weather", "")) == "storm"}
+
 func prepare_ship_transfer(source_data: TerrainData, destination_site: Vector2i, boat_ids: Array[String], destination_anchor: Vector2i, destination_facing: Vector2i, edge_only: bool = false) -> Dictionary:
 	if source_data == null: return fail("INVALID", "Original source required")
 	var storm_from := _coordinate(source_data)
@@ -4076,6 +4083,9 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 			return fail("DISPATCH_UNAVAILABLE", "原出發人物尚有已接受作業")
 	var route_context := prepare_region_route_context(lab.terrain, extracted.party)
 	if not route_context.ok: return route_context
+	if str(departure_mode.spec.mode) == "sea":
+		var sea_weather := region_sea_weather(coordinate.site) # TC11: the departure slot's wind and storm
+		if not sea_weather.is_empty(): route_context.context["weather"] = sea_weather
 	if steps.is_empty():
 		# Strategy has already selected this known target. The original route
 		# owner may now read true effective geometry solely as a resolver.
@@ -5302,12 +5312,7 @@ func _region_sea_timeline(steps: Array, party: Dictionary) -> Dictionary:
 	var content: Dictionary = party.content
 	var vehicles: Array = content.get("vehicles", {}).values()
 	# 時間與氣候 TC11: the wind and storm of the departure slot set every leg's sailing speed.
-	var weather := {}
-	var registry: Variant = control.get("faction_registry", {})
-	if registry is Dictionary and RegionWeather.enabled(registry) and steps.size() >= 1:
-		var start := Vector2i(int(steps[0].site[0]), int(steps[0].site[1]))
-		var now := RegionWeather.at(str(pin.get("world_instance_id", "")), str(pin.get("atlas_id", "")), start, float(control.logical_game_seconds))
-		weather = {"wind": now.get("wind", Vector2.ZERO), "storm": str(now.get("weather", "")) == "storm"}
+	var weather := region_sea_weather(Vector2i(int(steps[0].site[0]), int(steps[0].site[1]))) if steps.size() >= 1 else {}
 	for leg: int in range(1, steps.size()):
 		var from := Vector2i(int(steps[leg - 1].site[0]), int(steps[leg - 1].site[1]))
 		var to := Vector2i(int(steps[leg].site[0]), int(steps[leg].site[1]))
@@ -5412,6 +5417,13 @@ func _region_sea_action_duration(party: Dictionary, action: Dictionary) -> Dicti
 	if not bool(metrics.get("driver_ready", false)): return fail("NO_CREW", "原舵手未在有效原掌舵席")
 	var kind := str(vehicle.ship_type)
 	var speed := Ship.speed(kind, int(metrics.people), float(metrics.load), int(metrics.crew), action.action == "dock", action.action == "reverse")
+	# 時間與氣候 TC11: each sailing step is measured as it starts, in the weather of that moment and place: the wind on
+	# the step's heading and a storm caught at sea (×0.5) slow it (turns and docking are not affected).
+	if action.action in ["forward", "reverse"] and action.get("from_site") is Array and action.get("from") is Array and action.get("anchor") is Array:
+		var weather := region_sea_weather(Vector2i(int(action.from_site[0]), int(action.from_site[1])))
+		if not weather.is_empty():
+			var heading := Vector2(float(action.anchor[0]) - float(action.from[0]), float(action.anchor[1]) - float(action.from[1]))
+			speed *= Ship.weather_factor(kind, heading, weather.get("wind", Vector2.ZERO), bool(weather.get("storm", false)))
 	var duration := Ship.turn_seconds(kind, int(metrics.crew)) if action.action == "turn" else (1.0 / speed if speed > 0.0 else INF)
 	if not is_finite(duration) or duration <= 0.0: return fail("NO_CREW", "原船 crew／載重不容許 ACTION")
 	return {"ok": true, "duration": duration}
@@ -5470,6 +5482,7 @@ func _region_player_sea_candidate(party: Dictionary, plan: Dictionary, action: D
 		candidate.upkeep.distance = float(candidate.upkeep.distance) + float(action.metres) * action_delta / duration
 		if float(next_cursor.elapsed) >= duration - 0.00000001:
 			next_cursor.completed_metres = float(candidate.upkeep.distance)
+			_region_storm_hull_damage(candidate, plan, action, int(next_cursor.action_index))
 			next_cursor.action_index = int(next_cursor.action_index) + 1
 			next_cursor.elapsed = 0.0
 			next_cursor.duration = 0.0
@@ -5481,6 +5494,22 @@ func _region_player_sea_candidate(party: Dictionary, plan: Dictionary, action: D
 	outcome.arrived = int(next_cursor.action_index) >= plan.action_steps.size()
 	return outcome
 
+
+## 時間與氣候 TC11 (D8 A "已在海上的船…有受損機會"): a sailing step that ends in a storm at sea has a 30% chance of
+## costing its ship 5% of its hull (vehicle.naval.hp), never below 1 (no sinking from weather). The roll is the party's
+## token and the step's index, so a reload rolls the same. Turns and docking are not exposed.
+const STORM_DAMAGE_CHANCE := 30
+const STORM_DAMAGE_SHARE := 0.05
+
+func _region_storm_hull_damage(candidate: Dictionary, plan: Dictionary, action: Dictionary, index: int) -> void:
+	if str(action.get("action", "")) not in ["forward", "reverse"] or not action.get("from_site") is Array: return
+	var weather := region_sea_weather(Vector2i(int(action.from_site[0]), int(action.from_site[1])))
+	if weather.is_empty() or not bool(weather.get("storm", false)): return
+	if hash([str(plan.get("token", "")), index, "storm_hull"]) % 100 >= STORM_DAMAGE_CHANCE: return
+	var vehicle: Variant = candidate.content.get("vehicles", {}).get(str(action.vehicle_id))
+	if not vehicle is Dictionary or not vehicle.get("naval") is Dictionary: return
+	var full := Ship.hull_hp(str(vehicle.get("ship_type", "")))
+	vehicle.naval["hp"] = maxf(1.0, float(vehicle.naval.get("hp", full)) - full * STORM_DAMAGE_SHARE)
 
 func advance_region_sea_travel(max_steps: int) -> Dictionary:
 	var boarding_guard: Dictionary = _boarding_current_party_guard()
