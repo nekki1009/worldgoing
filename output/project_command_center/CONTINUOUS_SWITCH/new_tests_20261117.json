@@ -207,5 +207,12 @@
   "mode": "headless",
   "timeout": 360,
   "note": "lord funding"
+ },
+ {
+  "script": "res://scripts/tests/site_famine_refugees_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4 source E famine"
  }
 ]
