@@ -72,7 +72,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			var home: Dictionary = Aftermath.go_home(controller, band)
 			result.actions.append({"band": band, "action": "go_home", "ok": bool(home.get("ok", false)), "code": str(home.get("code", "")), "team": int(home.get("team", -1)), "refusals": home.get("refusals", [])})
 			continue
-		var chief := RegionPeerage.world_person_id(entry.get("leader_ref"))
+		var chief: int = controller.region_slot.person_id_of_ref(entry.get("leader_ref")) # a world or a Site lineage ref
 		# Only the live crowd Site decides for a chief standing there (a cold original Lab settling points does not).
 		var here: bool = chief > 0 and controller.lab.crowd_site != null and controller.lab.crowd_site.active and not controller.lab._original_person_target(chief).is_empty()
 		var can_rise := false

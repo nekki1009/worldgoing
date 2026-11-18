@@ -22,6 +22,8 @@ var nation_trace: Array[Dictionary] = []
 var nation_body_factions: Array[int] = [1, 1, 1]
 ## People in each authored source team.
 var nation_body_rosters: Array[int] = [2, 2, 2]
+## Faction of the four one-person gate guards born on the strategic target (a subclass may make them friendly).
+var nation_goal_guard_faction := 2
 var nation_step_min := INF # Smallest accepted positive world step since the last reset.
 
 func _initialize() -> void:
@@ -188,7 +190,7 @@ func _nation_initial_bodies() -> bool:
 				break
 		if not _check(enemy != null, "target enemy Genesis uses an empty original slot and preserves every resident", gates[index]): return false
 		enemy.team_id = nation_goal._next_army_identity()
-		enemy.faction_id = 2
+		enemy.faction_id = nation_goal_guard_faction
 		enemy.roster_size = 1
 		var cells: Array[Vector2i] = []
 		var candidates: Array[Vector2i] = [gates[index]]

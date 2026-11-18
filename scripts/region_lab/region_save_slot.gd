@@ -13189,6 +13189,14 @@ func peerage_person_ref(person_id: int) -> Variant:
 	if resolved.get("status") == "current": return RegionPeerage.world_person_ref(str(pin.world_instance_id), person_id)
 	return null
 
+## The current person id a stored person ref names: a world ref carries it; a typed (Site lineage) ref resolves through
+## the allocator's aliases. -1 when it names no one known.
+func person_id_of_ref(person_ref: Variant) -> int:
+	var world := RegionPeerage.world_person_id(person_ref)
+	if world > 0: return world
+	if not RegionFactionQuery.ref_valid(person_ref, "person") or not person_allocator_enabled(): return -1
+	return int(_person_pending.aliases.get(RegionTravel.stable_key(person_ref), -1))
+
 func person_reference(person_id: int) -> Dictionary:
 	if not person_allocator_enabled() or not _person_pending.locations.has(str(person_id)): return {}
 	return {"world_instance_id": str(pin.world_instance_id), "person_id": person_id}

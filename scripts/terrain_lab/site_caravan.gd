@@ -28,6 +28,8 @@ const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
 
 const REACH_SITES := 3
+## The last evaluation that changed or refused something (read by tests and diagnostics only; never saved).
+static var last_evaluation := {}
 const CARRY := Runtime.CARRY_CAPACITY
 
 static func _coordinate(site_id: String) -> Vector2i:
@@ -178,7 +180,7 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 	var controller: Variant = lab.site_controller
 	var scope := str(lab.terrain.site.id)
 	for mission: Dictionary in Caravans.missions(ledger).duplicate(true):
-		var captain := RegionPeerage.world_person_id(mission.captain_ref)
+		var captain: int = slot.person_id_of_ref(mission.captain_ref) # a world ref or a Site lineage ref (authored people)
 		if captain <= 0 or lab._original_person_target(captain).is_empty(): continue
 		if str(mission.phase) == "out" and str(mission.to_site) == scope:
 			if not mission.has("sold"):
@@ -187,9 +189,12 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 				if not stored.is_empty(): stored["sold"] = sold.get("got", {}).duplicate()
 				mission = stored if not stored.is_empty() else mission
 				result["sold"] = sold
-			if _send_home(slot, lab, controller, mission, captain).ok: result.turned.append(int(mission.id))
+			var home := _send_home(slot, lab, controller, mission, captain)
+			if home.ok: result.turned.append(int(mission.id))
+			else: result["refused"] = {"mission": int(mission.id), "code": str(home.get("code", "")), "message": str(home.get("message", ""))}
 		elif str(mission.phase) == "back" and str(mission.from_site) == scope:
 			if _unload(slot, lab, controller, mission, captain).ok: result.home.append(int(mission.id))
+	if not result.turned.is_empty() or not result.home.is_empty() or result.has("refused"): last_evaluation = result.duplicate(true)
 	return result
 
 ## Slice 2: the caravan's best-loaded member barters his share of the mission's goods with this settlement. Returns
