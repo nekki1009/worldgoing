@@ -11,7 +11,7 @@ func _distinct_masters_and_boundary() -> void:
 	var point := _master_point(fixture, requests, 10.0)
 	var base := 0.0
 	for prefix: Dictionary in point.admitted.prefixes: base += float(prefix.productive_seconds)
-	_check(float(fixture.vehicle.build.progress) == 60.0 and is_equal_approx(base, 60.0) and not fixture.vehicle.has("tech_batch") and point.admitted.runtime.size() == 6, "Each genuine participant adds its own unweighted physical contribution once; ordinary construction invents no research ledger and no helper duplicates the crew")
+	_check(float(fixture.vehicle.build.progress) == 60.0 and is_equal_approx(base, 60.0) and fixture.vehicle.tech_batch.token.is_empty() and int(fixture.vehicle.tech_batch.operator_id) == 0 and float(fixture.vehicle.tech_batch.work_seconds) == 60.0 and not fixture.vehicle.has("tech_trial") and point.admitted.runtime.size() == 6, "Each genuine participant adds its own unweighted physical contribution once; the yard keeps only its shared ordinary payment ledger (60 s), no research ledger, and no helper duplicates the crew")
 	fixture.team.team_fatigue.fatigue = 79.99 # Explicit actual original pool boundary source epoch.
 	fixture.team.team_fatigue.fatigue_rest = 0.0
 	requests = _master_requests(fixture, 30.0)
@@ -26,6 +26,7 @@ func _distinct_masters_and_boundary() -> void:
 	await process_frame
 
 func _run() -> void:
+	deadline = Time.get_ticks_msec() + 180000 # same bound as the siege yard fixture this extends
 	await _distinct_masters_and_boundary()
 	await _alternate_and_missing_requirement()
 	TerrainArmy.release_contact_source()

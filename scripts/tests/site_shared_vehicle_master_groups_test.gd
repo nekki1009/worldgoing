@@ -95,7 +95,7 @@ func _cross_actual_masters() -> void:
 	var own_base := 0.0
 	for prefix: Dictionary in admitted.wt.prefixes: own_base += float(prefix.productive_seconds)
 	for prefix: Dictionary in admitted.controlled.checked.prefixes: own_base += float(prefix.productive_seconds)
-	_check(is_equal_approx(float(fixture.vehicle.build.progress), 60.0) and is_equal_approx(own_base, 60.0) and not fixture.vehicle.has("tech_batch"), "One true six-person physical sum and six unweighted personal contributions publish once; ordinary construction does not invent a research ledger")
+	_check(is_equal_approx(float(fixture.vehicle.build.progress), 60.0) and is_equal_approx(own_base, 60.0) and fixture.vehicle.tech_batch.token.is_empty() and int(fixture.vehicle.tech_batch.operator_id) == 0 and is_equal_approx(float(fixture.vehicle.tech_batch.work_seconds), 60.0) and not fixture.vehicle.has("tech_trial"), "One true six-person physical sum and six unweighted personal contributions publish once; the yard keeps only its shared ordinary payment ledger (60 s), no research ledger")
 	var published := var_to_bytes([fixture.vehicle, fixture.team.team_fatigue])
 	fixture.lab.site_controller.work_team.publish_shared_work_prefix(admitted.wt)
 	fixture.lab.site_controller.person_actions.begin_shared_work_prefix_consumption(admitted.pa)
@@ -165,6 +165,7 @@ func _cross_partition() -> void:
 	await process_frame
 
 func _run() -> void:
+	deadline = Time.get_ticks_msec() + 420000 # builds the six-station cross fixture seven times (~40 s each)
 	await _cross_actual_masters()
 	await _cross_endpoint_and_death()
 	await _cross_missing_and_rest()

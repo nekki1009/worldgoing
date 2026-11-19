@@ -29,6 +29,7 @@ func _reverse_actual_masters() -> void:
 	await process_frame
 
 func _run() -> void:
+	deadline = Time.get_ticks_msec() + 420000 # builds the six-station cross fixture seven times (~40 s each)
 	await _cross_actual_masters()
 	await _reverse_actual_masters()
 	await _cross_endpoint_and_death()

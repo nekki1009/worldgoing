@@ -128,6 +128,7 @@ func _alternate_and_missing_requirement() -> void:
 	await process_frame
 
 func _run() -> void:
+	deadline = Time.get_ticks_msec() + 180000 # same bound as the siege yard fixture this extends
 	await _distinct_masters_and_boundary()
 	await _alternate_and_missing_requirement()
 	TerrainArmy.release_contact_source()
