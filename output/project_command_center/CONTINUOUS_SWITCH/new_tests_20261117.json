@@ -500,5 +500,16 @@
   "mode": "headless",
   "timeout": 300,
   "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t4_round_trip_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "t4trip_reg"
+  ],
+  "mode": "headless",
+  "timeout": 480,
+  "note": "trade T4 TR-40 wagon carries salt across Sites and trades from its hold"
  }
 ]
