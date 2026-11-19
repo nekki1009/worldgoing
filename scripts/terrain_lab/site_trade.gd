@@ -78,7 +78,7 @@ static func side_value(goods: Dictionary, stock: Dictionary, targets: Dictionary
 		coefficients[category] = _coefficient(category, int(totals[category]), stock, targets, receiving)
 	var value: float = 0.0
 	for resource: String in goods.resources:
-		var base: float = Values.resource_value(resource)
+		var base: float = Values.COIN_VALUE if resource == "coin" else Values.resource_value(resource) # coin: 1 grain (11/19)
 		if base <= 0.0: return Runtime.fail("TRADE_VALUES_VERSION")
 		value += base * int(goods.resources[resource]) * float(coefficients[_category(resource)])
 	for identity: String in goods.item_ids:
@@ -121,7 +121,7 @@ static func _choices(goods: Dictionary, stock: Dictionary, targets: Dictionary, 
 	var totals: Dictionary = _totals(goods, state)
 	for resource: String in goods.resources:
 		var category: String = _category(resource)
-		choices.append({"resource": resource, "key": resource, "price": Values.resource_value(resource) * _coefficient(category, int(totals[category]), stock, targets, receiving)})
+		choices.append({"resource": resource, "key": resource, "price": (Values.COIN_VALUE if resource == "coin" else Values.resource_value(resource)) * _coefficient(category, int(totals[category]), stock, targets, receiving)})
 	for identity: String in goods.item_ids:
 		var category: String = _item_category(state, identity)
 		choices.append({"item_id": identity, "key": identity, "price": Values.item_value(state, identity) * _coefficient(category, int(totals[category]), stock, targets, receiving)})

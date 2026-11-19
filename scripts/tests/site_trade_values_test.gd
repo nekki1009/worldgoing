@@ -86,7 +86,10 @@ func _run() -> void:
 	var limited: Dictionary = Trade.counter_offer(_goods({"wood": 1}), _goods({"grain": 1000000}), {"grain": 1000000}, {}, {"wood": 1}, allow)
 	if not _check(not limited.ok and limited.code == "NEGOTIATION_LIMIT" and limited.evaluations == 2048, "TR77 finite evaluation budget"): return
 	var invalid: Dictionary = Trade.side_value(_goods({"wood": 1.5}), {}, {}, true)
-	if not _check(not invalid.ok and not Trade.side_value(_goods({"coin": 1}), {}, {}, true).ok and not Trade.side_value(_goods({"wood": 1}), {}, {"wood": INF}, true).ok, "TR77 trust boundaries"): return
+	# Nekki 2026-11-19 「好」: coin is valued at one grain (it moves as a payment leg, never as goods).
+	var coin_value: Dictionary = Trade.side_value(_goods({"coin": 3}), {}, {}, true)
+	var grain_value: Dictionary = Trade.side_value(_goods({"grain": 3}), {}, {}, true)
+	if not _check(not invalid.ok and coin_value.ok and grain_value.ok and is_equal_approx(float(coin_value.value), float(grain_value.value)) and not Trade.side_value(_goods({"wood": 1}), {}, {"wood": INF}, true).ok, "TR77 trust boundaries; coin is worth a grain"): return
 	var interned: Dictionary = {&"wood": 1}
 	var live_value: Dictionary = Trade.side_value(_goods(interned), {&"wood": 1}, {&"wood": 0.0}, false)
 	if not _check(live_value.ok and float(live_value.value) == 0.375, "TR77 original interned resource keys"): return

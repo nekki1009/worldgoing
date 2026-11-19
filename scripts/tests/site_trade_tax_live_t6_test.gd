@@ -139,6 +139,23 @@ func _run() -> void:
 		"the coin moved untaxed as a payment leg; the grain paid its tax", [results, data.site.manual.cargo, stock.cargo, treasury.cargo]): return
 	var broke: Dictionary = controller.market_take("1", 1)
 	if not _check(not broke.ok, "coin the player does not carry cannot pay", broke): return
+	# Coin valued at one grain (Nekki 2026-11-19): an NPC takes coin in a haggled trade too.
+	data.site.manual.cargo.clear()
+	data.site.manual.cargo["coin"] = 20
+	var seller: Dictionary = controller.person_actions._person(npc)
+	seller.cargo.clear()
+	seller.cargo["grain"] = 12
+	var seller_coin := int(seller.cargo.get("coin", 0))
+	treasury_coin = int(treasury.cargo.get("coin", 0))
+	var haggled: Dictionary = controller.trade_propose(npc, {"coin": 12}, {"grain": 10})
+	if not _check(haggled.ok and str(haggled.get("decision", "")) in ["ACCEPT", "COUNTER"], "the NPC takes coin for grain in a haggled trade", haggled): return
+	var paid := int(haggled.player_gives.resources.get("coin", 0))
+	if not _check(controller.trade_accept(str(haggled.offer_id)).ok, "the haggled delivery starts"): return
+	lab.fire_action_cursor += 31.0
+	results = controller._trade().advance()
+	seller = controller.person_actions._person(npc)
+	if not _check(results.size() == 1 and results[0].ok and int(seller.cargo.get("coin", 0)) == seller_coin + paid and int(treasury.cargo.get("coin", 0)) == treasury_coin,
+		"the coin reached the seller untaxed", [results, seller.cargo, treasury.cargo, paid]): return
 
 	print("SITE_TRADE_TAX_LIVE_T6_PASS checks=", tax_checks, "; taxed take in kind to the treasury with receipts, no collector refused, rate 0 untaxed")
 	_finish_workflow_body()

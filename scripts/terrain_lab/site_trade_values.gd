@@ -82,6 +82,10 @@ static func validate_table() -> Dictionary:
 	if derive_resources() != RESOURCE_VALUES or derive_equipment() != EQUIPMENT_VALUES: return Runtime.fail("TRADE_VALUES_RECIPE_MISMATCH")
 	return Runtime.ok()
 
+## Nekki 2026-11-19 「好」: a coin is worth one grain when a trade pays in coin. Coin stays out of RESOURCE_VALUES and
+## resource_value (the derived goods table, TR-78); only SiteTrade's valuation reads COIN_VALUE.
+const COIN_VALUE := 1.0
+
 static func resource_value(resource: String) -> float:
 	return float(RESOURCE_VALUES.get(resource, -1.0)) if Runtime.Env.ITEM_NAMES.has(resource) else -1.0
 
