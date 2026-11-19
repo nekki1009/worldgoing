@@ -3,7 +3,7 @@ extends SceneTree
 ## a cadre leaves as captain of 乙國's team with a parked cart (grain 30); the player's own team also has a parked cart
 ## (iron 2) beside him. Checks:
 ## - the controller finds the player's own cart (he commands its team and stands beside it); a cadre of another team, or
-##   the player standing away from it, cannot use it; a cart in motion is refused;
+##   the player standing away from it, cannot use it; a cart in motion is refused; a ship's hold never trades (TR-41);
 ## - the player offers 1 iron from his cart's hold for 2 grain from the cadre team's cart; the team accepts and the
 ##   delivery moves goods between the two holds exactly once, both holds' versions rise once, his own cargo is untouched.
 ## Output: REGION_TRADE_T4_OWN_VEHICLE_PASS on success; quit(1) on any failure or the deadline.
@@ -118,6 +118,11 @@ func _run() -> void:
 	var session: Variant = controller._trade()
 	var foreign: Dictionary = session.player_side(captain, "vehicle:" + own_cart)
 	if not _check(not foreign.ok and str(foreign.code) == "NO_AUTHORITY", "a commander of another team cannot trade from the player's cart", foreign): return
+	# TR-41: a ship's hold never trades directly (goods are unloaded ashore first).
+	lab.terrain.site.vehicles["9003"] = {"id": "9003", "kind": "ship", "team_id": own_team, "cell": lab.terrain.index(player_cell + Vector2i(1, 1)), "cargo": {"iron": 1}}
+	var ship_trade: Dictionary = session.player_side(player, "vehicle:9003")
+	lab.terrain.site.vehicles.erase("9003")
+	if not _check(not ship_trade.ok and str(ship_trade.code) == "NO_TARGET", "a ship's hold never trades directly (TR-41)", ship_trade): return
 	# In motion: refused.
 	own_vehicle["move"] = {"pending": true}
 	var moving: Dictionary = controller.trade_propose_vehicle(captain, cart, {"iron": 1}, {"grain": 2}, true)
