@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-19 12:00（台北）
+更新：2026-11-19 12:45（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,11 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-19 12:45（台北）貿易 T4 完成
+- 已提交（未推送）：638a59d TR-40 全程測試 region_trade_t4_round_trip_test（原 Site 整隊出發→目的地抵達〔真 owner〕→目的地開成即時 Site→指揮者用馬車貨艙以鹽換鐵；鹽一路不多不少、成交一次、兩邊守恆）；a2932cf TR-41 船艙不能直接交易（貨要先卸上岸）。
+- 涵蓋說明：回程與 TR-40 同一對出發／抵達 owner（稅隊帶車回京已證）；途中吃糧屬 RegionTravel R1-U；TR-41 到港卸貨沿用既有船隻卸貨測試；TR-43 截停沿用既有攔路／遺物規則測試，未另寫貨物專測。
+- 下一步候選：TC8 365 日長跑（需 NPC 聚落與住戶範本）、triage-C 的 GD 工作隊測試、平民 C1c（等圖集）。
 
 ## 2026-11-19 12:00（台北）CIV-A0 上 D；貿易 T4 前兩片
 - 已提交（未推送）：2f454b0 CIV-A0 原生呈現覆寫（Codex CC-198；DLL 重建原生測試全過，發佈 7610cf4b…，舊 3c516ab2… 備份 evidence/CIV_APPLY_20261119；CA-01 在 D 通過；群眾家族 38/38）。
