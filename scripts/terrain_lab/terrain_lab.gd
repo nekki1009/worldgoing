@@ -2326,7 +2326,9 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			# sustain clock, which the native point publishes at the tick's end.
 			if site_controller != null:
 				site_controller.vehicles.update_ships(elapsed)
+				stage_started = _combat_profile_stage("crowd_ships", stage_started) # Optional counters only.
 				site_controller.vehicles.sync_ship_decks()
+			stage_started = _combat_profile_stage("crowd_ship_decks", stage_started) # Optional counters only.
 		else:
 			if site_controller != null: site_controller.vehicles.update_siege(elapsed)
 			if site_controller != null:

@@ -2848,7 +2848,9 @@ func update_ships(delta: float) -> void:
 			if vehicle.move.is_empty() and not driver_ready: vehicle.operator_id = 0
 		if vehicle.move.is_empty() and vehicle.command.is_empty() and driver_ready and crew_is_ready \
 				and team != null and not team.is_sustain_routed() and lab._region_owner_interval_active and controller.region_slot != null:
+			var ai_started := Time.get_ticks_usec() if lab.combat_profile_enabled else 0 # Optional counters only.
 			var selected: Dictionary = controller.region_slot._region_npc_live_ship_action(lab, vehicle)
+			lab._combat_profile_stage("ships_npc_action", ai_started)
 			if not selected.ok:
 				controller.latch_original_step_fault(selected)
 				return
@@ -2877,7 +2879,9 @@ func update_ships(delta: float) -> void:
 		var goal: Vector2i = lab.terrain.cell_from_index(int(vehicle.command.goal))
 		if anchor == goal: vehicle.command = {}; continue
 		var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+		var path_started := Time.get_ticks_usec() if lab.combat_profile_enabled else 0 # Optional counters only.
 		var path: Array[Vector2i] = lab.terrain.path_water_between(anchor, goal, func(cell: Vector2i) -> bool: return not _ship_fits(vehicle, Ship.footprint(str(vehicle.ship_type), cell, facing)))
+		lab._combat_profile_stage("ships_water_path", path_started)
 		if path.is_empty(): continue
 		var direction := path[0] - anchor
 		if direction != facing and direction != -facing:

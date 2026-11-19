@@ -525,5 +525,26 @@
   "mode": "headless",
   "timeout": 120,
   "note": "trade T6 S7 trade treaty"
+ },
+ {
+  "script": "res://scripts/tests/crowd_civilian_activity_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 120,
+  "note": "CIV-A3 activity rule"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_home_crowd_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C1c at home"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_shelter_rules_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "C1c shelter rules"
  }
 ]

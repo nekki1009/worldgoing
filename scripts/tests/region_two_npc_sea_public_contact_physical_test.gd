@@ -971,6 +971,21 @@ func _fleet_phase(label: String) -> void:
 	fleet_phase_marks.append([label, now - fleet_phase_last, action_paid, slot.control.logical_game_seconds if slot != null else -1.0])
 	fleet_phase_last = now
 	print("FLEET_PHASE ", label, " ms=", fleet_phase_marks[-1][1], " paid=", action_paid)
+	# Evidence only (-- --step-profile): TerrainLab's optional per-stage step counters for the phase that just ended,
+	# then cleared and (re)enabled on the live Site, which can be a new Lab after a reopen. Never a simulation clock.
+	if "--step-profile" in OS.get_cmdline_user_args():
+		var labs: Array = []
+		if current_scene is TerrainLab: labs.append(current_scene)
+		if fleet_live_lab is TerrainLab and not labs.has(fleet_live_lab): labs.append(fleet_live_lab)
+		for lab_node: Variant in labs:
+			if not is_instance_valid(lab_node): continue
+			var stages: Dictionary = lab_node.combat_profile_usec
+			var rows: Array = []
+			for stage: Variant in stages: rows.append([str(stage), int(int(stages[stage]) / 1000)])
+			rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
+			print("FLEET_STEP_PROFILE ", label, " ", JSON.stringify(rows))
+			lab_node.combat_profile_usec = {}
+			lab_node.combat_profile_enabled = true
 
 func _run() -> void:
 	fleet_phase_last = Time.get_ticks_msec()
