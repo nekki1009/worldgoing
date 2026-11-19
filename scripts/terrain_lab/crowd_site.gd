@@ -28,6 +28,7 @@ const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
 const SiegeWorkAppend := preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const Atlas := preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
+const CivilianActivity := preload("res://scripts/terrain_lab/crowd_civilian_activity.gd")
 const ExchangeTimings := preload("res://scripts/terrain_lab/character_exchange_timings.gd")
 const Site := preload("res://scripts/terrain_lab/site_controller.gd")
 const PersonOwner := preload("res://scripts/terrain_lab/crowd_person_owner.gd")
@@ -111,6 +112,7 @@ var _ammo_keys := {}
 var _host_fire_active := false
 var _fire_visual_dirty := false
 var _kit_cache := {}
+var _civilian_activity := CivilianActivity.new() # CIV-A3 / 平民 C1c: residents' work clips (presentation only)
 var _kit_windows := PackedFloat32Array()
 var order_calls := 0
 var unknown_fields := 0
@@ -1535,6 +1537,7 @@ func render(frame_dt: float) -> void:
 	if _body_pending or _body_signature() != _body_sig: _refresh_bodies()
 	if not _flush_kit_ids(): return
 	_prepare_actor_rows()
+	_civilian_activity.update(self, frame_dt)
 	var buf: PackedFloat32Array = crowd.pack_frame(CELL, frame_dt)
 	var spans: PackedInt32Array = crowd.row_spans()
 	var bounds: PackedFloat32Array = crowd.row_bounds()
@@ -1926,6 +1929,7 @@ func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteA
 	view.setup(host, 64)
 	var _mask_refs: Array = view.prewarm_dye_maps(required + optional) if reuse else []
 	crowd.render_clear()
+	_civilian_activity.clear()
 	var windows := PackedFloat32Array()
 	windows.resize(SLOTS.size())
 	var kit_of := {}
@@ -2038,7 +2042,11 @@ func _make_kit(page_index: int, palette: int, appearance: Dictionary, windows: P
 			tracks.append(track)
 	if windows[SLOTS.find("down")] <= 0.0: windows[SLOTS.find("down")] = 2.875
 	if windows[SLOTS.find("get_up")] <= 0.0: windows[SLOTS.find("get_up")] = 2.2
-	return crowd.render_add_kit(page_index, palette, float(page.scale), tracks)
+	var kit: int = crowd.render_add_kit(page_index, palette, float(page.scale), tracks)
+	# CIV-A3: a civilian page also carries the four work clips; a page without them simply shows no work activity.
+	if civilian and kit >= 0 and not _civilian_activity.register_kit(crowd, page, kit):
+		print("crowd10k: civilian page without work clips (no work activity): ", JSON.stringify(appearance.parts))
+	return kit
 
 
 func _solo_team_id() -> int:

@@ -71,6 +71,34 @@ func _run() -> void:
  layer.scale = Vector2.ONE * 3.0
  layer.position = Vector2(-1024,-1024)
  owner.lab = layer
+ image = await _draw_packet(owner,native)
+ need(image != null and image.save_png(out + "/native_crowdsite_batch.png") == OK,"actual CrowdSite GPU batch saved")
+ # CIV-A3 (平民 C1c): the four work clips through CrowdSite's activity tracks and the native presentation override.
+ need(owner._civilian_activity.has_kits(),"civilian work tracks registered by the real kit builder")
+ var work := ["civilian_sit","civilian_fetch_water","civilian_lift","civilian_carry"]
+ var tracks := PackedInt32Array()
+ var ages := PackedFloat32Array()
+ for index in 4:
+  var kit := int(owner._kit_ids[index])
+  need(owner._civilian_activity._tracks.has(kit) and owner._civilian_activity._tracks[kit].size() == 4,"four work clips on kit " + str(kit))
+  tracks.append_array(owner._civilian_activity._tracks[kit][work[index]])
+  ages.append([1.2,1.0,0.8,0.5][index])
+ var plain: PackedFloat32Array = native.pack_frame(64.0,0.0)
+ need(native.render_set_activity(PackedInt32Array([0,1,2,3]),tracks,ages,PackedByteArray([1,1,1,1])),"native takes the four work activities")
+ var worked: PackedFloat32Array = native.pack_frame(64.0,0.0)
+ need(plain != worked,"the work activity changes the native packet")
+ image = await _draw_packet(owner,native)
+ need(image != null and image.save_png(out + "/native_work_activity.png") == OK,"work activity GPU batch saved")
+ need(native.render_set_activity(PackedInt32Array(),PackedInt32Array(),PackedFloat32Array(),PackedByteArray()) and native.pack_frame(64.0,0.0) == plain,"clearing the activity restores the original packet")
+ var file := FileAccess.open(out + "/result.json",FileAccess.WRITE)
+ file.store_string(JSON.stringify({"status":"FAIL" if failed else "PASS","checks":checks,"scope":"real CrowdSite kit/node and native packet; CIV-A3 work activity tracks through the native override"},"  ",true))
+ print("CIV_VISUAL_", "FAIL" if failed else "PASS", " checks=",checks)
+ quit(1 if failed else 0)
+
+## The production CrowdSite MultiMesh nodes draw the native packet; returns the window image.
+func _draw_packet(owner: Node, native: RefCounted) -> Image:
+ for node: Variant in owner.nodes.values():
+  if node is MultiMeshInstance2D: node.visible = false
  var buf: PackedFloat32Array = native.pack_frame(64.0,0.0)
  var spans: PackedInt32Array = native.row_spans()
  var bounds: PackedFloat32Array = native.row_bounds()
@@ -86,9 +114,4 @@ func _run() -> void:
   node.visible = true
  for tick in 4: await process_frame
  await RenderingServer.frame_post_draw
- image = root.get_texture().get_image()
- need(image != null and image.save_png(out + "/native_crowdsite_batch.png") == OK,"actual CrowdSite GPU batch saved")
- var file := FileAccess.open(out + "/result.json",FileAccess.WRITE)
- file.store_string(JSON.stringify({"status":"FAIL" if failed else "PASS","checks":checks,"scope":"real CrowdSite kit/node and native packet; resident activity owner follows in A4"},"  ",true))
- print("CIV_VISUAL_", "FAIL" if failed else "PASS", " checks=",checks)
- quit(1 if failed else 0)
+ return root.get_texture().get_image()
