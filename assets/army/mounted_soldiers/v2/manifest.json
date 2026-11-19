@@ -50309,9 +50309,9 @@
 	],
 	"presentation": "Two layers on one ground anchor: the original horse with tack (rider hidden), and the ordinary soldier rider with the horse depth-occluding far limbs. Draw horse, then rider. Ranged clips are foot clips forced onto the mounted rig (unverified seat); five-slot dye masks on the rider; the horse is undyed. Pages are lossless Image resources.",
 	"source_fingerprints": {
-		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "0e76c65be9a51b6827aeb29aa7bf8cda",
-		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "5806668721ef33b75054310f4caa8e92",
-		"res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json": "d869730280f9a56b858e1707e4130cd3",
+		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "8c98639fca305d617cc7132cb232094d",
+		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "b541208a463cff72fbe4db5c36f58d89",
+		"res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json": "5ef732f3042d6507d09ead20538ff6dc",
 		"res://assets/mounts/horse/standard_horse_pack.glb": "efe01456dec422fcb06d338fecb59a9c",
 		"res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
 		"res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
@@ -50319,8 +50319,8 @@
 		"res://scripts/tools/bake_mounted_soldiers.gd": "653abd725114c1fa0112db637b90b9a4",
 		"res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
 		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
-		"res://scripts/ui/equipment_dye.gd": "bca8b3f03fc03cf5254fe0743361dbfd",
-		"res://scripts/ui/human_character_3d_editor.gd": "34190c5b67f3ea8c8aec633808a4310c",
+		"res://scripts/ui/equipment_dye.gd": "8d63fdfb5a491c9979621020f1e2e36d",
+		"res://scripts/ui/human_character_3d_editor.gd": "91e3e7d561818bc000b71ed7b18d10ba",
 		"res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
 	},
 	"version": 2

@@ -16,6 +16,10 @@ var cases: Array[String] = []
 var manifest: Dictionary = {}
 
 func _initialize() -> void:
+	if "--ca03" in OS.get_cmdline_user_args():
+		set_script(load("res://scripts/tests/civilian_atlas_ca03.gd"))
+		call_deferred("_run")
+		return
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
@@ -227,7 +231,9 @@ func _run() -> void:
 	copy[0].appearance.parts.boots = "none"
 	if not _need(Profile.catalog()[0].appearance.parts.boots == "boots_civilian_straw_01", "callers cannot mutate frozen catalog"): return
 	for row: Dictionary in contract.catalog:
-		if not _need(row.publication == "UNPUBLISHED" and not HumanCharacter3DEditor.valid_appearance(row.appearance), "future straw gear honestly unpublished in A0"): return
+		# A0 asserted the straw gear was not yet in the character packs. CIV-A1/A1F (applied 2026-11-19) added it, so every
+		# catalog appearance is now a valid editor appearance; its atlas pages are admitted by the --ca03 run.
+		if not _need(HumanCharacter3DEditor.valid_appearance(row.appearance), "the straw gear of every catalog row is in the character packs (CIV-A1/A1F)"): return
 	manifest = JSON.parse_string(FileAccess.get_file_as_string(Atlas.BASE_MANIFEST))
 	var admitted: Dictionary = Atlas.admit_crowd_appearances([manifest.appearance], [])
 	if not _need(Atlas.supports(manifest.appearance) and admitted.ok, "existing real appearance passes current original native atlas admission"): return

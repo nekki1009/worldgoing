@@ -73,3 +73,53 @@ static func contract() -> Dictionary:
 		"native_directions": NATIVE_DIRECTIONS.duplicate(), "frames_per_recipe": frames(), "phase1_frames_per_recipe": frames(true),
 		"new_work_choice": "carry_lift_not_hoe", "geometry_recipes": 4, "palette_only_no_extra_pages": true,
 		"source_sha256": source_hashes()}
+
+const Clips = preload("res://scripts/terrain_lab/civilian_atlas_clips.gd")
+const ROOT := "res://assets/characters/terrain_lab_army/civilian/v1"
+const EXTRA_SOURCES := [
+	"res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json",
+	"res://scripts/ui/character_render_contract.gd",
+	"res://scripts/terrain_lab/terrain_army_dye_atlas.gd",
+	"res://scripts/tools/bake_terrain_army_dyes.gd",
+	"res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader",
+	"res://scripts/terrain_lab/terrain_army_civilian_atlas.gd",
+	"res://scripts/terrain_lab/civilian_atlas_clips.gd",
+	"res://scripts/terrain_lab/civilian_atlas_capture.gd",
+	"res://scripts/terrain_lab/terrain_army_atlas_capture.gd",
+	"res://scripts/terrain_lab/terrain_army_equipment_atlas.gd",
+	"res://scripts/terrain_lab/terrain_army_batch_view.gd",
+	"res://scripts/terrain_lab/crowd_site.gd",
+	"res://scripts/tools/publish_civilian_atlas.gd",
+	"res://native/crowd10k/src/crowd_core.hpp", "res://native/crowd10k/src/render.cpp",
+	"res://native/crowd10k/godot/crowd10k_gdext.cpp"]
+
+static func geometry(appearance: Dictionary) -> Dictionary:
+	var result := HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance)
+	return JSON.parse_string(JSON.stringify(result))
+
+static func plan(appearance: Dictionary) -> Dictionary:
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
+	var clean := geometry(appearance)
+	var found := false
+	for row: Dictionary in catalog():
+		if clean == geometry(row.appearance): found = true
+	if not found: return {}
+	return {"ok":true,"key":JSON.stringify(clean,"",true).sha256_text(),"appearance":clean,
+		"clips":JSON.parse_string(JSON.stringify(Clips.CLIPS)),"directions":Clips.DIRECTIONS.duplicate(true),"recipe_total":256,
+		"source_manifest_md5":FileAccess.get_md5("res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json")}
+
+static func fingerprints() -> Dictionary:
+	var result := preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd").fingerprints()
+	if result.is_empty(): return {}
+	for path: String in EXTRA_SOURCES:
+		var digest := FileAccess.get_md5(path)
+		if digest.length() != 32: return {}
+		result[path] = digest
+	return result
+
+static func source_namespace(sources: Dictionary) -> String:
+	return JSON.stringify(sources,"",true).sha256_text() if not sources.is_empty() else ""
+
+static func native_clip(slot: String) -> String:
+	# Unsupported combat/work slots are explicitly absent; they are not admitted clips.
+	return slot if slot in ["idle","walk","run","hit","knockback","down","unconscious","get_up"] else ""

@@ -65,6 +65,7 @@ const PART_SLOTS := [
 		{"id": &"helmet_mingguang_01", "label": "鐵製｜明光配盔", "material": "iron", "culture": "chinese", "prefixes": ["Helmet_Mingguang_01"]},
 		{"id": &"helmet_chinese_leather_01", "label": "皮製｜中式皮盔", "material": "leather", "culture": "chinese", "prefixes": ["Helmet_Chinese_Leather_01"]},
 		{"id": &"helmet_western_iron_01", "label": "鐵製｜西式鐵盔", "material": "iron", "culture": "western", "prefixes": ["Helmet_Western_Iron_01"]},
+		{"id": &"helmet_civilian_straw_01", "label": "布製｜中式草編斗笠", "material": "cloth", "culture": "chinese", "prefixes": ["Helmet_Civilian_Straw_01"]},
 		{"id": &"helmet_cloth_chinese_01", "label": "布製｜中式布帽", "material": "cloth", "culture": "chinese", "prefixes": ["Helmet_Cloth_Chinese_01"]},
 		{"id": &"helmet_cloth_japanese_01", "label": "布製｜日式烏帽", "material": "cloth", "culture": "japanese", "prefixes": ["Helmet_Cloth_Japanese_01"]},
 		{"id": &"helmet_cloth_western_01", "label": "布製｜西式軟呢帽", "material": "cloth", "culture": "western", "prefixes": ["Helmet_Cloth_Western_01"]},
@@ -124,6 +125,7 @@ const PART_SLOTS := [
 		{"id": &"boots_iron_01", "label": "鐵製｜中式鐵靴", "material": "iron", "culture": "chinese", "prefixes": ["Boots_Iron_01"]},
 		{"id": &"boots_mingguang_01", "label": "鐵製｜明光配靴", "material": "iron", "culture": "chinese", "prefixes": ["Boots_Mingguang_01"]},
 		{"id": &"boots_western_iron_01", "label": "鐵製｜西式鐵靴", "material": "iron", "culture": "western", "prefixes": ["Boots_Western_Iron_01"]},
+		{"id": &"boots_civilian_straw_01", "label": "布製｜中式草鞋", "tuck_trousers": false, "material": "cloth", "culture": "chinese", "prefixes": ["Boots_Civilian_Straw_01"]},
 		{"id": &"boots_medieval_chinese_01", "label": "布製｜中式布鞋", "tuck_trousers": false, "material": "cloth", "culture": "chinese", "prefixes": ["Boots_Medieval_Chinese_01"]},
 		{"id": &"boots_medieval_japanese_01", "label": "布製｜日式足袋草鞋", "tuck_trousers": false, "material": "cloth", "culture": "japanese", "prefixes": ["Boots_Medieval_Japanese_01"]},
 		{"id": &"boots_medieval_european_01", "label": "皮製｜西式軟皮短鞋", "tuck_trousers": false, "material": "leather", "culture": "western", "prefixes": ["Boots_Medieval_European_01"]},
@@ -2708,7 +2710,7 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 		brow_y = 0.095
 	elif helmet_id == &"helmet_chinese_leather_01":
 		brow_y = 0.110
-	elif str(helmet_id).begins_with("helmet_cloth_"):
+	elif str(helmet_id).begins_with("helmet_cloth_") or helmet_id == &"helmet_civilian_straw_01":
 		brow_y = 0.109
 	var node_name := str(mesh_node.name)
 
@@ -2734,7 +2736,7 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 		existing_override.set_shader_parameter("inv_head_transform", inv_head)
 		existing_override.set_shader_parameter("brow_cut_y", brow_y)
 		existing_override.set_shader_parameter("scalp_radii", Vector2(.108,.124) if helmet_id == &"helmet_western_steel_01" else Vector2(.113,.130))
-		existing_override.set_shader_parameter("cloth_hat_mask", str(helmet_id).begins_with("helmet_cloth_"))
+		existing_override.set_shader_parameter("cloth_hat_mask", str(helmet_id).begins_with("helmet_cloth_") or helmet_id == &"helmet_civilian_straw_01")
 		existing_override.set_shader_parameter("open_western_helmet", helmet_id in [&"helmet_leather_01", &"helmet_western_iron_01", &"helmet_western_steel_01"])
 		existing_override.set_shader_parameter("cloth_hat_up", hat_up)
 		existing_override.set_shader_parameter("tuck_hair_piece", node_name.ends_with("_Buns") or node_name.ends_with("_Loose") or node_name.ends_with("_Band"))
@@ -2765,7 +2767,7 @@ func _apply_equipment_style() -> void:
 			# New variants retain their packed grain/flint textures and PBR response.
 			mesh_node.material_overlay = null
 			continue
-		if node_name.begins_with("Outfit_Medieval_") or node_name.begins_with("Boots_Medieval_") or node_name.begins_with("Helmet_Cloth_"):
+		if node_name.begins_with("Outfit_Medieval_") or node_name.begins_with("Boots_Medieval_") or node_name.begins_with("Helmet_Cloth_") or node_name.begins_with("Boots_Civilian_Straw_01_") or node_name.begins_with("Helmet_Civilian_Straw_01_"):
 			mesh_node.material_overlay = null
 			continue
 		if node_name.begins_with("Cape_Chinese_01_") or node_name.begins_with("Armor_Chinese_Leather_01_") or node_name.begins_with("Helmet_Mingguang_01_") or node_name.begins_with("Helmet_Chinese_Leather_01_") or node_name.begins_with("Outfit_Chinese_Lining_01_") or node_name.begins_with("Boots_Chinese_Leather_01_"):

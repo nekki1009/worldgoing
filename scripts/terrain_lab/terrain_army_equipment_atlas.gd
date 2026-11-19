@@ -1,5 +1,6 @@
 extends RefCounted
 ## Shared presentation data only. No soldier, item, health or animation clock owner.
+const Civilian = preload("res://scripts/terrain_lab/terrain_army_civilian_atlas.gd")
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
 const RangedAtlas = preload("res://scripts/terrain_lab/terrain_army_ranged_atlas.gd")
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
@@ -15,6 +16,8 @@ const WAGON_FOOT_BAKER := "res://scripts/tools/bake_wagon_rider_foot.gd"
 const MIXED_CAPTURE := "res://scripts/terrain_lab/terrain_army_atlas_capture.gd"
 const MIXED_ROOT := "user://equipment_atlas/v1"
 const PAGE_CACHE_BYTES := 64 * 1024 * 1024
+static var _civilian := {}
+static var _civilian_sources := {}
 static var _catalog_path := CATALOG
 static var _catalog_checked := false
 static var _catalog := {}
@@ -42,6 +45,8 @@ static var _mixed_namespace := ""
 static var _preparation: Node
 
 static func refresh_female_sources() -> void:
+	_civilian.clear()
+	_civilian_sources.clear()
 	# Recheck disk provenance at a load boundary, never on each rendered frame.
 	_female.clear()
 	_female_dye.clear()
@@ -163,6 +168,7 @@ static func _crowd_source_set(admission: Dictionary, key: String, extra_paths: A
 
 static func _crowd_appearance_ready(appearance: Dictionary, admission: Dictionary) -> bool:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
+	if not Civilian.plan(appearance).is_empty(): return not civilian_recipe(appearance, admission).is_empty() and not _dye_entry(appearance, admission).is_empty()
 	if not _wagon_foot_recipe(appearance, admission).is_empty(): return true
 	# Crowd's existing BatchView requires the exact mask even for an undyed
 	# appearance. It still performs page/decode/size/track admission afterward.
@@ -178,6 +184,7 @@ static func _crowd_appearance_ready(appearance: Dictionary, admission: Dictionar
 
 static func supports(appearance: Dictionary) -> bool:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
+	if not Civilian.plan(appearance).is_empty(): return not civilian_recipe(appearance).is_empty() and not dye_entry(appearance).is_empty()
 	if not wagon_foot_recipe(appearance).is_empty(): return true
 	if not mixed_recipe(appearance).is_empty():
 		return appearance.get("equipment_dyes", {}).is_empty() or not dye_entry(appearance).is_empty()
@@ -192,7 +199,9 @@ static func supports(appearance: Dictionary) -> bool:
 
 static func frame(appearance: Dictionary, clip: String, direction: String, sample_time: float) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
-	var recipe := wagon_foot_recipe(appearance)
+	var recipe := civilian_recipe(appearance)
+	if not Civilian.plan(appearance).is_empty() and (recipe.is_empty() or dye_entry(appearance).is_empty()): return {}
+	if recipe.is_empty(): recipe = wagon_foot_recipe(appearance)
 	if recipe.is_empty(): recipe = mixed_recipe(appearance)
 	if recipe.is_empty():
 		if appearance.get("body") == 1:
@@ -361,8 +370,11 @@ static func dye_entry(appearance: Dictionary) -> Dictionary:
 
 static func _dye_entry(appearance: Dictionary, admission: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
-	var recipe := _mixed_recipe(appearance, admission)
-	var mixed := not recipe.is_empty()
+	var recipe := civilian_recipe(appearance, admission)
+	var civilian := not Civilian.plan(appearance).is_empty()
+	if civilian and recipe.is_empty(): return {}
+	if recipe.is_empty(): recipe = _mixed_recipe(appearance, admission)
+	var mixed := civilian or not recipe.is_empty()
 	if recipe.is_empty() and appearance.get("body") != 1: return DyeAtlas.entry(appearance)
 	if recipe.is_empty(): recipe = _female_recipe(appearance, admission)
 	if recipe.is_empty(): return {}
@@ -385,7 +397,7 @@ static func _dye_entry(appearance: Dictionary, admission: Dictionary) -> Diction
 
 static func apply_dye(sprite: Sprite2D, appearance: Dictionary) -> bool:
 	if sprite.get_meta("equipment_dye_appearance", {}) == appearance: return true
-	if appearance.get("body") != 1 and mixed_recipe(appearance).is_empty(): return DyeAtlas.apply(sprite, appearance)
+	if appearance.get("body") != 1 and civilian_recipe(appearance).is_empty() and mixed_recipe(appearance).is_empty(): return DyeAtlas.apply(sprite, appearance)
 	return DyeAtlas.apply_record(sprite, appearance, dye_entry(appearance) if not appearance.get("equipment_dyes", {}).is_empty() else {})
 
 static func _mixed_key(appearance: Dictionary) -> String:
@@ -678,3 +690,43 @@ static func _number(value: Variant) -> bool:
 
 static func _integer(value: Variant, minimum: int, maximum: int) -> bool:
 	return _number(value) and float(value) == floorf(float(value)) and float(value) >= minimum and float(value) <= maximum
+
+static func civilian_recipe(appearance: Dictionary, admission: Dictionary = {}) -> Dictionary:
+	var plan := Civilian.plan(appearance)
+	if plan.is_empty(): return {}
+	var sources: Dictionary
+	if admission.is_empty():
+		if _civilian_sources.is_empty(): _civilian_sources = Civilian.fingerprints()
+		sources = _civilian_sources
+	else:
+		sources = _crowd_source_set(admission, "civilian", Civilian.EXTRA_SOURCES)
+	if sources.is_empty(): return {}
+	var directory := Civilian.ROOT + "/" + Civilian.source_namespace(sources) + "/" + str(plan.key)
+	if _civilian.has(directory): return _civilian[directory]
+	var recipe := _single_page_recipe(plan.appearance, directory, "terrain_army_civilian_recipe", sources, 0, plan)
+	if recipe.is_empty(): return {}
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(directory + "/manifest.json"))
+	var page: Dictionary = manifest.pages[0]
+	var png := Image.load_from_file(page.path)
+	var resource := ResourceLoader.load(page.resource_path, "Texture2D", ResourceLoader.CACHE_MODE_IGNORE) as Texture2D
+	if png == null or resource == null: return {}
+	var restored := resource.get_image()
+	if restored == null or png.get_width() != int(page.width) or png.get_height() != int(page.height) or restored.get_size() != png.get_size(): return {}
+	png.convert(Image.FORMAT_RGBA8)
+	restored.convert(Image.FORMAT_RGBA8)
+	if png.get_data() != restored.get_data() or _civilian_digest(png) != manifest.metrics.pixel_sha256: return {}
+	var dye_path := directory + "/dye.json"
+	if not FileAccess.file_exists(dye_path): return {}
+	var dye: Variant = JSON.parse_string(FileAccess.get_file_as_string(dye_path))
+	if not dye is Dictionary or not _inside(str(dye.get("mask_path","")),directory + "/"): return {}
+	if not FileAccess.file_exists(dye.mask_path): return {}
+	var mask := Image.load_from_file(dye.mask_path)
+	if mask == null or mask.get_size() != png.get_size(): return {}
+	_civilian[directory] = recipe
+	return recipe
+
+static func _civilian_digest(image: Image) -> String:
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(image.get_data())
+	return context.finish().hex_encode()

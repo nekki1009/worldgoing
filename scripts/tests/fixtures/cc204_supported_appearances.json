@@ -1,0 +1,3063 @@
+[
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m31/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m31/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m31/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m31/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m31/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m30/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m30/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m30/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m30/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m30/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m29/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m29/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m29/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m29/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m29/512_072/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/longsword_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m28/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m28/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m28/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m28/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m28/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m27/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m27/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m27/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m27/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m27/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m26/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m26/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m26/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m26/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m26/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m25/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m25/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m25/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m25/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m25/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m24/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m24/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m24/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m24/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m24/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m23/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m23/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m23/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m23/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m23/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m22/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m22/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m22/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m22/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m22/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m21/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m21/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m21/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m21/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m21/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m20/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m20/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m20/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m20/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m20/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m19/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m19/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m19/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m19/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m19/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m18/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m18/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m18/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m18/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m18/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m17/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m17/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m17/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m17/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m17/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m16/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m16/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m16/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m16/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m16/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m15/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m15/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m15/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m15/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m15/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m14/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m14/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m14/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m14/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m14/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m13/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m13/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m13/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m13/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m13/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m12/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m12/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m12/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m12/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m12/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m11/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m11/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m11/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m11/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m11/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m10/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m10/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m10/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m10/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m10/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m09/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m09/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m09/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m09/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m09/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m08/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m08/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m08/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m08/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m08/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m07/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m07/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m07/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m07/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m07/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m06/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m06/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m06/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m06/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m06/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m05/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m05/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m05/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m05/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m05/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m04/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m04/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m04/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m04/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m04/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m03/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m03/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m03/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m03/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m03/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m02/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m02/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m02/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m02/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m02/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m01/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m01/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m01/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m01/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m01/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "none",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "none",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": false,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m00/000_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m00/128_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m00/256_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m00/384_128/manifest.json",
+      "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/m00/512_072/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "axe_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "axe_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "axe_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "axe_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/bow_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/bow_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/bow_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/bow_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/crossbow_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/crossbow_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/crossbow_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/crossbow_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "dagger_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/dagger_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "dagger_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/dagger_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "dagger_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/dagger_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "dagger_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/dagger_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "hammer_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/hammer_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "hammer_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/hammer_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "hammer_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/hammer_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "hammer_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/hammer_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/longsword_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/longsword_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/longsword_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "pickaxe_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/pickaxe_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "pickaxe_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/pickaxe_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "pickaxe_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/pickaxe_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "pickaxe_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/pickaxe_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "shovel_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/shovel_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "shovel_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/shovel_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "shovel_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/shovel_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "shovel_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/shovel_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/spear_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/spear_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/spear_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/spear_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "tool_hammer_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/tool_hammer_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "tool_hammer_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/tool_hammer_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "tool_hammer_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/tool_hammer_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "tool_hammer_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/tool_hammer_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "wood_axe_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/wood_axe_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "wood_axe_01_steel"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/wood_axe_01_steel/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "wood_axe_01_stone"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/wood_axe_01_stone/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "wood_axe_01_wood"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/wood_axe_01_wood/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_female/v1/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_female/ranged/v1/bow_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/characters/terrain_lab_army/standard_female/ranged/v1/crossbow_01/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "outfit_medieval_chinese_01",
+        "boots": "boots_medieval_chinese_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "helmet_cloth_chinese_01",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/vehicles/logistics/v1/riders/foot/female/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "outfit_medieval_chinese_01",
+        "boots": "boots_medieval_chinese_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "helmet_cloth_chinese_01",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/vehicles/logistics/v1/riders/foot/male/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "axe_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "hammer_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "dagger_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "axe_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "hammer_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "dagger_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "spear_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "bow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": true,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "crossbow_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "user://equipment_atlas/v1",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://assets/army/mounted_soldiers/v2/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/f1adafab36d4e65f3ad0b970a3fa0773b1885d1f05680458ab4cc4f00e92895a/488028d75ae5e9fb907542c185ca0cda3ba1f6679a7fb3ba9beaefe36248c079/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/dd1e5573deac66954d00c00b03ff7680c46ef5282d38813d48b5e9fd4e0818ec/488028d75ae5e9fb907542c185ca0cda3ba1f6679a7fb3ba9beaefe36248c079/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/488028d75ae5e9fb907542c185ca0cda3ba1f6679a7fb3ba9beaefe36248c079/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/7d4fd8f1ddb39be91c6d4534e2dcddaf339fe615af0167dec9f4344d27ad4720/488028d75ae5e9fb907542c185ca0cda3ba1f6679a7fb3ba9beaefe36248c079/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/5d92a22eb34f588b242b3687dd2d4e129c3c98487c430b8ae66325a66f751755/488028d75ae5e9fb907542c185ca0cda3ba1f6679a7fb3ba9beaefe36248c079/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "helmet_leather_01",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/f1adafab36d4e65f3ad0b970a3fa0773b1885d1f05680458ab4cc4f00e92895a/50e1b7b2fb6bad8e2345d5b53b9a6ca26dd4f69189e8701fe531c89e8e9c4ad8/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/50e1b7b2fb6bad8e2345d5b53b9a6ca26dd4f69189e8701fe531c89e8e9c4ad8/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "helmet_leather_01",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/f1adafab36d4e65f3ad0b970a3fa0773b1885d1f05680458ab4cc4f00e92895a/98fe3824a0a2e7d596b68cfb04bece5415ae28187bfd7e4186cafa2f005e1ab9/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/98fe3824a0a2e7d596b68cfb04bece5415ae28187bfd7e4186cafa2f005e1ab9/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/354f13a84b85e1229ed6261a4218c6c427e3d8e4081a23456ba2e486b9318294/98fe3824a0a2e7d596b68cfb04bece5415ae28187bfd7e4186cafa2f005e1ab9/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "none",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/f1adafab36d4e65f3ad0b970a3fa0773b1885d1f05680458ab4cc4f00e92895a/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/ef72e26fe2f7dc99a934d7cf60501515866859561cac16028c9e531c25c215d9/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/7d4fd8f1ddb39be91c6d4534e2dcddaf339fe615af0167dec9f4344d27ad4720/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/5d92a22eb34f588b242b3687dd2d4e129c3c98487c430b8ae66325a66f751755/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/354f13a84b85e1229ed6261a4218c6c427e3d8e4081a23456ba2e486b9318294/a02dd9fdd447f5e2fee38ea362ead4f0b9ecd5b2012a9facb8288f6f599469ce/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "shield_heater_01",
+        "weapon": "longsword_01"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/f1adafab36d4e65f3ad0b970a3fa0773b1885d1f05680458ab4cc4f00e92895a/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/dd1e5573deac66954d00c00b03ff7680c46ef5282d38813d48b5e9fd4e0818ec/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/7d4fd8f1ddb39be91c6d4534e2dcddaf339fe615af0167dec9f4344d27ad4720/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/5d92a22eb34f588b242b3687dd2d4e129c3c98487c430b8ae66325a66f751755/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/159636171b02263f7b22185438742ad11759d267ff6a7954defca95ec66de5ef/a26101e6561ec5c2d7255d5c8212751c91292f804d61b81bf781050dc20fd989/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 0.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_male_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/ef72e26fe2f7dc99a934d7cf60501515866859561cac16028c9e531c25c215d9/3aee01e11c8513f31f547525257e4c7405d8ca6f69e21a8f9cc960acdc0e7a00/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/dd1e5573deac66954d00c00b03ff7680c46ef5282d38813d48b5e9fd4e0818ec/3aee01e11c8513f31f547525257e4c7405d8ca6f69e21a8f9cc960acdc0e7a00/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/3aee01e11c8513f31f547525257e4c7405d8ca6f69e21a8f9cc960acdc0e7a00/manifest.json",
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/0fbc5c8ddf438c6f169fed221408c7515d5359d632278bf869638e970f867891/3aee01e11c8513f31f547525257e4c7405d8ca6f69e21a8f9cc960acdc0e7a00/manifest.json"
+    ]
+  },
+  {
+    "appearance": {
+      "body": 1.0,
+      "coat": "bay",
+      "hair_dye": "9b775dff",
+      "hair_dyed": false,
+      "hair_mask": "auto",
+      "mounted": false,
+      "parts": {
+        "armor": "armor_light_leather_01",
+        "boots": "boots_leather_01",
+        "cape": "none",
+        "face": "face_standard_01",
+        "hair": "hair_female_01",
+        "helmet": "none",
+        "outfit": "outfit_underlayer_01",
+        "shield": "none",
+        "weapon": "none"
+      },
+      "tack": true
+    },
+    "mixed_root": "res://output/site_siege_close_20261004/equipment_atlas_runtime",
+    "supports": true,
+    "crowd_admitted": true,
+    "origin_paths": [
+      "res://output/site_siege_close_20261004/equipment_atlas_runtime/a704e1b4e51590518cdf26f394d8e7aad7f91816c9f9390e4e4931f11a8602dc/3a0f22d628239cefd0ad426ae97eecb6dcd414fa6a3893723fe9e41663e8f28c/manifest.json"
+    ]
+  }
+]

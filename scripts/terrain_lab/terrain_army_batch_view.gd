@@ -1006,7 +1006,8 @@ func _describe(appearance: Dictionary) -> Dictionary:
 				for direction: String in _army._combat_bake.contact_clocks[clip]:
 					sequences[clip + "|" + direction] = _army._combat_bake.contact_clocks[clip][direction][3]
 		else:
-			var recipe := wagon_foot
+			var recipe := Atlas.civilian_recipe(geometry)
+			if recipe.is_empty(): recipe = wagon_foot
 			if recipe.is_empty(): recipe = Atlas.mixed_recipe(geometry)
 			if recipe.is_empty(): recipe = Atlas.female_recipe(geometry) if geometry.body == 1 else Atlas.RangedAtlas.recipe(geometry)
 			if recipe.is_empty():

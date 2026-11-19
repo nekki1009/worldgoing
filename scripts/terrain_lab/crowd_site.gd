@@ -1894,6 +1894,8 @@ func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteA
 				return false
 			continue
 		required.append(appearance)
+		# Civilian profiles are exact unarmed publications; no alternate equipment recipe.
+		if not Atlas.Civilian.plan(appearance).is_empty(): continue
 		var unarmed: Dictionary = appearance.duplicate(true)
 		unarmed.parts.weapon = "none"
 		unarmed.parts.shield = "none"
@@ -1963,6 +1965,7 @@ func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteA
 
 
 func _clip_for(slot: String, appearance: Dictionary) -> String:
+	if not Atlas.Civilian.plan(appearance).is_empty(): return Atlas.Civilian.native_clip(slot)
 	var weapon := StringName(str(appearance.parts.get("weapon", "none")))
 	var family = HumanCharacter3DEditor.WeaponMaterials.family(weapon)
 	match slot:
@@ -1995,6 +1998,7 @@ func _make_kit(page_index: int, palette: int, appearance: Dictionary, windows: P
 	var tracks := PackedInt32Array()
 	var exchange_slots := ["attack", "attack_heavy", "guard", "hit", "knockback", "shoot"]
 	var mounted := bool(appearance.get("mounted", false))
+	var civilian := not Atlas.Civilian.plan(appearance).is_empty()
 	for si in range(SLOTS.size()):
 		var slot: String = SLOTS[si]
 		# CAV-3: a rider's page holds the ride clips (SiteMountedSoldierAtlas); slots without one fall back to idle natively.
@@ -2030,6 +2034,7 @@ func _make_kit(page_index: int, palette: int, appearance: Dictionary, windows: P
 					track = crowd.render_add_track(seq, duration, loop, times, anchors, time_map, sample_step)
 				elif not missing.has(clip):
 					missing.append(clip)
+			if civilian and not clip.is_empty() and track < 0: return -1
 			tracks.append(track)
 	if windows[SLOTS.find("down")] <= 0.0: windows[SLOTS.find("down")] = 2.875
 	if windows[SLOTS.find("get_up")] <= 0.0: windows[SLOTS.find("get_up")] = 2.2

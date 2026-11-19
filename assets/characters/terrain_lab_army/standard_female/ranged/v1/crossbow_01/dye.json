@@ -20,13 +20,13 @@
     "tack": true
   },
   "complete": true,
-  "decoded_bytes": 35770368.0,
+  "decoded_bytes": 35770368,
   "encoding": "RGB8: slot ID 1..5 / neutral lit shade / dominant-slot coverage; nearest, no mipmaps",
-  "frame_count": 632.0,
-  "height": 2911.0,
+  "frame_count": 632,
+  "height": 2911,
   "mask_md5": "66c1706e5715cfb6f0b77bb60d601826",
   "mask_path": "res://assets/characters/terrain_lab_army/standard_female/ranged/v1/crossbow_01/dye.png",
-  "schema_version": 1.0,
+  "schema_version": 1,
   "slots": [
     "helmet",
     "armor",
@@ -36,60 +36,18 @@
   ],
   "source_fingerprints": {
     "res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
-    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "0e76c65be9a51b6827aeb29aa7bf8cda",
-    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "5806668721ef33b75054310f4caa8e92",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "8c98639fca305d617cc7132cb232094d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "b541208a463cff72fbe4db5c36f58d89",
     "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
     "res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "5866bf990d5460168dd724907d252d40",
     "res://scripts/tools/bake_terrain_army_dyes.gd": "67299dae3fce3fe7c0965047174ae368",
     "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
     "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
-    "res://scripts/ui/equipment_dye.gd": "bca8b3f03fc03cf5254fe0743361dbfd",
-    "res://scripts/ui/human_character_3d_editor.gd": "34190c5b67f3ea8c8aec633808a4310c",
+    "res://scripts/ui/equipment_dye.gd": "8d63fdfb5a491c9979621020f1e2e36d",
+    "res://scripts/ui/human_character_3d_editor.gd": "91e3e7d561818bc000b71ed7b18d10ba",
     "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
   },
   "source_manifest": "res://assets/characters/terrain_lab_army/standard_female/ranged/v1/crossbow_01/manifest.json",
-  "source_manifest_md5": "156c3a590f7dbfd5131a165b2e5ec4e0",
-  "width": 4096.0,
-  "equipment_matrix_additive_revalidation": {
-    "rebaked": false,
-    "evidence": "output/equipment_matrix_20260918",
-    "old_manifest_md5": "6a58c10a20b806001748e76a3990fbcd",
-    "old_sources": {
-      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
-      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
-      "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
-      "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
-      "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
-      "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6"
-    }
-  },
-  "equipment_limits_revalidation": {
-    "rebaked": false,
-    "rgba_pairs": 450,
-    "evidence": "output/equipment_limits_20260919",
-    "old_manifest_md5": "2527b22cc615c936461e548e95a5ecb4"
-  },
-  "equipment_walk_revalidation": {
-    "rebaked": false,
-    "representative_control_pairs": 368,
-    "full_atlas_frame_proof": false,
-    "native_unselected_data_unchanged": true,
-    "evidence": "res://output/equipment_walk_fix_20260919/atlas/gpu_comparison_20260919T045450307055Z.json",
-    "old_manifest_md5": "b74d00c046c8ea8469121c7afa85a73b"
-  },
-  "steel_mingguang_walk_revalidation": {
-    "rebaked": false,
-    "representative_control_pairs": 450,
-    "full_atlas_frame_proof": false,
-    "native_unselected_data_unchanged": true,
-    "evidence": "res://output/steel_mingguang_walk_20260919/atlas/gpu_comparison_20260924T031002433540Z.json",
-    "old_manifest_md5": "de063fbb04535325dcb12671b1a0428c"
-  },
-  "crowd_batch_admission_revalidation": {
-    "rebaked": false,
-    "evidence": "res://output/crowd_c2_c3_b_atlas_20261001/publication/revalidation.json",
-    "previous_equipment_md5": "c80e52ca906d5ed5a0cc3fc9096ce12d",
-    "current_equipment_md5": "1ed2e25b130dfc5d7247591b4d6ae156",
-    "previous_manifest_md5": "b5d5451da3607da60b6dbf6a34a49fba"
-  }
+  "source_manifest_md5": "4426b733401c3ac07e4c08470b3ce202",
+  "width": 4096
 }
