@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-20 06:25（台北）
+更新：2026-11-20 07:25（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
 ## 現況與待辦（11/20 01:10 台北，取代下方各段的舊「下一步」）
@@ -11,6 +11,7 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/
 - 平民圖集指紋已縮小（5b71314）：改 crowd_site.gd、讀取器、batch_view、原生群眾原始碼不再讓平民失去准入。注意 terrain_army_equipment_atlas.gd 仍是女兵遠程頁的指紋，不要隨手改。
 - 貿易 T6 全部提交（774face..08dcbfd）；工匠分組四支測試修好 cbd7462；技能系統規格 V0.7 定案 c4758a9（K0–K5 等 Nekki 說要做再排）。
 - **里程碑全回歸 11/20（MILESTONE_1120）：227/227**（11/14 全清單 153＋之後新測試 74；並行 219、單跑 4、修正後 4）。修正 aafd110：shared_step_replay 兩個 KW21 來源釘值（CIV-A0、C1c，版面不變）、two_npc_sea 時限 1020/1080（friendly 單跑 850–923 s，逐次變慢：10/27 約 600、11/14 約 720、現在約 870）。攻城工位圖集兩支只是要新 GPU 資料夾。未推送提交 107 個（origin/claude/project-thread-qsrymf..HEAD），推送由 Nekki 決定。
+- **效能熱點（11/20 07:25，7fbc3f5）**：two_npc_sea friendly 的 melee_or_meal 段（276 s 壁鐘 / 74 遊戲秒）中，閒置 NPC 船每一步呼叫的 `RegionSaveSlot._region_npc_live_ship_action` 佔 37 s（crowd_ships 43 s 的大部分）。每步的成本來自：`region_original_party_runtime_proof` 每次把整個 party 用 var_to_bytes 序列化再 sha256；joined 隊伍的 `_region_life_party_document` 以空快取讀檔並驗 sha；另有每步的雙重迴圈比對船上人與隊員的敵對接觸。其他段：advance_combat 48 s、native begin prepare 9 s。分段工具：測試加 `-- --step-profile`（只在 combat_profile_enabled 時計時）。建議修法（另開串，需守冷熱重播一致）：①對 `_region_life_party_document` 改用依 sha 的快取（同 sha 必同內容，安全）；②proof 的指紋改為在 party 有異動時才重算（需要 party 修訂號，或在同一共同步進內只驗一次）；③船閒置且輸入未變時跳過重複決策（須證明冷熱一致）。
 - 效能觀察（11/20 06:40）：two_npc_sea friendly 兩次單跑的分段（FLEET_PHASE）同段相差很大：remote_decision_a 67 對 112 秒、paid_partial_sea 39 對 108 秒、native_frame_reopen 27 對 47 秒，所以單次總時長受機器負載影響大。主要耗時一直是 frame_bound（約 240–260 秒）與 melee_or_meal（約 265–300 秒）兩段：遊戲時間 63→138 秒，模擬約 0.25 倍實時。舊日誌已被保留規則清掉，沒有可直接比的舊分段；要歸因得在固定提交上逐段量測（建議另開效能串）。
 - 舊待辦核對（11/20 02:55）：下方舊段落列的缺口都已在之後完成，不再是待辦——群眾隊形上限（6abcd91 上限放寬到人數＋1025、b665c0b 重用空隊形）、跨 Site 兵力情報（fe0e3b6）、海上風雨（TC11 322144c／d2a8a77）、土匪成伙來源 C／D／E（e5caf4b／5470d74／58c01c9）與山寨可見度 BA-12（7e50050）、鄉勇編入守軍（C3c＋join_team 26ffb69）、徵召不滿＋5（C4a 280c39b）、TC8 365 日長跑（1409422）、平民 C1c 與中心避難（ff8aadf／6cdf999）。
 - 下方舊段落提到「T6 有明示阻擋」「CIV-A1 等 Nekki 說恢復」「派 CIV-A3 給 Codex」等皆已過時。
