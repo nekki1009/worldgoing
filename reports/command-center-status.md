@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-20 02:55（台北）
+更新：2026-11-20 06:25（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
 ## 現況與待辦（11/20 01:10 台北，取代下方各段的舊「下一步」）
@@ -10,6 +10,7 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/
 - 平民 C1c 屋內「在家」完成 ff8aadf：原生 absent 第 5 種（DLL a1a3ccd0…，舊 7610cf4b… 備份 evidence/C1C_HOME_20261120），作息進屋／出屋、鄉勇徵召先出屋；新測試 site_resident_home_crowd_test，回歸 C1C_FAM 48/48。中心避難也已完成（警報或暴風雨時無可住房者走到聚落中心入口進去；回歸 C1C2_FAM 49/49）。
 - 平民圖集指紋已縮小（5b71314）：改 crowd_site.gd、讀取器、batch_view、原生群眾原始碼不再讓平民失去准入。注意 terrain_army_equipment_atlas.gd 仍是女兵遠程頁的指紋，不要隨手改。
 - 貿易 T6 全部提交（774face..08dcbfd）；工匠分組四支測試修好 cbd7462；技能系統規格 V0.7 定案 c4758a9（K0–K5 等 Nekki 說要做再排）。
+- **里程碑全回歸 11/20（MILESTONE_1120）：227/227**（11/14 全清單 153＋之後新測試 74；並行 219、單跑 4、修正後 4）。修正 aafd110：shared_step_replay 兩個 KW21 來源釘值（CIV-A0、C1c，版面不變）、two_npc_sea 時限 1020/1080（friendly 單跑 850–923 s，逐次變慢：10/27 約 600、11/14 約 720、現在約 870）。攻城工位圖集兩支只是要新 GPU 資料夾。未推送提交 107 個（origin/claude/project-thread-qsrymf..HEAD），推送由 Nekki 決定。
 - 舊待辦核對（11/20 02:55）：下方舊段落列的缺口都已在之後完成，不再是待辦——群眾隊形上限（6abcd91 上限放寬到人數＋1025、b665c0b 重用空隊形）、跨 Site 兵力情報（fe0e3b6）、海上風雨（TC11 322144c／d2a8a77）、土匪成伙來源 C／D／E（e5caf4b／5470d74／58c01c9）與山寨可見度 BA-12（7e50050）、鄉勇編入守軍（C3c＋join_team 26ffb69）、徵召不滿＋5（C4a 280c39b）、TC8 365 日長跑（1409422）、平民 C1c 與中心避難（ff8aadf／6cdf999）。
 - 下方舊段落提到「T6 有明示阻擋」「CIV-A1 等 Nekki 說恢復」「派 CIV-A3 給 Codex」等皆已過時。
 
