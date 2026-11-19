@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-19 07:40（台北）
+更新：2026-11-19 10:45（台北）
 CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW），11/15 01:00Z 由協調者開、接手交接段工作（BANDIT→文武官→考試→軍餉）。前任「指揮中心：P4 時鐘落後續追」（cmsg_019ZbHjQVQy2cHmPmpt2suCG1qo9iNprJQ8w9YNAFHSPNy）。
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
@@ -22,6 +22,14 @@ CURRENT 指揮中心：「指揮中心：預定功能接續」（cmsg_019ZbHjQVQ
 5. 同時跑多個 Godot：Nekki 11/11 01:04Z 選 A——批次回歸最多 3 個並行（run_manifest_parallel.ps1），失敗的單獨重跑才算；單支除錯與計時量測仍一次一個；Nekki 玩遊戲時退回一次一個。
 6. 找失敗代碼出處用 `-- --diag-fail=代碼[,代碼]`（印出產生處堆疊），不要一次加一行 print。
 
+
+## 2026-11-19 10:45（台北）市集 T3 完成（TR-30..37）
+- 已提交（未推送）：b39354e 市集三片——①建物 market（4×4、木20石10繩4、30分；已建制聚落 2 級、轄區內、每聚落一座、缺圖 MISSING_ART；民用建物＋瓦頂可燒；附屬庫存 20×(等級+1) 不當加工供料；可由首長綁為交易來源；存檔拒兩座）②掛牌（市正／首長代行設至多 4 份以物易物掛牌，外來者向站在市集的市正按掛牌成交不議價，照常交付一次提交；每份每日份數、合計 10×等級、隔日重算；受損／施工暫停並取消進行中交付不轉移；陷落清除；建物面板「市集」視窗）③職責 AI 掛牌（存糧低於居民×14 日以鹽等日用品收糧、高於兩倍賣糧、其間撤牌；不掛建材；玩家當市正不代掛；職責 AI 關閉不動）。81be24c 市集圖匯入設定。6c6bea1 TR-34 觀測帳（在場官員記下該市集掛牌、跟著人走、3 遊戲日到期）。
+- 注意：通用幣在 T0 不是交換物資（SiteRuntime._trade_goods_valid），所以掛牌與 AI 都以物易物。
+- 同批：RegionTravel.extract 出發時解除原 Site 指向離開車輛的財政來源（玩家隊伍也可把餉源綁在車上）；region_crowd_wagon_arrival_test 加檢查。
+- 新測試：site_market_t3_test、site_market_listing_t3_test、site_market_ai_t3_test、site_market_observation_t3_test；已加入 new_tests_20261117.json。
+- 回歸：MARKET_REG 186/186（並行 136；2 支長測試逾時、48 支未跑到，單獨重跑全過）；MARKETOBS_FAM 8/8。
+- 美術：Codex 交件 CIV-A1 女款兩款（CC-201）與 CIV-A2 男款兩款群眾批次頁＋第一階段接線（CC-202）；女款批次頁 CC-203 因 5 小時額度 98% 停單（台北 12:59 重置，等 Nekki 說恢復）。CIV-A0→A2 尚未在 D 套用（需重建原生 DLL）。
 
 ## 2026-11-19 07:40（台北）稅隊／商隊車輛自動派駕駛、跨 Site 帶車
 - 已提交（未推送）：5ebcc75 NPC 隊伍出發前先為隊上的車派駕駛（SiteCartDriver：一名空閒隊員走到車把位置〔SitePersonActions cart_walk，沿住宅返家的同一步行〕→ 由車主入口指派為駕駛 → 建立並站定原生車隊 → 才出發）。稅隊出發與回程、商隊出發與回程都等它。
