@@ -388,5 +388,117 @@
   "mode": "headless",
   "timeout": 360,
   "note": "trade T4 TR-40 the player's own cart hold trades"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_exchange_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "person_fighting (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t2_vehicle_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "trade vehicles (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t1b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_candidate_n_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_leg_treasury_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_nation_leg_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_nation_source_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_save_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_visual_test.gd",
+  "args": [],
+  "mode": "visual",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t2_estate_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t2_settlement_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_inkind_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_treasury_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_treaty_rate_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_values_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
  }
 ]
