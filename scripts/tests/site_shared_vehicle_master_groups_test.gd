@@ -50,7 +50,10 @@ func _cross_admit(fixture: Dictionary, captured: Dictionary) -> Dictionary:
 	_check(pa.ok and wt_registered.ok and pa_registered.ok and priors.is_empty(), "BOTH true original owner allocations are registered before the first pure Runtime cost/geometry candidate")
 	var wt := workers.validate_shared_work_runtime_prefixes(wt_registered)
 	var controlled := actions.validate_checked_controlled_runtime_prefixes(pa_registered)
-	_check(wt.ok and controlled.ok, "Actual cross-provider F11/F12 witnesses admit the same positive prefix without learned/permission borrowing: " + str(wt) + str(controlled))
+	# Only the codes on failure: the admitted prefixes hold live owner references (cyclic), and str() of them recursed for
+	# minutes on every run (Maximum dictionary recursion) until the test timed out (found 2026-11-19).
+	var admitted_ok: bool = wt.ok and controlled.ok
+	_check(admitted_ok, "Actual cross-provider F11/F12 witnesses admit the same positive prefix without learned/permission borrowing" + ("" if admitted_ok else ": %s %s %s %s" % [str(wt.get("code", "")), str(wt.get("message", "")), str(controlled.get("code", "")), str(controlled.get("message", ""))]))
 	return {"wt": wt, "pa": pa, "controlled": controlled, "priors": priors}
 
 func _cross_publish(fixture: Dictionary, captured: Dictionary, admitted: Dictionary) -> void:
