@@ -113,7 +113,7 @@ func job_of(identity: int) -> String:
 func busy(identity: int) -> bool:
 	return not job_of(identity).is_empty()
 
-func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
+func _check_pair(player: int, npc: int, npc_holder: String = "", player_holder: String = "") -> Dictionary:
 	if player == npc: return Runtime.fail("INVALID", "不能和自己交易")
 	var a := _person(player)
 	var b := _person(npc)
@@ -123,7 +123,9 @@ func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
 	if not _face_to_face(a, b): return Runtime.fail("TOO_FAR", "須當面交易（兩格內）")
 	if controller.person_actions.is_busy(player) or controller.person_actions.is_busy(npc): return Runtime.fail("BUSY", "交易雙方須空閒")
 	if hostile(a, b): return Runtime.fail("HOSTILE", "敵對勢力之間不能交易")
-	for holder: String in [_holder_id(player), npc_holder if not npc_holder.is_empty() else _holder_id(npc)]:
+	var own := player_side(player, player_holder)
+	if not own.ok: return own
+	for holder: String in [str(own.holder), npc_holder if not npc_holder.is_empty() else _holder_id(npc)]:
 		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, holder)
 		if not endpoint.ok: return endpoint
 	if npc_holder.begins_with("feature:") or npc_holder.begins_with("vehicle:"):
@@ -131,7 +133,23 @@ func _check_pair(player: int, npc: int, npc_holder: String = "") -> Dictionary:
 		if not party.ok: return party
 		if int(party.decider) != npc: return Runtime.fail("NO_AUTHORITY", "此貨由「%s」負責交易" % str(party.position_name))
 		if Vector2(b.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "代表須站在倉庫門口或車旁")
-	return Runtime.ok("", {"a": a, "b": b})
+	return Runtime.ok("", {"a": a, "b": b, "own": own})
+
+## 貿易 T4 TR-40: the player's side of a trade: himself (""), or his own team's stopped cart or wagon ("vehicle:<id>")
+## whose hold trades directly, when he is the team's current commander and stands beside it (TR-27's rule for the
+## other side). {ok, holder, cargo}.
+func player_side(player: int, player_holder: String = "") -> Dictionary:
+	if player_holder.is_empty():
+		var endpoint: Dictionary = Runtime.trade_endpoint(_lab().terrain, _holder_id(player))
+		if not endpoint.ok: return endpoint
+		return Runtime.ok("", {"holder": _holder_id(player), "cargo": endpoint.cargo})
+	if not player_holder.begins_with("vehicle:"): return Runtime.fail("UNSUPPORTED", "本人只能用自己或本隊車輛的貨艙交易")
+	var party := vehicle_party(player_holder.trim_prefix("vehicle:"))
+	if not party.ok: return party
+	if int(party.decider) != player: return Runtime.fail("NO_AUTHORITY", "只有隊伍指揮者能用本隊車輛的貨艙交易")
+	var me := _person(player)
+	if me.is_empty() or Vector2(me.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "須站在本隊車旁")
+	return Runtime.ok("", {"holder": player_holder, "cargo": party.cargo})
 
 ## The organization side of a trade by its holder: a settlement warehouse or a team's stopped cart / wagon.
 func source_party(holder: String) -> Dictionary:
@@ -213,9 +231,9 @@ func _npc_terms(npc: Dictionary) -> Dictionary:
 	var axes: Dictionary = PersonPersonality.read(npc.body.get("personality") if npc.body is Dictionary else npc.body.get("personality"))
 	return {"stock": npc.cargo, "targets": {"food": float(FOOD_TARGET_DAYS)}, "thrift": float(axes.get("thrift", 50))}
 
-func _legal(player: int, npc_holder: String) -> Callable:
+func _legal(player: int, npc_holder: String, player_holder: String = "") -> Callable:
 	var data: TerrainData = _lab().terrain
-	var a_ref := _ref(player)
+	var a_ref := _holder_ref(player_holder) if not player_holder.is_empty() else _ref(player)
 	var b_ref := _holder_ref(npc_holder)
 	# Only a settlement warehouse has trade limits (a family estate has none).
 	var source := npc_holder.trim_prefix("feature:") if npc_holder.begins_with("feature:") and not Stockpiles.family_estate(data, npc_holder.trim_prefix("feature:")) else ""
@@ -251,38 +269,39 @@ func drop_sources(feature_keys: Array) -> int:
 ## One round: the player offers `player_gives` for `npc_gives`. The NPC answers ACCEPT (the offer stands as given),
 ## COUNTER (an offer the NPC accepts, changed by the deterministic counter rule) or REJECT. A round that does not
 ## stand as given costs one concession for today (at most 4: five rounds). Moves no goods.
-func propose(player: int, npc: int, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
-	return _propose(player, npc, "", player_gives, npc_gives)
+func propose(player: int, npc: int, player_gives: Dictionary, npc_gives: Dictionary, player_holder: String = "") -> Dictionary:
+	return _propose(player, npc, "", player_gives, npc_gives, player_holder)
 
 ## T2: trade with the settlement's warehouse `key` through its decider `npc`.
-func propose_settlement(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
-	return _propose(player, npc, Stockpiles.identity(key), player_gives, npc_gives)
+func propose_settlement(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary, player_holder: String = "") -> Dictionary:
+	return _propose(player, npc, Stockpiles.identity(key), player_gives, npc_gives, player_holder)
 
 ## T2 TR-27: trade with a team's stopped cart or wagon `key` through its commander `npc`.
-func propose_vehicle(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
-	return _propose(player, npc, "vehicle:" + key, player_gives, npc_gives)
+func propose_vehicle(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary, player_holder: String = "") -> Dictionary:
+	return _propose(player, npc, "vehicle:" + key, player_gives, npc_gives, player_holder)
 
 ## 貿易 T3 (§5.2 掛牌, TR-30): the player takes `lots` lots of market listing `row_id` from the settlement's trade decider
 ## `npc` standing at the market: no valuation or bargaining (a listing is a pre-approved offer); the delivery starts at
 ## once and commits once like any trade. Refused while the market is closed (TR-31), past the listing's lots for the
 ## day, or past the trade source's limits (TR-21).
-func take_listing(player: int, npc: int, row_id: String, lots: int) -> Dictionary:
+func take_listing(player: int, npc: int, row_id: String, lots: int, player_holder: String = "") -> Dictionary:
 	var data: TerrainData = _lab().terrain
 	var lot := Market.take_guard(data, row_id, lots)
 	if not lot.ok: return lot
 	var holder := Stockpiles.identity(str(lot.key))
-	var pair := _check_pair(player, npc, holder)
+	var pair := _check_pair(player, npc, holder, player_holder)
 	if not pair.ok: return pair
 	var quota := Settlement.trade_quota_refusal(data, str(lot.key), lot.give.resources)
 	if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
-	var preview: Dictionary = Runtime.exchange_items(data, _ref(player), _holder_ref(holder), lot.want, lot.give, true)
+	var own_ref := _holder_ref(str(pair.own.holder))
+	var preview: Dictionary = Runtime.exchange_items(data, own_ref, _holder_ref(holder), lot.want, lot.give, true)
 	if not preview.ok: return preview
 	_drop_offers_of([player, npc])
 	var trade := state()
 	var offer_id := "%s:%d" % [str(trade.site_id), int(trade.next_seq)]
 	trade["next_seq"] = int(trade.next_seq) + 1
 	var at := now()
-	trade.offers[offer_id] = {"revision": 1, "a": _ref(player), "b": _holder_ref(holder), "a_gives": lot.want.duplicate(true), "b_gives": lot.give.duplicate(true),
+	trade.offers[offer_id] = {"revision": 1, "a": own_ref, "b": _holder_ref(holder), "a_gives": lot.want.duplicate(true), "b_gives": lot.give.duplicate(true),
 		"a_representative": player, "b_representative": npc, "created_action": at, "expires_action": at + OFFER_SECONDS,
 		"accepted_a": false, "accepted_b": true}
 	var started := accept(offer_id)
@@ -292,15 +311,16 @@ func take_listing(player: int, npc: int, row_id: String, lots: int) -> Dictionar
 	Market.reserve(data, offer_id, row_id, lots)
 	return Runtime.ok("按掛牌成交：%s" % str(started.message), {"offer_id": offer_id, "job_id": str(started.job_id)})
 
-func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
-	var pair := _check_pair(player, npc, npc_holder)
+func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionary, npc_gives: Dictionary, player_holder: String = "") -> Dictionary:
+	var pair := _check_pair(player, npc, npc_holder, player_holder)
 	if not pair.ok: return pair
 	if Trade._unit_count(player_gives) == 0 or Trade._unit_count(npc_gives) == 0: return Runtime.fail("EMPTY", "雙方都要有付出的東西")
 	var holder := npc_holder if not npc_holder.is_empty() else _holder_id(npc)
 	if npc_holder.begins_with("feature:") and not Stockpiles.family_estate(_lab().terrain, npc_holder.trim_prefix("feature:")):
 		var quota := Settlement.trade_quota_refusal(_lab().terrain, npc_holder.trim_prefix("feature:"), npc_gives.resources)
 		if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
-	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, _ref(player), _holder_ref(holder), player_gives, npc_gives, true)
+	var own_ref := _holder_ref(str(pair.own.holder))
+	var preview: Dictionary = Runtime.exchange_items(_lab().terrain, own_ref, _holder_ref(holder), player_gives, npc_gives, true)
 	if not preview.ok: return preview
 	var used := holder_concessions(holder, _holder_id(player))
 	var terms := _npc_terms(pair.b)
@@ -314,7 +334,7 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 			terms["targets"] = {"food": float(int(family_party(npc_holder.trim_prefix("feature:")).get("members", 1)) * SETTLEMENT_FOOD_DAYS)}
 		else:
 			terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
-	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.a.cargo, _legal(player, holder),
+	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.own.cargo, _legal(player, holder, player_holder),
 		float(terms.thrift), used, _lab().terrain.site)
 	if not answer.ok: return answer
 	var decision := str(answer.decision)
@@ -329,7 +349,7 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 	var key := "%s:%d" % [str(trade.site_id), int(trade.next_seq)]
 	trade["next_seq"] = int(trade.next_seq) + 1
 	var at := now()
-	trade.offers[key] = {"revision": 1, "a": _ref(player), "b": _holder_ref(holder), "a_gives": answer.receive.duplicate(true), "b_gives": answer.give.duplicate(true),
+	trade.offers[key] = {"revision": 1, "a": own_ref, "b": _holder_ref(holder), "a_gives": answer.receive.duplicate(true), "b_gives": answer.give.duplicate(true),
 		"a_representative": player, "b_representative": npc, "created_action": at, "expires_action": at + OFFER_SECONDS,
 		"accepted_a": false, "accepted_b": true}
 	result["offer_id"] = key
@@ -348,7 +368,8 @@ func accept(offer_id: String) -> Dictionary:
 	var player := int(offer.a_representative)
 	var npc := int(offer.b_representative)
 	var b_holder := str(offer.b.holder)
-	var pair := _check_pair(player, npc, b_holder if b_holder != _holder_id(npc) else "")
+	var a_holder := str(offer.a.holder)
+	var pair := _check_pair(player, npc, b_holder if b_holder != _holder_id(npc) else "", a_holder if a_holder != _holder_id(player) else "")
 	if not pair.ok: return pair
 	if _holder_version(str(offer.a.holder)) != int(offer.a.expected_version) or _holder_version(b_holder) != int(offer.b.expected_version):
 		trade.offers.erase(offer_id)
@@ -405,6 +426,9 @@ func advance() -> Array[Dictionary]:
 		if reason.is_empty() and (str(offer.b.holder).begins_with("feature:") or str(offer.b.holder).begins_with("vehicle:")):
 			var party := source_party(str(offer.b.holder))
 			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "組織交易負責人已變更"
+		if reason.is_empty() and str(offer.a.holder).begins_with("vehicle:"):
+			var own := player_side(int(offer.a_representative), str(offer.a.holder))
+			if not own.ok: reason = "本隊車輛已不在指揮者身旁或已移動"
 		# TR-31: a market damaged, or under construction or repair, pauses its trades; nothing is made up later.
 		var market_key := str(offer.b.holder).trim_prefix("feature:") if str(offer.b.holder).begins_with("feature:") else ""
 		if reason.is_empty() and not market_key.is_empty() and str(_lab().terrain.site.get("features", {}).get(market_key, {}).get("kind", "")) == Market.KIND:

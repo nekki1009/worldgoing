@@ -10819,18 +10819,36 @@ func _trade() -> RefCounted:
 	return trade_session
 
 ## The controlled person offers `gives` (resources) for `wants` from `npc_id`; the NPC accepts, counters or refuses.
-func trade_propose(npc_id: int, gives: Dictionary, wants: Dictionary) -> Dictionary:
+func trade_propose(npc_id: int, gives: Dictionary, wants: Dictionary, from_vehicle: bool = false) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
-	return _trade().propose(int(lab.controlled_person_id()), npc_id, TradeSession.goods(gives), TradeSession.goods(wants))
+	var own := own_trade_vehicle() if from_vehicle else ""
+	if from_vehicle and own.is_empty(): return Runtime.fail("NO_TARGET", NO_OWN_VEHICLE)
+	return _trade().propose(int(lab.controlled_person_id()), npc_id, TradeSession.goods(gives), TradeSession.goods(wants), own)
+
+const NO_OWN_VEHICLE := "身旁沒有本人指揮、已停穩的本隊車輛"
+
+## 貿易 T4 TR-40: the controlled person's own team's stopped cart or wagon he commands and stands beside
+## ("vehicle:<id>"), whose hold may trade directly; "" when none.
+func own_trade_vehicle() -> String:
+	if lab == null or lab.terrain == null: return ""
+	var player := int(lab.controlled_person_id())
+	var keys: Array = lab.terrain.site.get("vehicles", {}).keys()
+	keys.sort()
+	for key: Variant in keys:
+		if str(lab.terrain.site.vehicles[key].get("kind", "")) not in ["cart", "wagon"]: continue
+		if _trade().player_side(player, "vehicle:" + str(key)).ok: return "vehicle:" + str(key)
+	return ""
 
 func trade_accept(offer_id: String) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	return _trade().accept(offer_id)
 
 ## T2: trade with the settlement warehouse `key` through its trade decider `npc_id`.
-func trade_propose_settlement(npc_id: int, key: String, gives: Dictionary, wants: Dictionary) -> Dictionary:
+func trade_propose_settlement(npc_id: int, key: String, gives: Dictionary, wants: Dictionary, from_vehicle: bool = false) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
-	return _trade().propose_settlement(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants))
+	var own := own_trade_vehicle() if from_vehicle else ""
+	if from_vehicle and own.is_empty(): return Runtime.fail("NO_TARGET", NO_OWN_VEHICLE)
+	return _trade().propose_settlement(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants), own)
 
 ## T2: the head binds the warehouse at the selected cell to the 市正 with limits written "grain:20/200, wood:10/100"
 ## (per trade / in total); empty text unbinds it.
@@ -10881,9 +10899,11 @@ func trade_source_of(npc_id: int) -> String:
 func trade_drop_sources(feature_keys: Array) -> int:
 	return _trade().drop_sources(feature_keys)
 
-func trade_propose_vehicle(npc_id: int, key: String, gives: Dictionary, wants: Dictionary) -> Dictionary:
+func trade_propose_vehicle(npc_id: int, key: String, gives: Dictionary, wants: Dictionary, from_vehicle: bool = false) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
-	return _trade().propose_vehicle(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants))
+	var own := own_trade_vehicle() if from_vehicle else ""
+	if from_vehicle and own.is_empty(): return Runtime.fail("NO_TARGET", NO_OWN_VEHICLE)
+	return _trade().propose_vehicle(int(lab.controlled_person_id()), npc_id, key, TradeSession.goods(gives), TradeSession.goods(wants), own)
 
 ## The trade dialog (T1-a): what I give from my cargo, what I want from theirs, the NPC's answer, and accepting a
 ## standing offer or counter. Quantities are capped by what each side carries; nothing moves until delivery completes.
@@ -15518,6 +15538,10 @@ func _open_market(host: Window = null) -> void:
 	var row := HBoxContainer.new()
 	column.add_child(row)
 	var lots := _number_input(row, "MarketLots", 1, Market.MAX_UNITS, 1)
+	var from_vehicle := CheckBox.new()
+	from_vehicle.name = "MarketFromVehicle"
+	from_vehicle.text = "用身旁本隊車輛的貨艙"
+	row.add_child(from_vehicle)
 	var edit := LineEdit.new()
 	edit.name = "MarketListingText"
 	edit.placeholder_text = Market.FORMAT_TEXT
@@ -15539,7 +15563,7 @@ func _open_market(host: Window = null) -> void:
 		if edit.text.is_empty(): edit.text = Market.rows_text(record)
 	_button(row, "按掛牌成交", "MarketTake", func() -> void:
 		var picked := rows.get_selected_items()
-		var result := market_take(str(rows.get_item_metadata(picked[0])) if not picked.is_empty() else "", int(lots.value))
+		var result := market_take(str(rows.get_item_metadata(picked[0])) if not picked.is_empty() else "", int(lots.value), from_vehicle.button_pressed)
 		status.text = str(result.get("message", ""))
 		show_result(result)
 		update.call())
@@ -15553,12 +15577,14 @@ func _open_market(host: Window = null) -> void:
 	_show_dialog(dialog, "market", key, host)
 
 ## 貿易 T3 (TR-30): the controlled person takes `lots` lots of market listing `row_id` from the 市正 standing at the market.
-func market_take(row_id: String, lots: int) -> Dictionary:
+func market_take(row_id: String, lots: int, from_vehicle: bool = false) -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
 	if row_id.is_empty(): return Runtime.fail("NO_TARGET", "先選一份掛牌")
 	var trader := Market.decider(lab)
 	if trader <= 0: return Runtime.fail("OFFICE_PAUSED", "市集目前無人代表")
-	return _trade().take_listing(int(lab.controlled_person_id()), trader, row_id, lots)
+	var own := own_trade_vehicle() if from_vehicle else ""
+	if from_vehicle and own.is_empty(): return Runtime.fail("NO_TARGET", NO_OWN_VEHICLE)
+	return _trade().take_listing(int(lab.controlled_person_id()), trader, row_id, lots, own)
 
 ## 貿易 T3: the controlled 市正 sets the market's listings from text (Market.parse_rows); empty text takes them down.
 func market_set_listings(text: String) -> Dictionary:

@@ -381,5 +381,12 @@
   "mode": "headless",
   "timeout": 180,
   "note": "CIV-A0 CA-01 native presentation override (Codex CC-198)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t4_own_vehicle_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "trade T4 TR-40 the player's own cart hold trades"
  }
 ]
