@@ -103,6 +103,8 @@ const FEATURES := {
 	"village_school": {"placement": "fixed", "size": Vector2i(3, 3), "name": "蒙學", "cost": {"wood": 20, "stone": 8, "rope": 4}, "work": 40.0, "solid": true, "water": 0.0},
 	"district_school": {"placement": "fixed", "size": Vector2i(4, 4), "name": "鄉學", "cost": {"wood": 30, "stone": 20, "brick": 10, "pottery": 4}, "work": 80.0, "solid": true, "water": 0.0},
 	"state_academy": {"placement": "fixed", "size": Vector2i(5, 5), "name": "國學", "cost": {"stone": 60, "brick": 40, "steel": 4, "cloth": 6}, "work": 160.0, "solid": true, "water": 0.0},
+	# 貿易 T3 (reports/trade-plan.md §5.2, Q4 C): the market, a settlement's standing trade place (site_market.gd).
+	"market": {"placement": "fixed", "size": Vector2i(4, 4), "name": "市集", "cost": {"wood": 20, "stone": 10, "rope": 4}, "work": 30.0, "solid": true, "water": 0.0},
 }
 ## Research institution kinds: the scope each serves and its researcher seats (plan approved 11/07).
 const RESEARCH_INSTITUTIONS := {
@@ -133,7 +135,7 @@ const FEATURE_RECIPES := {
 	},
 }
 
-const CIVIL_KINDS := ["house", "well", "intake", "saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver", "warehouse", "dock", "shipyard"]
+const CIVIL_KINDS := ["house", "well", "intake", "saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver", "warehouse", "dock", "shipyard", "market"]
 const CIVIL_VERSION := 1
 const CIVIL_MAX_GRADE := 3
 # The settlement center shares the civil body/repair contract but is never a
@@ -5847,7 +5849,7 @@ static func _fire_suppression_inputs(data: TerrainData, state: Dictionary, begin
 
 # P4 original feature.parts extension. Stored parts remain exactly {hp}.
 const FIRE_LAYOUT_VERSION := 1
-const FIRE_ROOF_KINDS := ["house", "warehouse", "saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver"]
+const FIRE_ROOF_KINDS := ["house", "warehouse", "saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver", "market"]
 const FIRE_LAYOUT_KINDS := FIRE_ROOF_KINDS + ["well", "intake", "barracks", "training_ground"]
 
 static func _fire_layout_parts(feature: Dictionary) -> Array[String]:
@@ -11757,6 +11759,9 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 	if kind in ["village_school", "district_school", "state_academy"]:
 		var school := school_build_guard(data, kind, cells, int(options.get("quarter", 0)))
 		if not school.ok: return school
+	if kind == "market":
+		var market: Dictionary = (load("res://scripts/terrain_lab/site_market.gd") as Script).call("build_guard", data, cells, int(options.get("quarter", 0)))
+		if not market.ok: return market
 	var preview: Dictionary = preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
 	if not preview.ok: return preview
 	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")

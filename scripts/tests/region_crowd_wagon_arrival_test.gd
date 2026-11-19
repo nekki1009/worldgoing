@@ -16,6 +16,7 @@ extends SceneTree
 const DT := 1.0 / 30.0
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
+const SiteFinance = preload("res://scripts/terrain_lab/site_finance.gd")
 ## The origin's team numbering starts here, above the destination's own team numbers (1..3), so the arriving id is new there.
 const ORIGIN_TEAM_COUNTER := 10
 
@@ -139,6 +140,13 @@ func _run() -> void:
 	captured = lab.site_controller._capture_for_save()
 	if not _check(captured.get("ok", false) == true, "the Site captures the settled wagon before departure", captured): return
 
+	# The player's team pays from its own wagon (a team may bind a vehicle as its pay source); the binding must not keep
+	# the origin from saving once the wagon has left with the team.
+	var finance_ref := {"kind": "team", "site_id": str(lab.terrain.site.get("id", "")), "org_id": str(team_id)}
+	var finance_made: Dictionary = SiteFinance.ensure(lab.terrain, finance_ref, 0)
+	if not _check(finance_made.get("ok", false) == true, "origin: the team has a finance record", finance_made): return
+	finance_made.record["pay_source"] = {"kind": "vehicle", "site_id": str(lab.terrain.site.get("id", "")), "vehicle_id": wagon_key}
+	if not _check(SiteFinance.validate(lab.terrain.site).get("ok", false) == true, "origin: the wagon is a valid pay source before departure"): return
 	# The real whole-team land departure: plan, release, capture, extract.
 	var plan: Dictionary = crowd.departure_plan(captain)
 	if not _check(plan.get("ok", false) == true and plan.people.size() == soldiers, "the wagon team passes the whole-team departure plan", plan): return
@@ -163,6 +171,8 @@ func _run() -> void:
 	# The origin: the Site the team left, saved, validated and reloaded with no wagon and no convoy for it.
 	var origin: Dictionary = extracted.origin
 	if not _check(_vehicle_key(origin.get("vehicles", {}), "wagon") == "", "the origin's vehicles no longer hold the wagon", origin.get("vehicles", {}).keys()): return
+	var origin_record: Dictionary = origin.get("finance", {}).get(SiteFinance.org_key(finance_ref), {})
+	if not _check(not origin_record.is_empty() and origin_record.pay_source.is_empty(), "the origin keeps the team's finance record but no longer binds the departed wagon", origin_record.get("pay_source")): return
 	lab.terrain.site = origin
 	DirAccess.make_dir_recursive_absolute("user://sites")
 	var origin_path := "user://sites/crowd_wagon_origin.json"

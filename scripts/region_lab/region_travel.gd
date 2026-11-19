@@ -1674,6 +1674,16 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		moving_vehicles[identity] = true
 		content.vehicles[identity] = vehicle
 		origin.vehicles.erase(identity)
+	# A finance holder that travels away binds nothing here any more: a team's pay source may be its own cart, and the
+	# cart leaving with its team would leave the origin's record pointing at a vehicle it no longer has, so the origin
+	# failed its save (CORRUPT_SAVE 財政來源車輛不存在, found 2026-11-19). The organization rebinds where it goes.
+	var finance_site := str(origin.get("id", ""))
+	for record: Variant in origin.get("finance", {}).values():
+		if not record is Dictionary: continue
+		for field: String in ["pay_source", "tax_source", "treasury"]:
+			var source: Variant = record.get(field)
+			if source is Dictionary and str(source.get("kind", "")) == "vehicle" and str(source.get("site_id", "")) == finance_site \
+				and moving_vehicles.has(str(source.get("vehicle_id", ""))): record[field] = {}
 	if sea:
 		var bodies := _body_records(origin)
 		bodies.merge(_body_records(content))

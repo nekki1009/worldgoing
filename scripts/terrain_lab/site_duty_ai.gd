@@ -32,6 +32,7 @@ const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") 
 const Tribute = preload("res://scripts/terrain_lab/site_tribute.gd") # 軍餉與稅收 P3: deliveries, tribute, funding.
 const FinanceAI = preload("res://scripts/terrain_lab/site_finance_ai.gd") # 軍餉與稅收 P6: NPC pay sources and levies.
 const BanditProtection = preload("res://scripts/terrain_lab/site_bandit_protection.gd") # 土匪 B4b: protection money.
+const Market = preload("res://scripts/terrain_lab/site_market.gd") # 貿易 T3: the 市正's listings.
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
 # Nation equipment templates (NPC plan 7.8), lightest first.
@@ -223,6 +224,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		Payroll.day(lab)
 		ProduceTax.day(lab)
 		ResidentMood.day(lab)
+		Market.day(lab)
 		# P1d: team personnel at peace, on the grid review's own cadence: the same stamp gate, round counter (due() reads it)
 		# and seat waits. Logistics and training stay refused under crowd.
 		var crowd_cadence := _cadence_state(lab, ledger)
@@ -250,6 +252,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 	Payroll.day(lab) # 軍餉與稅收 P1: a payday on the 1st of the month.
 	ProduceTax.day(lab) # 軍餉與稅收 P2: residents' grievance at a 15%/20% levy.
 	ResidentMood.day(lab) # 平民 C4a: hunger, homelessness and content.
+	Market.day(lab) # 貿易 T3: the 市正 lists by the settlement's food (TR-32, TR-33).
 	var controller: Variant = lab.site_controller
 	var controlled: int = lab.controlled_person_id()
 	var cadence := _cadence_state(lab, ledger)

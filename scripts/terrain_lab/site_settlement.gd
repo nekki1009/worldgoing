@@ -72,12 +72,14 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
 	if int(settlement.version) >= 5 and settlement.has("succession"): expected_fields.append("succession")
 	if settlement.has("trade_sources"): expected_fields.append("trade_sources")
+	if settlement.has("market_listings"): expected_fields.append("market_listings") # 貿易 T3
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
 	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
 	if int(settlement.version) >= 4 and not valid_trade_tax_percent(settlement.get("trade_tax_percent")): return Runtime.fail("CORRUPT_SAVE", "聚落貿易稅率")
 	if settlement.has("technology_operations") and not valid_technology_operations(data, settlement.technology_operations, state): return Runtime.fail("CORRUPT_SAVE", "聚落有限用途格式")
 	if settlement.has("trade_sources") and not valid_trade_sources(settlement.trade_sources, state): return Runtime.fail("CORRUPT_SAVE", "聚落交易來源綁定")
+	if settlement.has("market_listings") and not Market.valid_listings(settlement.market_listings, state): return Runtime.fail("CORRUPT_SAVE", "市集掛牌")
 	if not settlement.settlement_id is String or str(settlement.settlement_id).is_empty() or str(settlement.settlement_id).length() > 96: return Runtime.fail("CORRUPT_SAVE", "聚落身分")
 	if centers.size() != 1: return Runtime.fail("CORRUPT_SAVE", "每個 Site 必須恰有一座聚落中心")
 	if not settlement.center_id is String or str(settlement.center_id) != centers[0]: return Runtime.fail("CORRUPT_SAVE", "聚落中心 ID 不存在")
@@ -263,18 +265,22 @@ static func normalize(state: Dictionary) -> void:
 				source.limits[resource].per_trade = int(source.limits[resource].per_trade)
 				source.limits[resource].total = int(source.limits[resource].total)
 			for resource: String in source.used: source.used[resource] = int(source.used[resource])
+	if settlement.get("market_listings") is Dictionary: Market.normalize_listings(settlement.market_listings)
 
 # --- Trade plan T2: warehouses the head binds to settlement.trade (§4, "授權額度") ---
 ## trade_sources {warehouse key: {revision, limits {resource: {per_trade, total}}, used {resource: count}}}. A source
 ## exists only by the head's explicit binding; a resource without a limit cannot be paid out; used never exceeds the
 ## total and is not reset when a receipt ages out.
 const MAX_TRADE_SOURCES := 16
+## Facilities the head may bind as trade sources: a warehouse, or the market (貿易 T3 §5.2 附屬庫存).
+const TRADE_SOURCE_KINDS := ["warehouse", "market"]
+const Market = preload("res://scripts/terrain_lab/site_market.gd")
 
 static func valid_trade_sources(sources: Variant, state: Dictionary) -> bool:
 	if not sources is Dictionary or sources.size() > MAX_TRADE_SOURCES: return false
 	for key: Variant in sources:
 		var source: Variant = sources[key]
-		if not key is String or str(state.get("features", {}).get(key, {}).get("kind", "")) != "warehouse": return false
+		if not key is String or str(state.get("features", {}).get(key, {}).get("kind", "")) not in TRADE_SOURCE_KINDS: return false
 		if not source is Dictionary or not Technology.keys(source, ["revision", "limits", "used"]) or not _int(source.revision, 1, 2147483646) \
 			or not source.limits is Dictionary or not source.used is Dictionary: return false
 		for resource: Variant in source.limits:
@@ -294,8 +300,8 @@ static func bind_trade_source(lab: Variant, requester: int, key: String, limits:
 	if requester != int(lab.controlled_person_id()) or int(SiteOffices.head_position(settlement.offices).get("holder", -1)) != requester:
 		return Runtime.fail("NO_AUTHORITY", "只有聚落首長能綁定交易來源")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
-	if str(feature.get("kind", "")) != "warehouse" or not feature_in_jurisdiction(data, feature) or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction):
-		return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
+	if str(feature.get("kind", "")) not in TRADE_SOURCE_KINDS or not feature_in_jurisdiction(data, feature) or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction):
+		return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫或市集")
 	# TR-22: one facility serves one organization.
 	var bound_stock: Dictionary = data.site.get("stockpiles", {}).get(key, {})
 	if not limits.is_empty() and (bound_stock.has("nation_id") or bool(bound_stock.get("family_estate", false))): return Runtime.fail("BUSY", "此倉已綁給國庫或家產")
@@ -751,6 +757,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int, reputation: boo
 		var estate: Dictionary = data.site.get("stockpiles", {}).get(key, {})
 		if estate.has("family_estate"): estate.erase("family_estate")
 	if settlement.has("trade_sources") and sources.is_empty(): settlement.erase("trade_sources")
+	settlement.erase("market_listings") # 貿易 T3 TR-35: the old listings end with the fall
 	var trading: Variant = lab.get("site_controller")
 	if trading != null and trading.has_method("trade_drop_sources"): trading.trade_drop_sources(changed)
 	# Reputation (聲望系統規劃): the capturing leader gains village +2 / township +3 / town +5 / city +8; the old lord loses half.

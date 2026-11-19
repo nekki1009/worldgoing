@@ -3826,6 +3826,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if not institution_validation.ok: return institution_validation
 	var school_validation := Schools.validate(state, people)
 	if not school_validation.ok: return school_validation
+	var market_validation: Dictionary = (load("res://scripts/terrain_lab/site_market.gd") as Script).call("validate", state) # 貿易 T3
+	if not market_validation.ok: return market_validation
 	var finance_validation := Finance.validate(state)
 	if not finance_validation.ok: return finance_validation
 	var rout_validation := BanditRout.validate(state)

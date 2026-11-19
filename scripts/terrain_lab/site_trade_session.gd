@@ -20,6 +20,7 @@ const MAX_CONCESSIONS := 4
 const SETTLEMENT_FOOD_DAYS := 14
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
+const Market = preload("res://scripts/terrain_lab/site_market.gd")
 const REACH := 2.0 # cells between the two representatives (face to face; crowd bodies keep about one cell apart)
 
 var controller: Variant
@@ -184,8 +185,8 @@ func settlement_party(key: String) -> Dictionary:
 	var settlement: Dictionary = Settlement.record(data)
 	if settlement.is_empty() or int(settlement.get("level", 0)) <= 0: return Runtime.fail("NO_TARGET", "此地沒有聚落")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
-	if str(feature.get("kind", "")) != "warehouse" or not Settlement.feature_in_jurisdiction(data, feature) \
-		or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫")
+	if str(feature.get("kind", "")) not in Settlement.TRADE_SOURCE_KINDS or not Settlement.feature_in_jurisdiction(data, feature) \
+		or int(feature.get("owner_faction", -1)) != int(settlement.owner_faction): return Runtime.fail("NO_TARGET", "不是聚落管轄內的倉庫或市集")
 	var endpoint: Dictionary = Stockpiles.stock_endpoint(data, key)
 	if endpoint.is_empty(): return Runtime.fail("NO_TARGET", "倉庫尚無庫存")
 	if not settlement.get("trade_sources", {}).has(key): return Runtime.fail("NOT_BOUND", "此倉未經首長綁給市正")
@@ -260,6 +261,36 @@ func propose_settlement(player: int, npc: int, key: String, player_gives: Dictio
 ## T2 TR-27: trade with a team's stopped cart or wagon `key` through its commander `npc`.
 func propose_vehicle(player: int, npc: int, key: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
 	return _propose(player, npc, "vehicle:" + key, player_gives, npc_gives)
+
+## 貿易 T3 (§5.2 掛牌, TR-30): the player takes `lots` lots of market listing `row_id` from the settlement's trade decider
+## `npc` standing at the market: no valuation or bargaining (a listing is a pre-approved offer); the delivery starts at
+## once and commits once like any trade. Refused while the market is closed (TR-31), past the listing's lots for the
+## day, or past the trade source's limits (TR-21).
+func take_listing(player: int, npc: int, row_id: String, lots: int) -> Dictionary:
+	var data: TerrainData = _lab().terrain
+	var lot := Market.take_guard(data, row_id, lots)
+	if not lot.ok: return lot
+	var holder := Stockpiles.identity(str(lot.key))
+	var pair := _check_pair(player, npc, holder)
+	if not pair.ok: return pair
+	var quota := Settlement.trade_quota_refusal(data, str(lot.key), lot.give.resources)
+	if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
+	var preview: Dictionary = Runtime.exchange_items(data, _ref(player), _holder_ref(holder), lot.want, lot.give, true)
+	if not preview.ok: return preview
+	_drop_offers_of([player, npc])
+	var trade := state()
+	var offer_id := "%s:%d" % [str(trade.site_id), int(trade.next_seq)]
+	trade["next_seq"] = int(trade.next_seq) + 1
+	var at := now()
+	trade.offers[offer_id] = {"revision": 1, "a": _ref(player), "b": _holder_ref(holder), "a_gives": lot.want.duplicate(true), "b_gives": lot.give.duplicate(true),
+		"a_representative": player, "b_representative": npc, "created_action": at, "expires_action": at + OFFER_SECONDS,
+		"accepted_a": false, "accepted_b": true}
+	var started := accept(offer_id)
+	if not started.ok:
+		trade.offers.erase(offer_id)
+		return started
+	Market.reserve(data, offer_id, row_id, lots)
+	return Runtime.ok("按掛牌成交：%s" % str(started.message), {"offer_id": offer_id, "job_id": str(started.job_id)})
 
 func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionary, npc_gives: Dictionary) -> Dictionary:
 	var pair := _check_pair(player, npc, npc_holder)
@@ -337,7 +368,9 @@ func _end(key: String, result: Dictionary) -> Dictionary:
 	var trade := state()
 	var job: Dictionary = trade.jobs.get(key, {})
 	trade.jobs.erase(key)
-	if not job.is_empty(): trade.offers.erase(job.offer_id)
+	if not job.is_empty():
+		trade.offers.erase(job.offer_id)
+		Market.release(_lab().terrain, str(job.offer_id)) # a listed delivery that ended uncommitted frees its lots
 	return result
 
 ## Once per frame: advance each delivery on the action clock, cancel on any interruption, commit when due.
@@ -372,6 +405,11 @@ func advance() -> Array[Dictionary]:
 		if reason.is_empty() and (str(offer.b.holder).begins_with("feature:") or str(offer.b.holder).begins_with("vehicle:")):
 			var party := source_party(str(offer.b.holder))
 			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "組織交易負責人已變更"
+		# TR-31: a market damaged, or under construction or repair, pauses its trades; nothing is made up later.
+		var market_key := str(offer.b.holder).trim_prefix("feature:") if str(offer.b.holder).begins_with("feature:") else ""
+		if reason.is_empty() and not market_key.is_empty() and str(_lab().terrain.site.get("features", {}).get(market_key, {}).get("kind", "")) == Market.KIND:
+			var market_open: Dictionary = Market.open_state(_lab().terrain, market_key)
+			if not bool(market_open.open): reason = str(Market.CLOSED_TEXT.get(str(market_open.reason), "市集暫停"))
 		if reason.is_empty() and not _face_to_face(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方已不在面前"
 		if not reason.is_empty():
 			results.append(_end(str(key), Runtime.fail("CANCELLED", "交易中止：%s；未轉移任何物品" % reason)))
@@ -388,6 +426,7 @@ func advance() -> Array[Dictionary]:
 				continue
 		var committed: Dictionary = Runtime.exchange_items(_lab().terrain, offer.a, offer.b, offer.a_gives, offer.b_gives)
 		if committed.ok and not source.is_empty(): Settlement.record_trade_payout(_lab().terrain, source, offer.b_gives.resources)
+		if committed.ok: Market.commit(_lab().terrain, str(job.offer_id)) # a listed delivery counts its lots for the day
 		results.append(_end(str(key), Runtime.ok("交易完成") if committed.ok else committed))
 	if not results.is_empty(): last_results = results.duplicate()
 	return results

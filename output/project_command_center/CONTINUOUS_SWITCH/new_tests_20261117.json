@@ -338,5 +338,26 @@
   "mode": "headless",
   "timeout": 960,
   "note": "P3b tax team takes its cart across Sites behind an auto driver (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_market_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 1 market building"
+ },
+ {
+  "script": "res://scripts/tests/site_market_listing_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 2 listings"
+ },
+ {
+  "script": "res://scripts/tests/site_market_ai_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 3 duty AI listings"
  }
 ]

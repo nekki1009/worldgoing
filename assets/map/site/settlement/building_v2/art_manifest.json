@@ -14124,6 +14124,170 @@
       "sha256": "022622A5C9850974A68600DC066F48409B446FE72F5004549037C45047339FCC",
       "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261116-194/generation.json",
       "qa": "Individual source sprites and final contact sheet viewed; school lecture halls/desks/corridors, no research equipment. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "market": {
+      "file": "market_v1.png",
+      "name": "市集 南向",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        35,
+        133,
+        1185,
+        1005
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        35,
+        133,
+        34,
+        116
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "south",
+      "transparent_pixels": 620104,
+      "low_alpha_pixels": 31625,
+      "opaque_pixels": 1189,
+      "sha256": "F51D66D3A2E8C1292A698CB157FFDC107C98F60B25162711B05632BB50AAA1D6",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261119-196/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; same covered market, trading stalls/baskets, exactly one entry gap per orientation. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "market_east": {
+      "file": "market_east_v1.png",
+      "name": "市集 東向",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        35,
+        102,
+        1185,
+        1060
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        35,
+        102,
+        34,
+        92
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "east",
+      "transparent_pixels": 616287,
+      "low_alpha_pixels": 22909,
+      "opaque_pixels": 1362,
+      "sha256": "79903E221DC6B6EFC5E65C6BDF502829A46DFD09B531F436D6AFD335763AB9D8",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261119-196/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; same covered market, trading stalls/baskets, exactly one entry gap per orientation. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "market_north": {
+      "file": "market_north_v1.png",
+      "name": "市集 北向",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        33,
+        126,
+        1188,
+        1006
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        33,
+        126,
+        33,
+        122
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "north",
+      "transparent_pixels": 609313,
+      "low_alpha_pixels": 30534,
+      "opaque_pixels": 1199,
+      "sha256": "45DB9EC2C433682DFAF5095DF1796EB9B3DB2B341818AD5BC99907AAB307D745",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261119-196/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; same covered market, trading stalls/baskets, exactly one entry gap per orientation. Godot/GPU/build/scale acceptance NOT_RUN."
+    },
+    "market_west": {
+      "file": "market_west_v1.png",
+      "name": "市集 西向",
+      "mode": "structure",
+      "art_size": [
+        4,
+        4
+      ],
+      "base_art_size": [
+        4,
+        4
+      ],
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        50,
+        66,
+        1156,
+        1129
+      ],
+      "bbox_alpha_threshold": 16,
+      "padding": [
+        50,
+        66,
+        48,
+        59
+      ],
+      "ground_anchor": [
+        0.5,
+        1.0
+      ],
+      "orientation": "west",
+      "transparent_pixels": 570967,
+      "low_alpha_pixels": 26552,
+      "opaque_pixels": 350,
+      "sha256": "DC4FFD76FDBD18788777636BE107BFFE9B3612B217DE469DD5612845E32E97DE",
+      "origin": "Built-in image_gen; original PNG bytes/alpha unchanged. Exact prompts, references, source PNGs, revisions and QA: output/project_command_center/evidence/CC-20261119-196/generation.json",
+      "qa": "Individual source sprites and final contact sheet viewed; same covered market, trading stalls/baskets, exactly one entry gap per orientation. Godot/GPU/build/scale acceptance NOT_RUN."
     }
   },
   "auxiliary_images": {

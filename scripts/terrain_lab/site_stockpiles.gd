@@ -4,10 +4,12 @@ extends RefCounted
 # Only storage locations for the original Site resources and item records.
 # People, transport, production and construction retain their existing owners.
 const Runtime := preload("res://scripts/terrain_lab/site_runtime.gd")
+## Facilities whose stock only stores (never a processing supply): the warehouse and the market (貿易 T3 §5.2).
+const STORE_ONLY := ["warehouse", "market"]
 
 static func eligible(feature: Dictionary) -> bool:
 	var kind := str(feature.get("kind", ""))
-	return kind == "shipyard" and Runtime.valid_technology_shipyard_work(feature) or kind == "warehouse" or Runtime.FEATURES.has(kind) and Runtime.FEATURES[kind].has("input")
+	return kind == "shipyard" and Runtime.valid_technology_shipyard_work(feature) or kind in STORE_ONLY or Runtime.FEATURES.has(kind) and Runtime.FEATURES[kind].has("input")
 
 static func capacity(feature: Dictionary) -> int:
 	if not eligible(feature): return 0
@@ -41,7 +43,7 @@ static func ensure_storage(data: TerrainData, key: String, faction: int) -> Dict
 
 static func set_local_supply(data: TerrainData, key: String, enabled: bool, faction: int) -> Dictionary:
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
-	if not eligible(feature) or str(feature.get("kind", "")) == "warehouse": return Runtime.fail("NO_TARGET")
+	if not eligible(feature) or str(feature.get("kind", "")) in STORE_ONLY: return Runtime.fail("NO_TARGET")
 	if bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) != 0.0 or Runtime._feature_has_work(data, key):
 		return Runtime.fail("BUSY", "先停止原加工工作並領出已付批次")
 	for zone: Dictionary in data.site.get("zones", []):
@@ -117,7 +119,7 @@ static func validate(state: Dictionary) -> Dictionary:
 	for key: Variant in state.features:
 		if not state.features[key] is Dictionary: return Runtime.fail("CORRUPT_SAVE", "設施格式")
 		var feature: Dictionary = state.features[key]
-		if feature.has("supply_mode") and (feature.supply_mode != "local" or str(feature.kind) == "warehouse" \
+		if feature.has("supply_mode") and (feature.supply_mode != "local" or str(feature.kind) in STORE_ONLY \
 			or not eligible(feature) or not stockpiles.has(key)):
 			return Runtime.fail("CORRUPT_SAVE", "加工現場供料引用不合法")
 	return Runtime.ok()

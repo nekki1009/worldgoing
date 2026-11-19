@@ -49,6 +49,7 @@ const FinanceData = preload("res://scripts/terrain_lab/site_finance.gd")
 const Sleep = preload("res://scripts/terrain_lab/site_sleep.gd")
 const Vital = preload("res://scripts/terrain_lab/site_vital.gd")
 const Schools = preload("res://scripts/terrain_lab/site_schools.gd")
+const Market = preload("res://scripts/terrain_lab/site_market.gd")
 ## 文武官 W5: the settlement level the live controller last saw (runtime), and the civil prestige per level reached.
 var _settlement_level_seen := -1
 const CIVIL_LEVEL_PRESTIGE := {3: 2.0, 4: 3.0, 5: 5.0}
@@ -7637,6 +7638,7 @@ func _build_building_actions(column: VBoxContainer) -> void:
 	building_actions.training = _button(column, "在校場開始本隊訓練", "TrainAtGround", func() -> void: show_result(order_controlled_training(true, feature_key)))
 	building_actions.shipyard = _button(column, "在車輛與運輸視窗造船…", "OpenSelectedShipyard", _open_selected_shipyard)
 	building_actions.school = _button(column, "學校名單／指派師生／開考", "ManageSchool", _open_school) # 考試學校 E4
+	building_actions.market = _button(column, "市集掛牌／按掛牌成交", "ManageMarket", _open_market) # 貿易 T3
 
 func _feature_stock_choices(choice: OptionButton, preferred: String = "") -> void:
 	choice.clear()
@@ -7678,7 +7680,7 @@ func _open_feature_storage() -> void:
 	var column := VBoxContainer.new()
 	margin.add_child(column)
 	_label(column, "材料與裝備保留原物權；本人須到入口或同時鄰接兩個庫存。\n遠處倉庫的物資須由本人或原車輛實際載運。原裝卸不自動往返。\n群眾人物須先沿原手動收回入口轉回一般人物，再現場裝卸。", 17)
-	if str(feature.kind) != "warehouse":
+	if str(feature.kind) not in Stockpiles.STORE_ONLY:
 		var local := CheckBox.new()
 		local.name = "LocalFeatureSupply"
 		local.text = "以本人卸入這座設施的現場材料加工"
@@ -8124,6 +8126,7 @@ func _sync_building_actions() -> void:
 	building_actions.training.disabled = not complete or not training_facility
 	building_actions.shipyard.disabled = not complete or kind != "shipyard"
 	building_actions.school.disabled = not complete or not Schools.KINDS.has(kind)
+	building_actions.market.disabled = not complete or kind != Market.KIND
 	building_actions.training.text = "在西式軍營開始本隊訓練" if kind == "barracks" and training_facility else "在校場開始本隊訓練"
 	building_actions.resize.disabled = not complete or kind == "bridge" or int(feature.get("layout_version", 0)) != 1 or str(Runtime.FEATURES.get(kind, {}).get("placement", "fixed")) == "fixed"
 	building_actions.cancel_resize.disabled = modes.selected != 5
@@ -10835,8 +10838,8 @@ func bind_trade_warehouse(limits_text: String) -> Dictionary:
 	var key := ""
 	for feature_key: Variant in lab.terrain.site.get("features", {}):
 		var feature: Dictionary = lab.terrain.site.features[feature_key]
-		if str(feature.get("kind", "")) == "warehouse" and feature.get("cells", []).has(lab.terrain.index(selected)): key = str(feature_key)
-	if key.is_empty(): return Runtime.fail("NO_TARGET", "先選一座倉庫")
+		if str(feature.get("kind", "")) in Settlement.TRADE_SOURCE_KINDS and feature.get("cells", []).has(lab.terrain.index(selected)): key = str(feature_key)
+	if key.is_empty(): return Runtime.fail("NO_TARGET", "先選一座倉庫或市集")
 	var limits := {}
 	for part: String in limits_text.split(",", false):
 		var pair := part.strip_edges().split(":")
@@ -10865,7 +10868,7 @@ func trade_source_of(npc_id: int) -> String:
 	if person.is_empty(): return ""
 	var candidates: Array = []
 	for key: Variant in lab.terrain.site.get("features", {}):
-		if str(lab.terrain.site.features[key].get("kind", "")) == "warehouse": candidates.append("feature:" + str(key))
+		if str(lab.terrain.site.features[key].get("kind", "")) in Settlement.TRADE_SOURCE_KINDS: candidates.append("feature:" + str(key))
 	for key: Variant in lab.terrain.site.get("vehicles", {}):
 		if str(lab.terrain.site.vehicles[key].get("kind", "")) in ["cart", "wagon"]: candidates.append("vehicle:" + str(key))
 	candidates.sort()
@@ -15486,3 +15489,80 @@ func _open_school(host: Window = null) -> void:
 	dialog.close_requested.connect(dialog.queue_free)
 	update.call()
 	_show_dialog(dialog, "school", key, host)
+
+## 貿易 T3 (§5.2): the market's listings. Anyone may take lots from the 市正 standing at the market; the 市正 (the head
+## while the seat is vacant) edits them.
+func _open_market(host: Window = null) -> void:
+	var key := feature_key
+	if _existing_dialog("market", key, host): return
+	if str(lab.terrain.site.get("features", {}).get(key, {}).get("kind", "")) != Market.KIND:
+		show_result(Runtime.fail("NO_TARGET", "不是市集"))
+		return
+	var dialog := Window.new()
+	dialog.title = "市集 #%s" % key
+	dialog.size = Vector2i(620, 520)
+	dialog.min_size = Vector2i(480, 400)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 14)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	var summary := _label(column, "", 15)
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var rows := ItemList.new()
+	rows.name = "MarketListings"
+	rows.custom_minimum_size.y = 150
+	rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(rows)
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	var lots := _number_input(row, "MarketLots", 1, Market.MAX_UNITS, 1)
+	var edit := LineEdit.new()
+	edit.name = "MarketListingText"
+	edit.placeholder_text = Market.FORMAT_TEXT
+	column.add_child(edit)
+	var status := _label(column, "", 15)
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var update := func() -> void:
+		var feature: Dictionary = lab.terrain.site.features.get(key, {})
+		var open := Market.open_state(lab.terrain, key)
+		var record := Market.listings(lab.terrain)
+		var trader := Market.decider(lab)
+		summary.text = "%s · 市正 %s · 每日份數上限 %d（%d 級）\n站在市正面前即可按掛牌成交，不必議價；照常交付、一次提交。" % [
+			"營業中" if bool(open.open) else str(Market.CLOSED_TEXT.get(str(open.reason), "暫停")), ("#%d" % trader) if trader > 0 else "無人",
+			Market.daily_cap(feature), Runtime.building_grade(feature)]
+		rows.clear()
+		for listing: Variant in record.get("rows", []):
+			rows.add_item("付 %s → 得 %s · 今日 %d／%d 份" % [Market.stack_text(listing.want), Market.stack_text(listing.give), int(listing.used), int(listing.daily)])
+			rows.set_item_metadata(rows.item_count - 1, str(listing.id))
+		if edit.text.is_empty(): edit.text = Market.rows_text(record)
+	_button(row, "按掛牌成交", "MarketTake", func() -> void:
+		var picked := rows.get_selected_items()
+		var result := market_take(str(rows.get_item_metadata(picked[0])) if not picked.is_empty() else "", int(lots.value))
+		status.text = str(result.get("message", ""))
+		show_result(result)
+		update.call())
+	_button(column, "設定掛牌（市正）", "MarketSetListings", func() -> void:
+		var result := market_set_listings(edit.text)
+		status.text = str(result.get("message", ""))
+		show_result(result)
+		update.call())
+	dialog.close_requested.connect(dialog.queue_free)
+	update.call()
+	_show_dialog(dialog, "market", key, host)
+
+## 貿易 T3 (TR-30): the controlled person takes `lots` lots of market listing `row_id` from the 市正 standing at the market.
+func market_take(row_id: String, lots: int) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	if row_id.is_empty(): return Runtime.fail("NO_TARGET", "先選一份掛牌")
+	var trader := Market.decider(lab)
+	if trader <= 0: return Runtime.fail("OFFICE_PAUSED", "市集目前無人代表")
+	return _trade().take_listing(int(lab.controlled_person_id()), trader, row_id, lots)
+
+## 貿易 T3: the controlled 市正 sets the market's listings from text (Market.parse_rows); empty text takes them down.
+func market_set_listings(text: String) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	var parsed := Market.parse_rows(text)
+	if not parsed.ok: return parsed
+	return Market.set_listings(lab, int(lab.controlled_person_id()), parsed.rows)
