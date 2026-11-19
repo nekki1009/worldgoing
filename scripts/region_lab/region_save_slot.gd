@@ -4980,6 +4980,8 @@ func consume_due_region_events() -> Dictionary:
 				if not observed_features.ok: return observed_features
 				var observed_strength := SiteStrength.record(self, lab) # 跨 Site 兵力情報: officers record and tell.
 				if not observed_strength.ok: return observed_strength
+				var observed_market: Dictionary = (load("res://scripts/region_lab/region_market_observation.gd") as Script).call("record", self, lab) # 貿易 T3 TR-34: listings seen here
+				if not observed_market.ok: return observed_market
 				(load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("evaluate", self, lab) # 貿易 T5: caravans turn back / come home
 				(load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("evaluate", self, lab) # 軍餉與稅收 P3b: tax teams collect / come home
 				lab.review_region_duty(float(event.at), registry)

@@ -359,5 +359,12 @@
   "mode": "headless",
   "timeout": 180,
   "note": "trade T3 slice 3 duty AI listings"
+ },
+ {
+  "script": "res://scripts/tests/site_market_observation_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 4 observations"
  }
 ]
