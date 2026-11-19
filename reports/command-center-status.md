@@ -1,15 +1,15 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-19 20:45（台北）
-CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手；交接段工作 BANDIT→文武官→考試→軍餉→貿易 T3–T6）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+更新：2026-11-20 01:10（台北）
+CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
-## 現況與待辦（20:45 台北，取代下方各段的舊「下一步」）
-- Codex CC-20261119-205（續 CC-204）：重烘全部士兵群眾圖集頁＋女款平民頁，以便 CIV-A1／A1F／A2（草鞋斗笠進角色包）一次套用。12:29Z 已完成 228 個烘焙工作全過，仍在跑；烘焙期間 D 上不跑 Godot（CC-204 曾在有其他 Godot 時出現一次未證實的記憶體失敗）。
-- CC-205 交件後：D 上套用 A1／A1F／A2＋重烘頁、編輯器匯入、士兵畫面准入、CA-02／CA-03、群眾回歸、提交；再派 CIV-A3。
-- 貿易 T6：S6 稅、S7 通商協定、S8 通用幣、1 幣＝1 糧議價、協定稅率整合測試都已提交。剩 TR-64（國家只從 R4 國庫出貨）與 TR-83（五種協定狀態、收稅 holder 滿載／過期／重合、裝備不可分、拆單取整）的逐項驗收覆蓋核對。
-- 技能系統規格 V0.2 已入庫（66b2c52）；K0–K5 等 Nekki 說要做再排。
-- 待決：site_shared_vehicle_master_groups_v2 等 GD 工作隊測試，依 triage-C A 規則（只測 GD 軍隊的退役、混合的修剪）處理，尚未動手。
-- 下方舊段落提到「T6 有明示阻擋」「CIV-A1 等 Nekki 說恢復」等皆已過時。
+## 現況與待辦（11/20 01:10 台北，取代下方各段的舊「下一步」）
+- **新規則（Nekki 11/19 15:01Z）**：Codex 只負責生成圖片／改圖。程式、Blender、烘焙流程、測試與驗收一律由 Claude 做。
+- CIV-A1／A1F／A2＋全部士兵重烘已在 D 套用並提交 23f8e6a（士兵 104→104、群眾 74→74；匯入、准入、士兵畫面、CA-03、平民畫面全 PASS；群眾家族 37/38，CA-01 舊 A0 斷言更新後 PASS）。
+- CIV-A3（搬運、抬起、坐下、打水）：計畫 reports/civ-a3-plan.md（916cf06）；第一版動作與預覽 8908107，預覽圖已給 Nekki 看，等回覆。下一步做第二階段烘焙路徑。
+- 注意：平民圖集指紋包含 crowd_site.gd、terrain_army_equipment_atlas.gd、batch_view 與原生群眾原始碼；改到這些檔，四款平民就失去准入，要重烘平民（數分鐘）。士兵頁不受影響。CIV-A3 打算把平民指紋縮到只影響像素的來源。
+- 貿易 T6 全部提交（774face..08dcbfd）；工匠分組四支測試修好 cbd7462；技能系統規格 V0.7 定案 c4758a9（K0–K5 等 Nekki 說要做再排）。
+- 下方舊段落提到「T6 有明示阻擋」「CIV-A1 等 Nekki 說恢復」「派 CIV-A3 給 Codex」等皆已過時。
 
 驗收標準：只有「正式 D:\worldgoing 上、由 canonical `verify_godot.ps1` 產生的 `result.json` 收據」算通過。隔離副本的通過、候選數量、單獨重跑都只列為「參考」，不算驗收。
 
