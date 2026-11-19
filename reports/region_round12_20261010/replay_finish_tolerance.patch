@@ -1,0 +1,24 @@
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -1822,6 +1822,12 @@
+ 	return SiteRuntime.ok("原地點補算完成", {"status": "COMPLETE", "target": target_game_seconds,
+ 		"pending": 0.0, "steps": completed_steps, "data": terrain})
+ 
++## The same completion tolerance replay_site_to applies to its residue: one
++## ACTION_TIME_EPSILON of action time, expressed in game seconds (minute and
++## phase accumulate float drift above a bare 1e-12 game-second epsilon).
++func _replay_completion_tolerance() -> float:
++	return maxf(ACTION_TIME_EPSILON, SiteRuntime.game_seconds(ACTION_TIME_EPSILON, float(terrain.site.get("combat_left", 0.0))) * simulation_speed)
++
+ func _replay_pending_residue(pending: float) -> float:
+ 	# Clipped fixed steps can leave a float residue below one ACTION_TIME_EPSILON
+ 	# of action time; it cannot be stepped, so it counts as complete.
+@@ -9633,7 +9639,7 @@
+ 	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
+ 	if slot == null and parent != null and parent.site_controller != null: slot = parent.site_controller.region_slot
+ 	if not restore_only or terrain == null or terrain != _region_bound_data or _replay_target != target_game_seconds \
+-		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > ACTION_TIME_EPSILON \
++		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_completion_tolerance() \
+ 		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING")
+ 	var settled := RegionSaveSlot.validate_settlement(terrain.site, target_game_seconds)
+ 	if not settled.ok or settled.legacy or float(settled.pending) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_REPLAY_PENDING")

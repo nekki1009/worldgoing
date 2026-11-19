@@ -1,0 +1,152 @@
+--- a/scripts/terrain_lab/site_technology.gd
++++ b/scripts/terrain_lab/site_technology.gd
+@@ -237,6 +237,7 @@
+ 	"technology_project", "technology_purpose", "technology_family_id", "technology_epoch", "technology_attempt"]
+ 
+ static func cold_jobs_candidate(raw: Variant, state: Dictionary, people: Dictionary) -> Dictionary:
++	if raw is Dictionary and integer(raw.get("version"), 2, 2): return _f15_cold_jobs_candidate(raw, state, people)
+ 	if not keys(raw, ["version", "config_version", "site_id", "jobs"]) or not integer(raw.version, 1, 1) or raw.config_version != COLD_CONFIG \
+ 		or raw.site_id != str(state.get("id", "")) or not raw.jobs is Array or raw.jobs.size() > 1:
+ 		return {"ok": false, "code": "INVALID_TECHNOLOGY_JOBS"}
+@@ -265,6 +266,52 @@
+ 		for resource: String in TRIAL_COST:
+ 			if int(project.budget.spent[resource]) + int(TRIAL_COST[resource]) > int(project.budget.cap[resource]): return {"ok": false, "code": "BUDGET_EXCEEDED"}
+ 		for field: String in ["executor_id", "executor_cell", "executor_hit", "executor_version", "technology_project", "technology_epoch", "technology_attempt"]: job[field] = int(job[field])
++		job.elapsed = float(job.elapsed)
++		job.duration = float(job.duration)
++	return {"ok": true, "state": result}
++
++static func cold_job_fields(row: Dictionary) -> Array:
++	return F15_COLD_FIELDS if row.has("technology_scope_token") else COLD_FIELDS
++
++static func _f15_cold_jobs_candidate(raw: Variant, state: Dictionary, people: Dictionary) -> Dictionary:
++	if not keys(raw, ["version", "config_version", "site_id", "jobs"]) or not integer(raw.version, 2, 2) \
++		or raw.config_version != F15_COLD_CONFIG or raw.site_id != str(state.get("id", "")) or not raw.jobs is Array or raw.jobs.size() > 1: return {"ok": false, "code": "INVALID_TECHNOLOGY_JOBS"}
++	var family: Dictionary = state.get("family", {})
++	var record: Dictionary = family.get("technology", {})
++	if not valid_scope_record(record, "family") or record.holder_site_id != str(state.id): return {"ok": false, "code": "STALE_PROJECT"}
++	var result: Dictionary = raw.duplicate(true)
++	result.version = 2
++	for job: Variant in result.jobs:
++		if not keys(job, F15_COLD_FIELDS) or not integer(job.executor_id, 1, 2147483647) or int(job.executor_id) == int(state.get("controlled_person_id", -1)) \
++			or not integer(job.executor_cell) or not integer(job.executor_hit) or not integer(job.executor_version) or job.recipe not in ["fire_arrow", "fire_pot", "crossbow"] \
++			or not finite_number(job.elapsed) or not finite_number(job.duration) or float(job.duration) != (60.0 if job.recipe == "fire_arrow" else 90.0 if job.recipe == "fire_pot" else 180.0) \
++			or float(job.elapsed) >= float(job.duration) or job.paused not in ["", "REST", "THREAT"]: return {"ok": false, "code": "INVALID_TECHNOLOGY_JOB"}
++		var token: Variant = job.technology_scope_token
++		if not keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]) \
++			or token.scope != "family" or token.scope_id != family.family_id or token.tech_id not in ["F15", "F08"] or token.tech_id == "F08" and job.recipe != "crossbow" or token.tech_id == "F15" and job.recipe == "crossbow" or token.binding != job.recipe \
++			or token.target_id != "ranged:" + str(int(job.executor_id)) or not valid_ref(token.person) or token.person.site_id != str(state.id) \
++			or int(token.person.person_id) != int(job.executor_id) or not integer(token.project_id, 1) or not integer(token.epoch, int(record.epoch), int(record.epoch)) \
++			or not integer(token.attempt, 1): return {"ok": false, "code": "INVALID_TECHNOLOGY_JOB"}
++		var project := active_project(record)
++		if project.is_empty() or int(project.rules_version) != 2 or project.tech_id != token.tech_id or int(project.id) != int(token.project_id) \
++			or project.purpose != token.purpose or not same_person_ref(project.executor, token.person, record.get("person_links", [])) \
++			or int(token.attempt) != int(project.next_attempt) - 1: return {"ok": false, "code": "STALE_PROJECT"}
++		var phase := scope_next_phase(project, token.person, record.get("person_links", []))
++		if phase.is_empty() or phase.id != token.phase_id or phase.binding != token.binding or float(phase.seconds) != float(job.duration) \
++			or not material_equal(token.materials, phase.materials): return {"ok": false, "code": "STALE_PHASE"}
++		if project.budget.is_empty() or project.budget.status != "granted" or project.budget.holder != "depot" or project.budget.source_site_id != str(state.id): return {"ok": false, "code": "NO_BUDGET"}
++		for material: String in token.materials:
++			if int(project.budget.spent.get(material, 0)) + int(token.materials[material]) > int(project.budget.cap.get(material, 0)): return {"ok": false, "code": "BUDGET_EXCEEDED"}
++		for payment: Dictionary in project.budget.payments:
++			if int(payment.attempt) == int(token.attempt): return {"ok": false, "code": "DUPLICATE"}
++		var person: Dictionary = people.get(int(job.executor_id), {})
++		if person.is_empty() or not person.get("item_state") is Dictionary or int(person.item_state.get("version", -1)) != int(job.executor_version) \
++			or learned(person.get("technology", {}), str(token.tech_id)) or float(person.get("hp", 0.0)) <= 0.0 or float(person.get("ko", person.get("knockout_left", 0.0))) > 0.0 \
++			or person.get("captive", false) == true: return {"ok": false, "code": "STALE_TECHNOLOGY_PERSON"}
++		for key: String in ["executor_id", "executor_cell", "executor_hit", "executor_version"]: job[key] = int(job[key])
++		for key: String in ["project_id", "epoch", "attempt"]: token[key] = int(token[key])
++		token.person.person_id = int(token.person.person_id)
++		for material: String in token.materials: token.materials[material] = int(token.materials[material])
+ 		job.elapsed = float(job.elapsed)
+ 		job.duration = float(job.duration)
+ 	return {"ok": true, "state": result}
+--- a/scripts/terrain_lab/site_person_actions.gd
++++ b/scripts/terrain_lab/site_person_actions.gd
+@@ -3021,15 +3021,16 @@
+ 	if lab.get("restore_only") != true: return Runtime.fail("BUSY", "人工在途科研仍須完成或取消後保存")
+ 	var rows: Array = []
+ 	for job: Dictionary in _jobs.values():
+-		if str(job.kind) != "ranged_craft" or not job.has("technology_project") or bool(_person(int(job.executor_id)).get("player", true)):
++		if str(job.kind) != "ranged_craft" or not (job.has("technology_project") or job.has("technology_scope_token")) or bool(_person(int(job.executor_id)).get("player", true)):
+ 			return Runtime.fail("BUSY", "冷科研終點只允合法原 NPC 研究；其他作業沿原守衛")
+ 		var check := _job_context(job)
+ 		if not check.ok: return check
+ 		if float(job.elapsed) >= float(job.duration) - 0.00000001: return Runtime.fail("BUSY", "先沿原接觸後提交已完成試作")
+ 		var row := {}
+-		for field: String in Technology.COLD_FIELDS: row[field] = job[field]
++		for field: String in Technology.cold_job_fields(job): row[field] = job[field]
+ 		rows.append(row)
+-	var state := {"version": 1, "config_version": Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": rows}
++	var expanded: bool = rows.any(func(row: Dictionary) -> bool: return row.has("technology_scope_token"))
++	var state := {"version": 2 if expanded else 1, "config_version": Technology.F15_COLD_CONFIG if expanded else Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": rows}
+ 	return Runtime.ok("", {"state": state})
+ 
+ func cold_technology_jobs_save_guard() -> Dictionary:
+@@ -3054,7 +3055,7 @@
+ 		var person := _person(int(row.executor_id))
+ 		if bool(person.player) or lab.terrain.index(person.cell) != int(row.executor_cell) or int(person.hit) != int(row.executor_hit): return Runtime.fail("STALE_TECHNOLOGY_PERSON")
+ 		var job := _new_job(person, "ranged_craft", int(row.executor_id))
+-		for field: String in Technology.COLD_FIELDS: job[field] = row[field]
++		for field: String in Technology.cold_job_fields(row): job[field] = row[field]
+ 		job.merge({"terrain": lab.terrain, "site_state": lab.terrain.site, "executor_holder": person.holder, "executor_cargo": person.cargo,
+ 			"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory, "technology_executor_owner": person.owner, "technology_executor_body": person.body})
+ 		var check := _job_context(job)
+@@ -3068,7 +3069,7 @@
+ 	if not bool(prepared.get("ok", false)) or not is_same(prepared.get("jobs_owner"), _jobs) or not _jobs.is_empty() \
+ 		or not is_same(prepared.get("terrain"), lab.terrain) or not is_same(prepared.get("site_state"), lab.terrain.site): return false
+ 	if not prepared.get("jobs") is Dictionary or not prepared.get("people") is Dictionary or not prepared.get("cold_state") is Dictionary or prepared.jobs.size() != prepared.people.size(): return false
+-	var raw := {"version": 1, "config_version": Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": []}
++	var raw := {"version": int(prepared.cold_state.version), "config_version": str(prepared.cold_state.config_version), "site_id": _technology_site_id(), "jobs": []}
+ 	var people := {}
+ 	for identity: int in prepared.people:
+ 		var person := _person(identity)
+@@ -3077,7 +3078,7 @@
+ 			or not is_same(person.cargo, expected.cargo) or int(person.holder.version) != int(expected.version) or int(person.hit) != int(expected.hit) or person.cell != expected.cell: return false
+ 		if not prepared.jobs.has(str(identity)) or not prepared.jobs[str(identity)] is Dictionary or not _job_context(prepared.jobs[str(identity)]).ok: return false
+ 		var row := {}
+-		for field: String in Technology.COLD_FIELDS:
++		for field: String in Technology.cold_job_fields(prepared.jobs[str(identity)]):
+ 			if not prepared.jobs[str(identity)].has(field): return false
+ 			row[field] = prepared.jobs[str(identity)][field]
+ 		raw.jobs.append(row)
+--- a/scripts/terrain_lab/site_resource_view.gd
++++ b/scripts/terrain_lab/site_resource_view.gd
+@@ -1340,6 +1340,7 @@
+ func _draw_feature(canvas: Node2D, feature: Dictionary, row_index: int = -1) -> void:
+ 	if str(feature.kind) == "siege_ladder": return # Original VehicleView shows the generated ladder sprite.
+ 	if _building_uses_art(feature): return
++	if feature.get("kind") == "irrigation_channel": _draw_irrigation_channel(canvas, feature, row_index); return
+ 	var kind := str(feature.kind)
+ 	var complete := str(feature.stage) == "complete"
+ 	var min_cell := data.cell_from_index(int(feature.cells[0]))
+@@ -1423,6 +1424,29 @@
+ 	var label := str(Runtime.FEATURES[kind].name) + ("" if complete else "·施工")
+ 	_draw_string(canvas, ThemeDB.fallback_font, p + Vector2(-30, 22), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("fff0c8"))
+ 
++func _draw_irrigation_channel(canvas: Node2D, feature: Dictionary, row_index: int) -> void:
++	var live := false
++	for key: String in data.site.features:
++		if is_same(data.site.features[key], feature): live = Runtime.irrigation_channel_flow(data, key).ok; break
++	var broken := float(feature.get("parts", {}).get("body", {}).get("hp", 100.0)) <= 0.0
++	var complete: bool = feature.get("stage") == "complete"
++	var color := Color("467f9a") if live else Color("756653")
++	if not complete: color.a = 0.4
++	# Half-edges belong to the original cell's actual painter row. This renders
++	# bends and each row once; no bounding-rectangle water/placeholder house.
++	for index: int in feature.cells.size():
++		var cell := int(feature.cells[index])
++		if row_index >= 0 and data.cell_from_index(cell).y != row_index: continue
++		var center := _center(cell)
++		var ends: Array[Vector2] = []
++		if index > 0: ends.append((_center(int(feature.cells[index - 1])) + center) * 0.5)
++		if index + 1 < feature.cells.size(): ends.append((_center(int(feature.cells[index + 1])) + center) * 0.5)
++		if ends.is_empty(): ends = [center + Vector2(-CELL * 0.25, 0), center + Vector2(CELL * 0.25, 0)]
++		for endpoint: Vector2 in ends:
++			_draw_thick_line(canvas, center, endpoint, Color("b2a28b"), 15.0)
++			_draw_thick_line(canvas, center, endpoint, color, 8.0)
++		if broken: _draw_thick_line(canvas, center + Vector2(-10, -10), center + Vector2(10, 10), Color("a46e50"), 4.0)
++
+ # Engineering component presentation through the original row draw records.
+ # The approved intact artwork remains the source for existing whole sprites;
+ # these bounded primitives make destroyed/supporting parts legible without

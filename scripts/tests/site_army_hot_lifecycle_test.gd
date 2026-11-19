@@ -53,7 +53,7 @@ func _run() -> void:
 	assert(army.index_for_identity(999) == 1 and army.index_for_identity(102) == -1)
 	army._release_combat_hot_store(true)
 	army.free()
-	var output := FileAccess.open("res://output/site_army_5k_hot_close_20260926/hot_lifecycle_smoke.json", FileAccess.WRITE)
+	var output := FileAccess.open("res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/hot_lifecycle_smoke.json", FileAccess.WRITE)
 	assert(output != null)
 	output.store_string(JSON.stringify({"checks": {"admission": true, "owner_reads_and_writes": true,
 		"cold_reference": true, "optional_key": true, "single_and_full_materialization": true,

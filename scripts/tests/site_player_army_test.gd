@@ -23,7 +23,9 @@ func run() -> void:
 	data.ramp_edges.fill(0)
 	lab.bind_terrain(data)
 	lab.character.place(Vector2i(50, 50), true)
-	lab.npc.place(Vector2i(52, 50), true)
+	# The default worker was retired; membership still uses the original player.
+	if is_instance_valid(lab.npc):
+		lab.npc.place(Vector2i(52, 50), true)
 	assert(lab.start_melee_trial().ok)
 	var deployed_teams := 0
 	for team: TerrainArmy in lab.combat_armies:

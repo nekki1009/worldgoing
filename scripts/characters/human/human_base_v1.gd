@@ -175,7 +175,7 @@ func get_socket_transform(socket_name: StringName) -> Transform3D:
 
 func get_socket_bone_name(socket_name: StringName) -> StringName:
 	var attachment: BoneAttachment3D = socket_attachments.get(socket_name)
-	return attachment.bone_name if attachment != null else &""
+	return StringName(attachment.bone_name) if attachment != null else &""
 
 func get_body_region_names() -> Array[StringName]:
 	return BODY_REGION_NAMES.duplicate()
@@ -190,7 +190,7 @@ func get_stats() -> Dictionary:
 		"height": body_mesh.get_aabb().size.y,
 		"aabb_min_y": body_mesh.get_aabb().position.y,
 		"vertices": vertices.size(),
-		"triangles": index_data.size() / 3,
+		"triangles": floori(float(index_data.size()) / 3.0),
 		"surfaces": body_mesh.get_surface_count(),
 		"materials": 1,
 		"skinned_meshes": 1,
@@ -210,7 +210,7 @@ func validate_weights() -> bool:
 	var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
 	if bones.size() != weights.size() or bones.size() % 4 != 0:
 		return false
-	for vertex_index: int in range(bones.size() / 4):
+	for vertex_index: int in range(floori(float(bones.size()) / 4.0)):
 		var total: float = 0.0
 		for slot: int in range(4):
 			var bone_index: int = bones[vertex_index * 4 + slot]
@@ -402,7 +402,7 @@ func _build_body_shell() -> void:
 			var angle: float = TAU * (float(segment) + 0.5) / float(segments)
 			var angle_x: float = signf(cos(angle)) * pow(absf(cos(angle)), 0.65)
 			var angle_z: float = signf(sin(angle)) * pow(absf(sin(angle)), 0.65)
-			var position := Vector3(angle_x * ring[1], ring[0], angle_z * ring[2])
+			var vertex_position := Vector3(angle_x * ring[1], ring[0], angle_z * ring[2])
 			var normal := Vector3(angle_x, 0.0, angle_z).normalized()
 			var blend: float = float(ring[5])
 			var frontness: float = maxf(0.0, -sin(angle))
@@ -410,7 +410,7 @@ func _build_body_shell() -> void:
 			if absf(cos(angle)) > 0.78:
 				surface_color = surface_color.lerp(SKIN_SHADOW, 0.20)
 			_append_vertex(
-				position, normal, _uv(Rect2(0.00, 0.00, 0.30, 0.48), float(segment) / float(segments), (ring[0] - 0.67) / 0.76),
+				vertex_position, normal, _uv(Rect2(0.00, 0.00, 0.30, 0.48), float(segment) / float(segments), (ring[0] - 0.67) / 0.76),
 				int(ring[3]), int(ring[4]), blend, _shade_surface_color(surface_color, normal)
 			)
 			ring_index.append(_vertices.size() - 1)
@@ -519,7 +519,7 @@ func _append_capsule_between(
 ) -> void:
 	var direction := end - start
 	var length: float = maxf(direction.length(), 0.001)
-	var basis := _basis_for_y(direction)
+	var capsule_basis := _basis_for_y(direction)
 	var center := (start + end) * 0.5
 	var axial: Array[float] = [
 		-length * 0.5 - radius * 0.16,
@@ -541,19 +541,19 @@ func _append_capsule_between(
 		for segment: int in range(segments):
 			var angle: float = TAU * (float(segment) + 0.5) / float(segments)
 			var local := Vector3(cos(angle) * radial[ring_index], axial[ring_index], sin(angle) * radial[ring_index])
-			var normal := (basis * Vector3(cos(angle), 0.0, sin(angle))).normalized()
+			var normal := (capsule_basis * Vector3(cos(angle), 0.0, sin(angle))).normalized()
 			ring.append(_append_vertex(
-				center + basis * local, normal,
+				center + capsule_basis * local, normal,
 				_uv(uv_rect, float(segment) / float(segments), t), bone_a, bone_b, blend, _shade_surface_color(color, normal)
 			))
 		rings.append(ring)
 	var start_pole := _append_vertex(
-		center + basis * Vector3(0.0, axial[0] - radius * 0.11, 0.0), -basis.y,
-		_uv(uv_rect, 0.5, 0.0), bone_a, bone_b, 0.0, _shade_surface_color(color, -basis.y)
+		center + capsule_basis * Vector3(0.0, axial[0] - radius * 0.11, 0.0), -capsule_basis.y,
+		_uv(uv_rect, 0.5, 0.0), bone_a, bone_b, 0.0, _shade_surface_color(color, -capsule_basis.y)
 	)
 	var end_pole := _append_vertex(
-		center + basis * Vector3(0.0, axial[axial.size() - 1] + radius * 0.11, 0.0), basis.y,
-		_uv(uv_rect, 0.5, 1.0), bone_a, bone_b, 1.0, _shade_surface_color(color, basis.y)
+		center + capsule_basis * Vector3(0.0, axial[axial.size() - 1] + radius * 0.11, 0.0), capsule_basis.y,
+		_uv(uv_rect, 0.5, 1.0), bone_a, bone_b, 1.0, _shade_surface_color(color, capsule_basis.y)
 	)
 	for segment: int in range(segments):
 		var next: int = (segment + 1) % segments
@@ -573,7 +573,7 @@ func _shade_surface_color(color: Color, normal: Vector3) -> Color:
 	return Color(color.r * light_factor, color.g * light_factor, color.b * light_factor, color.a)
 
 func _append_vertex(
-	position: Vector3,
+	vertex_position: Vector3,
 	normal: Vector3,
 	uv: Vector2,
 	bone_a: int,
@@ -582,7 +582,7 @@ func _append_vertex(
 	color: Color
 ) -> int:
 	var index: int = _vertices.size()
-	_vertices.append(position)
+	_vertices.append(vertex_position)
 	_normals.append(normal.normalized())
 	_uvs.append(uv)
 	_colors.append(color)
@@ -615,7 +615,7 @@ func _end_region() -> void:
 		"vertex_count": _vertices.size() - _active_region_vertex_start,
 		"index_start": _active_region_index_start,
 		"index_count": _indices.size() - _active_region_index_start,
-		"triangles": (_indices.size() - _active_region_index_start) / 3
+		"triangles": floori(float(_indices.size() - _active_region_index_start) / 3.0)
 	}
 	_active_region = &""
 
@@ -706,9 +706,9 @@ func _rebuild_skeleton_gizmo() -> void:
 		if parent_index < 0:
 			continue
 		var parent_position: Vector3 = skeleton.get_bone_global_pose(parent_index).origin
-		var position: Vector3 = skeleton.get_bone_global_pose(bone_index).origin
+		var bone_position: Vector3 = skeleton.get_bone_global_pose(bone_index).origin
 		skeleton_gizmo.surface_add_vertex(parent_position)
-		skeleton_gizmo.surface_add_vertex(position)
+		skeleton_gizmo.surface_add_vertex(bone_position)
 	skeleton_gizmo.surface_end()
 
 func _debug_material(vertex_colors: bool, wireframe: bool) -> StandardMaterial3D:

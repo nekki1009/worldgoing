@@ -1,0 +1,40 @@
+{
+ "schema": "CC001_CATALOG_STAGE_SWITCH_V1",
+ "stage_switch": "disabled -> enabled_isolated (apply at the 22->23 handoff; git apply -R after row 149)",
+ "patch": {
+  "path": "reports/cc001_catalog_20261010/enabled_isolated_catalog.patch",
+  "sha256": "A4DBCD12ABDA27637A97237F41F492367CF9FDB5ACA0E1306F8A5621950007F0"
+ },
+ "files": [
+  {
+   "path": "scripts/terrain_lab/site_technology_catalog.gd",
+   "sha256_before_disabled": "5D16B72164F97747889C98E56B8ADE968E743E1EB0B7FC15A94966355CC432B3",
+   "sha256_after_enabled_isolated": "C45B6694E88B749B62AB4BAEEC1BC775FACE92A9E8B8456E8DE868C3BE622E75",
+   "source_after": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\ROOT_CATALOG_RELEASE_CANDIDATE.v1.gd.txt",
+   "source_before_baseline": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\ROOT_CATALOG_RELEASE_BASELINE.v1.gd.txt"
+  },
+  {
+   "path": "scripts/tests/site_technology_catalog_test.gd",
+   "sha256_before_disabled": "215A591A2809F5DB25B9C9A9C452A60D2C4F272B663F6B54E077E362A6AB5CD5",
+   "sha256_after_enabled_isolated": "7C19D4FE33EF7866300FD7A611C9C96E705445C3AC7AF1DD8355BC448B1C70B4",
+   "source_after": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\ROOT_CATALOG_RELEASE_TEST_CANDIDATE.v1.gd.txt",
+   "source_before_baseline": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\ROOT_CATALOG_RELEASE_TEST_BASELINE.v1.gd.txt"
+  }
+ ],
+ "pin_source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_deployment_mapping_source_v1_20261008_084500\\CATALOG_POINTER_ADDENDUM.v1.json",
+ "scope": "Only the catalog and its paired enabled_isolated test; no other file.",
+ "apply": "git -c core.autocrlf=false apply reports/cc001_catalog_20261010/enabled_isolated_catalog.patch",
+ "revert": "git -c core.autocrlf=false apply -R reports/cc001_catalog_20261010/enabled_isolated_catalog.patch",
+ "line_endings": "Both files are LF-only. This checkout has core.autocrlf=true; a plain git apply rewrites them as CRLF and the after/before hashes no longer match the pins (observed in a scratch repo). Use the commands above.",
+ "round_trip_verified": {
+  "scratch_repo_core_autocrlf_false": true,
+  "after": [
+   "C45B6694...",
+   "7C19D4FE..."
+  ],
+  "after_revert": [
+   "5D16B721...",
+   "215A591A..."
+  ]
+ }
+}

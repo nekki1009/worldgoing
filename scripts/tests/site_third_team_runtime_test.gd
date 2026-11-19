@@ -23,7 +23,7 @@ func _aliases(lab: TerrainLab) -> Dictionary:
 	var borrowed := {"site": lab.terrain.site, "fields": lab.terrain.site.duplicate(),
 		"records": lab.terrain.site.item_records.duplicate(), "definitions": lab.terrain.site.item_definitions.duplicate(),
 		"manual_cargo": lab.terrain.site.manual.cargo, "worker_cargo": lab.terrain.site.worker.cargo,
-		"player_holder": lab.character.item_state, "npc_holder": lab.npc.item_state,
+		"player_holder": lab.character.item_state, "npc_holder": lab.npc.item_state if lab.npc != null else null,
 		"appearances": lab.site_controller._equipment_appearances, "rows": []}
 	for team: TerrainArmy in lab.combat_armies:
 		for row: Dictionary in team.combat_units:
@@ -40,8 +40,10 @@ func _assert_aliases(lab: TerrainLab, borrowed: Dictionary) -> void:
 	for identity: String in borrowed.definitions:
 		assert(is_same(lab.terrain.site.item_definitions[identity], borrowed.definitions[identity]))
 	assert(is_same(lab.character.ammo_inventory, borrowed.manual_cargo) and is_same(lab.character.ammo_inventory, lab.terrain.site.manual.cargo))
-	assert(is_same(lab.npc.ammo_inventory, borrowed.worker_cargo) and is_same(lab.npc.ammo_inventory, lab.terrain.site.worker.cargo))
-	assert(is_same(lab.character.item_state, borrowed.player_holder) and is_same(lab.npc.item_state, borrowed.npc_holder))
+	assert(is_same(lab.terrain.site.worker.cargo, borrowed.worker_cargo))
+	if lab.npc != null:
+		assert(is_same(lab.npc.ammo_inventory, borrowed.worker_cargo) and is_same(lab.npc.item_state, borrowed.npc_holder))
+	assert(is_same(lab.character.item_state, borrowed.player_holder))
 	assert(is_same(lab.site_controller._equipment_appearances, borrowed.appearances))
 	for person: Dictionary in borrowed.rows:
 		assert(is_same(person.row.item_state, person.holder) and is_same(person.row.cargo, person.cargo))
@@ -60,7 +62,9 @@ func _shot_goal(lab: TerrainLab, actor: TerrainTestCharacter) -> Vector2i:
 
 func _ammo_after_rejection(lab: TerrainLab) -> void:
 	var depot_bolts := int(lab.terrain.site.inventory.get("bolt", 0))
+	var worker_shot := lab.npc != null
 	for actor: TerrainTestCharacter in [lab.character, lab.npc]:
+		if actor == null: continue # The current main scene starts with the player alone.
 		var player := actor == lab.character
 		var weapon := "bow_01" if player else "crossbow_01"
 		var ammo := "arrow" if player else "bolt"
@@ -83,7 +87,7 @@ func _ammo_after_rejection(lab: TerrainLab) -> void:
 	assert(loaded.ok and int(loaded.data.site.manual.cargo.arrow) == 4)
 	# The original worker may deliver its remaining bolts while the combat
 	# clock expires. Count the real destination as well, never freeze its job.
-	assert(int(loaded.data.site.worker.cargo.get("bolt", 0)) + int(loaded.data.site.inventory.get("bolt", 0)) == depot_bolts + 4)
+	assert(int(loaded.data.site.worker.cargo.get("bolt", 0)) + int(loaded.data.site.inventory.get("bolt", 0)) == depot_bolts + (4 if worker_shot else 0))
 
 func _run() -> void:
 	assert(DisplayServer.get_name() == "headless")

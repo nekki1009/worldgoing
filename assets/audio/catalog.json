@@ -1,0 +1,2479 @@
+{
+  "version": 1,
+  "sample_rate": 44100,
+  "format": "PCM_16 mono WAV",
+  "status": "P0-P3 output component candidate active68; four provisional fish/boar files appended to immutable active64; native import/actual trigger/device/listening NOT_RUN; remaining gaps explicit.",
+  "sounds": {
+    "step_grass_walk": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_grass_walk_fast_01.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_walk_fast_02.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 2,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_walk_slow_01.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_walk_slow_02.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 2,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_grass_run": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_grass_run_fast_01.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_run_fast_02.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 2,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_run_slow_01.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_grass_run_slow_02.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "grass",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 2,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_hard_walk": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_hard_walk_fast_01.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_walk_fast_02.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 2,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_walk_slow_01.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_walk_slow_02.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 2,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_hard_run": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_hard_run_fast_01.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_run_fast_02.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 2,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_run_slow_01.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_hard_run_slow_02.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "hard",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 2,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_wood_walk": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_wood_walk_fast_01.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "wood",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_wood_walk_slow_01.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "wood",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_wood_run": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_wood_run_fast_01.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "wood",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_wood_run_slow_01.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "wood",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_water_walk": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_water_walk_fast_01.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "surface": "water",
+          "locomotion": "walk",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_water_walk_slow_01.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "surface": "water",
+          "locomotion": "walk",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "step_water_run": {
+      "variants": [
+        {
+          "path": "res://assets/audio/step_water_run_fast_01.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "surface": "water",
+          "locomotion": "run",
+          "tempo": "fast",
+          "variant": 1,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/step_water_run_slow_01.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false,
+          "surface": "water",
+          "locomotion": "run",
+          "tempo": "slow",
+          "variant": 1,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 20,
+      "volume_db": -14.0
+    },
+    "hoof_walk": {
+      "variants": [
+        {
+          "path": "res://assets/audio/horse_hoof_1.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/horse_hoof_2.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/horse_hoof_3.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 25,
+      "volume_db": -12.0
+    },
+    "hoof_run": {
+      "variants": [
+        {
+          "path": "res://assets/audio/horse_hoof_1.wav",
+          "duration": 0.38,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/horse_hoof_2.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        },
+        {
+          "path": "res://assets/audio/horse_hoof_3.wav",
+          "duration": 0.18,
+          "provisional": true,
+          "loop": false,
+          "footsteps": 2
+        }
+      ],
+      "group": "footsteps",
+      "priority": 25,
+      "volume_db": -12.0
+    },
+    "contact": {
+      "variants": [
+        {
+          "path": "res://assets/audio/contact_light.wav",
+          "duration": 0.35147392290249435,
+          "provisional": false,
+          "loop": false
+        },
+        {
+          "path": "res://assets/audio/contact_heavy.wav",
+          "duration": 0.1676643990929705,
+          "provisional": false,
+          "loop": false
+        },
+        {
+          "path": "res://assets/audio/contact_mixed.wav",
+          "duration": 0.35147392290249435,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "combat",
+      "priority": 60,
+      "volume_db": -8.0
+    },
+    "shield": {
+      "variants": [
+        {
+          "path": "res://assets/audio/shield_contact_1.wav",
+          "duration": 0.35147392290249435,
+          "provisional": true,
+          "loop": false
+        },
+        {
+          "path": "res://assets/audio/shield_contact_2.wav",
+          "duration": 0.26,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "combat",
+      "priority": 65,
+      "volume_db": -8.0
+    },
+    "hurt": {
+      "variants": [
+        {
+          "path": "res://assets/audio/hurt_voice_1.wav",
+          "duration": 0.5,
+          "provisional": true,
+          "loop": false,
+          "sha256": "38c5db0fc6cb64e68d468d36daa7012228995548037e9faee6fa54d571e98210",
+          "bytes": 44144,
+          "source_id": "emopreben_pain",
+          "source_member": "Painsounds v2 - Track 1 - Arrrch.ogg",
+          "modification": [
+            "full original duration, no pitch/trim",
+            "mono arithmetic channel mean",
+            "44.1kHz output; 48k sources use recorded linear interpolation",
+            "gain only attenuated to <=0.45 peak, actual multiplier 0.490275288077",
+            "PCM16 WAV write/readback"
+          ],
+          "note": "Author's recorded human pain vocalization; genuine voice source, character/role/mix suitability unaccepted; optional candidate, never silently bind to all people.",
+          "peak": 0.449981689453125,
+          "license": "CC0 1.0"
+        },
+        {
+          "path": "res://assets/audio/hurt_voice_2.wav",
+          "duration": 0.57,
+          "provisional": true,
+          "loop": false,
+          "sha256": "fc0a747810ca58e14d693f4230e0daba5d01c9960130281e92a5ab2339f7211f",
+          "bytes": 50318,
+          "source_id": "emopreben_pain",
+          "source_member": "Painsounds v2 - Track 2 - Hurgh.ogg",
+          "modification": [
+            "full original duration, no pitch/trim",
+            "mono arithmetic channel mean",
+            "44.1kHz output; 48k sources use recorded linear interpolation",
+            "gain only attenuated to <=0.45 peak, actual multiplier 0.461214006005",
+            "PCM16 WAV write/readback"
+          ],
+          "note": "Author's recorded human pain vocalization; genuine voice source, character/role/mix suitability unaccepted; optional candidate, never silently bind to all people.",
+          "peak": 0.45001220703125,
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "combat",
+      "priority": 90,
+      "volume_db": -5.0
+    },
+    "bow": {
+      "variants": [
+        {
+          "path": "res://assets/audio/bow_longbow_release.wav",
+          "duration": 0.36,
+          "provisional": true,
+          "loop": false,
+          "sha256": "9455eb4b7a588f2de899343eb39a0d8a6287177b1038533090c924ef36ee53ec",
+          "bytes": 31796,
+          "source_member": "selected_originals/English Longbow Shoot.wav",
+          "source_member_sha256": "c25684ccdab3eb13f17a0ffa637fbd175659d092665f16c0bce8510d46c4fbee",
+          "original_start": 0.04,
+          "original_end": 0.4,
+          "original_rate": 192000,
+          "original_subtype": "PCM_24",
+          "selected_source_clipped_samples": 0,
+          "peak": 0.449981689453125,
+          "gain": 0.9661859781280515,
+          "modification": "Select one recorded release;5ms source edge fade; band-limited Fourier resample192000->44100(no pitch/time stretch, dropped frequencies above22050Hz,target Nyquist correction); attenuate peak<=.45;mono PCM16 write/readback. No new package/runtime codec.",
+          "note": "Direct source recorded longbow/recurve/crossbow release, not knife/belt foley or public MP3 preview; automatic excerpt choice and character/weapon/mix subjective suitability unaccepted.",
+          "source_id": "stillnorth_medieval_texture",
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "projectile",
+      "priority": 70,
+      "volume_db": -9.0
+    },
+    "crossbow": {
+      "variants": [
+        {
+          "path": "res://assets/audio/crossbow_recorded_release.wav",
+          "duration": 0.52,
+          "provisional": true,
+          "loop": false,
+          "sha256": "8589ed79ac5a65052f6dcbc93b33a0aa91597fb2c047df6e46c70de8f8c259f3",
+          "bytes": 45908,
+          "source_member": "selected_originals/Crossbow Shoot.wav",
+          "source_member_sha256": "d8c68f970540d73ab6fe2db5309166e6dd911876501a16bb4df43498247e19b2",
+          "original_start": 0.2,
+          "original_end": 0.72,
+          "original_rate": 192000,
+          "original_subtype": "PCM_24",
+          "selected_source_clipped_samples": 0,
+          "peak": 0.45001220703125,
+          "gain": 0.46308228641865806,
+          "modification": "Select one recorded release;5ms source edge fade; band-limited Fourier resample192000->44100(no pitch/time stretch, dropped frequencies above22050Hz,target Nyquist correction); attenuate peak<=.45;mono PCM16 write/readback. No new package/runtime codec.",
+          "note": "Direct source recorded longbow/recurve/crossbow release, not knife/belt foley or public MP3 preview; automatic excerpt choice and character/weapon/mix subjective suitability unaccepted.",
+          "source_id": "stillnorth_medieval_texture",
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "projectile",
+      "priority": 70,
+      "volume_db": -9.0
+    },
+    "impact_ground": {
+      "variants": [
+        {
+          "path": "res://assets/audio/projectile_ground.wav",
+          "duration": 0.10498866213151928,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "projectile",
+      "priority": 55,
+      "volume_db": -10.0
+    },
+    "impact_wood": {
+      "variants": [
+        {
+          "path": "res://assets/audio/projectile_wood.wav",
+          "duration": 0.3,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "projectile",
+      "priority": 55,
+      "volume_db": -10.0
+    },
+    "impact_metal": {
+      "variants": [
+        {
+          "path": "res://assets/audio/projectile_metal.wav",
+          "duration": 0.35147392290249435,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "projectile",
+      "priority": 55,
+      "volume_db": -10.0
+    },
+    "fire_small": {
+      "variants": [
+        {
+          "path": "res://assets/audio/fire_small_original.wav",
+          "duration": 2.770612244897959,
+          "provisional": true,
+          "loop": true,
+          "sha256": "5fb54b5161414b8cdacb069d57c941eac5f7ab5407013f4026803ba96c171bcd",
+          "bytes": 244412,
+          "source_id": "antumdeluge_fire",
+          "source_member": "fire.wav",
+          "modification": [
+            "entire2.8706s author-published PCM source, 100ms cyclic crossfade",
+            "mono arithmetic channel mean",
+            "44.1kHz output; 48k sources use recorded linear interpolation",
+            "gain only attenuated to <=0.45 peak, actual multiplier 1",
+            "PCM16 WAV write/readback"
+          ],
+          "note": "Direct published WAV acquisition replaces public MP3 lineage; small/large acoustic differentiation, short repetition and seam require listening. Large uses half-cycle rotation, no false larger-fire recording claim.",
+          "peak": 0.397674560546875,
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "environment",
+      "priority": 15,
+      "volume_db": -16.0
+    },
+    "fire_large": {
+      "variants": [
+        {
+          "path": "res://assets/audio/fire_large_original.wav",
+          "duration": 2.770612244897959,
+          "provisional": true,
+          "loop": true,
+          "sha256": "152e7fd4bc6e1cf522f72d6a33a11c08efead7ba889ccf136f3a340a5b78bfd7",
+          "bytes": 244412,
+          "source_id": "antumdeluge_fire",
+          "source_member": "fire.wav",
+          "modification": [
+            "entire2.8706s author-published PCM source, 100ms cyclic crossfade",
+            "mono arithmetic channel mean",
+            "44.1kHz output; 48k sources use recorded linear interpolation",
+            "gain only attenuated to <=0.45 peak, actual multiplier 1",
+            "PCM16 WAV write/readback"
+          ],
+          "note": "Direct published WAV acquisition replaces public MP3 lineage; small/large acoustic differentiation, short repetition and seam require listening. Large uses half-cycle rotation, no false larger-fire recording claim.",
+          "peak": 0.397674560546875,
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "environment",
+      "priority": 40,
+      "volume_db": -12.0
+    },
+    "fire_extinguish": {
+      "variants": [
+        {
+          "path": "res://assets/audio/fire_extinguish.wav",
+          "duration": 0.25,
+          "provisional": true,
+          "loop": false
+        }
+      ],
+      "group": "environment",
+      "priority": 30,
+      "volume_db": -12.0
+    },
+    "down": {
+      "variants": [
+        {
+          "path": "res://assets/audio/down_body_foley.wav",
+          "duration": 0.6262131519274377,
+          "provisional": true,
+          "loop": false,
+          "sha256": "eb8cf8b259db1aec91337dbaef37a4e7fb6a84e32dc87134ca6eb53e74152ffc",
+          "bytes": 55276,
+          "source_id": "rubberduck_falling_hit",
+          "source_member": "bfh1_falling_06.ogg",
+          "modification": [
+            "full generic falling source, no pitch/trim",
+            "mono arithmetic channel mean",
+            "44.1kHz output; 48k sources use recorded linear interpolation",
+            "gain only attenuated to <=0.45 peak, actual multiplier 0.571274859545",
+            "PCM16 WAV write/readback"
+          ],
+          "note": "Generic falling foley only; not verified recorded human body fall. Proposed down key remains provisional semantic/listening gate, not false human voice.",
+          "peak": 0.449981689453125,
+          "license": "CC0 1.0"
+        }
+      ],
+      "group": "call",
+      "priority": 95,
+      "volume_db": -5.0
+    },
+    "harvest_wood": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/tool_wood_chop_01.wav",
+          "duration": 0.24024943310657595,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "tool_wood_chop_01",
+          "sha256": "3147d4afd709a4f852a8751228772624527dfb507f089056dc2855374192c854",
+          "source_id": "p3_tool_wood_chop_01",
+          "license": "CC0 1.0",
+          "source_sha256": "d00c2b3c9fff07e376145c8c8c45c90e5084ec192f6ce0387db233f7b86f1486",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "木材劈砍工具 Foley"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "木材劈砍工具 Foley",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "harvest_stone": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/tool_mining_01.wav",
+          "duration": 0.937437641723356,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "tool_mining_01",
+          "sha256": "57c701a72156d78b03491a55d267443c075c02ee3c7d7fa523cc31c5c56fb28a",
+          "source_id": "p3_tool_mining_01",
+          "license": "CC0 1.0",
+          "source_sha256": "36b4ea107222d073c67ca64dde26944975609202d5090b2f2021213c1a7e35cd",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "採礦鎬接觸 Foley；石與鐵礦共用"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "採礦鎬接觸 Foley；石與鐵礦共用",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "harvest_iron": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/tool_mining_01.wav",
+          "duration": 0.937437641723356,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "tool_mining_01",
+          "sha256": "57c701a72156d78b03491a55d267443c075c02ee3c7d7fa523cc31c5c56fb28a",
+          "source_id": "p3_tool_mining_01",
+          "license": "CC0 1.0",
+          "source_sha256": "36b4ea107222d073c67ca64dde26944975609202d5090b2f2021213c1a7e35cd",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "採礦鎬接觸 Foley；石與鐵礦共用"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "採礦鎬接觸 Foley；石與鐵礦共用",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "harvest_clay": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/tool_shovel_01.wav",
+          "duration": 0.9091156462585034,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "tool_shovel_01",
+          "sha256": "9a5405518b4aa3748345e37ce32b44ef26e37384ff687ad96db26c705f3b053f",
+          "source_id": "p3_tool_shovel_01",
+          "license": "CC0 1.0",
+          "source_sha256": "1ad178afa5d959ecd4454c3d8388abb23451a1f43a028f476aa37aa3a944d195",
+          "license_snapshot_sha256": "35fb9a71558b936815322826672ec369f5f301a4f5b792109c3b7a3a866fbf91",
+          "semantic": "真鏟土節錄；黏土／泥土候選"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "真鏟土節錄；黏土／泥土候選",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "gather_soft": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/soft_handle_01.wav",
+          "duration": 0.3382086167800454,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "soft_handle_01",
+          "sha256": "d6cb801628cfbd0d37167897505246b92a86c7fa6ca7c296e7e99fe64febb46a",
+          "source_id": "p3_soft_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "ae3cbf695aa0a8b98b5a80a835be5a3ccbd5446a24db2235cd4c3cd6fc92ed96",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "wildlife_harvest": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/equipment_handle_01.wav",
+          "duration": 0.27671201814058954,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "equipment_handle_01",
+          "sha256": "723bb01bf985839fb404c2c045061ed4281d2a37d6c0b40be34ac51ed0df15d6",
+          "source_id": "p3_equipment_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "2ef665bd8b65dbe669f4560be38a6d8f04a162e618b15a49e3e71b58e558aab0",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "wildlife_capture": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/equipment_handle_01.wav",
+          "duration": 0.27671201814058954,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "equipment_handle_01",
+          "sha256": "723bb01bf985839fb404c2c045061ed4281d2a37d6c0b40be34ac51ed0df15d6",
+          "source_id": "p3_equipment_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "2ef665bd8b65dbe669f4560be38a6d8f04a162e618b15a49e3e71b58e558aab0",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_complete": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/tool_complete_01.wav",
+          "duration": 0.7790022675736962,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "tool_complete_01",
+          "sha256": "9f223a755f510f74b2307879a8afa80b4864409320989735824ee5d184d23fbb",
+          "source_id": "p3_tool_complete_01",
+          "license": "CC0 1.0",
+          "source_sha256": "8403cd7a043f0391574c88c55dd205743725b5363d2407f6de145f201690b68f",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "通用最後一下工具接觸 completion Foley；不推導建材或配方"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "通用最後一下工具接觸 completion Foley；不推導建材或配方",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "equipment_handle": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/equipment_handle_01.wav",
+          "duration": 0.27671201814058954,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "equipment_handle_01",
+          "sha256": "723bb01bf985839fb404c2c045061ed4281d2a37d6c0b40be34ac51ed0df15d6",
+          "source_id": "p3_equipment_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "2ef665bd8b65dbe669f4560be38a6d8f04a162e618b15a49e3e71b58e558aab0",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "裝備／皮帶物件處理 generic completion Foley；不稱獵物聲或捕網",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "material_transfer": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/soft_handle_01.wav",
+          "duration": 0.3382086167800454,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "soft_handle_01",
+          "sha256": "d6cb801628cfbd0d37167897505246b92a86c7fa6ca7c296e7e99fe64febb46a",
+          "source_id": "p3_soft_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "ae3cbf695aa0a8b98b5a80a835be5a3ccbd5446a24db2235cd4c3cd6fc92ed96",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "item_handle": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/soft_handle_01.wav",
+          "duration": 0.3382086167800454,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "soft_handle_01",
+          "sha256": "d6cb801628cfbd0d37167897505246b92a86c7fa6ca7c296e7e99fe64febb46a",
+          "source_id": "p3_soft_handle_01",
+          "license": "CC0 1.0",
+          "source_sha256": "ae3cbf695aa0a8b98b5a80a835be5a3ccbd5446a24db2235cd4c3cd6fc92ed96",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "柔軟物件處理 generic completion Foley；不稱鹽水／食物／藥草真採集錄音",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "gate_open": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/door_open_provisional_01.wav",
+          "duration": 0.9189569160997733,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "door_open_provisional_01",
+          "sha256": "930d336934088b364f253ba9589c30606d6015e437e6ad2584b3da5689696b77",
+          "source_id": "p3_door_open_provisional_01",
+          "license": "CC0 1.0",
+          "source_sha256": "4ab93bab96522d8eb109ff96dc57cb6765deb02448fe14c10472084be5bb2a0b",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "普通木門打開 Foley；大型木柵門品質仍 GAP"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "普通木門打開 Foley；大型木柵門品質仍 GAP",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "gate_close": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/door_close_provisional_01.wav",
+          "duration": 0.6750340136054421,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "door_close_provisional_01",
+          "sha256": "3356c1027290ce994d1593f54ca82e39dc6bce9449b0392b2bad0a667973ffca",
+          "source_id": "p3_door_close_provisional_01",
+          "license": "CC0 1.0",
+          "source_sha256": "834d29c60a8a8bfb50b158cdb6b7dfa8f02812a408a1ee9703d038dfab0b1aeb",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "普通木門關閉 Foley；大型木柵門品質仍 GAP"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "普通木門關閉 Foley；大型木柵門品質仍 GAP",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "cart_roll": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/cart_roll_loop_01.wav",
+          "duration": 7.75,
+          "loop": true,
+          "provisional": true,
+          "asset_id": "cart_roll_loop_01",
+          "sha256": "d38bfb577535b36a96b581488c66ed0ba7c3ce5e66917a9fbab77a0fd7ffc60c",
+          "source_id": "p3_cart_roll_loop_01",
+          "license": "CC-BY 4.0",
+          "source_sha256": "d8d149eea60eef1fa2573dd49674121965f849e98a00cbb901b1d6893d16f6b6",
+          "license_snapshot_sha256": "d93525f5f81f416da520fb89f573b6d413c8def0bf0a0cd6442e04c4aba5f5c6",
+          "semantic": "真木輪木車在人行路面，由兩人推動；沒有馬蹄"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "真木輪木車在人行路面，由兩人推動；沒有馬蹄",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "water_fresh": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/water_fresh_loop_01.wav",
+          "duration": 11.75,
+          "loop": true,
+          "provisional": true,
+          "asset_id": "water_fresh_loop_01",
+          "sha256": "14e5aadea10b5dd36765717eea6f95d49689b44815f2560ec7da0e1fbe18eebe",
+          "source_id": "p3_water_fresh_loop_01",
+          "license": "CC0 1.0",
+          "source_sha256": "8c24607e41edd6f018ec3582a07e5a8dbc57347276339cb68440951a0fb4cfb1",
+          "license_snapshot_sha256": "3837ebba30e7143aa72aec84a71a72fa822f7a64dafcae6635bf3603d2b6155a",
+          "semantic": "淡水河岸環境候選；無流速／氣象聲稱，原發布有損 MP3"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "淡水河岸環境候選；無流速／氣象聲稱，原發布有損 MP3",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "water_shore": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/water_shore_loop_01.wav",
+          "duration": 3.75,
+          "loop": true,
+          "provisional": true,
+          "asset_id": "water_shore_loop_01",
+          "sha256": "85f86d9961d3d7b7a9e2c977749910600cf334e4003b83961f49888e80d01b00",
+          "source_id": "p3_water_shore_loop_01",
+          "license": "CC0 1.0",
+          "source_sha256": "fcfca178eca2eac536e8c2a4ed5cf8096e44c921acd587047b3d9f1d7845435c",
+          "license_snapshot_sha256": "62244968fc746b5336618fca2f840794d73856dc7d223360311724828d7ac4b5",
+          "semantic": "真海灘浪聲節錄後跨接 loop；未聽覺驗收"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "真海灘浪聲節錄後跨接 loop；未聽覺驗收",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_wood": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/work_wood_oneshot_01.wav",
+          "duration": 0.24024943310657595,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "work_wood_oneshot_01",
+          "sha256": "3147d4afd709a4f852a8751228772624527dfb507f089056dc2855374192c854",
+          "source_id": "p3_work_wood_oneshot_01",
+          "license": "CC0 1.0",
+          "source_sha256": "d00c2b3c9fff07e376145c8c8c45c90e5084ec192f6ce0387db233f7b86f1486",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "wood 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "wood 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_stone": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/work_stone_oneshot_01.wav",
+          "duration": 0.937437641723356,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "work_stone_oneshot_01",
+          "sha256": "57c701a72156d78b03491a55d267443c075c02ee3c7d7fa523cc31c5c56fb28a",
+          "source_id": "p3_work_stone_oneshot_01",
+          "license": "CC0 1.0",
+          "source_sha256": "36b4ea107222d073c67ca64dde26944975609202d5090b2f2021213c1a7e35cd",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "stone 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "stone 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_earth": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/work_earth_oneshot_01.wav",
+          "duration": 0.9091156462585034,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "work_earth_oneshot_01",
+          "sha256": "9a5405518b4aa3748345e37ce32b44ef26e37384ff687ad96db26c705f3b053f",
+          "source_id": "p3_work_earth_oneshot_01",
+          "license": "CC0 1.0",
+          "source_sha256": "1ad178afa5d959ecd4454c3d8388abb23451a1f43a028f476aa37aa3a944d195",
+          "license_snapshot_sha256": "35fb9a71558b936815322826672ec369f5f301a4f5b792109c3b7a3a866fbf91",
+          "semantic": "earth 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "earth 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_metal": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/work_metal_oneshot_01.wav",
+          "duration": 0.1676643990929705,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "work_metal_oneshot_01",
+          "sha256": "9fe2c723ecff2504d7f0431e73d263a73981ab3c3e3ac8467dd35ce1ad931364",
+          "source_id": "p3_work_metal_oneshot_01",
+          "license": "CC0 1.0",
+          "source_sha256": "e07045693e4a2b3d165c424e3dab4c781d9ff8880a386880ac89a51315d7f831",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "metal 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "metal 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "work_textile": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/work_textile_oneshot_01.wav",
+          "duration": 0.6610430839002267,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "work_textile_oneshot_01",
+          "sha256": "adca228f57d35486a070dde5bb48f7accd5a82da80faf16ef9417fa007ea9e40",
+          "source_id": "p3_work_textile_oneshot_01",
+          "license": "CC0 1.0",
+          "source_sha256": "ddb93a3671233f95da0e0b10367f082f7eb42fa6caaddcf776410aa8833c747d",
+          "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+          "semantic": "textile 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "textile 工具／材料接觸 one-shot Foley；只供真工作正進度事件，不推導建材或配方專屬聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "animal_horse": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/animal_horse_01.wav",
+          "duration": 1.5727437641723356,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_horse_01",
+          "sha256": "3cd9a3ef6abada5a8f03ab9276fb51f2193f4561104804ef17e379a00c0e4c72",
+          "source_id": "p3_animal_horse_01",
+          "license": "CC0 1.0",
+          "source_sha256": "bec2ef5854c4e3695e8b362bb4b07e5f9055cec04c615be37647ad2846e53dde",
+          "license_snapshot_sha256": "2c42db378c0cd95ec758aa1e05fb7680476ad2bb12c2d53cb37f541be3080c00",
+          "semantic": "真馬嘶鳴"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "call",
+      "priority": 12,
+      "semantic": "真馬嘶鳴",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "animal_sheep": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/animal_sheep_01.wav",
+          "duration": 0.8724036281179138,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_sheep_01",
+          "sha256": "9edf0d506f45837c3b1dd7b6582b006ddf607e269b1564479b12344d79e8d425",
+          "source_id": "p3_animal_sheep_01",
+          "license": "CC0 1.0",
+          "source_sha256": "b2687077a29c044e57220b660c616f9336a0b454519f67bbc59954e0574acc70",
+          "license_snapshot_sha256": "181623e8fbe58bc1e150ea741e776b3de0c2c4ee5a979747d6b5bf2f72798bb9",
+          "semantic": "真羊叫節錄"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "call",
+      "priority": 12,
+      "semantic": "真羊叫節錄",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "animal_deer": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/animal_deer_fallow_rut_01.wav",
+          "duration": 2.9116326530612247,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_deer_fallow_rut_01",
+          "sha256": "1e6350902e23a83597933043fbc4a35e842db452c6ce945bd5c17cfd7c911eea",
+          "source_id": "p3_animal_deer_fallow_rut_01",
+          "license": "CC-BY 2.0",
+          "source_sha256": "d094b3c2201f689dc0a656ff8fa542e1e271dcb7331b9b1b31bd771f0e9feeb1",
+          "license_snapshot_sha256": "124c34d2be53680b67af683421353bae10ce599212fc3fa28425d7f9e6ca1509",
+          "semantic": "真雄性黇鹿繁殖期 groan；非臺灣梅花鹿，也非全年日常泛鹿聲"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "call",
+      "priority": 12,
+      "semantic": "真雄性黇鹿繁殖期 groan；非臺灣梅花鹿，也非全年日常泛鹿聲",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "ship_sail": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/ship_row_loop_01.wav",
+          "duration": 7.75,
+          "loop": true,
+          "provisional": true,
+          "asset_id": "ship_row_loop_01",
+          "sha256": "67351921fe569ecf71bcd3551bfe630a2a2b09cec6cce071fdbf611fa300d71a",
+          "source_id": "p3_ship_row_loop_01",
+          "license": "CC0 1.0",
+          "source_sha256": "7de3f074f4814afe6979ff75fb179cdf02093a69b0688942f7024a92c86d97a7",
+          "license_snapshot_sha256": "b19462a19a661534a282b158700a3ebca06bcb4820234ce05ee943e76508bc76",
+          "semantic": "木板水槽划槳 Foley；非實船、大船或海洋環境錄音"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "木板水槽划槳 Foley；非實船、大船或海洋環境錄音",
+      "admission": "OUTPUT_ONLY_CANDIDATE_NATIVE_IMPORT_AND_LISTENING_NOT_RUN"
+    },
+    "ship_board": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/ship_deck_contact_provisional_01.wav",
+          "duration": 0.24959183673469387,
+          "loop": false,
+          "provisional": true,
+          "sha256": "dfe93efdcb33237e86b307bba986a0c691b2076d51a47f2e573587ef588c101d",
+          "asset_id": "ship_deck_contact_provisional_01",
+          "source_id": "p3_ship_deck_contact_provisional_01",
+          "license": "CC0 1.0",
+          "source_sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "登離船完成處的通用單次木甲板接觸 Foley；不是實船／登船實錄、沒有第二步補播"
+        }
+      ],
+      "group": "world",
+      "priority": 12,
+      "volume_db": -18.0,
+      "semantic": "登離船完成處的通用單次木甲板接觸 Foley；不是實船／登船實錄、沒有第二步補播",
+      "admission": "PROVISIONAL_GENERIC_FOLEY_NOT_SHIP_RECORDING_NOT_LISTENED"
+    },
+    "ship_disembark": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/ship_deck_contact_provisional_01.wav",
+          "duration": 0.24959183673469387,
+          "loop": false,
+          "provisional": true,
+          "sha256": "dfe93efdcb33237e86b307bba986a0c691b2076d51a47f2e573587ef588c101d",
+          "asset_id": "ship_deck_contact_provisional_01",
+          "source_id": "p3_ship_deck_contact_provisional_01",
+          "license": "CC0 1.0",
+          "source_sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+          "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+          "semantic": "登離船完成處的通用單次木甲板接觸 Foley；不是實船／登船實錄、沒有第二步補播"
+        }
+      ],
+      "group": "world",
+      "priority": 12,
+      "volume_db": -18.0,
+      "semantic": "登離船完成處的通用單次木甲板接觸 Foley；不是實船／登船實錄、沒有第二步補播",
+      "admission": "PROVISIONAL_GENERIC_FOLEY_NOT_SHIP_RECORDING_NOT_LISTENED"
+    },
+    "fish_catch": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/fish_catch_01.wav",
+          "duration": 0.38344671201814057,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "fish_catch_01",
+          "sha256": "c4357a1e97dc4e216dfcf8280fc5595c2cbb39e42ea529ebf68476a16195fca0",
+          "source_id": "p3_skippy_water_fish_catch",
+          "license": "CC0 1.0",
+          "source_sha256": "6107b595a7f1c19a1fde61200726726e31aec98af6de31aef00048ea336a973e",
+          "license_snapshot_sha256": "65352f5ce0de2478ef00904ce8144a9ba292705e2307b41e43eebac81533fdcd",
+          "semantic": "捕魚成功提交時可用的玻璃水手工Foley；錄音本身不是實際捕魚／魚類叫聲，交易trigger須另驗"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "world",
+      "priority": 12,
+      "semantic": "捕魚成功提交時可用的玻璃水手工Foley；錄音本身不是實際捕魚／魚類叫聲，交易trigger須另驗",
+      "admission": "OUTPUT_ONLY_PROVISIONAL_NATIVE_IMPORT_AND_Q01_NOT_RUN"
+    },
+    "animal_boar": {
+      "variants": [
+        {
+          "path": "res://assets/audio/p3/animal_boar_01.wav",
+          "duration": 2.0,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_boar_01",
+          "sha256": "71a67c548f3ebb09e2447f310e644d1a5e45c8d72619133efecebec0293bd660",
+          "source_id": "p3_tsa_sus_scrofa_group",
+          "license": "CC BY-SA 3.0 Germany",
+          "source_sha256": "a29edad160432e5459fe121052e51b6493736151c774d78cb05d88b9f2c4f2bd",
+          "license_snapshot_sha256": "216424dc50086119d5870e8e88d66a1a1f23f7f155bc555fd2f2d9d0dd92c1c6",
+          "semantic": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質"
+        },
+        {
+          "path": "res://assets/audio/p3/animal_boar_02.wav",
+          "duration": 2.0,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_boar_02",
+          "sha256": "aaf49bc10ce3b4af45e999651324908f0a15ba0712fb8a9729bee748caa90b09",
+          "source_id": "p3_tsa_sus_scrofa_group",
+          "license": "CC BY-SA 3.0 Germany",
+          "source_sha256": "a29edad160432e5459fe121052e51b6493736151c774d78cb05d88b9f2c4f2bd",
+          "license_snapshot_sha256": "216424dc50086119d5870e8e88d66a1a1f23f7f155bc555fd2f2d9d0dd92c1c6",
+          "semantic": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質"
+        },
+        {
+          "path": "res://assets/audio/p3/animal_boar_03.wav",
+          "duration": 2.0,
+          "loop": false,
+          "provisional": true,
+          "asset_id": "animal_boar_03",
+          "sha256": "e78f0d883acdc9922165a29c6f282423901d8d07f290c658bf069dc4b7e77ecc",
+          "source_id": "p3_tsa_sus_scrofa_group",
+          "license": "CC BY-SA 3.0 Germany",
+          "source_sha256": "a29edad160432e5459fe121052e51b6493736151c774d78cb05d88b9f2c4f2bd",
+          "license_snapshot_sha256": "216424dc50086119d5870e8e88d66a1a1f23f7f155bc555fd2f2d9d0dd92c1c6",
+          "semantic": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質"
+        }
+      ],
+      "volume_db": -18.0,
+      "group": "call",
+      "priority": 12,
+      "semantic": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質",
+      "admission": "OUTPUT_ONLY_PROVISIONAL_NATIVE_IMPORT_AND_Q01_NOT_RUN"
+    },
+    "weather_rain_light_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_rain_light_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "40b34266a5b782b696b4d28c32bfa815045ccf818f5552487187d0524288a228",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir"
+          ],
+          "modification": [
+            "Original rain_4.ogg, excerpt 5.00-26.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 3.42709117;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 12,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_rain_heavy_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_rain_heavy_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "4fa5832b941d7f1db834b346d92e4e58bc3f89bdc757de2d94088f6e8e5c757f",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir"
+          ],
+          "modification": [
+            "Original rain_2.ogg, excerpt 2.00-23.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 0.662189991;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 16,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_wind_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_wind_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "fdbb797379e873c9ea3dbae64844f34a4189df71abcbf669e53f5c59d328c0b5",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_wind_luke"
+          ],
+          "modification": [
+            "Original wind_original.wav, excerpt 5.00-26.00s",
+            "arithmetic channel mean to mono; original44100Hz retained",
+            "1s equal-power cyclic tail/head overlap;20s cycle",
+            "RMS/peak limited gain 3.14932909;no limiter/clipping",
+            "cyclic rotation to low-delta seam; last2PCM frames match first frame (<=16LSB correction)"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 10,
+      "volume_db": -20.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_storm_loop": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_storm_loop.wav",
+          "duration": 20.0,
+          "loop": true,
+          "provisional": true,
+          "sha256": "f79f5178bbb2454e2dfe4659b851368d5a8c29e0fe64c5b811561cce3bbf99d4",
+          "bytes": 1764044,
+          "license": "CC0 1.0",
+          "source_ids": [
+            "weather_rain_ylmir",
+            "weather_wind_luke"
+          ],
+          "modification": [
+            "rain1 excerpt3-24s + synthesized wind1 excerpt12-33s;mono arithmetic means",
+            "each1s equal-power cyclic overlap;20s rain/wind composite without embedded thunder",
+            "component gains rain=1.32973565,wind=4.73342688;mix gain=0.979891434",
+            "low-delta cyclic rotation and final2frame seam alignment;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 22,
+      "volume_db": -18.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_01": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_01.wav",
+          "duration": 7.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "7206f4290497cbc4840f43290ec90e6bacd7a3a7d2226efbecca141aa90e2711",
+          "bytes": 617444,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 19.8-26.8s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "smooth spectral lowpass 1200Hz",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 2.48060892;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_02": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_02.wav",
+          "duration": 7.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "5aa15361d0c1a3cda78110e990b6c433a1934a81b4cfaf6a130c6b2a9ad74d12",
+          "bytes": 617444,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 0.6-7.6s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "original bandwidth retained",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 0.709368596;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    },
+    "weather_thunder_03": {
+      "variants": [
+        {
+          "path": "res://assets/audio/weather_thunder_03.wav",
+          "duration": 8.0,
+          "loop": false,
+          "provisional": true,
+          "sha256": "6bd1103a61fd8c8fc06de95f1b9827fe9ef939040cd39705f773675b5ef8ca4f",
+          "bytes": 705644,
+          "license": "CC BY 3.0",
+          "source_ids": [
+            "weather_thunder_jerimee"
+          ],
+          "modification": [
+            "Original thunder-seq.wav excerpt 34.3-42.3s",
+            "stereo arithmetic mean to mono;44100Hz retained",
+            "smooth spectral lowpass 3500Hz",
+            "20ms onset and350ms tail endpoint fades",
+            "RMS/peak limited gain 0.99188411;PCM16"
+          ]
+        }
+      ],
+      "group": "environment",
+      "priority": 35,
+      "volume_db": -14.0,
+      "admission": "AUDIO_ASSET_ONLY_GODOT_WEATHER_TRIGGER_AND_NEKKI_LISTENING_NOT_RUN"
+    }
+  },
+  "sources": [
+    {
+      "id": "grass_a",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "footstep_grass_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "9d49497777405d78d7cf7f2888e28277f3a23192300cfd1d79d54876b20f479f",
+      "file": "clips/kenney_impact_footstep_grass_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.7775736961451247,
+      "source_rate": 44100
+    },
+    {
+      "id": "grass_b",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "footstep_grass_001.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "fb28781bd22b2eefdc14077f1adf5c94d7fe9c3a130194633b55f3e0d39d9f04",
+      "file": "clips/kenney_impact_footstep_grass_001.ogg",
+      "selected_start": 0,
+      "selected_end": 0.6736054421768708,
+      "source_rate": 44100
+    },
+    {
+      "id": "stone_a",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "footstep_concrete_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "d7267e183067757c92c169de2a379abea592cfca6b39bb2e8feea15221ad79fe",
+      "file": "clips/kenney_impact_footstep_concrete_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.10591836734693877,
+      "source_rate": 44100
+    },
+    {
+      "id": "stone_b",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "footstep_concrete_001.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "507a75eb19b897087855a3be3cf11a12d7fa37d143ad535eeebe0b8031c7325d",
+      "file": "clips/kenney_impact_footstep_concrete_001.ogg",
+      "selected_start": 0,
+      "selected_end": 0.10764172335600906,
+      "source_rate": 44100
+    },
+    {
+      "id": "wood_a",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "footstep_wood_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+      "file": "clips/kenney_impact_footstep_wood_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.24959183673469387,
+      "source_rate": 44100
+    },
+    {
+      "id": "fishing_plop",
+      "creator": "el_boss",
+      "source_url": "https://freesound.org/people/el_boss/sounds/853279/",
+      "source_title": "Fishing Lure Plop Water - Game SFX (2 or 2)",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Freesound 公開低品質 MP3 預聽；未取得正式母檔",
+      "sha256": "9992b813459eece651f2bd239c014be4e263688800c70768644b9cfd6f7ba700",
+      "file": "clips/freesound_853279_fishing_plop.mp3",
+      "selected_start": 0,
+      "selected_end": 0.383,
+      "source_rate": 24000
+    },
+    {
+      "id": "horse_hoof",
+      "creator": "Max_Headroom",
+      "source_url": "https://freesound.org/people/Max_Headroom/sounds/175356/",
+      "source_title": "Horse Galloping.wav",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Freesound 公開低品質 MP3 預聽；未取得正式母檔",
+      "sha256": "30de9e4df14186907bf4eb2cea58993bc1cb176f50162b54adcc33283cb0d1be",
+      "file": "clips/freesound_175356_horse_hoof.mp3",
+      "selected_start": 0,
+      "selected_end": 5.759,
+      "source_rate": 44100
+    },
+    {
+      "id": "metal_light",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "impactMetal_light_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "33b5e6e37c6e9d54e07bf5a89b12c76e879f40c1ea83cdd82714df1d6f9fec6d",
+      "file": "clips/kenney_impact_impactMetal_light_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.35147392290249435,
+      "source_rate": 44100
+    },
+    {
+      "id": "metal_heavy",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "impactMetal_heavy_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "e07045693e4a2b3d165c424e3dab4c781d9ff8880a386880ac89a51315d7f831",
+      "file": "clips/kenney_impact_impactMetal_heavy_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.1676643990929705,
+      "source_rate": 44100
+    },
+    {
+      "id": "plank",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "impactPlank_medium_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "8403cd7a043f0391574c88c55dd205743725b5363d2407f6de145f201690b68f",
+      "file": "clips/kenney_impact_impactPlank_medium_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.7790022675736962,
+      "source_rate": 44100
+    },
+    {
+      "id": "punch",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "source_title": "impactPunch_medium_000.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "486988aa2d6440ffc4c62a0e8ccf3c23673ba84424bd4723378d451b7255eb5c",
+      "file": "clips/kenney_impact_impactPunch_medium_000.ogg",
+      "selected_start": 0,
+      "selected_end": 0.43054421768707485,
+      "source_rate": 44100
+    },
+    {
+      "id": "knife",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "source_title": "knifeSlice.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "4cd96dc630bed9840c15f1dd2306da2cc56a4da26a5d3f1a03c5a7265ac5e54f",
+      "file": "clips/kenney_rpg_knifeSlice.ogg",
+      "selected_start": 0,
+      "selected_end": 0.5995416666666666,
+      "source_rate": 48000
+    },
+    {
+      "id": "belt",
+      "creator": "Kenney",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "source_title": "beltHandle1.ogg",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "官方素材包原 Ogg",
+      "sha256": "2ef665bd8b65dbe669f4560be38a6d8f04a162e618b15a49e3e71b58e558aab0",
+      "file": "clips/kenney_rpg_beltHandle1.ogg",
+      "selected_start": 0,
+      "selected_end": 0.27670833333333333,
+      "source_rate": 48000
+    },
+    {
+      "id": "crossbow",
+      "creator": "DUDE_X-SoundLab",
+      "source_url": "https://freesound.org/people/DUDE_X-SoundLab/sounds/752203/",
+      "source_title": "Crossbow Fire III",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Freesound 公開低品質 MP3 預聽；未取得正式母檔",
+      "sha256": "91a7ef8e9ee5287cb3557706cd28e4102d89c5cad8f29d59d0f003cc90e19f48",
+      "file": "clips/freesound_752203_crossbow.mp3",
+      "selected_start": 0,
+      "selected_end": 0.616,
+      "source_rate": 24000
+    },
+    {
+      "id": "fire",
+      "creator": "ceich93",
+      "source_url": "https://freesound.org/people/ceich93/sounds/263864/",
+      "source_title": "fire_crackling.wav",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Freesound 公開低品質 MP3 預聽；未取得正式母檔",
+      "sha256": "d4173351601ca3992f15b8add11f20b074c3442b9125e5cf746c069ee0a4fb59",
+      "file": "clips/freesound_263864_fire.mp3",
+      "selected_start": 0,
+      "selected_end": 12,
+      "source_rate": 24000
+    },
+    {
+      "id": "emopreben_pain",
+      "creator": "EmoPreben / Lasse Bührmann",
+      "source_url": "https://opengameart.org/content/pain-sounds-by-emopreben",
+      "download_url": "https://opengameart.org/sites/default/files/painsounds.zip",
+      "final_download_url": "https://opengameart.org/sites/default/files/painsounds.zip",
+      "file": "sources/pain.zip",
+      "sha256": "4b7b0567901ee8dc8c44ed0b595bf3ac2ce761eb153e730e0244d482e8830352",
+      "bytes": 73117,
+      "source_page": "sources/pain_source_page.html",
+      "source_page_sha256": "07f36c6945a4e678210d18db67ad9c69ecfade311635b8dec42e8196c39ff79d",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Author-published original download, not public preview; source format alone does not prove recording-master lineage",
+      "source_archive_or_file_sha256": "4b7b0567901ee8dc8c44ed0b595bf3ac2ce761eb153e730e0244d482e8830352",
+      "acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\p1_asset_candidates_v2\\SOURCE_RECEIPT.json",
+      "license_snapshot": "res://assets/audio/licenses/emopreben_pain.html"
+    },
+    {
+      "id": "rubberduck_falling_hit",
+      "creator": "rubberduck",
+      "source_url": "https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx",
+      "download_url": "https://opengameart.org/sites/default/files/sfx_breaking_and_falling.zip",
+      "final_download_url": "https://opengameart.org/sites/default/files/sfx_breaking_and_falling.zip",
+      "file": "sources/fall_hit.zip",
+      "sha256": "e6ee04d91c5f4d30cfda1260d2c9d1faf96fda36319287215fbd07bcb1a80451",
+      "bytes": 1624406,
+      "source_page": "sources/fall_hit_source_page.html",
+      "source_page_sha256": "f475ca3b63b2c622945e7c68a2696dfa266e6344659a38cfc436b06ba0b47161",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Author-published original download, not public preview; source format alone does not prove recording-master lineage",
+      "source_archive_or_file_sha256": "e6ee04d91c5f4d30cfda1260d2c9d1faf96fda36319287215fbd07bcb1a80451",
+      "acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\p1_asset_candidates_v2\\SOURCE_RECEIPT.json",
+      "license_snapshot": "res://assets/audio/licenses/rubberduck_falling_hit.html"
+    },
+    {
+      "id": "antumdeluge_fire",
+      "creator": "AntumDeluge",
+      "source_url": "https://opengameart.org/content/fire-crackling/",
+      "download_url": "https://opengameart.org/sites/default/files/fire-1.wav",
+      "final_download_url": "https://opengameart.org/sites/default/files/fire-1.wav",
+      "file": "sources/fire.wav",
+      "sha256": "26702de8a195bcbafeae72034861d875a1b7917168a25106f4e1957ecdddf7e5",
+      "bytes": 253232,
+      "source_page": "sources/fire_source_page.html",
+      "source_page_sha256": "85c850df0932605e7ebdfacce23070442c8a30710b6e4c0033b2b05b028d86c4",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "quality": "Author-published original download, not public preview; source format alone does not prove recording-master lineage",
+      "source_archive_or_file_sha256": "26702de8a195bcbafeae72034861d875a1b7917168a25106f4e1957ecdddf7e5",
+      "acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\p1_asset_candidates_v2\\SOURCE_RECEIPT.json",
+      "license_snapshot": "res://assets/audio/licenses/antumdeluge_fire.html"
+    },
+    {
+      "id": "stillnorth_medieval_texture",
+      "creator": "Ben Jaszczak and Brian Nelson / Still North Media; archived by MedicineStorm",
+      "source_url": "https://opengameart.org/content/medieval-sound-effects-weapon-textures",
+      "download_url": "https://opengameart.org/sites/default/files/medieval_sfx_textures_1_of_2.7z",
+      "original_author_terms": "https://web.archive.org/web/20220331020630/https://www.stillnorthmedia.com/libraries",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_archive_sha256": "b5e2b2c86d811d983d15dbf8453df6a25275a2a0dc4e88e0dc5e1cb3046fd4ae",
+      "source_archive_bytes": 89924031,
+      "acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\p1_asset_candidates_v2\\BOW_SOURCE_RECEIPT.json",
+      "original_members_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\p1_asset_candidates_v2\\WEAPON_ORIGINALS_RECEIPT.json",
+      "license_snapshot": "res://assets/audio/licenses/stillnorth_medieval_texture.html",
+      "quality": "Recorded author source mono192k PCM24; selected non-clipped longbow/crossbow release excerpt; subjective fit still pending; full crossbow later samples clipped as source receipt notes"
+    },
+    {
+      "id": "p3_tool_wood_chop_01",
+      "creator": "Kenney",
+      "source_title": "Audio/chop.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_chop.ogg",
+      "source_original_sha256": "d00c2b3c9fff07e376145c8c8c45c90e5084ec192f6ce0387db233f7b86f1486",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/chop.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0.0,
+      "original_end": 0.24025,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.45767800444234064; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_tool_mining_01",
+      "creator": "Kenney",
+      "source_title": "Audio/impactMining_000.ogg",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_impactMining_000.ogg",
+      "source_original_sha256": "36b4ea107222d073c67ca64dde26944975609202d5090b2f2021213c1a7e35cd",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+      "source_archive_member": "Audio/impactMining_000.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_impact-sounds_License.txt",
+      "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "original_start": 0.0,
+      "original_end": 0.937437641723356,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "uniform gain 0.5078624688864847; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_tool_shovel_01",
+      "creator": "RavenWolfProds; adapted by themightyglider",
+      "source_title": "Shovel Sound",
+      "source_url": "https://opengameart.org/content/shovel-sound",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\shovel.ogg",
+      "source_original_sha256": "1ad178afa5d959ecd4454c3d8388abb23451a1f43a028f476aa37aa3a944d195",
+      "quality": "公開原發布 Ogg，從真鏟土錄音剪出的片段；非泥土母帶 WAV",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_oga_shovel.html",
+      "license_snapshot_sha256": "35fb9a71558b936815322826672ec369f5f301a4f5b792109c3b7a3a866fbf91",
+      "original_start": 0.0,
+      "original_end": 0.9091156462585034,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "uniform gain 0.4811711386120793; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_soft_handle_01",
+      "creator": "Kenney",
+      "source_title": "Audio/handleSmallLeather.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_handleSmallLeather.ogg",
+      "source_original_sha256": "ae3cbf695aa0a8b98b5a80a835be5a3ccbd5446a24db2235cd4c3cd6fc92ed96",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/handleSmallLeather.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0.0,
+      "original_end": 0.33820833333333333,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 1.0; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_tool_complete_01",
+      "creator": "Kenney",
+      "source_title": "Audio/impactPlank_medium_000.ogg",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_impactPlank_medium_000.ogg",
+      "source_original_sha256": "8403cd7a043f0391574c88c55dd205743725b5363d2407f6de145f201690b68f",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+      "source_archive_member": "Audio/impactPlank_medium_000.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_impact-sounds_License.txt",
+      "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "original_start": 0.0,
+      "original_end": 0.7790022675736962,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "uniform gain 0.5171108288045211; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_equipment_handle_01",
+      "creator": "Kenney",
+      "source_title": "Audio/beltHandle1.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_beltHandle1.ogg",
+      "source_original_sha256": "2ef665bd8b65dbe669f4560be38a6d8f04a162e618b15a49e3e71b58e558aab0",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/beltHandle1.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0.0,
+      "original_end": 0.27670833333333333,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.7184804290371487; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_door_open_provisional_01",
+      "creator": "Kenney",
+      "source_title": "Audio/doorOpen_1.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_doorOpen_1.ogg",
+      "source_original_sha256": "4ab93bab96522d8eb109ff96dc57cb6765deb02448fe14c10472084be5bb2a0b",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/doorOpen_1.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0.0,
+      "original_end": 0.9189583333333333,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.4456567527725511; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_door_close_provisional_01",
+      "creator": "Kenney",
+      "source_title": "Audio/doorClose_1.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_doorClose_1.ogg",
+      "source_original_sha256": "834d29c60a8a8bfb50b158cdb6b7dfa8f02812a408a1ee9703d038dfab0b1aeb",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/doorClose_1.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0.0,
+      "original_end": 0.6750416666666667,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.4314641105538078; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_animal_horse_01",
+      "creator": "Joseph SARDIN / BigSoundBank",
+      "source_title": "Horse neighing #5",
+      "source_url": "https://bigsoundbank.com/horse-neighing-5-s1542.html",
+      "license": "CC0 1.0",
+      "license_url": "https://bigsoundbank.com/licenses.html",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\horse_1542.wav",
+      "source_original_sha256": "bec2ef5854c4e3695e8b362bb4b07e5f9055cec04c615be37647ad2846e53dde",
+      "quality": "作者公開原 WAV；真馬叫，原 48 kHz PCM24",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_bsb_horse.html",
+      "license_snapshot_sha256": "2c42db378c0cd95ec758aa1e05fb7680476ad2bb12c2d53cb37f541be3080c00",
+      "original_start": 0.0,
+      "original_end": 1.57275,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.44336799721118214; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_animal_sheep_01",
+      "creator": "mikewest; adapted by AntumDeluge",
+      "source_title": "Sheep Baa",
+      "source_url": "https://opengameart.org/content/sheep-baa",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\sheep_baa.flac",
+      "source_original_sha256": "b2687077a29c044e57220b660c616f9336a0b454519f67bbc59954e0574acc70",
+      "quality": "公開原發布 lossless FLAC，真羊叫片段；非 Freesound 原始完整母帶",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_oga_sheep_baa.html",
+      "license_snapshot_sha256": "181623e8fbe58bc1e150ea741e776b3de0c2c4ee5a979747d6b5bf2f72798bb9",
+      "original_start": 0.0,
+      "original_end": 0.8724036281179138,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "uniform gain 0.8966581314426406; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_animal_deer_fallow_rut_01",
+      "creator": "Elodie Briefer, Elisabetta Vannoni, Alan G McElligott",
+      "source_title": "Quality prevails over identity in the sexually selected vocalisations of an ageing mammal / Additional file 1",
+      "source_url": "https://doi.org/10.1186/1741-7007-8-35",
+      "license": "CC-BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\deer_supplement_1.WAV",
+      "source_original_sha256": "d094b3c2201f689dc0a656ff8fa542e1e271dcb7331b9b1b31bd771f0e9feeb1",
+      "quality": "研究原公開 WAV；真雄性黇鹿繁殖期 groan，原 16 kHz，不宣稱臺灣梅花鹿或所有鹿日常叫",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_deer_article.html",
+      "license_snapshot_sha256": "124c34d2be53680b67af683421353bae10ce599212fc3fa28425d7f9e6ca1509",
+      "original_start": 0.0,
+      "original_end": 2.911625,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 16000 to 44100 Hz; no pitch change",
+        "uniform gain 0.59651129933304; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_water_fresh_loop_01",
+      "creator": "RandomMind",
+      "source_title": "VistulaShort",
+      "source_url": "https://opengameart.org/content/sea-and-river-wave-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\VistulaShort.mp3",
+      "source_original_sha256": "8c24607e41edd6f018ec3582a07e5a8dbc57347276339cb68440951a0fb4cfb1",
+      "quality": "作者公開原發布 MP3 短版；真 Vistula 河岸環境，非 lossless 母檔",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_oga_freshwater.html",
+      "license_snapshot_sha256": "3837ebba30e7143aa72aec84a71a72fa822f7a64dafcae6635bf3603d2b6155a",
+      "original_start": 10.0,
+      "original_end": 22.0,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "linear wrap crossfade 0.25 s, duration shortened by overlap",
+        "uniform gain 0.4568122111741503; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_water_shore_loop_01",
+      "creator": "jasinski; adapted by qubodup / Iwan Gabovitch",
+      "source_title": "Beach Ocean Waves / wave_01",
+      "source_url": "https://opengameart.org/content/beach-ocean-waves",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\beach_wave_01.flac",
+      "source_original_sha256": "fcfca178eca2eac536e8c2a4ed5cf8096e44c921acd587047b3d9f1d7845435c",
+      "quality": "公開原發布 PCM24 FLAC，真海灘浪聲短節錄；非完整錄音母帶",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_oga_beach.html",
+      "license_snapshot_sha256": "62244968fc746b5336618fca2f840794d73856dc7d223360311724828d7ac4b5",
+      "original_start": 0.0,
+      "original_end": 4.0,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "linear wrap crossfade 0.25 s, duration shortened by overlap",
+        "uniform gain 1.0; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_cart_roll_loop_01",
+      "creator": "Monika Widzicka / Work With Sounds / Museum of Municipal Engineering",
+      "source_title": "WWS Woodenwagon",
+      "source_url": "https://commons.wikimedia.org/wiki/File:WWS_Woodenwagon.ogg",
+      "license": "CC-BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\WWS_Woodenwagon.ogg",
+      "source_original_sha256": "d8d149eea60eef1fa2573dd49674121965f849e98a00cbb901b1d6893d16f6b6",
+      "quality": "公開原發布 Ogg；木輪推車路面實錄，兩名人推動，未疊馬蹄",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_commons_woodenwagon.html",
+      "license_snapshot_sha256": "d93525f5f81f416da520fb89f573b6d413c8def0bf0a0cd6442e04c4aba5f5c6",
+      "original_start": 2.0,
+      "original_end": 10.0,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "linear wrap crossfade 0.25 s, duration shortened by overlap",
+        "uniform gain 0.6564682625356755; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_ship_row_loop_01",
+      "creator": "Joseph SARDIN / BigSoundBank",
+      "source_title": "Rowing Quickly",
+      "source_url": "https://bigsoundbank.com/rowing-quickly-s1513.html",
+      "license": "CC0 1.0",
+      "license_url": "https://bigsoundbank.com/licenses.html",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\rowing_1513.wav",
+      "source_original_sha256": "7de3f074f4814afe6979ff75fb179cdf02093a69b0688942f7024a92c86d97a7",
+      "quality": "作者公開原 WAV；木板在水槽中的划槳 Foley，非實船錄音",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_bsb_rowing.html",
+      "license_snapshot_sha256": "b19462a19a661534a282b158700a3ebca06bcb4820234ce05ee943e76508bc76",
+      "original_start": 10.0,
+      "original_end": 18.0,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract selected-clip DC mean",
+        "linear wrap crossfade 0.25 s, duration shortened by overlap",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz; no pitch change",
+        "uniform gain 0.4538077618059032; peak cap .4495 before PCM16 quantization"
+      ]
+    },
+    {
+      "id": "p3_work_wood_oneshot_01",
+      "creator": "Kenney",
+      "source_title": "Audio/chop.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_chop.ogg",
+      "source_original_sha256": "d00c2b3c9fff07e376145c8c8c45c90e5084ec192f6ce0387db233f7b86f1486",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/chop.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0,
+      "original_end": 0.24025,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract original-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz if needed; no pitch change",
+        "uniform gain 0.45767800444234064; peak cap .4495 before PCM16"
+      ]
+    },
+    {
+      "id": "p3_work_stone_oneshot_01",
+      "creator": "Kenney",
+      "source_title": "Audio/impactMining_000.ogg",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_impactMining_000.ogg",
+      "source_original_sha256": "36b4ea107222d073c67ca64dde26944975609202d5090b2f2021213c1a7e35cd",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+      "source_archive_member": "Audio/impactMining_000.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_impact-sounds_License.txt",
+      "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "original_start": 0,
+      "original_end": 0.937437641723356,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract original-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 44100 to 44100 Hz if needed; no pitch change",
+        "uniform gain 0.5078624688864847; peak cap .4495 before PCM16"
+      ]
+    },
+    {
+      "id": "p3_work_earth_oneshot_01",
+      "creator": "RavenWolfProds; adapted by themightyglider",
+      "source_title": "Shovel Sound",
+      "source_url": "https://opengameart.org/content/shovel-sound",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\sources\\shovel.ogg",
+      "source_original_sha256": "1ad178afa5d959ecd4454c3d8388abb23451a1f43a028f476aa37aa3a944d195",
+      "quality": "公開原發布 Ogg，從真鏟土錄音剪出的片段；非泥土母帶 WAV",
+      "source_archive_sha256": null,
+      "source_archive_member": null,
+      "license_snapshot": "res://assets/audio/licenses/p3_oga_shovel.html",
+      "license_snapshot_sha256": "35fb9a71558b936815322826672ec369f5f301a4f5b792109c3b7a3a866fbf91",
+      "original_start": 0,
+      "original_end": 0.9091156462585034,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract original-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 44100 to 44100 Hz if needed; no pitch change",
+        "uniform gain 0.4811711386120793; peak cap .4495 before PCM16"
+      ]
+    },
+    {
+      "id": "p3_work_metal_oneshot_01",
+      "creator": "Kenney",
+      "source_title": "Audio/impactMetal_heavy_000.ogg",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_impactMetal_heavy_000.ogg",
+      "source_original_sha256": "e07045693e4a2b3d165c424e3dab4c781d9ff8880a386880ac89a51315d7f831",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+      "source_archive_member": "Audio/impactMetal_heavy_000.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_impact-sounds_License.txt",
+      "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "original_start": 0,
+      "original_end": 0.1676643990929705,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract original-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 44100 to 44100 Hz if needed; no pitch change",
+        "uniform gain 1.0; peak cap .4495 before PCM16"
+      ]
+    },
+    {
+      "id": "p3_work_textile_oneshot_01",
+      "creator": "Kenney",
+      "source_title": "Audio/cloth1.ogg",
+      "source_url": "https://kenney.nl/assets/rpg-audio",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p3_asset_candidates_v1\\selected_originals\\kenney_cloth1.ogg",
+      "source_original_sha256": "ddb93a3671233f95da0e0b10367f082f7eb42fa6caaddcf776410aa8833c747d",
+      "quality": "作者官方素材包原發布 Ogg；工具／物件 Foley，不宣稱現場實錄",
+      "source_archive_sha256": "6dbeaf8544da958d8f2adcb4a4a4b76c1ade34a05f8ab9edccd327da7375f38b",
+      "source_archive_member": "Audio/cloth1.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_rpg-audio_License.txt",
+      "license_snapshot_sha256": "5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539",
+      "original_start": 0,
+      "original_end": 0.6610416666666666,
+      "modification": [
+        "channel arithmetic mean to mono",
+        "subtract original-clip DC mean",
+        "5 ms endpoint fades",
+        "numpy Fourier bandlimited resample 48000 to 44100 Hz if needed; no pitch change",
+        "uniform gain 0.7139183558469191; peak cap .4495 before PCM16"
+      ]
+    },
+    {
+      "id": "p3_ship_deck_contact_provisional_01",
+      "creator": "Kenney",
+      "source_title": "footstep_wood_000.ogg",
+      "source_url": "https://kenney.nl/assets/impact-sounds",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\p0_p3_component_candidates_v2\\selected_originals\\kenney_impact_footstep_wood_000.ogg",
+      "source_original_sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+      "quality": "Official original single wood foot-contact Ogg; generic deck contact Foley, not a ship/boarding recording.",
+      "source_archive_sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+      "source_archive_member": "Audio/footstep_wood_000.ogg",
+      "license_snapshot": "res://assets/audio/licenses/p3_kenney_impact-sounds_License.txt",
+      "license_snapshot_sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "original_start": 0.0,
+      "original_end": 0.24959183673469387,
+      "modification": [
+        "whole official original single-contact file; not a split of P1 two-step segment",
+        "mono arithmetic mean",
+        "subtract DC mean",
+        "1 ms endpoint fades",
+        "attenuate gain 0.5000475070699996 to prequantized peak .4495",
+        "mono44100 PCM16"
+      ]
+    },
+    {
+      "id": "p3_skippy_water_fish_catch",
+      "creator": "jcpmcdonald",
+      "source_title": "Skippy Fish Water Sound Collection / water.wav",
+      "source_url": "https://opengameart.org/content/skippy-fish-water-sound-collection",
+      "original_download_url": "https://opengameart.org/sites/default/files/water.wav",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\remaining_material_search_v1\\sources_network\\skippy_water_original.wav",
+      "source_original_sha256": "6107b595a7f1c19a1fde61200726726e31aec98af6de31aef00048ea336a973e",
+      "license_snapshot": "res://assets/audio/licenses/p3_skippy_fish_source_and_license.html",
+      "license_snapshot_sha256": "65352f5ce0de2478ef00904ce8144a9ba292705e2307b41e43eebac81533fdcd",
+      "quality": "捕魚成功提交時可用的玻璃水手工Foley；錄音本身不是實際捕魚／魚類叫聲，交易trigger須另驗",
+      "anonymous_original_acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\remaining_material_search_v1\\PUBLIC_SOURCE_FETCH_RECEIPT_NETWORK.json",
+      "modification": [
+        "exact original decoded frame slice",
+        "arithmetic mono channel mean",
+        "band-limited real Fourier resampling to44100 when source rate differs; preserve clip duration",
+        "20ms linear endpoint fades after resampling",
+        "attenuation only if required, never boost; PCM peak cap floor(.45*32768)/32768",
+        "PCM16 nearest integer quantization and wave readback"
+      ]
+    },
+    {
+      "id": "p3_tsa_sus_scrofa_group",
+      "creator": "Günter Tembrock",
+      "publisher": "Museum für Naturkunde Berlin / Tierstimmenarchiv",
+      "source_title": "TSA:Sus_scrofa_V_2124_17_2",
+      "source_url": "https://suche.tierstimmenarchiv.de/search/showdetails.html?from_search=true&language=deutsch&unique_identifier=TSA%3ASus_scrofa_V_2124_17_2",
+      "license": "CC BY-SA 3.0 Germany",
+      "license_url": "https://creativecommons.org/licenses/by-sa/3.0/de/legalcode",
+      "derived_asset_license": "CC BY-SA 3.0 Germany",
+      "source_original_path": "D:\\worldgoing\\output\\audio_implementation_20261008\\boar_original_source_v2\\originals\\Sus_scrofa_V2124_17.flac",
+      "source_original_sha256": "a29edad160432e5459fe121052e51b6493736151c774d78cb05d88b9f2c4f2bd",
+      "source_archive_sha256": "0604366634b20799e2b95f9dae1e2e6ff06a08fe570335179fb36f509fbc35cb",
+      "source_metadata_sha256": "dfdfd93a156e964e30f00a70941763b2007eeeee028b2c6ff012ac765f00773c",
+      "license_snapshot": "res://assets/audio/licenses/p3_tsa_sus_scrofa_source_and_license.html",
+      "license_snapshot_sha256": "216424dc50086119d5870e8e88d66a1a1f23f7f155bc555fd2f2d9d0dd92c1c6",
+      "quality": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質",
+      "source_species": "Sus scrofa",
+      "visual_identification": true,
+      "recording_date": "2005-08-31",
+      "source_context": "Hermsdorf Wildgehege, Berlin, Germany; several animals calling before feeding",
+      "selection": "Reuse previous 2s rolling-RMS non-overlapping source cuts, not auditory species/quality classification",
+      "attribution": "Günter Tembrock, TSA:Sus_scrofa_V_2124_17_2, Museum für Naturkunde Berlin / Tierstimmenarchiv; CC BY-SA 3.0 Germany; excerpts/resampling/mono conversion/20ms fades/attenuation/PCM16 changes by Worldgoing audio candidate preparation. Source/license links retained; no endorsement implied.",
+      "anonymous_original_acquisition_receipt": "D:\\worldgoing\\output\\audio_implementation_20261008\\boar_original_source_v2\\BOAR_ORIGINAL_SOURCE_RECEIPT.json",
+      "modification": [
+        "exact original decoded frame slice",
+        "arithmetic mono channel mean",
+        "band-limited real Fourier resampling to44100 when source rate differs; preserve clip duration",
+        "20ms linear endpoint fades after resampling",
+        "attenuation only if required, never boost; PCM peak cap floor(.45*32768)/32768",
+        "PCM16 nearest integer quantization and wave readback"
+      ]
+    },
+    {
+      "creator": "Ylmir",
+      "source_title": "Rain (loopable)",
+      "source_url": "https://opengameart.org/content/rain-loopable",
+      "download_url": "https://opengameart.org/sites/default/files/Rain%20OGG.zip",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "file": "originals/rain_loopable.zip",
+      "license_page": "pages/rain_loopable.html",
+      "quality": "Author-published Ogg Vorbis160kbps from mono window recording processed to stereo; not a lossless master.",
+      "id": "weather_rain_ylmir",
+      "sha256": "e68f3e1c77493cf43bec84cebff5043bff6be9ce16d59b24caa988cd460aa75b",
+      "license_snapshot_sha256": "494d439fdfbbc8e05fff4124f0bf79f663788466e63fa7ef938fbcef763b9acc",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
+    },
+    {
+      "creator": "Luke.RUSTLTD",
+      "source_title": "wind1",
+      "source_url": "https://opengameart.org/content/wind1",
+      "download_url": "https://opengameart.org/sites/default/files/wind1.wav",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "file": "originals/wind_original.wav",
+      "license_page": "pages/wind.html",
+      "quality": "Author-published synthesized PureData wind; author credits Andy Farnell tutorial.",
+      "id": "weather_wind_luke",
+      "sha256": "a2856f794fbf77e05f8241dc4adeade7f62fa21c3c9dc49f7725b6c6218060c3",
+      "license_snapshot_sha256": "b710a10007a2d22c80fd042043190d6fe23dce76d3d08a801b7c25de6955f23c",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
+    },
+    {
+      "creator": "Jerimee",
+      "source_title": "Thunder / thunder-seq.wav",
+      "source_url": "https://opengameart.org/content/thunder",
+      "download_url": "https://opengameart.org/sites/default/files/thunder-seq.wav",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "file": "originals/thunder_original.wav",
+      "license_page": "pages/thunder.html",
+      "quality": "Author-published synthesized thunder sequence; made using Rene Nyffenegger cSound instrument with minor modifications. Not a field recording.",
+      "id": "weather_thunder_jerimee",
+      "sha256": "eab85a5880092668026264e356953169a24e2d12f956b255b5090e9162f4722d",
+      "license_snapshot_sha256": "6b4a1482d0f551cb903662517e6008d39747ef9f3f63628e9bf66dc7cf04a914",
+      "evidence_root": "D:/worldgoing/output/project_command_center/evidence/CC-20261116-195"
+    }
+  ],
+  "baseline_files": 36,
+  "additional_p1_files": 7,
+  "active_unique_files": 75,
+  "count_history": {
+    "baseline_files": 36,
+    "step_files": 24,
+    "step_banks": 16,
+    "other_baseline_files": 12,
+    "initial_additional_p1_files": 6,
+    "new_additional_down_files": 1,
+    "current_additional_p1_files": 7,
+    "active_unique_files": 68,
+    "physical_wav_files_after_publication": 74,
+    "retained_inactive_old_wavs": 6,
+    "note": "Replace6 active source files with6 new unique paths plus1 new down; keep old6 physical WAV and import sidecars, no deletion. Counts36baseline/12other unchanged; original6extras historical.",
+    "additional_p3_files": 25,
+    "p3_material_stage_files": 20,
+    "new_generic_ship_contact_files": 1,
+    "p1_physical_wav_files_after_publication": 49,
+    "physical_count_scope": "Future candidate68 active plus6 retained inactive=74 physical WAV; predecessor candidate64 had70. No comparison WAV or source original is copied as an active asset.",
+    "note_p3": "43 P1 active plus25 distinct P3 paths: predecessor21 plus4 provisional fish/boar WAV. Preserve all P1 banks, baseline36/24 two-step files/16 tempo banks. Six P3 historical comparison files remain inactive.",
+    "new_missing_material_files": 4
+  },
+  "additional_p3_files": 25,
+  "material_gaps": [
+    {
+      "key": "fish_catch",
+      "state": "PROVISIONAL_OUTPUT_CANDIDATE_NATIVE_IMPORT_TRIGGER_Q01_NOT_RUN",
+      "reason": "捕魚成功提交時可用的玻璃水手工Foley；錄音本身不是實際捕魚／魚類叫聲，交易trigger須另驗",
+      "source_id": "p3_skippy_water_fish_catch",
+      "source_url": "https://opengameart.org/content/skippy-fish-water-sound-collection",
+      "admission": "Sound bank/source candidate supplied only; audible quality, real trigger and whole P3 acceptance remain NOT_RUN."
+    },
+    {
+      "key": "animal_boar",
+      "state": "PROVISIONAL_OUTPUT_CANDIDATE_NATIVE_IMPORT_TRIGGER_Q01_NOT_RUN",
+      "reason": "官方來源metadata為目視辨識Sus scrofa餵食前群體發聲；片段僅按RMS選，可能含背景，未人工確認單段叫聲品質",
+      "source_id": "p3_tsa_sus_scrofa_group",
+      "source_url": "https://suche.tierstimmenarchiv.de/search/showdetails.html?from_search=true&language=deutsch&unique_identifier=TSA%3ASus_scrofa_V_2124_17_2",
+      "admission": "Sound bank/source candidate supplied only; audible quality, real trigger and whole P3 acceptance remain NOT_RUN."
+    },
+    {
+      "keys": [
+        "gate_open",
+        "gate_close"
+      ],
+      "state": "PROVISIONAL_FOLEY_QUALITY_GAP",
+      "reason": "Kenney 普通木門 Foley 已供候選；尚無真大型木柵門開關原錄音，不能當大型門品質 PASS。"
+    },
+    {
+      "key": "animal_deer",
+      "state": "SPECIES_CONTEXT_LIMIT",
+      "reason": "已取得真雄黇鹿繁殖期原 WAV；臺灣梅花鹿或全年日常叫仍缺，需按遊戲鹿定義及試聽決定是否適用。"
+    },
+    {
+      "key": "water_fresh",
+      "state": "LOSSLESS_SOURCE_GAP",
+      "reason": "原作者公開短版 MP3，不冒 lossless 母檔；180.2 MB 完整包本輪未抓。"
+    },
+    {
+      "keys": [
+        "work_kiln",
+        "work_smelter",
+        "work_charcoal",
+        "work_saltworks",
+        "work_tannery",
+        "work_farm",
+        "work_pasture",
+        "work_recipe_*"
+      ],
+      "state": "MISSING_SILENT",
+      "reason": "沒有配方／流程適配錄音，不把鏟土當窯火、採矿當冶煉、砍木當製弓；來源 key 未提供素材即保持 silent。"
+    },
+    {
+      "keys": [
+        "ship_board",
+        "ship_disembark"
+      ],
+      "state": "PROVISIONAL_GENERIC_FOLEY_QUALITY_NOT_ACCEPTED",
+      "reason": "One official original single wood contact used as generic completed deck-contact Foley; no original boarding/ship recording or device/listening acceptance."
+    }
+  ],
+  "additional_weather_files": 7
+}

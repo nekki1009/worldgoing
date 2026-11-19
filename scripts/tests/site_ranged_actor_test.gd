@@ -120,7 +120,8 @@ func run() -> void:
 	if not _check(actor.activate_exchange_skill("power") and actor.ranged_fire(npc.terrain_cell, 1), "Original bow fires without a render editor"):
 		return
 	var shot: Dictionary = actor.projectiles[0]
-	if not _check(shot.size() == 14 and shot.mode == "cell" and shot.source_cell == Vector2i(5, 5)
+	if not _check(shot.size() == 16 and shot.mode == "cell" and shot.source_cell == Vector2i(5, 5)
+		and shot.source_eye == 1.0 and shot.goal_eye == 1.0
 		and shot.target_cell == npc.terrain_cell and shot.origin == Vector2(5.5, 5.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
 		and shot.position == shot.origin and shot.goal == Vector2(9.5, 5.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
 		and shot.left == 0.4 and shot.total == 0.4 and shot.velocity == Vector2(10.0 * TerrainRenderer.CELL_PIXELS, 0)
@@ -212,7 +213,7 @@ func run() -> void:
 	actor.place(Vector2i(5, 5), true)
 	npc.place(Vector2i(6, 5), true)
 	npc.faction_id = actor.faction_id
-	npc.knockout_left = 30.0
+	npc.knockout_left = SiteCombatRules.KNOCKOUT_GAME_SECONDS
 	if not _check(actor.start_rescue(npc), "Use original rescue relationship"):
 		return
 	actor.ranged_apply_hit(Vector2i(9, 5), _packet(1.0, 1.0, 0.35))
@@ -220,7 +221,7 @@ func run() -> void:
 		return
 	actor.stun = 95.0
 	actor.ranged_apply_hit(Vector2i(9, 5), _packet(2.0, 8.0, 0.35))
-	if not _check(actor.knockout_left == 30.0 and actor.visual_state.animation_id == &"down", "Original KO pose is never overwritten with hit"):
+	if not _check(actor.knockout_left == SiteCombatRules.KNOCKOUT_GAME_SECONDS and actor.visual_state.animation_id == &"down", "Original KO pose is never overwritten with hit"):
 		return
 	actor.ranged_apply_hit(Vector2i(9, 5), _packet(100.0, 0.0, 0.35))
 	if not _check(actor.hp == 0.0 and actor.visual_state.animation_id == &"down" and actor.legacy_calls == 0

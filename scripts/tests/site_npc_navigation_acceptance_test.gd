@@ -1,5 +1,9 @@
 extends SceneTree
 ## Formal main scene, original commands and action clock, untouched generated map.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/npc_ai_acceptance_20260918/navigation"
 var lab: TerrainLab
 var deadline := 0
@@ -45,11 +49,12 @@ func _capture(name: String) -> void:
 
 func _run() -> void:
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate()
+	lab = (load(ORIGINAL_SITE_SCENE) as PackedScene).instantiate()
+	lab.npc = TerrainTestNPC.new() # Explicit NPC presenter: the Lab no longer creates one by default.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab

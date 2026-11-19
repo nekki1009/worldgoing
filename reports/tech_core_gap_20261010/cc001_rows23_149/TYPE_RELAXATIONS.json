@@ -1,0 +1,667 @@
+{
+ "scripts/tests/site_f10_construction_method_test.gd": [
+  {
+   "line": 16,
+   "name": "original_cost"
+  }
+ ],
+ "scripts/tests/site_f11_joinery_scope_ui_test.gd": [
+  {
+   "line": 77,
+   "name": "actions"
+  },
+  {
+   "line": 99,
+   "name": "captured"
+  },
+  {
+   "line": 103,
+   "name": "admitted"
+  },
+  {
+   "line": 105,
+   "name": "checked"
+  },
+  {
+   "line": 130,
+   "name": "prepared"
+  },
+  {
+   "line": 136,
+   "name": "workers"
+  },
+  {
+   "line": 140,
+   "name": "assigned"
+  },
+  {
+   "line": 151,
+   "name": "captured"
+  },
+  {
+   "line": 154,
+   "name": "admitted"
+  },
+  {
+   "line": 182,
+   "name": "stock"
+  }
+ ],
+ "scripts/tests/site_f12_first_earned_counterweight_test.gd": [
+  {
+   "line": 97,
+   "name": "actions"
+  },
+  {
+   "line": 105,
+   "name": "refused"
+  }
+ ],
+ "scripts/tests/site_family_recipe_effect_test.gd": [
+  {
+   "line": 50,
+   "name": "stock_before"
+  }
+ ],
+ "scripts/tests/site_n01_procurement_earned_test.gd": [
+  {
+   "line": 8,
+   "name": "actions"
+  },
+  {
+   "line": 9,
+   "name": "requests"
+  },
+  {
+   "line": 17,
+   "name": "results"
+  },
+  {
+   "line": 21,
+   "name": "actions"
+  },
+  {
+   "line": 33,
+   "name": "actions"
+  },
+  {
+   "line": 34,
+   "name": "orders"
+  },
+  {
+   "line": 43,
+   "name": "person"
+  }
+ ],
+ "scripts/tests/site_n04_workshop_earned_test.gd": [
+  {
+   "line": 13,
+   "name": "actions"
+  },
+  {
+   "line": 47,
+   "name": "workers"
+  },
+  {
+   "line": 50,
+   "name": "captured"
+  },
+  {
+   "line": 54,
+   "name": "admitted"
+  },
+  {
+   "line": 74,
+   "name": "started"
+  },
+  {
+   "line": 95,
+   "name": "camp"
+  }
+ ],
+ "scripts/tests/site_n05_military_issue_earned_test.gd": [
+  {
+   "line": 15,
+   "name": "actions"
+  },
+  {
+   "line": 16,
+   "name": "orders"
+  },
+  {
+   "line": 46,
+   "name": "workers"
+  },
+  {
+   "line": 75,
+   "name": "requested"
+  },
+  {
+   "line": 76,
+   "name": "other"
+  },
+  {
+   "line": 81,
+   "name": "donor"
+  },
+  {
+   "line": 104,
+   "name": "camp"
+  },
+  {
+   "line": 105,
+   "name": "donor_spent"
+  },
+  {
+   "line": 189,
+   "name": "accepted_scope"
+  }
+ ],
+ "scripts/tests/site_n10_first_earned_mandate_test.gd": [
+  {
+   "line": 54,
+   "name": "payments_before"
+  }
+ ],
+ "scripts/tests/site_p4_cold_original_research_test.gd": [
+  {
+   "line": 109,
+   "name": "depot"
+  },
+  {
+   "line": 203,
+   "name": "prior_receipts"
+  },
+  {
+   "line": 272,
+   "name": "station"
+  },
+  {
+   "line": 397,
+   "name": "station"
+  }
+ ],
+ "scripts/tests/site_technology_armor_recipes_test.gd": [
+  {
+   "line": 35,
+   "name": "actions"
+  },
+  {
+   "line": 109,
+   "name": "workers"
+  },
+  {
+   "line": 124,
+   "name": "cost_before"
+  },
+  {
+   "line": 161,
+   "name": "orders"
+  },
+  {
+   "line": 171,
+   "name": "issued"
+  },
+  {
+   "line": 174,
+   "name": "camp"
+  },
+  {
+   "line": 190,
+   "name": "actions"
+  }
+ ],
+ "scripts/tests/site_technology_artisan_production_base.gd": [
+  {
+   "line": 444,
+   "name": "restored"
+  }
+ ],
+ "scripts/tests/site_technology_checked_work_prefix_test.gd": [
+  {
+   "line": 10,
+   "name": "actions"
+  },
+  {
+   "line": 21,
+   "name": "requests"
+  },
+  {
+   "line": 25,
+   "name": "captured"
+  },
+  {
+   "line": 28,
+   "name": "person"
+  },
+  {
+   "line": 33,
+   "name": "admitted"
+  },
+  {
+   "line": 35,
+   "name": "checked"
+  },
+  {
+   "line": 66,
+   "name": "actions"
+  },
+  {
+   "line": 77,
+   "name": "workers"
+  },
+  {
+   "line": 78,
+   "name": "requests"
+  },
+  {
+   "line": 81,
+   "name": "captured"
+  },
+  {
+   "line": 88,
+   "name": "admitted"
+  },
+  {
+   "line": 96,
+   "name": "published"
+  }
+ ],
+ "scripts/tests/site_technology_completed_vehicle_lineage_test.gd": [
+  {
+   "line": 15,
+   "name": "actions"
+  },
+  {
+   "line": 35,
+   "name": "event"
+  },
+  {
+   "line": 49,
+   "name": "valid"
+  },
+  {
+   "line": 51,
+   "name": "candidate"
+  },
+  {
+   "line": 58,
+   "name": "unfinished"
+  }
+ ],
+ "scripts/tests/site_technology_controller_prefix_test.gd": [
+  {
+   "line": 51,
+   "name": "held_items"
+  }
+ ],
+ "scripts/tests/site_technology_f13_named_ferry_test.gd": [
+  {
+   "line": 9,
+   "name": "actions"
+  },
+  {
+   "line": 25,
+   "name": "inventory"
+  },
+  {
+   "line": 37,
+   "name": "person"
+  },
+  {
+   "line": 41,
+   "name": "paid"
+  },
+  {
+   "line": 43,
+   "name": "paid_inventory"
+  },
+  {
+   "line": 44,
+   "name": "original_token"
+  }
+ ],
+ "scripts/tests/site_technology_military_production_test.gd": [
+  {
+   "line": 12,
+   "name": "actions"
+  },
+  {
+   "line": 13,
+   "name": "orders"
+  },
+  {
+   "line": 42,
+   "name": "workers"
+  },
+  {
+   "line": 63,
+   "name": "requested"
+  },
+  {
+   "line": 67,
+   "name": "donor"
+  },
+  {
+   "line": 74,
+   "name": "initial"
+  },
+  {
+   "line": 89,
+   "name": "camp"
+  },
+  {
+   "line": 91,
+   "name": "result"
+  },
+  {
+   "line": 106,
+   "name": "source"
+  },
+  {
+   "line": 109,
+   "name": "resumed"
+  }
+ ],
+ "scripts/tests/site_technology_productive_processing_window_test.gd": [
+  {
+   "line": 32,
+   "name": "stock"
+  }
+ ],
+ "scripts/tests/site_technology_s06_food_owner_test.gd": [
+  {
+   "line": 84,
+   "name": "query"
+  },
+  {
+   "line": 93,
+   "name": "result"
+  },
+  {
+   "line": 124,
+   "name": "source_fingerprint"
+  },
+  {
+   "line": 137,
+   "name": "resumed"
+  },
+  {
+   "line": 146,
+   "name": "refused"
+  }
+ ],
+ "scripts/tests/site_technology_settlement_processing_test.gd": [
+  {
+   "line": 23,
+   "name": "workers"
+  },
+  {
+   "line": 26,
+   "name": "captured"
+  },
+  {
+   "line": 31,
+   "name": "admitted"
+  },
+  {
+   "line": 70,
+   "name": "stock"
+  },
+  {
+   "line": 97,
+   "name": "stock"
+  },
+  {
+   "line": 136,
+   "name": "started"
+  },
+  {
+   "line": 164,
+   "name": "camp"
+  }
+ ],
+ "scripts/tests/site_technology_settlement_ship_test.gd": [
+  {
+   "line": 70,
+   "name": "master"
+  },
+  {
+   "line": 76,
+   "name": "paid"
+  },
+  {
+   "line": 109,
+   "name": "prepared"
+  },
+  {
+   "line": 121,
+   "name": "paid_before"
+  }
+ ],
+ "scripts/tests/site_technology_shipyard_physical_test.gd": [
+  {
+   "line": 107,
+   "name": "center"
+  },
+  {
+   "line": 202,
+   "name": "vehicles"
+  },
+  {
+   "line": 205,
+   "name": "depot"
+  },
+  {
+   "line": 220,
+   "name": "workers"
+  },
+  {
+   "line": 223,
+   "name": "captured"
+  },
+  {
+   "line": 228,
+   "name": "admitted"
+  },
+  {
+   "line": 250,
+   "name": "stock"
+  },
+  {
+   "line": 254,
+   "name": "workers"
+  }
+ ],
+ "scripts/tests/site_technology_ship_target_config_test.gd": [
+  {
+   "line": 14,
+   "name": "paid"
+  },
+  {
+   "line": 15,
+   "name": "materials"
+  }
+ ],
+ "scripts/tests/site_technology_siege_yard_test.gd": [
+  {
+   "line": 40,
+   "name": "captain_index"
+  },
+  {
+   "line": 76,
+   "name": "workers"
+  },
+  {
+   "line": 77,
+   "name": "requests"
+  },
+  {
+   "line": 80,
+   "name": "captured"
+  },
+  {
+   "line": 85,
+   "name": "admitted"
+  },
+  {
+   "line": 91,
+   "name": "handled"
+  },
+  {
+   "line": 104,
+   "name": "transport"
+  },
+  {
+   "line": 142,
+   "name": "workers"
+  },
+  {
+   "line": 144,
+   "name": "camp"
+  },
+  {
+   "line": 248,
+   "name": "actions"
+  }
+ ],
+ "scripts/tests/site_technology_targeted_vehicle_test.gd": [
+  {
+   "line": 30,
+   "name": "actions"
+  },
+  {
+   "line": 58,
+   "name": "actions"
+  },
+  {
+   "line": 67,
+   "name": "refused"
+  },
+  {
+   "line": 80,
+   "name": "stock"
+  },
+  {
+   "line": 81,
+   "name": "started"
+  },
+  {
+   "line": 137,
+   "name": "actions"
+  },
+  {
+   "line": 144,
+   "name": "started"
+  }
+ ],
+ "scripts/tests/site_technology_work_credit_test.gd": [
+  {
+   "line": 44,
+   "name": "work"
+  },
+  {
+   "line": 46,
+   "name": "already_named"
+  },
+  {
+   "line": 81,
+   "name": "actions"
+  },
+  {
+   "line": 92,
+   "name": "started"
+  },
+  {
+   "line": 118,
+   "name": "paid_count"
+  },
+  {
+   "line": 141,
+   "name": "stale"
+  }
+ ],
+ "scripts/tests/site_work_team_master_groups_test.gd": [
+  {
+   "line": 36,
+   "name": "paid_before"
+  },
+  {
+   "line": 58,
+   "name": "requests"
+  },
+  {
+   "line": 65,
+   "name": "workers"
+  },
+  {
+   "line": 66,
+   "name": "captured"
+  },
+  {
+   "line": 71,
+   "name": "admitted"
+  },
+  {
+   "line": 77,
+   "name": "handled"
+  }
+ ],
+ "scripts/tests/site_work_team_t6_weights_test.gd": [
+  {
+   "line": 10,
+   "name": "actions"
+  },
+  {
+   "line": 37,
+   "name": "workers"
+  },
+  {
+   "line": 38,
+   "name": "requests"
+  },
+  {
+   "line": 44,
+   "name": "captured"
+  },
+  {
+   "line": 49,
+   "name": "prepared"
+  },
+  {
+   "line": 55,
+   "name": "handled"
+  }
+ ],
+ "scripts/tests/site_n07_first_earned_course_test.gd": [
+  {
+   "line": 2,
+   "name": "SiteFamilyContinuity",
+   "kind": "resolution_alias_preload_const"
+  }
+ ],
+ "scripts/tests/site_n07_funded_lesson_terminal_point_test.gd": [
+  {
+   "line": 2,
+   "name": "SiteFamilyContinuity",
+   "kind": "resolution_alias_preload_const"
+  }
+ ],
+ "scripts/tests/site_technology_artisan_g06_siege_gates_base.gd": [
+  {
+   "line": 2,
+   "name": "SiteFamilyContinuity",
+   "kind": "resolution_alias_preload_const"
+  }
+ ],
+ "scripts/tests/site_f07_cold_jobs_test.gd": [
+  {
+   "line": 268,
+   "name": "current"
+  },
+  {
+   "line": 271,
+   "name": "bad"
+  }
+ ]
+}

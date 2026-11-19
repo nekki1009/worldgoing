@@ -222,5 +222,36 @@ func _run() -> void:
 	assert(people[1].work_resting and not people[2].work_resting)
 	assert(not Sustain.train(0, people, [1], 1, {"controlled_person_id": -1}).ok)
 	_near(Sustain.weighted(100, 10, 0, 10), 50)
+	# A borrowed hot column must produce the same hunger/death transition while
+	# the original row still holds its old HP until the owner applies damage.
+	var reference_people := _people(2)
+	reference_people[1].hp = 0.25
+	var reference_state := _state(reference_people, [1, 2])
+	var borrowed_people := _people(2)
+	var borrowed_state := _state(borrowed_people, [1, 2])
+	var hot_values := {1: {"hp": 0.25, "ko": 0.0, "captive": false, "present": true},
+		2: {"hp": 100.0, "ko": 0.0, "captive": false, "present": true}}
+	var hot_read := func(id: int, field: StringName) -> Variant: return hot_values[id][String(field)]
+	var pending_hp := {}
+	var reference_damage := Sustain.advance_to(reference_state, reference_people, {}, 49.0 * HOUR)
+	var borrowed_damage := Sustain.advance_to(borrowed_state, borrowed_people, {}, 49.0 * HOUR,
+		{"hot_read": hot_read, "pending_hp": pending_hp})
+	_compare(reference_state, borrowed_state)
+	assert(reference_damage.damage == borrowed_damage.damage)
+	for id: int in pending_hp:
+		_near(float(pending_hp[id]), float(reference_people[id].hp), "borrowed hp")
+	assert(float(borrowed_people[1].hp) == 100.0 and float(pending_hp[1]) == 0.0)
+	var reference_training := _people(2)
+	reference_training[2].ko = 30.0
+	var borrowed_training := _people(2)
+	hot_values[1].hp = 100.0
+	hot_values[2].ko = 30.0
+	var training_context := {"ordered": true, "commander": true, "safe": true, "stopped": true,
+		"fed": true, "coach": 0.0, "controlled_person_id": 0}
+	var expected_training := Sustain.train(0.0, reference_training, [1, 2], HOUR, training_context)
+	training_context.hot_read = hot_read
+	var actual_training := Sustain.train(0.0, borrowed_training, [1, 2], HOUR, training_context)
+	assert(expected_training.handled_ids == actual_training.handled_ids and expected_training.handled_ids == [1])
+	_near(float(expected_training.training), float(actual_training.training), "borrowed training")
 	print("SITE SUSTAIN PASS: ration conservation, equal meals, time-credit transfer, hunger history/grace/death/resupply, partition/pause, morale/rout/reward, original fatigue training 80/50 and validation")
 	quit(0)

@@ -35,11 +35,13 @@ func run() -> void:
 	DirAccess.make_dir_recursive_absolute(folder)
 	var body := int(sex == "female")
 	editor = CandidateEditor.new()
+	editor.use_imported_model = "--imported" in args
 	for argument in args:
 		if argument.begins_with("--candidate="):
 			var candidate := argument.trim_prefix("--candidate=")
 			assert(candidate.begins_with(capture_root+"/") and FileAccess.file_exists(candidate))
 			(editor as CandidateEditor).candidate_path = candidate
+	assert(not editor.use_imported_model or (editor as CandidateEditor).candidate_path.is_empty(), "Imported evidence must use the formal PackedScene path")
 	editor.visual_state.body_index = body
 	root.add_child(editor)
 	editor.open()
@@ -62,6 +64,7 @@ func run() -> void:
 			["mingguang", &"armor_mingguang_01", &"boots_leather_01"]]
 	if not "--hair-only" in args and not "--low-pose-only" in args:
 		for item in cases:
+			if "--steel-only" in args and item[0] == "mingguang": continue
 			if "--armor-only" in args and item[0] not in ["western_armor","chinese_armor"]: continue
 			choose(&"armor", item[1]); choose(&"boots", item[2])
 			var sheet := Image.create(1800, 1100, false, Image.FORMAT_RGBA8)
@@ -118,8 +121,14 @@ func run() -> void:
 				for angle in [0.0,90.0,180.0]: await shot("hair_%02d_%s_%s_%d" % [hair,helmet,mode,int(angle)],angle,true)
 			editor.set_hair_mask_mode(&"auto")
 	var result := {"status":"CAPTURE_COMPLETE", "sex":sex, "checks":checks, "images":images,
+		"engine_version": Engine.get_version_info().string,
 		"editor_md5": FileAccess.get_md5("res://scripts/ui/human_character_3d_editor.gd"),
 		"candidate_path": (editor as CandidateEditor).candidate_path}
+	var model_path := (editor as CandidateEditor).candidate_path
+	if model_path.is_empty():
+		model_path = "res://assets/characters/human/q35/standard_anime_%s_character_pack.glb" % sex
+	result.model_sha256 = FileAccess.get_sha256(model_path)
+	result.model_load_mode = "imported_resource" if editor.use_imported_model else "runtime_raw_gltf"
 	if not (editor as CandidateEditor).candidate_path.is_empty():
 		result.candidate_sha256 = FileAccess.get_sha256((editor as CandidateEditor).candidate_path)
 	FileAccess.open(folder+"/result.json",FileAccess.WRITE).store_string(JSON.stringify(result,"\t"))

@@ -13,6 +13,8 @@ class FakeManager extends RefCounted:
 			"progress":phase, "kind":record.kind, "operator_id":1}
 class FakeTerrain extends RefCounted:
 	var site := {"vehicles":{"cart1":{"id":"cart1", "kind":"cart"}, "wagon1":{"id":"wagon1", "kind":"wagon"}}}
+	func surface_visual_offset_at(_point: Vector2) -> Vector2:
+		return Vector2.ZERO
 class FakeController extends RefCounted:
 	var vehicles := FakeManager.new()
 class FakeLab extends Node:

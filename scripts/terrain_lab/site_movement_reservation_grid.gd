@@ -14,7 +14,8 @@ var member_proposal_map: Dictionary = {} # member_id (int) -> proposal_id (int)
 var cell_proposal_map: Dictionary = {} # to_cell (Vector2i) -> Array[MoveProposal]
 var _next_proposal_id: int = 1
 var terrain_data: Object = null
-var blocked_destinations: Dictionary = {} # In-flight destination claims, separate from current cells.
+var blocked_destinations: Dictionary = {} # In-flight claims and borrowed external actor cells, separate from member occupancy.
+var compound_proposals: Dictionary = {} # Tick-local owner/plan references, never a physical clock.
 
 func begin_tick(current_occupancy: Dictionary, p_terrain: Object = null, p_blocked_destinations: Dictionary = {}) -> void:
 	initial_occupancy = current_occupancy.duplicate()
@@ -23,6 +24,7 @@ func begin_tick(current_occupancy: Dictionary, p_terrain: Object = null, p_block
 	proposal_lookup.clear()
 	member_proposal_map.clear()
 	cell_proposal_map.clear()
+	compound_proposals.clear()
 	_next_proposal_id = 1
 	terrain_data = p_terrain
 	blocked_destinations = p_blocked_destinations.duplicate()
@@ -48,6 +50,92 @@ func propose_move(
 	proposal.formation_persistent_serial = formation_persistent_serial
 	proposal.status = Types.MoveProposalStatus.PENDING
 	return add_proposal(proposal)
+
+func propose_compound(owner: Object, plan: Dictionary, member_moves: Array) -> String:
+	var identity := str(plan.get("compound_id", ""))
+	if identity.is_empty() or compound_proposals.has(identity) or owner == null or not owner.has_method("can_commit_siege_compound") or not owner.has_method("begin_siege_compound"):
+		return ""
+	var seen := {}
+	for movement: Dictionary in member_moves:
+		var mid := int(movement.get("member_id", 0))
+		if mid <= 0 or seen.has(mid) or member_proposal_map.has(mid): return ""
+		seen[mid] = true
+	var ids: Array[int] = []
+	var priority = Types.MoveProposal.new(int(plan.get("formation_id", 0)), int(plan.get("priority_member", 0)))
+	priority.formation_persistent_serial = int(plan.get("formation_serial", 0))
+	priority.wait_age_ticks = int(plan.get("wait_age", 0))
+	for movement: Dictionary in member_moves:
+		var proposal = Types.MoveProposal.new(int(plan.formation_id), int(movement.member_id), movement.from_cell, movement.to_cell)
+		proposal.compound_id = identity
+		proposal.formation_persistent_serial = priority.formation_persistent_serial
+		proposal.wait_age_ticks = priority.wait_age_ticks
+		ids.append(add_proposal(proposal))
+	compound_proposals[identity] = {"owner": owner, "plan": plan, "proposal_ids": ids, "priority": priority, "accepted": false}
+	return identity
+
+func _reject_compound(identity: String, reason: int) -> void:
+	var group: Dictionary = compound_proposals.get(identity, {})
+	if group.is_empty(): return
+	group["accepted"] = false
+	for pid: int in group.proposal_ids:
+		var proposal = proposal_lookup.get(pid)
+		if proposal != null and proposal.status in [Types.MoveProposalStatus.PENDING, Types.MoveProposalStatus.ACCEPTED]: proposal.status = reason
+
+func _compound_claim_cells(plan: Dictionary) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if terrain_data == null: return result
+	for value: int in plan.get("sweep", []): result.append(terrain_data.cell_from_index(value))
+	for movement: Dictionary in plan.get("participants", []):
+		for value: int in [int(movement.from), int(movement.to)]:
+			var cell: Vector2i = terrain_data.cell_from_index(value)
+			if not result.has(cell): result.append(cell)
+	return result
+
+func _resolve_compound_claims() -> void:
+	var candidates: Array = compound_proposals.values()
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _compare_proposals(a.priority, b.priority))
+	var claimed := {}
+	for group: Dictionary in candidates:
+		var plan: Dictionary = group.plan
+		var identity := str(plan.compound_id)
+		if not is_instance_valid(group.owner) or not group.owner.can_commit_siege_compound(plan, initial_occupancy, blocked_destinations):
+			_reject_compound(identity, Types.MoveProposalStatus.REJECTED_STATIC)
+			continue
+		var cells := _compound_claim_cells(plan)
+		var rejected := false
+		for cell: Vector2i in cells:
+			if claimed.has(cell): rejected = true; break
+			for proposal in cell_proposal_map.get(cell, []):
+				if proposal.compound_id == identity or proposal.status != Types.MoveProposalStatus.PENDING: continue
+				if _compare_proposals(proposal, group.priority): rejected = true; break
+			if rejected: break
+		if rejected:
+			_reject_compound(identity, Types.MoveProposalStatus.REJECTED_CONFLICT)
+			continue
+		group.accepted = true
+		for cell: Vector2i in cells:
+			claimed[cell] = identity
+			for proposal in cell_proposal_map.get(cell, []):
+				if proposal.compound_id != identity and proposal.status == Types.MoveProposalStatus.PENDING: proposal.status = Types.MoveProposalStatus.REJECTED_CONFLICT
+
+func _cascade_compound_rejections() -> void:
+	var changed := true
+	while changed:
+		changed = false
+		for identity: String in compound_proposals:
+			var group: Dictionary = compound_proposals[identity]
+			if not bool(group.accepted): continue
+			for pid: int in group.proposal_ids:
+				if proposal_lookup[pid].status != Types.MoveProposalStatus.ACCEPTED:
+					_reject_compound(identity, Types.MoveProposalStatus.REJECTED_DEPENDENCY)
+					changed = true
+					break
+		for proposal in proposals:
+			if proposal.status != Types.MoveProposalStatus.ACCEPTED or proposal.dependency_proposal_id < 0: continue
+			var dependency = proposal_lookup.get(proposal.dependency_proposal_id)
+			if dependency == null or dependency.status != Types.MoveProposalStatus.ACCEPTED:
+				proposal.status = Types.MoveProposalStatus.REJECTED_DEPENDENCY
+				changed = true
 
 func add_proposal(proposal: Variant) -> int:
 	if proposal == null:
@@ -103,8 +191,10 @@ func is_same_formation_pair_swap(proposal: Variant) -> bool:
 		and partner.dependency_proposal_id == proposal.proposal_id
 
 func resolve_all() -> void:
+	_resolve_compound_claims()
 	# --- Stage 1: Static validation & same-cell competition ---
 	for p in proposals:
+		if p.status != Types.MoveProposalStatus.PENDING: continue
 		# Check from_cell matches tick-start occupancy
 		if initial_occupancy.get(p.from_cell, -1) != p.member_id:
 			p.status = Types.MoveProposalStatus.REJECTED_INVALID_MEMBER
@@ -229,9 +319,22 @@ func resolve_all() -> void:
 	for p in proposals:
 		if p.status == Types.MoveProposalStatus.PENDING:
 			p.status = Types.MoveProposalStatus.REJECTED_DEPENDENCY
+	_cascade_compound_rejections()
 
 
 func commit_all(member_lookup: Dictionary, current_tick: int = 0) -> Array:
+	# A whole vehicle group must still exist before any original person starts.
+	for identity: String in compound_proposals:
+		var group: Dictionary = compound_proposals[identity]
+		if not bool(group.accepted): continue
+		var valid: bool = is_instance_valid(group.owner) and group.owner.can_commit_siege_compound(group.plan, initial_occupancy, blocked_destinations)
+		for pid: int in group.proposal_ids:
+			var proposal = proposal_lookup[pid]
+			var info: Dictionary = member_lookup.get(proposal.member_id, {})
+			if proposal.status != Types.MoveProposalStatus.ACCEPTED or info.is_empty() or info.get("cell") != proposal.from_cell or not is_instance_valid(info.get("formation")):
+				valid = false
+		if not valid: _reject_compound(identity, Types.MoveProposalStatus.REJECTED_INVALID_MEMBER)
+	_cascade_compound_rejections()
 	# Pass 0: Preflight validation + cascade dependency invalidation
 	var invalidated_pids: Dictionary = {}
 	var participants: Dictionary = {}
@@ -240,6 +343,7 @@ func commit_all(member_lookup: Dictionary, current_tick: int = 0) -> Array:
 			participants[p.member_id] = true
 	for p in proposals:
 		if p.status == Types.MoveProposalStatus.ACCEPTED:
+			if not p.compound_id.is_empty(): continue # Above whole-group preflight owns this step.
 			var valid := true
 			if not member_lookup.has(p.member_id):
 				valid = false
@@ -279,6 +383,7 @@ func commit_all(member_lookup: Dictionary, current_tick: int = 0) -> Array:
 						changed = true
 
 	# Collect all surviving accepted proposals
+	_cascade_compound_rejections()
 	var accepted_proposals: Array = []
 	for p in proposals:
 		if p.status == Types.MoveProposalStatus.ACCEPTED:
@@ -287,8 +392,11 @@ func commit_all(member_lookup: Dictionary, current_tick: int = 0) -> Array:
 	# Start the original physical step. The source cell stays authoritative until
 	# the coordinator completes the whole dependency chain after interpolation.
 	for p in accepted_proposals:
+		if not p.compound_id.is_empty(): continue
 		var info: Dictionary = member_lookup[p.member_id]
 		info.formation.begin_committed_move(p.member_id, p.from_cell, p.to_cell)
+	for group: Dictionary in compound_proposals.values():
+		if bool(group.accepted): group.owner.begin_siege_compound(group.plan)
 
 	# Pass 4: Generate immutable MoveCommitRecord for all proposals
 	var records: Array = []

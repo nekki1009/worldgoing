@@ -3,15 +3,18 @@ extends "res://scripts/tests/site_workflow_test.gd"
 const CLOCK_SAVE := "res://.godot-temp/site_resources_contract/work_team_clock.json"
 const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
 
+func _initialize() -> void:
+	super._initialize()
+	# Original Controller save/load completed at 18.303 s in the timed diagnostic.
+	# Keep a bounded leaf workflow; the parent remains 15 s and canonical stays 60 s.
+	deadline = Time.get_ticks_msec() + 30000
+
 func _near(actual: float, expected: float, label: String) -> void:
 	assert(absf(actual - expected) < 0.00001, "%s: %.12f != %.12f" % [label, actual, expected])
 
 func _press(controller: SiteController, button_name: String) -> void:
-	var button := controller.panel.find_child(button_name, true, false) as Button
-	if button == null:
-		# Army commands now live in the original movable combat-test window.
-		controller._open_combat_window()
-		button = controller.combat_window.find_child(button_name, true, false) as Button
+	# Use the same real button in the original formal work window.
+	var button := controller.lab.find_child(button_name, true, false) as Button
 	assert(button != null, "Actual controller button missing: " + button_name)
 	button.pressed.emit()
 
@@ -73,6 +76,7 @@ func _nearby_free(data: TerrainData, origin: Vector2i, reserved: Array[Vector2i]
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit original NPC fixture before the Lab wires its actors.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -100,7 +104,9 @@ func _run() -> void:
 	assert(team.combat_units[1].get("work_task", {}).is_empty(), "Original player identity alone cannot order another team's workers")
 	# This fixture selects the existing captain through the real control-bind
 	# callback. Death-only family selection is verified by its separate test.
-	assert(controller._control_family_person(null, team.combat_identity(team.current_commander)).ok)
+	var captain_id := team.combat_identity(team.current_commander)
+	assert(controller._control_family_person(null, captain_id).ok)
+	assert(lab.controlled_person_id() == captain_id)
 	for identity: int in identities:
 		lab.selected_army_target = identity
 		_press(controller, "AssignSelectedWorker")
@@ -116,7 +122,7 @@ func _run() -> void:
 	_near(float(second.work_task.progress), 0.2, "second original worker productive time")
 	var shared := PersonFatigue.pool(first)
 	assert(is_same(shared, team.team_fatigue) and is_same(shared, PersonFatigue.pool(second)))
-	assert(int(shared.count) == 2 and PersonFatigue.pool(team.combat_units[0]).is_empty(), "The controlled captain is personal; both original workers share the real team pool")
+	assert(int(shared.count) == 3 and is_same(PersonFatigue.pool(team.combat_units[team.index_for_identity(captain_id)]), shared), "The controlled captain and both original workers retain one three-person team pool")
 	assert(not first.has("fatigue") and not second.has("fatigue"), "Shared members must not retain shadow fatigue fields")
 	var shared_work_rate := identities.size() * PersonFatigue.WORK_RATE / float(shared.count)
 	_near(PersonFatigue.read(first), 12.0 * shared_work_rate, "two workers charge their actual shared membership once")
@@ -148,7 +154,8 @@ func _run() -> void:
 	first = team.combat_units[team.index_for_identity(identities[0])]
 	second = team.combat_units[team.index_for_identity(identities[1])]
 	shared = PersonFatigue.pool(first)
-	assert(is_same(shared, team.team_fatigue) and is_same(shared, PersonFatigue.pool(second)) and int(shared.count) == 2, "Load must restore the original shared fatigue owner")
+	assert(is_same(shared, team.team_fatigue) and is_same(shared, PersonFatigue.pool(second)) and int(shared.count) == 3, "Load must restore the original three-person shared fatigue owner")
+	assert(lab.controlled_person_id() == captain_id and is_same(shared, PersonFatigue.pool(team.combat_units[team.index_for_identity(captain_id)])), "Load retains the same controlled captain in the same team pool")
 	for index in range(2):
 		var row: Dictionary = first if index == 0 else second
 		assert(controller.work_team.is_assigned(identities[index]))

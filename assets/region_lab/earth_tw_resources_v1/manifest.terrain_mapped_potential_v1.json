@@ -1,0 +1,3187 @@
+{
+  "format": 1,
+  "placement_rule": "osm_landcover_resources_v1",
+  "geography_manifest_sha256": "cdf59e3247c9db3eb1e5399f7346014f8dec5c2f90bb977fd41ea35bc3444446",
+  "crs": "EPSG:3826",
+  "cell_size_m": 20,
+  "region_size_m": 20000,
+  "tile_size": [
+    1000,
+    1000
+  ],
+  "encoding": "u8_zlib",
+  "row_order": "north_to_south",
+  "categories": {
+    "0": "unclassified",
+    "1": "forest",
+    "2": "grass_meadow",
+    "3": "scrub_heath",
+    "4": "farmland_vineyard",
+    "5": "orchard",
+    "6": "quarry",
+    "7": "built"
+  },
+  "class_mapping": {
+    "forest": 1,
+    "grass": 2,
+    "meadow": 2,
+    "scrub": 3,
+    "heath": 3,
+    "farmland": 4,
+    "orchard": 5,
+    "vineyard": 4,
+    "quarry": 6,
+    "residential": 7,
+    "industrial": 7,
+    "commercial": 7,
+    "retail": 7,
+    "farmyard": 7,
+    "cemetery": 7,
+    "military": 7,
+    "landfill": 7
+  },
+  "overlap_rule": "higher_category_wins",
+  "sampling_rule": "pixel_center_all_touched_false",
+  "source": {
+    "url": "https://download.geofabrik.de/asia/taiwan-260926-free.shp.zip",
+    "sha256": "960710795bd19191f19fbadc6decf4843c177ea5b8e616254bf87212c458d89c",
+    "bytes": 261733637,
+    "snapshot_utc": "2026-09-26T20:22:51Z",
+    "layer": "gis_osm_landuse_a_free_1",
+    "feature_counts": {
+      "allotments": 655,
+      "cemetery": 2304,
+      "commercial": 1121,
+      "farmland": 39818,
+      "farmyard": 2876,
+      "forest": 12531,
+      "grass": 10150,
+      "heath": 1021,
+      "industrial": 8286,
+      "landfill": 68,
+      "meadow": 1362,
+      "military": 748,
+      "orchard": 3235,
+      "park": 8654,
+      "quarry": 278,
+      "recreation_ground": 339,
+      "residential": 25841,
+      "retail": 1094,
+      "scrub": 2722,
+      "vineyard": 3
+    },
+    "selected_feature_count": 113436,
+    "empty_geometries_excluded": [
+      {
+        "osm_id": "193250671",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "305503139",
+        "code": 7217,
+        "fclass": "scrub",
+        "name": ""
+      },
+      {
+        "osm_id": "311385531",
+        "code": 7203,
+        "fclass": "residential",
+        "name": ""
+      },
+      {
+        "osm_id": "335749751",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "4790401",
+        "code": 7218,
+        "fclass": "grass",
+        "name": ""
+      },
+      {
+        "osm_id": "339706526",
+        "code": 7229,
+        "fclass": "farmland",
+        "name": ""
+      },
+      {
+        "osm_id": "344480066",
+        "code": 7229,
+        "fclass": "farmland",
+        "name": ""
+      },
+      {
+        "osm_id": "345217661",
+        "code": 7229,
+        "fclass": "farmland",
+        "name": ""
+      },
+      {
+        "osm_id": "4602297",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "653947285",
+        "code": 7219,
+        "fclass": "heath",
+        "name": ""
+      },
+      {
+        "osm_id": "921409204",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "969699394",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "16731917",
+        "code": 7203,
+        "fclass": "residential",
+        "name": ""
+      },
+      {
+        "osm_id": "1184918867",
+        "code": 7217,
+        "fclass": "scrub",
+        "name": ""
+      },
+      {
+        "osm_id": "1203415028",
+        "code": 7229,
+        "fclass": "farmland",
+        "name": ""
+      },
+      {
+        "osm_id": "1307163687",
+        "code": 7201,
+        "fclass": "forest",
+        "name": ""
+      },
+      {
+        "osm_id": "19270807",
+        "code": 7203,
+        "fclass": "residential",
+        "name": ""
+      },
+      {
+        "osm_id": "1452386341",
+        "code": 7203,
+        "fclass": "residential",
+        "name": "華勛五村"
+      },
+      {
+        "osm_id": "1459419820",
+        "code": 7229,
+        "fclass": "farmland",
+        "name": ""
+      },
+      {
+        "osm_id": "1459419821",
+        "code": 7228,
+        "fclass": "farmyard",
+        "name": ""
+      },
+      {
+        "osm_id": "1466155516",
+        "code": 7203,
+        "fclass": "residential",
+        "name": ""
+      },
+      {
+        "osm_id": "1549375665",
+        "code": 7203,
+        "fclass": "residential",
+        "name": ""
+      }
+    ],
+    "license": "ODbL-1.0",
+    "attribution": "Copyright OpenStreetMap contributors; processed by Geofabrik GmbH"
+  },
+  "limitations": [
+    "Mapped present-day land cover, not exhaustive ground truth or historical reconstruction.",
+    "20 m cell-center samples preserve polygon holes but can omit smaller features.",
+    "Unclassified is unknown, not evidence that resources are absent.",
+    "Forest does not establish tree species or quantities; quarry does not establish mineral type or remaining stock.",
+    "Game resource instances, yields and ecology remain game rules, not surveyed source facts."
+  ],
+  "tiles": {
+    "3,128": {
+      "path": "tiles/3_128.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        60000,
+        2560000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "3,129": {
+      "path": "tiles/3_129.cover.zlib",
+      "sha256": "8b6fbbd06bd4a9ca4483ddf7bb38818fccfdb718bca6310ee3dde43f32cf6eb1",
+      "bytes": 1051,
+      "raw_bytes": 1000000,
+      "origin": [
+        60000,
+        2580000
+      ],
+      "counts": [
+        999903,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        97
+      ]
+    },
+    "4,128": {
+      "path": "tiles/4_128.cover.zlib",
+      "sha256": "35790b20f51d4f6167cee4bd71a0f7cf34b9b935e5b5cdaec3b9f54a01d3b435",
+      "bytes": 1843,
+      "raw_bytes": 1000000,
+      "origin": [
+        80000,
+        2560000
+      ],
+      "counts": [
+        998651,
+        0,
+        192,
+        0,
+        89,
+        5,
+        0,
+        1063
+      ]
+    },
+    "4,129": {
+      "path": "tiles/4_129.cover.zlib",
+      "sha256": "98a23bb91643e3d97d69b767e93b09634f0e010f0b4e90190e6c7d6ab3a83793",
+      "bytes": 1297,
+      "raw_bytes": 1000000,
+      "origin": [
+        80000,
+        2580000
+      ],
+      "counts": [
+        999168,
+        0,
+        19,
+        32,
+        0,
+        0,
+        0,
+        781
+      ]
+    },
+    "4,130": {
+      "path": "tiles/4_130.cover.zlib",
+      "sha256": "b9a699d9e05560c70938762c59369c7e8a9233c243b28f39eefc4d0ec7f800e2",
+      "bytes": 1699,
+      "raw_bytes": 1000000,
+      "origin": [
+        80000,
+        2600000
+      ],
+      "counts": [
+        997278,
+        0,
+        3,
+        854,
+        0,
+        0,
+        0,
+        1865
+      ]
+    },
+    "5,128": {
+      "path": "tiles/5_128.cover.zlib",
+      "sha256": "15206908d95ff5e57c31e28abcf4d2514683e79833b614ec40f46b16ac91c470",
+      "bytes": 1169,
+      "raw_bytes": 1000000,
+      "origin": [
+        100000,
+        2560000
+      ],
+      "counts": [
+        999769,
+        0,
+        0,
+        56,
+        0,
+        0,
+        0,
+        175
+      ]
+    },
+    "5,129": {
+      "path": "tiles/5_129.cover.zlib",
+      "sha256": "49d67ab3bf051d16cf6ea3242eb1aa6da47d7e59da74baaf3065c26d08f2a69a",
+      "bytes": 1084,
+      "raw_bytes": 1000000,
+      "origin": [
+        100000,
+        2580000
+      ],
+      "counts": [
+        999559,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        441
+      ]
+    },
+    "5,130": {
+      "path": "tiles/5_130.cover.zlib",
+      "sha256": "4c21c539f4c605dd9cd3c03618265e34415ca8d7d6d3bcd8bb765dbb24ba4e53",
+      "bytes": 6660,
+      "raw_bytes": 1000000,
+      "origin": [
+        100000,
+        2600000
+      ],
+      "counts": [
+        974173,
+        7710,
+        1800,
+        242,
+        42,
+        0,
+        0,
+        16033
+      ]
+    },
+    "5,131": {
+      "path": "tiles/5_131.cover.zlib",
+      "sha256": "41a7a1013a2c165ab9628e0e2c6f63832347bc327266d21f9ebd05531db17c70",
+      "bytes": 1255,
+      "raw_bytes": 1000000,
+      "origin": [
+        100000,
+        2620000
+      ],
+      "counts": [
+        999297,
+        371,
+        0,
+        0,
+        0,
+        0,
+        0,
+        332
+      ]
+    },
+    "6,130": {
+      "path": "tiles/6_130.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        120000,
+        2600000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "7,127": {
+      "path": "tiles/7_127.cover.zlib",
+      "sha256": "2e8692b8cc634cddf06c37d7a77c9c8296f01284d2abd854eafbc507dcb61d2d",
+      "bytes": 4271,
+      "raw_bytes": 1000000,
+      "origin": [
+        140000,
+        2540000
+      ],
+      "counts": [
+        976289,
+        4866,
+        0,
+        0,
+        13755,
+        0,
+        0,
+        5090
+      ]
+    },
+    "7,128": {
+      "path": "tiles/7_128.cover.zlib",
+      "sha256": "72867403595747a02344ebce425ad1291f6df125a8518c8770256a53238a0616",
+      "bytes": 3127,
+      "raw_bytes": 1000000,
+      "origin": [
+        140000,
+        2560000
+      ],
+      "counts": [
+        986817,
+        2555,
+        548,
+        158,
+        7652,
+        0,
+        14,
+        2256
+      ]
+    },
+    "7,129": {
+      "path": "tiles/7_129.cover.zlib",
+      "sha256": "884e685ada5a59e36ec9f7aaf3db9b66587c60ac1a0816a8ed51c7ba8629b2eb",
+      "bytes": 1060,
+      "raw_bytes": 1000000,
+      "origin": [
+        140000,
+        2580000
+      ],
+      "counts": [
+        999579,
+        421,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "7,130": {
+      "path": "tiles/7_130.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        140000,
+        2600000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "8,124": {
+      "path": "tiles/8_124.cover.zlib",
+      "sha256": "fafe656a230cca9ff98d11ecc296d07aee1ac5da24b2e1eb39dc33014502367d",
+      "bytes": 3894,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2480000
+      ],
+      "counts": [
+        980524,
+        102,
+        237,
+        76,
+        0,
+        0,
+        0,
+        19061
+      ]
+    },
+    "8,125": {
+      "path": "tiles/8_125.cover.zlib",
+      "sha256": "2eb0a20336287769182607e3903ae47d3ce77866db3dd14c549a433214f82708",
+      "bytes": 23831,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2500000
+      ],
+      "counts": [
+        830316,
+        27725,
+        5066,
+        792,
+        3626,
+        68,
+        337,
+        132070
+      ]
+    },
+    "8,126": {
+      "path": "tiles/8_126.cover.zlib",
+      "sha256": "8db875e6aea980b4e1a73374a8c96cb05a75095dbcc5a3104bf852ac0e7b3d6b",
+      "bytes": 26647,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2520000
+      ],
+      "counts": [
+        778994,
+        5187,
+        29694,
+        5338,
+        58053,
+        3637,
+        0,
+        119097
+      ]
+    },
+    "8,127": {
+      "path": "tiles/8_127.cover.zlib",
+      "sha256": "2ed2d45ca1f988db772d76616febbf7430feaa08888b0a4f7404e1d15120b130",
+      "bytes": 52970,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2540000
+      ],
+      "counts": [
+        494644,
+        2322,
+        21827,
+        6903,
+        200846,
+        2205,
+        0,
+        271253
+      ]
+    },
+    "8,128": {
+      "path": "tiles/8_128.cover.zlib",
+      "sha256": "050ff615c93be8ea433adf74edc4ba248a7246e61a5f820daf2260531e381527",
+      "bytes": 57176,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2560000
+      ],
+      "counts": [
+        414608,
+        1450,
+        34355,
+        7397,
+        394352,
+        31739,
+        0,
+        116099
+      ]
+    },
+    "8,129": {
+      "path": "tiles/8_129.cover.zlib",
+      "sha256": "20dccd2c107c75f45563e06ff8b918962d5e0795cf6c27e0de8f57dd30beac54",
+      "bytes": 37933,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2580000
+      ],
+      "counts": [
+        625654,
+        2565,
+        5573,
+        8783,
+        310340,
+        5987,
+        0,
+        41098
+      ]
+    },
+    "8,130": {
+      "path": "tiles/8_130.cover.zlib",
+      "sha256": "af4d3cc930f138956bab4bfe2d80e7a62b96236a2ae1ed4fce2960f03f11353f",
+      "bytes": 47728,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2600000
+      ],
+      "counts": [
+        578182,
+        4459,
+        391,
+        139,
+        394462,
+        7514,
+        0,
+        14853
+      ]
+    },
+    "8,131": {
+      "path": "tiles/8_131.cover.zlib",
+      "sha256": "00ce3490009bcec53917b71b67f1fc353a68f9478b2e51ed392cd00cf3ae9b64",
+      "bytes": 24627,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2620000
+      ],
+      "counts": [
+        748804,
+        12922,
+        1119,
+        691,
+        178741,
+        226,
+        113,
+        57384
+      ]
+    },
+    "8,132": {
+      "path": "tiles/8_132.cover.zlib",
+      "sha256": "8925bbffcc92873c315242f29071159829da3eeb9c0c81fc2306ee3e33ce6bb4",
+      "bytes": 3070,
+      "raw_bytes": 1000000,
+      "origin": [
+        160000,
+        2640000
+      ],
+      "counts": [
+        988569,
+        0,
+        0,
+        0,
+        11098,
+        11,
+        0,
+        322
+      ]
+    },
+    "9,123": {
+      "path": "tiles/9_123.cover.zlib",
+      "sha256": "73de7a8c905777b11f3c4508aed1b6790fa514295759f701ed96705f73215c50",
+      "bytes": 2377,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2460000
+      ],
+      "counts": [
+        995640,
+        2102,
+        273,
+        0,
+        0,
+        18,
+        0,
+        1967
+      ]
+    },
+    "9,124": {
+      "path": "tiles/9_124.cover.zlib",
+      "sha256": "f2f76d722e0227bb81d2fa4b5a827442d2b6339980f20814bf2806586b1f1440",
+      "bytes": 29972,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2480000
+      ],
+      "counts": [
+        759135,
+        22348,
+        4277,
+        330,
+        82494,
+        2444,
+        402,
+        128570
+      ]
+    },
+    "9,125": {
+      "path": "tiles/9_125.cover.zlib",
+      "sha256": "083c18d1189b818f0b178bdac453d9df9011fd45beac436f2e62b03ccc3fb3e0",
+      "bytes": 48118,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2500000
+      ],
+      "counts": [
+        670529,
+        82570,
+        5421,
+        1018,
+        71271,
+        1443,
+        433,
+        167315
+      ]
+    },
+    "9,126": {
+      "path": "tiles/9_126.cover.zlib",
+      "sha256": "8f8a78d3daf7f37d8e1f8c649e921ebfbcc7ab75cbd65d56d7860e1c704639fe",
+      "bytes": 47259,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2520000
+      ],
+      "counts": [
+        573506,
+        339568,
+        3282,
+        87,
+        45624,
+        3591,
+        1808,
+        32534
+      ]
+    },
+    "9,127": {
+      "path": "tiles/9_127.cover.zlib",
+      "sha256": "e6dd2d7763c88c5821bb678dde512aebc86a1ebc83725a584d8979d0af801bfa",
+      "bytes": 47471,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2540000
+      ],
+      "counts": [
+        368192,
+        399801,
+        19554,
+        6059,
+        81700,
+        81228,
+        0,
+        43466
+      ]
+    },
+    "9,128": {
+      "path": "tiles/9_128.cover.zlib",
+      "sha256": "4a5d0abfcfc717c7a836bcc4c2a75e2bfe7026445859a6638140599197c8294a",
+      "bytes": 49059,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2560000
+      ],
+      "counts": [
+        165996,
+        486006,
+        26131,
+        17364,
+        143280,
+        105286,
+        70,
+        55867
+      ]
+    },
+    "9,129": {
+      "path": "tiles/9_129.cover.zlib",
+      "sha256": "42f3e4e54f9b6dbef34d2e20e926c64c160680747415b8a8662e6ed5cdbf90e8",
+      "bytes": 57924,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2580000
+      ],
+      "counts": [
+        381864,
+        121652,
+        27913,
+        39340,
+        301878,
+        42311,
+        48,
+        84994
+      ]
+    },
+    "9,130": {
+      "path": "tiles/9_130.cover.zlib",
+      "sha256": "e6b10a6b863c60d4a5fcab3dc6c726682d6dbc437f2796a75c08c72789b79700",
+      "bytes": 49001,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2600000
+      ],
+      "counts": [
+        551270,
+        25122,
+        1259,
+        19,
+        381903,
+        1591,
+        0,
+        38836
+      ]
+    },
+    "9,131": {
+      "path": "tiles/9_131.cover.zlib",
+      "sha256": "c3384bf5da0a406badef5cbaa52124b0353e7cc73e8664ee87d4aa64b2d3c5a7",
+      "bytes": 45365,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2620000
+      ],
+      "counts": [
+        509535,
+        7857,
+        1047,
+        1395,
+        453139,
+        416,
+        0,
+        26611
+      ]
+    },
+    "9,132": {
+      "path": "tiles/9_132.cover.zlib",
+      "sha256": "9b06199b25b044f9ae4f3b149d97406cf8b8d513199e5421a0e042c5711f023c",
+      "bytes": 35813,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2640000
+      ],
+      "counts": [
+        757102,
+        953,
+        1481,
+        668,
+        207801,
+        163,
+        27,
+        31805
+      ]
+    },
+    "9,133": {
+      "path": "tiles/9_133.cover.zlib",
+      "sha256": "d3f208c97bcc3fb9bcc62a900a733e133ce9ee1d28269379ab0becaac349880c",
+      "bytes": 25982,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2660000
+      ],
+      "counts": [
+        849817,
+        1567,
+        398,
+        627,
+        57877,
+        46,
+        0,
+        89668
+      ]
+    },
+    "9,134": {
+      "path": "tiles/9_134.cover.zlib",
+      "sha256": "5d313d0efa3503b0e15c34974842e6979c1061a4cff0c3cb88e7a8d73646ec91",
+      "bytes": 2231,
+      "raw_bytes": 1000000,
+      "origin": [
+        180000,
+        2680000
+      ],
+      "counts": [
+        987089,
+        55,
+        0,
+        0,
+        0,
+        0,
+        0,
+        12856
+      ]
+    },
+    "10,121": {
+      "path": "tiles/10_121.cover.zlib",
+      "sha256": "5570d4d5e7a5d5c5af2e2757371e608e92750e82f0d49fe133857427f9edf657",
+      "bytes": 3991,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2420000
+      ],
+      "counts": [
+        974068,
+        14507,
+        0,
+        3889,
+        5599,
+        21,
+        0,
+        1916
+      ]
+    },
+    "10,122": {
+      "path": "tiles/10_122.cover.zlib",
+      "sha256": "af175ebf907e5915fe771daaec96dce8a255c77fb6cb366ffacfabd29791472c",
+      "bytes": 5024,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2440000
+      ],
+      "counts": [
+        958194,
+        35081,
+        37,
+        952,
+        2475,
+        1916,
+        63,
+        1282
+      ]
+    },
+    "10,123": {
+      "path": "tiles/10_123.cover.zlib",
+      "sha256": "67dc537fa1d5d12d7709cacf74f01043434e979f5d4ead1586568eed4482c380",
+      "bytes": 16830,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2460000
+      ],
+      "counts": [
+        607898,
+        319097,
+        570,
+        34,
+        23050,
+        31273,
+        0,
+        18078
+      ]
+    },
+    "10,124": {
+      "path": "tiles/10_124.cover.zlib",
+      "sha256": "6a833139277b10538ca5255a276059862525aa606646712eda7dbc8ac5baaafd",
+      "bytes": 26819,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2480000
+      ],
+      "counts": [
+        417043,
+        388551,
+        1172,
+        536,
+        139592,
+        21101,
+        36,
+        31969
+      ]
+    },
+    "10,125": {
+      "path": "tiles/10_125.cover.zlib",
+      "sha256": "dca2dde4c345f04e40e2e4755b43044ad0b2d2c56b5ce84f5d3f04444b657d75",
+      "bytes": 24318,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2500000
+      ],
+      "counts": [
+        495779,
+        366866,
+        1184,
+        17,
+        97423,
+        1737,
+        126,
+        36868
+      ]
+    },
+    "10,126": {
+      "path": "tiles/10_126.cover.zlib",
+      "sha256": "b9361fa76d354a18ad7a7cd4a05272b82f6954c94bfee5dad5cb18ef8cb4add0",
+      "bytes": 14425,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2520000
+      ],
+      "counts": [
+        439398,
+        524142,
+        52,
+        0,
+        21284,
+        32,
+        6246,
+        8846
+      ]
+    },
+    "10,127": {
+      "path": "tiles/10_127.cover.zlib",
+      "sha256": "de38e4d0b6b3060e0b545f90998ea085db4a5e289b1860d7133af2146a48629b",
+      "bytes": 21419,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2540000
+      ],
+      "counts": [
+        237174,
+        742818,
+        253,
+        0,
+        9658,
+        2320,
+        0,
+        7777
+      ]
+    },
+    "10,128": {
+      "path": "tiles/10_128.cover.zlib",
+      "sha256": "eee0a963362da1b0d1ab5a72555b14610d81c7ee3e435aaa31af134e63a1635d",
+      "bytes": 15221,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2560000
+      ],
+      "counts": [
+        128751,
+        847771,
+        36,
+        117,
+        361,
+        19666,
+        0,
+        3298
+      ]
+    },
+    "10,129": {
+      "path": "tiles/10_129.cover.zlib",
+      "sha256": "8103f0e2e6c8b097d86ac28fcdc77bbfe6f8cb3d79d475211da9c40f18a4ccb8",
+      "bytes": 23396,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2580000
+      ],
+      "counts": [
+        244083,
+        738280,
+        71,
+        11,
+        3660,
+        8979,
+        0,
+        4916
+      ]
+    },
+    "10,130": {
+      "path": "tiles/10_130.cover.zlib",
+      "sha256": "ebcec06663127ebf875c26af746d4fffebc27912125097ee5a8f162e3fc947c9",
+      "bytes": 31233,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2600000
+      ],
+      "counts": [
+        308994,
+        624552,
+        737,
+        13,
+        48003,
+        7921,
+        131,
+        9649
+      ]
+    },
+    "10,131": {
+      "path": "tiles/10_131.cover.zlib",
+      "sha256": "3929f7f3da52c586cfe7bbb31e210a079ef1277fa5b7a303723b90f0ecb3f948",
+      "bytes": 33415,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2620000
+      ],
+      "counts": [
+        605171,
+        154299,
+        1555,
+        835,
+        193917,
+        14223,
+        0,
+        30000
+      ]
+    },
+    "10,132": {
+      "path": "tiles/10_132.cover.zlib",
+      "sha256": "1872ce62d8af6d6edd07ddf00ec5c31b85bc0032c73045070d0a31e827ca6383",
+      "bytes": 41549,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2640000
+      ],
+      "counts": [
+        717615,
+        127163,
+        1323,
+        126,
+        87171,
+        628,
+        35,
+        65939
+      ]
+    },
+    "10,133": {
+      "path": "tiles/10_133.cover.zlib",
+      "sha256": "245bb493cad2244f603834d5e7f643d772aaef1060eb24d0e86a3dbb590dda9e",
+      "bytes": 63585,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2660000
+      ],
+      "counts": [
+        677654,
+        76035,
+        6253,
+        28135,
+        90723,
+        449,
+        371,
+        120380
+      ]
+    },
+    "10,134": {
+      "path": "tiles/10_134.cover.zlib",
+      "sha256": "a63811f4616de3934a652d4917c2b4139a7d8769a9f732c8f6bbbd1f75a49fc8",
+      "bytes": 44458,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2680000
+      ],
+      "counts": [
+        733000,
+        26910,
+        2133,
+        12195,
+        120018,
+        385,
+        924,
+        104435
+      ]
+    },
+    "10,135": {
+      "path": "tiles/10_135.cover.zlib",
+      "sha256": "a74f942a51d42c9a25fb89fc46260cc608653dbc68d63f2c57be9d28c1dc1fd8",
+      "bytes": 9092,
+      "raw_bytes": 1000000,
+      "origin": [
+        200000,
+        2700000
+      ],
+      "counts": [
+        965398,
+        17883,
+        360,
+        784,
+        7381,
+        47,
+        262,
+        7885
+      ]
+    },
+    "11,120": {
+      "path": "tiles/11_120.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2400000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "11,121": {
+      "path": "tiles/11_121.cover.zlib",
+      "sha256": "246e33dcd2b3e2d58ca03743d59eb53a498ad2c8e01349e0abce381102f2de92",
+      "bytes": 30053,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2420000
+      ],
+      "counts": [
+        493762,
+        342339,
+        5067,
+        28830,
+        73222,
+        3627,
+        0,
+        53153
+      ]
+    },
+    "11,122": {
+      "path": "tiles/11_122.cover.zlib",
+      "sha256": "3aa7effdf46fddaf77bbdd926a297c8d793ffd6b91ba7b3f8f2b10523eb9438c",
+      "bytes": 20480,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2440000
+      ],
+      "counts": [
+        117460,
+        813129,
+        378,
+        5435,
+        23215,
+        1477,
+        0,
+        38906
+      ]
+    },
+    "11,123": {
+      "path": "tiles/11_123.cover.zlib",
+      "sha256": "cf4a15b585f21ff8e2d44a3e0ecb1fe2f918f7d909b583e9a546ab886b4e19fd",
+      "bytes": 7227,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2460000
+      ],
+      "counts": [
+        54907,
+        939552,
+        17,
+        0,
+        2299,
+        1330,
+        0,
+        1895
+      ]
+    },
+    "11,124": {
+      "path": "tiles/11_124.cover.zlib",
+      "sha256": "12410de4e7fe67a050e81e9d16b0b09931473d124e581420f5ecc2c5ce978b3e",
+      "bytes": 2742,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2480000
+      ],
+      "counts": [
+        13382,
+        986051,
+        0,
+        0,
+        471,
+        0,
+        0,
+        96
+      ]
+    },
+    "11,125": {
+      "path": "tiles/11_125.cover.zlib",
+      "sha256": "fd3d73a3ed7ee8ec5e25c523b510211470f814d3bdd8659384b8d8cbba0ec240",
+      "bytes": 6151,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2500000
+      ],
+      "counts": [
+        25856,
+        972998,
+        3,
+        0,
+        439,
+        0,
+        0,
+        704
+      ]
+    },
+    "11,126": {
+      "path": "tiles/11_126.cover.zlib",
+      "sha256": "17a16f56a99145d7a5c125b2387df51edbd9b8370e4a5444ee89686cb2077cb5",
+      "bytes": 1607,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2520000
+      ],
+      "counts": [
+        1241,
+        998306,
+        0,
+        0,
+        318,
+        0,
+        0,
+        135
+      ]
+    },
+    "11,127": {
+      "path": "tiles/11_127.cover.zlib",
+      "sha256": "5a1f06fd58591ff7acdef22403a7aaafb1e471bcb0cf519edfe0d64b543d5041",
+      "bytes": 10362,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2540000
+      ],
+      "counts": [
+        65075,
+        934511,
+        1,
+        0,
+        0,
+        294,
+        0,
+        119
+      ]
+    },
+    "11,128": {
+      "path": "tiles/11_128.cover.zlib",
+      "sha256": "226097dca18ccbbec538827a63a61a6f90b3e8dfb3ac89b608872d72815aaeb2",
+      "bytes": 21017,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2560000
+      ],
+      "counts": [
+        174843,
+        824608,
+        6,
+        0,
+        0,
+        0,
+        0,
+        543
+      ]
+    },
+    "11,129": {
+      "path": "tiles/11_129.cover.zlib",
+      "sha256": "5439dcf64f8c660ed592b79cdefc94f466d4ec071711ad9f476fdff4774dc32b",
+      "bytes": 12195,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2580000
+      ],
+      "counts": [
+        92023,
+        907324,
+        71,
+        0,
+        0,
+        31,
+        0,
+        551
+      ]
+    },
+    "11,130": {
+      "path": "tiles/11_130.cover.zlib",
+      "sha256": "158df0717246f7c4288f391069d575b82ba7524cb6bed15616b0a2ac2e3a6a91",
+      "bytes": 14391,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2600000
+      ],
+      "counts": [
+        105329,
+        877937,
+        49,
+        0,
+        14142,
+        329,
+        0,
+        2214
+      ]
+    },
+    "11,131": {
+      "path": "tiles/11_131.cover.zlib",
+      "sha256": "e2387b7c0c3bec7b17d16174e44c0d29a2ffbc5ea75db59e914d198157e60f4a",
+      "bytes": 20909,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2620000
+      ],
+      "counts": [
+        248942,
+        723886,
+        181,
+        25,
+        10197,
+        557,
+        61,
+        16151
+      ]
+    },
+    "11,132": {
+      "path": "tiles/11_132.cover.zlib",
+      "sha256": "edddb0522ba2021ecf9fb00bbbf874dc964bca275245bbc388155058208be2f4",
+      "bytes": 19674,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2640000
+      ],
+      "counts": [
+        229721,
+        741856,
+        94,
+        79,
+        16317,
+        755,
+        435,
+        10743
+      ]
+    },
+    "11,133": {
+      "path": "tiles/11_133.cover.zlib",
+      "sha256": "6250c0f6becb738450343f1aaf7690b294149bbecc7ebf9105463806c8268443",
+      "bytes": 20055,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2660000
+      ],
+      "counts": [
+        298485,
+        673800,
+        1581,
+        248,
+        2948,
+        1226,
+        203,
+        21509
+      ]
+    },
+    "11,134": {
+      "path": "tiles/11_134.cover.zlib",
+      "sha256": "5a655e7671fc975b02b613074d681b665e6e7cc3fc3ed778531f2e890397f4c5",
+      "bytes": 51739,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2680000
+      ],
+      "counts": [
+        593802,
+        323753,
+        927,
+        908,
+        44141,
+        10555,
+        1574,
+        24340
+      ]
+    },
+    "11,135": {
+      "path": "tiles/11_135.cover.zlib",
+      "sha256": "4aed0e6bd28030d7e8fde878e4450d489a814876f5d267c655e915480ae4a79d",
+      "bytes": 61923,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2700000
+      ],
+      "counts": [
+        469699,
+        461974,
+        749,
+        865,
+        46207,
+        587,
+        1307,
+        18612
+      ]
+    },
+    "11,136": {
+      "path": "tiles/11_136.cover.zlib",
+      "sha256": "429c82d6f10f99a04cae4ad8c3f589497cb73a2ed11a358adfe687130945c298",
+      "bytes": 30641,
+      "raw_bytes": 1000000,
+      "origin": [
+        220000,
+        2720000
+      ],
+      "counts": [
+        827096,
+        94046,
+        505,
+        6367,
+        53225,
+        0,
+        1008,
+        17753
+      ]
+    },
+    "12,123": {
+      "path": "tiles/12_123.cover.zlib",
+      "sha256": "35291fe76eac4bf92c5b29c81550b33b7b8bc5f2e297046ef3045b110f34b57e",
+      "bytes": 1806,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2460000
+      ],
+      "counts": [
+        979158,
+        20645,
+        0,
+        0,
+        112,
+        0,
+        0,
+        85
+      ]
+    },
+    "12,124": {
+      "path": "tiles/12_124.cover.zlib",
+      "sha256": "096860aefd201653a3bdb94d19cf3d0f8f8a5ad31075650f3941fc07c444ad53",
+      "bytes": 4951,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2480000
+      ],
+      "counts": [
+        719018,
+        276645,
+        15,
+        80,
+        2205,
+        0,
+        0,
+        2037
+      ]
+    },
+    "12,125": {
+      "path": "tiles/12_125.cover.zlib",
+      "sha256": "b8d08911165665f2afc602a336bb8ac0aa1490b953daf99cce60510b52fef582",
+      "bytes": 12726,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2500000
+      ],
+      "counts": [
+        282889,
+        631806,
+        405,
+        4411,
+        72849,
+        0,
+        0,
+        7640
+      ]
+    },
+    "12,126": {
+      "path": "tiles/12_126.cover.zlib",
+      "sha256": "d563d7fb7f06afde014f5de587eb76417ef6cc737933cd1710b0c7a4e9650a16",
+      "bytes": 6920,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2520000
+      ],
+      "counts": [
+        52048,
+        928797,
+        13,
+        0,
+        14935,
+        0,
+        0,
+        4207
+      ]
+    },
+    "12,127": {
+      "path": "tiles/12_127.cover.zlib",
+      "sha256": "881055ed472249899f714cff51fad8715eb4fba1ded4eb9d093cd032f5500491",
+      "bytes": 1020,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2540000
+      ],
+      "counts": [
+        0,
+        999960,
+        0,
+        0,
+        40,
+        0,
+        0,
+        0
+      ]
+    },
+    "12,128": {
+      "path": "tiles/12_128.cover.zlib",
+      "sha256": "a9a8ea75f1196d0e211e68a67d84f97c278243606556e82e6c7b30f34590233d",
+      "bytes": 7654,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2560000
+      ],
+      "counts": [
+        30296,
+        967517,
+        22,
+        0,
+        2060,
+        0,
+        102,
+        3
+      ]
+    },
+    "12,129": {
+      "path": "tiles/12_129.cover.zlib",
+      "sha256": "6111a9d9d45527f9191b3c99193b38f6b7bdc8fc5d505a33e35c040b306073ea",
+      "bytes": 5653,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2580000
+      ],
+      "counts": [
+        35643,
+        964155,
+        202,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "12,130": {
+      "path": "tiles/12_130.cover.zlib",
+      "sha256": "4576a9b1728e0e75d40dcac184f4914c327e15df139ae1a8c4b69aef186b85b9",
+      "bytes": 4530,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2600000
+      ],
+      "counts": [
+        22266,
+        977725,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ]
+    },
+    "12,131": {
+      "path": "tiles/12_131.cover.zlib",
+      "sha256": "7e6246adeb4d7a9aa21a008a8942182bd4d83cf77588a9f1ff240568fd44e8c0",
+      "bytes": 9301,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2620000
+      ],
+      "counts": [
+        69672,
+        926477,
+        53,
+        0,
+        1519,
+        0,
+        0,
+        2279
+      ]
+    },
+    "12,132": {
+      "path": "tiles/12_132.cover.zlib",
+      "sha256": "334f3dfe60183cbf1da1cbab466049134844e8de6180478b5672b3c5f71d2c39",
+      "bytes": 25568,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2640000
+      ],
+      "counts": [
+        269749,
+        682804,
+        1275,
+        26,
+        27640,
+        163,
+        38,
+        18305
+      ]
+    },
+    "12,133": {
+      "path": "tiles/12_133.cover.zlib",
+      "sha256": "266c66ba74fe89f50b675f3aec8c6ca42f296b9ed9563965e78f110055bffa9e",
+      "bytes": 7252,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2660000
+      ],
+      "counts": [
+        53675,
+        942514,
+        25,
+        0,
+        1643,
+        0,
+        0,
+        2143
+      ]
+    },
+    "12,134": {
+      "path": "tiles/12_134.cover.zlib",
+      "sha256": "d640b08eb118508fe77a6b1dbe90158a6f0c32917396a2551b9d8840dfa949ea",
+      "bytes": 11100,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2680000
+      ],
+      "counts": [
+        109192,
+        890333,
+        21,
+        0,
+        190,
+        9,
+        95,
+        160
+      ]
+    },
+    "12,135": {
+      "path": "tiles/12_135.cover.zlib",
+      "sha256": "1cdd7c6dc4819053db2476c73c2900cd1468c000dbf22daa99a7de195d427583",
+      "bytes": 14362,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2700000
+      ],
+      "counts": [
+        119171,
+        877483,
+        54,
+        0,
+        1233,
+        215,
+        0,
+        1844
+      ]
+    },
+    "12,136": {
+      "path": "tiles/12_136.cover.zlib",
+      "sha256": "8949c4f3d32b1ca788d6be78379ec138688e526260b9ff167457566e756eff3d",
+      "bytes": 55740,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2720000
+      ],
+      "counts": [
+        449861,
+        502640,
+        1266,
+        535,
+        15672,
+        4378,
+        1189,
+        24459
+      ]
+    },
+    "12,137": {
+      "path": "tiles/12_137.cover.zlib",
+      "sha256": "7e10dc8827b99194f7a29349cc8bb444fce4ef87d8045166e453fbe3f96c6827",
+      "bytes": 50583,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2740000
+      ],
+      "counts": [
+        676198,
+        100191,
+        5183,
+        1155,
+        63206,
+        164,
+        783,
+        153120
+      ]
+    },
+    "12,138": {
+      "path": "tiles/12_138.cover.zlib",
+      "sha256": "4629238a01eefc1fe362adbb28b31ae25263e043a10124e1e92bbff71abb556a",
+      "bytes": 7201,
+      "raw_bytes": 1000000,
+      "origin": [
+        240000,
+        2760000
+      ],
+      "counts": [
+        973768,
+        2436,
+        25,
+        0,
+        5513,
+        94,
+        143,
+        18021
+      ]
+    },
+    "13,125": {
+      "path": "tiles/13_125.cover.zlib",
+      "sha256": "9aa2f018774a40310a4cdd18f40ff9a320d162b16518a3832aeebfb5d4e3089d",
+      "bytes": 10708,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2500000
+      ],
+      "counts": [
+        931819,
+        5373,
+        2214,
+        27,
+        41137,
+        0,
+        0,
+        19430
+      ]
+    },
+    "13,126": {
+      "path": "tiles/13_126.cover.zlib",
+      "sha256": "66a8fa7fd86c260d3b5183a5fbdeee212f20286e7924d7f169fe64831ed8111d",
+      "bytes": 16123,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2520000
+      ],
+      "counts": [
+        548732,
+        414342,
+        2473,
+        20,
+        18826,
+        1617,
+        0,
+        13990
+      ]
+    },
+    "13,127": {
+      "path": "tiles/13_127.cover.zlib",
+      "sha256": "ac9aca8fc5f8a401b47588eb4dce3c75574d83c4c78eacb2fbb116268e45d0dc",
+      "bytes": 26813,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2540000
+      ],
+      "counts": [
+        212810,
+        691632,
+        3887,
+        0,
+        83500,
+        3541,
+        70,
+        4560
+      ]
+    },
+    "13,128": {
+      "path": "tiles/13_128.cover.zlib",
+      "sha256": "714398f581872f302e4ecaa14b19e29031841a646d03bace0b31b97990c5d553",
+      "bytes": 14433,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2560000
+      ],
+      "counts": [
+        94594,
+        849815,
+        91,
+        255,
+        51102,
+        92,
+        1495,
+        2556
+      ]
+    },
+    "13,129": {
+      "path": "tiles/13_129.cover.zlib",
+      "sha256": "fb21da8c780c2f50621203485ff98a48c851c6423c7fbfbe9cafa0d9fc7d60ce",
+      "bytes": 1676,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2580000
+      ],
+      "counts": [
+        1425,
+        991998,
+        417,
+        0,
+        0,
+        0,
+        6113,
+        47
+      ]
+    },
+    "13,130": {
+      "path": "tiles/13_130.cover.zlib",
+      "sha256": "55c484cb0aa817d5ca150de991b6c33d379ced18b365fface3bf6efb978e63fa",
+      "bytes": 1038,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2600000
+      ],
+      "counts": [
+        0,
+        999850,
+        150,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "13,131": {
+      "path": "tiles/13_131.cover.zlib",
+      "sha256": "379895777aab43ce47db5e289d0ae36d222e454965e492fdd003ce78495b3789",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2620000
+      ],
+      "counts": [
+        0,
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "13,132": {
+      "path": "tiles/13_132.cover.zlib",
+      "sha256": "9242ff90d1ae94d0b4fc4f8e12d8bb03183eaef8c888a299f0fa5af9bc1598cd",
+      "bytes": 10408,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2640000
+      ],
+      "counts": [
+        59058,
+        931770,
+        896,
+        0,
+        3068,
+        0,
+        0,
+        5208
+      ]
+    },
+    "13,133": {
+      "path": "tiles/13_133.cover.zlib",
+      "sha256": "9c60fa95905a97a581c5f09b84c457ca72dc4dcba886e48a968fe10e6943498a",
+      "bytes": 21661,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2660000
+      ],
+      "counts": [
+        129348,
+        842072,
+        905,
+        0,
+        23692,
+        0,
+        0,
+        3983
+      ]
+    },
+    "13,134": {
+      "path": "tiles/13_134.cover.zlib",
+      "sha256": "5dfc42d9dd112596cfa7509b789ac977bb870dccef96498dd3e386b459a59bc3",
+      "bytes": 11842,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2680000
+      ],
+      "counts": [
+        80902,
+        914392,
+        524,
+        0,
+        3456,
+        0,
+        0,
+        726
+      ]
+    },
+    "13,135": {
+      "path": "tiles/13_135.cover.zlib",
+      "sha256": "eaf99a64671d1b9815a02c1b5ef37f920f8db678ec8d1ae5f9fcdece8143a3c0",
+      "bytes": 1474,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2700000
+      ],
+      "counts": [
+        5099,
+        994614,
+        2,
+        0,
+        285,
+        0,
+        0,
+        0
+      ]
+    },
+    "13,136": {
+      "path": "tiles/13_136.cover.zlib",
+      "sha256": "bc5ec49aa849d2308e920081cdfb9fc58aec7c801aa13e425220e6a674025c0b",
+      "bytes": 24291,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2720000
+      ],
+      "counts": [
+        216332,
+        775390,
+        80,
+        854,
+        791,
+        809,
+        3155,
+        2589
+      ]
+    },
+    "13,137": {
+      "path": "tiles/13_137.cover.zlib",
+      "sha256": "115f5e16ad1a566a5da5f31fefdfce82ce8dfbb8e6ca8634c737bad5aad3bf19",
+      "bytes": 56467,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2740000
+      ],
+      "counts": [
+        595963,
+        307484,
+        986,
+        2268,
+        16218,
+        218,
+        372,
+        76491
+      ]
+    },
+    "13,138": {
+      "path": "tiles/13_138.cover.zlib",
+      "sha256": "e9c72b5e70fd633b94ffdb52d60bf4f200e228d846f9551cec5cf6fc64210a24",
+      "bytes": 40996,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2760000
+      ],
+      "counts": [
+        841762,
+        18942,
+        11963,
+        2250,
+        31748,
+        264,
+        818,
+        92253
+      ]
+    },
+    "13,139": {
+      "path": "tiles/13_139.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        260000,
+        2780000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "14,125": {
+      "path": "tiles/14_125.cover.zlib",
+      "sha256": "4afa80b07d69fd06e54bfe206b094d453a19c6dadd852a3e0b49b5b4c7d65207",
+      "bytes": 1830,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2500000
+      ],
+      "counts": [
+        989832,
+        9336,
+        12,
+        0,
+        389,
+        0,
+        0,
+        431
+      ]
+    },
+    "14,126": {
+      "path": "tiles/14_126.cover.zlib",
+      "sha256": "2440e3ff32bb241079aef3b0d20898d255fd3f91ace695a57084e97411f911b5",
+      "bytes": 1073,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2520000
+      ],
+      "counts": [
+        999894,
+        86,
+        0,
+        0,
+        0,
+        0,
+        0,
+        20
+      ]
+    },
+    "14,127": {
+      "path": "tiles/14_127.cover.zlib",
+      "sha256": "3baa28cce4d0ced60668a87cdb237dfb55a6b4cd29fe8e243658f84b55029ba0",
+      "bytes": 12332,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2540000
+      ],
+      "counts": [
+        761271,
+        227737,
+        45,
+        11,
+        3400,
+        2481,
+        128,
+        4927
+      ]
+    },
+    "14,128": {
+      "path": "tiles/14_128.cover.zlib",
+      "sha256": "71d235659905d2b988ea2c55175cb663eb1332f291e4c8c474d9fe62ae4c7f08",
+      "bytes": 16141,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2560000
+      ],
+      "counts": [
+        447505,
+        511310,
+        189,
+        16,
+        32451,
+        4718,
+        9,
+        3802
+      ]
+    },
+    "14,129": {
+      "path": "tiles/14_129.cover.zlib",
+      "sha256": "a0ad9eed4b9ab29bee5d2cb47338dc28cc85303c858c82d5b88e4fc57680d89a",
+      "bytes": 19612,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2580000
+      ],
+      "counts": [
+        320267,
+        639393,
+        400,
+        212,
+        20237,
+        6943,
+        5815,
+        6733
+      ]
+    },
+    "14,130": {
+      "path": "tiles/14_130.cover.zlib",
+      "sha256": "40b960a85813de1fa6f0f021245acbb4e6fe44d18aa62fac27199e63eaa8d86a",
+      "bytes": 7643,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2600000
+      ],
+      "counts": [
+        178423,
+        767482,
+        46,
+        921,
+        50473,
+        671,
+        322,
+        1662
+      ]
+    },
+    "14,131": {
+      "path": "tiles/14_131.cover.zlib",
+      "sha256": "ba9820eb058dd70d9d46caaea07ad87a54e5704959fdbd16154684408a7eb10b",
+      "bytes": 18956,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2620000
+      ],
+      "counts": [
+        169694,
+        723052,
+        1918,
+        9764,
+        86127,
+        2327,
+        3870,
+        3248
+      ]
+    },
+    "14,132": {
+      "path": "tiles/14_132.cover.zlib",
+      "sha256": "7a6faa56a7644c04ba57cfd34ee62ec85cd1097ef8464c405551d633a7fd7c7c",
+      "bytes": 2249,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2640000
+      ],
+      "counts": [
+        2016,
+        995653,
+        0,
+        0,
+        1091,
+        0,
+        1098,
+        142
+      ]
+    },
+    "14,133": {
+      "path": "tiles/14_133.cover.zlib",
+      "sha256": "a8ccbfedd6d163f00a7050bec42beeb1487cd34f19a46711cf150ed5e7eaf379",
+      "bytes": 6235,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2660000
+      ],
+      "counts": [
+        17346,
+        980492,
+        33,
+        0,
+        1942,
+        127,
+        0,
+        60
+      ]
+    },
+    "14,134": {
+      "path": "tiles/14_134.cover.zlib",
+      "sha256": "0fa20af2d5a8653c9eb44af5ad6a8e6db0c16639f115d2950072676d0db14965",
+      "bytes": 8965,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2680000
+      ],
+      "counts": [
+        37888,
+        958579,
+        67,
+        1917,
+        1496,
+        0,
+        0,
+        53
+      ]
+    },
+    "14,135": {
+      "path": "tiles/14_135.cover.zlib",
+      "sha256": "04f703da79615875e6809a2087a81ff1b66fae2295f1bc91ab64865b28e3b106",
+      "bytes": 15001,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2700000
+      ],
+      "counts": [
+        50483,
+        936345,
+        111,
+        3996,
+        8454,
+        0,
+        0,
+        611
+      ]
+    },
+    "14,136": {
+      "path": "tiles/14_136.cover.zlib",
+      "sha256": "5f27fe5c336b6db2e7c89cee2384ebca81faf7e64888fbb5c37819dfdd86dabf",
+      "bytes": 10631,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2720000
+      ],
+      "counts": [
+        93517,
+        903792,
+        44,
+        364,
+        2024,
+        0,
+        0,
+        259
+      ]
+    },
+    "14,137": {
+      "path": "tiles/14_137.cover.zlib",
+      "sha256": "51a73d2547d29d077b4763262802d51e2f0c1aa66fa103e0e98511f5670d59c5",
+      "bytes": 30176,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2740000
+      ],
+      "counts": [
+        210511,
+        751500,
+        686,
+        823,
+        4949,
+        47,
+        429,
+        31055
+      ]
+    },
+    "14,138": {
+      "path": "tiles/14_138.cover.zlib",
+      "sha256": "66f775419d6c85f23ff8d097ec3c85b70093f6587c10a88ba47ab495e35f707c",
+      "bytes": 72855,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2760000
+      ],
+      "counts": [
+        538865,
+        281835,
+        3655,
+        424,
+        13011,
+        158,
+        265,
+        161787
+      ]
+    },
+    "14,139": {
+      "path": "tiles/14_139.cover.zlib",
+      "sha256": "6c2d11a2072591bd4310993def478c24c41f4d2c8ffa002fc97c6e15330ba10a",
+      "bytes": 31881,
+      "raw_bytes": 1000000,
+      "origin": [
+        280000,
+        2780000
+      ],
+      "counts": [
+        848940,
+        93961,
+        3999,
+        5,
+        15149,
+        127,
+        0,
+        37819
+      ]
+    },
+    "15,121": {
+      "path": "tiles/15_121.cover.zlib",
+      "sha256": "4f0c7bcdc0382190b64dc2ff295219b2c5a6c2a202c2aa530ce999d31ce229bc",
+      "bytes": 3789,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2420000
+      ],
+      "counts": [
+        938923,
+        55606,
+        371,
+        0,
+        4306,
+        0,
+        0,
+        794
+      ]
+    },
+    "15,122": {
+      "path": "tiles/15_122.cover.zlib",
+      "sha256": "d1d16774cb8f939b9e71c93f6050b3af4638398a22f170ffd3546bc4a1437134",
+      "bytes": 3459,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2440000
+      ],
+      "counts": [
+        962319,
+        34917,
+        5,
+        0,
+        2575,
+        0,
+        0,
+        184
+      ]
+    },
+    "15,125": {
+      "path": "tiles/15_125.cover.zlib",
+      "sha256": "2863d8da2021e517b44adb04c4451d941a667f5a8d41c69b9d71cdc4ee3de9f4",
+      "bytes": 2541,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2500000
+      ],
+      "counts": [
+        981133,
+        17253,
+        908,
+        311,
+        90,
+        0,
+        0,
+        305
+      ]
+    },
+    "15,129": {
+      "path": "tiles/15_129.cover.zlib",
+      "sha256": "a66a939811da9be539200a96fbaa2c944b7464c99e088701dc24a056d21a3cf3",
+      "bytes": 2341,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2580000
+      ],
+      "counts": [
+        982111,
+        16864,
+        0,
+        0,
+        390,
+        14,
+        0,
+        621
+      ]
+    },
+    "15,130": {
+      "path": "tiles/15_130.cover.zlib",
+      "sha256": "fecce9fabe4650c41bc4e9399c01f7194e6685cc7fd98b00132b75807e7efebf",
+      "bytes": 5967,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2600000
+      ],
+      "counts": [
+        842861,
+        153225,
+        6,
+        0,
+        2357,
+        1358,
+        0,
+        193
+      ]
+    },
+    "15,131": {
+      "path": "tiles/15_131.cover.zlib",
+      "sha256": "be298e530e5fcde75636293b0667682cdda246acf761c9ea95647375bcf2579a",
+      "bytes": 11389,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2620000
+      ],
+      "counts": [
+        661825,
+        278448,
+        193,
+        55,
+        52495,
+        3087,
+        263,
+        3634
+      ]
+    },
+    "15,132": {
+      "path": "tiles/15_132.cover.zlib",
+      "sha256": "7e554a9fed28d53d965db5cd826e8edf58f7a71523d6ae8d736c53e353cbbfbe",
+      "bytes": 33494,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2640000
+      ],
+      "counts": [
+        603608,
+        278693,
+        5082,
+        1530,
+        53996,
+        274,
+        50,
+        56767
+      ]
+    },
+    "15,133": {
+      "path": "tiles/15_133.cover.zlib",
+      "sha256": "51dee6b5aa160192bcf5f0731436d1dacdc3162e1ad34b7526e6c90e4d1e4b9c",
+      "bytes": 12695,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2660000
+      ],
+      "counts": [
+        280879,
+        700165,
+        206,
+        1524,
+        6970,
+        10,
+        3117,
+        7129
+      ]
+    },
+    "15,134": {
+      "path": "tiles/15_134.cover.zlib",
+      "sha256": "ceb39262f7dafa692eed5c5e0765ffd754ce264e1a72099c8bb7ea02028b1be7",
+      "bytes": 2950,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2680000
+      ],
+      "counts": [
+        9250,
+        988067,
+        0,
+        0,
+        0,
+        0,
+        2643,
+        40
+      ]
+    },
+    "15,135": {
+      "path": "tiles/15_135.cover.zlib",
+      "sha256": "f6b1c4cfd9b4f8032b3d5b7d724f0ed845ecfb0d478126a4912e5b2639e33cef",
+      "bytes": 16010,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2700000
+      ],
+      "counts": [
+        28842,
+        961368,
+        341,
+        7871,
+        1544,
+        0,
+        0,
+        34
+      ]
+    },
+    "15,136": {
+      "path": "tiles/15_136.cover.zlib",
+      "sha256": "cb5e31e912eec53a87438c0380e4042d37a8e36fb369ec9aa97c794be7f1eede",
+      "bytes": 29933,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2720000
+      ],
+      "counts": [
+        139366,
+        798206,
+        7187,
+        8345,
+        34855,
+        38,
+        488,
+        11515
+      ]
+    },
+    "15,137": {
+      "path": "tiles/15_137.cover.zlib",
+      "sha256": "3b6a398040aa21355da337906961ba058f89ad910a91ec6ae709a62131f49eb5",
+      "bytes": 10080,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2740000
+      ],
+      "counts": [
+        44084,
+        944006,
+        34,
+        39,
+        1426,
+        226,
+        0,
+        10185
+      ]
+    },
+    "15,138": {
+      "path": "tiles/15_138.cover.zlib",
+      "sha256": "b000be751b2c77da3fc0d52eb2e03c341db1bae66446685c4e93aa842a4491c6",
+      "bytes": 61256,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2760000
+      ],
+      "counts": [
+        362530,
+        520583,
+        8105,
+        596,
+        3812,
+        499,
+        39,
+        103836
+      ]
+    },
+    "15,139": {
+      "path": "tiles/15_139.cover.zlib",
+      "sha256": "fa6a4da553552780aa9452dd682e18bf44a81a1e9abaab609f8827a47c3a27c8",
+      "bytes": 52048,
+      "raw_bytes": 1000000,
+      "origin": [
+        300000,
+        2780000
+      ],
+      "counts": [
+        467426,
+        501493,
+        162,
+        41,
+        6629,
+        386,
+        0,
+        23863
+      ]
+    },
+    "16,133": {
+      "path": "tiles/16_133.cover.zlib",
+      "sha256": "caeeee0057d80b0e1a603ff2df9d6371e9dbb16815bb8eb6163bb11680cf5592",
+      "bytes": 1116,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2660000
+      ],
+      "counts": [
+        998762,
+        1238,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "16,134": {
+      "path": "tiles/16_134.cover.zlib",
+      "sha256": "147347177b6c5a97af936179f0f6aa519c62d738b1b0c37d825f5632cc9f1310",
+      "bytes": 6875,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2680000
+      ],
+      "counts": [
+        673098,
+        312665,
+        53,
+        210,
+        682,
+        0,
+        10410,
+        2882
+      ]
+    },
+    "16,135": {
+      "path": "tiles/16_135.cover.zlib",
+      "sha256": "22cbb13baa0c67ade1ceeec900e04cd0156dbf87beeeb61d015c07e247d1a53c",
+      "bytes": 9499,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2700000
+      ],
+      "counts": [
+        290564,
+        694203,
+        49,
+        0,
+        7361,
+        7,
+        2958,
+        4858
+      ]
+    },
+    "16,136": {
+      "path": "tiles/16_136.cover.zlib",
+      "sha256": "b73e22d06729cd529a6bdaefb76cee0d5dbf46068150671989e79704a79c1834",
+      "bytes": 29124,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2720000
+      ],
+      "counts": [
+        704741,
+        184316,
+        4960,
+        168,
+        63070,
+        40,
+        28,
+        42677
+      ]
+    },
+    "16,137": {
+      "path": "tiles/16_137.cover.zlib",
+      "sha256": "1e30fd039719eb402e579e700ea63f718000657475b53230fd7d385aa5c4afe4",
+      "bytes": 14774,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2740000
+      ],
+      "counts": [
+        443147,
+        541054,
+        912,
+        775,
+        5579,
+        66,
+        0,
+        8467
+      ]
+    },
+    "16,138": {
+      "path": "tiles/16_138.cover.zlib",
+      "sha256": "b77ad9afc27ea9d239a4b4198dffdf8cda9fa2f4f4b2df5e4e62073d71db7775",
+      "bytes": 25069,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2760000
+      ],
+      "counts": [
+        101471,
+        882518,
+        889,
+        390,
+        331,
+        0,
+        184,
+        14217
+      ]
+    },
+    "16,139": {
+      "path": "tiles/16_139.cover.zlib",
+      "sha256": "829ead0230c98ecd54c846b0e7a2cf9a174d4fab7055d12fc9f4e3382cd8ae1d",
+      "bytes": 11044,
+      "raw_bytes": 1000000,
+      "origin": [
+        320000,
+        2780000
+      ],
+      "counts": [
+        943425,
+        42788,
+        87,
+        1138,
+        162,
+        0,
+        26,
+        12374
+      ]
+    },
+    "17,136": {
+      "path": "tiles/17_136.cover.zlib",
+      "sha256": "5ddbb0d4350de572501798f35370b51fa8c857d804e712caaa960f0717db8418",
+      "bytes": 991,
+      "raw_bytes": 1000000,
+      "origin": [
+        340000,
+        2720000
+      ],
+      "counts": [
+        1000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "17,137": {
+      "path": "tiles/17_137.cover.zlib",
+      "sha256": "9f28f65560a336adfac17817fc6956060fdb01147c065bd9b5b242d04f0bd90d",
+      "bytes": 1558,
+      "raw_bytes": 1000000,
+      "origin": [
+        340000,
+        2740000
+      ],
+      "counts": [
+        994461,
+        5400,
+        0,
+        120,
+        0,
+        0,
+        0,
+        19
+      ]
+    },
+    "17,138": {
+      "path": "tiles/17_138.cover.zlib",
+      "sha256": "2d58db8bcd11b2ee39d0e65ef7fb283ff72831bbfb1a9198acc65d84b9908b93",
+      "bytes": 9783,
+      "raw_bytes": 1000000,
+      "origin": [
+        340000,
+        2760000
+      ],
+      "counts": [
+        797796,
+        192563,
+        97,
+        2955,
+        937,
+        21,
+        0,
+        5631
+      ]
+    },
+    "17,139": {
+      "path": "tiles/17_139.cover.zlib",
+      "sha256": "88b9e0cf61b04e93090ebead0fe1722c0920a6197a5af95699b81c93d0de6068",
+      "bytes": 1085,
+      "raw_bytes": 1000000,
+      "origin": [
+        340000,
+        2780000
+      ],
+      "counts": [
+        999814,
+        107,
+        0,
+        64,
+        0,
+        0,
+        0,
+        15
+      ]
+    }
+  },
+  "samples": [
+    {
+      "category": 0,
+      "region_key": "3,128",
+      "row": 500,
+      "col": 0,
+      "projected_m": [
+        60010.0,
+        2569990.0
+      ],
+      "lon_lat": [
+        119.14384792604854,
+        23.221188566915693
+      ],
+      "source_features": []
+    },
+    {
+      "category": 1,
+      "region_key": "5,130",
+      "row": 117,
+      "col": 334,
+      "projected_m": [
+        106690.0,
+        2617650.0
+      ],
+      "lon_lat": [
+        119.59523505226446,
+        23.65616277416025
+      ],
+      "source_features": [
+        {
+          "osm_id": "19551725",
+          "fclass": "forest",
+          "name": "",
+          "category": 1
+        }
+      ]
+    },
+    {
+      "category": 2,
+      "region_key": "4,128",
+      "row": 562,
+      "col": 398,
+      "projected_m": [
+        87970.0,
+        2568750.0
+      ],
+      "lon_lat": [
+        119.4170540757112,
+        23.21298268243471
+      ],
+      "source_features": [
+        {
+          "osm_id": "726031142",
+          "fclass": "grass",
+          "name": "",
+          "category": 2
+        }
+      ]
+    },
+    {
+      "category": 3,
+      "region_key": "4,129",
+      "row": 688,
+      "col": 813,
+      "projected_m": [
+        96270.0,
+        2586230.0
+      ],
+      "lon_lat": [
+        119.49634634848526,
+        23.3715747674726
+      ],
+      "source_features": [
+        {
+          "osm_id": "1431635037",
+          "fclass": "scrub",
+          "name": "",
+          "category": 3
+        }
+      ]
+    },
+    {
+      "category": 4,
+      "region_key": "4,128",
+      "row": 595,
+      "col": 492,
+      "projected_m": [
+        89850.0,
+        2568090.0
+      ],
+      "lon_lat": [
+        119.43548472238143,
+        23.207208566480034
+      ],
+      "source_features": [
+        {
+          "osm_id": "1493481254",
+          "fclass": "farmland",
+          "name": "",
+          "category": 4
+        }
+      ]
+    },
+    {
+      "category": 5,
+      "region_key": "4,128",
+      "row": 559,
+      "col": 437,
+      "projected_m": [
+        88750.0,
+        2568810.0
+      ],
+      "lon_lat": [
+        119.42466567072007,
+        23.213600815046796
+      ],
+      "source_features": [
+        {
+          "osm_id": "1493481244",
+          "fclass": "orchard",
+          "name": "",
+          "category": 5
+        }
+      ]
+    },
+    {
+      "category": 6,
+      "region_key": "7,128",
+      "row": 918,
+      "col": 891,
+      "projected_m": [
+        157830.0,
+        2561630.0
+      ],
+      "lon_lat": [
+        120.09988905883566,
+        23.154082579226422
+      ],
+      "source_features": [
+        {
+          "osm_id": "490640192",
+          "fclass": "quarry",
+          "name": "鹽山",
+          "category": 6
+        }
+      ]
+    },
+    {
+      "category": 7,
+      "region_key": "3,129",
+      "row": 522,
+      "col": 929,
+      "projected_m": [
+        78590.0,
+        2589550.0
+      ],
+      "lon_lat": [
+        119.3230931127701,
+        23.399785059402912
+      ],
+      "source_features": [
+        {
+          "osm_id": "954698184",
+          "fclass": "residential",
+          "name": "",
+          "category": 7
+        }
+      ]
+    }
+  ],
+  "pixel_counts": [
+    71741632,
+    56498382,
+    291224,
+    245235,
+    5510888,
+    456584,
+    62549,
+    3193506
+  ],
+  "placement_evidence": {
+    "alpine_vegetation": {
+      "source_url": "https://www.ysnp.gov.tw/RecreationArea/1fbfec62-e8ce-4916-a902-a6c28c9dd33e?Tab=6",
+      "source_title": "Yushan National Park vegetation zones",
+      "source_scope": "Yushan; not a Taiwan-wide species or tree-position survey",
+      "documented_bands_m": [
+        {
+          "min": 3000,
+          "max": 3600,
+          "vegetation": "fir"
+        },
+        {
+          "min": 3600,
+          "max": 3850,
+          "vegetation": "dwarf_shrubs"
+        },
+        {
+          "min": 3850,
+          "max": 3952,
+          "vegetation": "herbaceous"
+        }
+      ],
+      "game_rule": "Use absolute elevation, not the 0-5 gameplay levels. At or above 3600 m, forest cover produces no timber and uses sparse scrub resources; at or above 3850 m, only sparse food/herb candidates remain.",
+      "limitation": "Conservative game placement rule based on mapped vegetation belts; it does not establish surveyed trees, edible plants, medicinal properties or resource quantities."
+    }
+  }
+}

@@ -108,7 +108,7 @@ func run() -> void:
 	assert(a.editor.selected_animation == &"idle")
 
 	b.hp = 37.25
-	b.knockout_left = 30.0
+	b.knockout_left = SiteCombatRules.KNOCKOUT_GAME_SECONDS # Rescue is only offered to a long knockout.
 	b._stop_fighting("Unconscious")
 	b.advance_combat(3.0)
 	assert(b.editor.selected_animation == &"unconscious")
@@ -130,6 +130,9 @@ func run() -> void:
 	assert(not a.WeaponCollision.contact([], hands, b._geometry.body_shapes(b)).is_empty(), "Rescue hands never reached the patient")
 	assert((a._attack_offset + a._stance_offset).length() < 32.0, "Rescue presentation crossed its ground cell")
 	a.advance_combat(2.0)
+	# Rescue caps the remaining knockout; the patient then wakes naturally into get-up.
+	assert(b.knockout_left == SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS and not b._getting_up and b.hp == 37.25)
+	b.advance_combat(0.1, false, SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS)
 	assert(b._getting_up and not b.can_act() and b.hp == 37.25)
 	b.advance_combat(1.1)
 	await _capture("get_up")
@@ -140,7 +143,7 @@ func run() -> void:
 	b.advance_combat(1.1)
 	assert(b.can_act() and b.hp == 37.25)
 	a.hp = 41.0
-	a.knockout_left = 30.0
+	a.knockout_left = SiteCombatRules.KNOCKOUT_GAME_SECONDS
 	a._stop_fighting("Unconscious")
 	a.advance_combat(3.0)
 	assert(b.start_rescue(a))
@@ -151,6 +154,8 @@ func run() -> void:
 		hands.append(b.WeaponCollision.capsule(_bone_point(b, "J_Bip_" + side + "_Hand"), _bone_point(b, "J_Bip_" + side + "_Middle3"), 1.5))
 	assert(not b.WeaponCollision.contact([], hands, a._geometry.body_shapes(a)).is_empty(), "Female rescue hands never reached the patient")
 	b.advance_combat(2.0)
+	assert(a.knockout_left == SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS and not a._getting_up)
+	a.advance_combat(0.1, false, SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS)
 	a.advance_combat(2.2)
 	assert(a.can_act() and a.hp == 41.0)
 	b.knockout_left = .1

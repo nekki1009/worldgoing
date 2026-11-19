@@ -299,15 +299,27 @@ static func contact(previous: Array[PackedVector2Array], current: Array[PackedVe
 				continue
 			var fraction := 0.0
 			# Recover sub-sample contact order, not array/scene iteration order.
-			if before.size() == shape.size() and Geometry2D.intersect_polygons(before, bodies[body_index]).is_empty():
+			# Equal vertex counts keep the original per-vertex sweep exactly. Different counts
+			# (both parts non-empty) use the Minkowski interpolation below instead of fraction 0.
+			if (before.size() == shape.size() or (not before.is_empty() and not shape.is_empty())) and Geometry2D.intersect_polygons(before, bodies[body_index]).is_empty():
 				var low := 0.0
 				var high := 1.0
 				for refinement in range(8):
 					var middle := (low + high) * 0.5
 					if not partials.has(middle):
 						var sweep := before.duplicate()
-						for vertex in range(shape.size()):
-							sweep.append(before[vertex].lerp(shape[vertex], middle))
+						if before.size() == shape.size():
+							for vertex in range(shape.size()):
+								sweep.append(before[vertex].lerp(shape[vertex], middle))
+						else:
+							# A live CPU-skinned weapon hull can gain or lose a vertex between samples.
+							# Interpolate the convex parts by their Minkowski combination
+							# (1 - t) * before + t * shape: it is before at 0 and shape at 1, and its
+							# swept hull with before grows monotonically in t, so the same eight
+							# refinements recover the sub-sample contact instead of falling to 0.
+							for before_vertex: Vector2 in before:
+								for shape_vertex: Vector2 in shape:
+									sweep.append(before_vertex.lerp(shape_vertex, middle))
 						partials[middle] = Geometry2D.convex_hull(sweep)
 					var partial := Geometry2D.intersect_polygons(partials[middle], bodies[body_index])
 					if partial.is_empty():
@@ -334,6 +346,136 @@ static func polygon_bounds(shape: PackedVector2Array) -> Rect2:
 		for vertex: Vector2 in shape:
 			bounds = bounds.expand(vertex)
 	return bounds
+
+# Continuous intersection against the original terrain/part's navigation prism.
+# x/y are cell coordinates, z is the existing navigation-height unit.
+static func segment_prism_contact(previous: Vector3, current: Vector3, bounds: Rect2, lower: float, upper: float, radius: float = 0.0) -> Dictionary:
+	var minimum := Vector3(bounds.position.x - radius, bounds.position.y - radius, lower - radius)
+	var maximum := Vector3(bounds.end.x + radius, bounds.end.y + radius, upper + radius)
+	var delta := current - previous
+	var enter := 0.0
+	var leave := 1.0
+	for axis in range(3):
+		if absf(delta[axis]) < 0.0000001:
+			if previous[axis] < minimum[axis] or previous[axis] > maximum[axis]: return {}
+			continue
+		var first := (minimum[axis] - previous[axis]) / delta[axis]
+		var last := (maximum[axis] - previous[axis]) / delta[axis]
+		enter = maxf(enter, minf(first, last))
+		leave = minf(leave, maxf(first, last))
+		if enter > leave: return {}
+	if enter > 1.0 or leave < 0.0: return {}
+	return {"fraction": enter, "position": previous.lerp(current, enter)}
+
+static func bolt_prism_contact(previous: Vector3, current: Vector3, bounds: Rect2, lower: float, upper: float) -> Dictionary:
+	var direction := Vector2(current.x - previous.x, current.y - previous.y).normalized()
+	var tip := direction * (6.0 / 64.0)
+	var side := Vector2(-direction.y, direction.x) * (3.0 / 64.0)
+	var origin := Vector2(previous.x, previous.y)
+	var goal := Vector2(current.x, current.y)
+	var before: Array[PackedVector2Array] = [PackedVector2Array([origin - tip - side, origin + tip - side, origin + tip + side, origin - tip + side])]
+	var after: Array[PackedVector2Array] = [PackedVector2Array([goal - tip - side, goal + tip - side, goal + tip + side, goal - tip + side])]
+	var body: Array[PackedVector2Array] = [PackedVector2Array([bounds.position, bounds.position + Vector2(bounds.size.x, 0), bounds.end, bounds.position + Vector2(0, bounds.size.y)])]
+	var entry := contact(before, after, body)
+	if entry.is_empty(): return {}
+	var reverse := contact(after, before, body)
+	var enter := float(entry.fraction)
+	var leave := 1.0 - float(reverse.fraction)
+	var height_delta := current.z - previous.z
+	var radius_height := 3.0 / 48.0
+	if absf(height_delta) < 0.0000001:
+		if previous.z < lower - radius_height or previous.z > upper + radius_height: return {}
+	else:
+		var first := (lower - radius_height - previous.z) / height_delta
+		var last := (upper + radius_height - previous.z) / height_delta
+		enter = maxf(enter, minf(first, last))
+		leave = minf(leave, maxf(first, last))
+	if enter > leave or enter > 1.0 or leave < 0.0: return {}
+	return {"fraction": enter, "position": previous.lerp(current, enter)}
+
+
+static func arc_position(origin: Vector3, goal: Vector3, arc: float, fraction: float) -> Vector3:
+	var result := origin.lerp(goal, fraction)
+	result.z += 4.0 * arc * fraction * (1.0 - fraction)
+	return result
+
+static func _polynomial_value(coefficients: Array[float], value: float) -> float:
+	var result := 0.0
+	for index in range(coefficients.size() - 1, -1, -1): result = result * value + coefficients[index]
+	return result
+
+static func _polynomial_roots(coefficients: Array[float], lower: float, upper: float) -> Array[float]:
+	var values: Array[float] = coefficients.duplicate()
+	while values.size() > 1 and absf(values[-1]) < 0.000000000001: values.pop_back()
+	var result: Array[float] = []
+	if values.size() == 1: return result
+	if values.size() == 2:
+		var root := -values[0] / values[1]
+		if root >= lower - 0.0000000001 and root <= upper + 0.0000000001: result.append(clampf(root, lower, upper))
+		return result
+	var derivative: Array[float] = []
+	for index in range(1, values.size()): derivative.append(float(index) * values[index])
+	var intervals: Array[float] = [lower]
+	intervals.append_array(_polynomial_roots(derivative, lower, upper))
+	intervals.append(upper)
+	intervals.sort()
+	for value: float in intervals:
+		if absf(_polynomial_value(values, value)) <= 0.0000000001 and (result.is_empty() or absf(result[-1] - value) > 0.00000001): result.append(value)
+	for index in range(intervals.size() - 1):
+		var start := intervals[index]
+		var end := intervals[index + 1]
+		var before := _polynomial_value(values, start)
+		var after := _polynomial_value(values, end)
+		if before * after >= 0.0: continue
+		for _iteration in range(48):
+			var middle := (start + end) * 0.5
+			var at_middle := _polynomial_value(values, middle)
+			if before * at_middle <= 0.0: end = middle
+			else: start = middle; before = at_middle
+		result.append((start + end) * 0.5)
+	result.sort()
+	return result
+
+static func arc_prism_contact(origin: Vector3, goal: Vector3, arc: float, begin: float, end: float,
+		bounds: Rect2, lower: float, upper: float, radius: float) -> Dictionary:
+	if begin > end or radius < 0.0 or lower > upper: return {}
+	var minimum := Vector3(bounds.position.x, bounds.position.y, lower)
+	var maximum := Vector3(bounds.end.x, bounds.end.y, upper)
+	var constant := origin
+	var linear := goal - origin + Vector3(0.0, 0.0, 4.0 * arc)
+	var quadratic := Vector3(0.0, 0.0, -4.0 * arc)
+	# The closest face/edge/corner is fixed between crossings of the six planes.
+	var breaks: Array[float] = [begin, end]
+	for axis in range(3):
+		for boundary: float in [minimum[axis], maximum[axis]]:
+			var equation: Array[float] = [constant[axis] - boundary, linear[axis], quadratic[axis]]
+			breaks.append_array(_polynomial_roots(equation, begin, end))
+	breaks.sort()
+	for interval in range(breaks.size() - 1):
+		var first := breaks[interval]
+		var last := breaks[interval + 1]
+		if last - first < 0.000000000001: continue
+		var middle := arc_position(origin, goal, arc, (first + last) * 0.5)
+		var distance: Array[float] = [-radius * radius, 0.0, 0.0, 0.0, 0.0]
+		for axis in range(3):
+			if middle[axis] >= minimum[axis] and middle[axis] <= maximum[axis]: continue
+			var boundary := minimum[axis] if middle[axis] < minimum[axis] else maximum[axis]
+			var terms: Array[float] = [constant[axis] - boundary, linear[axis], quadratic[axis]]
+			for a in range(3):
+				for b in range(3): distance[a + b] += terms[a] * terms[b]
+		if _polynomial_value(distance, first) <= 0.0000000001:
+			return {"fraction": first, "position": arc_position(origin, goal, arc, first)}
+		var roots := _polynomial_roots(distance, first, last)
+		if not roots.is_empty(): return {"fraction": roots[0], "position": arc_position(origin, goal, arc, roots[0])}
+	if begin == end:
+		var point := arc_position(origin, goal, arc, begin)
+		if point.distance_squared_to(point.clamp(minimum, maximum)) <= radius * radius:
+			return {"fraction": begin, "position": point}
+	return {}
+
+static func sphere_prism_contact(previous: Vector3, current: Vector3, bounds: Rect2,
+		lower: float, upper: float, radius: float) -> Dictionary:
+	return arc_prism_contact(previous, current, 0.0, 0.0, 1.0, bounds, lower, upper, radius)
 
 static func shifted(shapes: Array, offset: Vector2) -> Array[PackedVector2Array]:
 	var result: Array[PackedVector2Array] = []
@@ -464,7 +606,7 @@ func posed_vertices(part: MeshInstance3D, skeleton: Skeleton3D, native_rigid: bo
 					skinning_profile.rigid_vertices += vertices.size()
 				if hull_only and rigid_hull_dedup_enabled and part.get_blend_shape_count() == 0:
 					if not rigid_surface.has("hull_vertices"):
-						rigid_surface.hull_vertices = _unique_rigid_vertices(vertices)
+						rigid_surface["hull_vertices"] = _unique_rigid_vertices(vertices)
 					vertices = rigid_surface.hull_vertices
 				var binding: Transform3D
 				if palette.is_empty():

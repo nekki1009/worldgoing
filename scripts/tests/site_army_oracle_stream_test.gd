@@ -2,7 +2,7 @@ extends "res://scripts/tests/site_army_oracle_calibration_test.gd"
 ## Exact, process-isolated frozen-A / candidate-B logical comparison.
 
 const Gate = preload("res://scripts/tests/fixtures/site_army_mechanism_gate.gd")
-const ROOT := "res://output/site_army_5k_hot_close_20260926/"
+const ROOT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/"
 const SNAPSHOTS := 1801 # Initial state plus 1,800 30 Hz action steps.
 const REFERENCE := ROOT + "frozen_A_logical.bin"
 const REFERENCE_REPORT := ROOT + "frozen_A_logical.json"
@@ -112,7 +112,7 @@ func _run_stream() -> void:
 	var stream: FileAccess = null
 	if is_segment:
 		reference_report = JSON.parse_string(FileAccess.get_file_as_string(REFERENCE_REPORT)) if FileAccess.file_exists(REFERENCE_REPORT) else null
-		if not reference_report is Dictionary or reference_report.get("status") != "PASS" or reference_report.get("snapshots_checked") != SNAPSHOTS or reference_report.get("scene") != MAIN or reference_report.get("per_team") != PER_TEAM:
+		if not reference_report is Dictionary or reference_report.get("status") != "PASS" or reference_report.get("snapshots_checked") != SNAPSHOTS or reference_report.get("hot_active_checked_ticks") != SNAPSHOTS or reference_report.get("scene") != MAIN or reference_report.get("per_team") != PER_TEAM:
 			_finish_stream(report, report_path, "frozen_A_reference_missing_or_incomplete", 1)
 			return
 		for label: String in FROZEN_FILES:
@@ -165,9 +165,9 @@ func _run_stream() -> void:
 		report["native_exact_checks_both_values"] = true
 	var events: Array = []
 	_attach_events(lab, events)
-	if is_segment and not _hot_active(lab):
+	if (is_segment or role == "A") and not _hot_active(lab):
 		lab.free()
-		_finish_stream(report, report_path, "candidate_hot_inactive_at_start", 1)
+		_finish_stream(report, report_path, "candidate_hot_inactive_at_start" if is_segment else "reference_hot_inactive_at_start", 1)
 		return
 	for tick in SNAPSHOTS:
 		if Time.get_ticks_usec() > deadline:
@@ -178,10 +178,10 @@ func _run_stream() -> void:
 			lab._process(STEP)
 			report.process_usec += Time.get_ticks_usec() - process_begin
 			report.process_steps += 1
-		if is_segment and not _hot_active(lab):
+		if (is_segment or role == "A") and not _hot_active(lab):
 			report["first_inactive_tick"] = tick
 			break
-		if is_segment: report.hot_active_checked_ticks += 1
+		if is_segment or role == "A": report.hot_active_checked_ticks += 1
 		if is_segment and tick in [0, 600, 1200, 1800]:
 			var team_stats: Array = []
 			for side in range(2):
@@ -311,6 +311,8 @@ func _run_stream() -> void:
 			or int(report.checkpoint_checked) != CHECKPOINT_TICKS.size() \
 			or report.checkpoint_ticks != CHECKPOINT_TICKS):
 		complete = false
+	if role == "A" and int(report.hot_active_checked_ticks) != SNAPSHOTS:
+		complete = false
 	if role == "A" and complete and stream.get_error() != OK:
 		report["stream_error"] = stream.get_error()
 		complete = false
@@ -376,6 +378,8 @@ func _segment_path(index: int) -> String:
 func _merge_segments() -> void:
 	var started := Time.get_ticks_usec()
 	var serialized_step: Variant = JSON.parse_string(JSON.stringify(STEP))
+	var serialized_engine: Variant = JSON.parse_string(JSON.stringify(Engine.get_version_info()))
+	var serialized_checkpoints: Variant = JSON.parse_string(JSON.stringify(CHECKPOINT_TICKS))
 	var capture: Dictionary = Gate.capture_source_manifest()
 	var report := {"role": "B", "status": "INCOMPLETE", "scene": MAIN,
 		"preset": "PLAINS", "seed": 581, "per_team": PER_TEAM,
@@ -397,10 +401,11 @@ func _merge_segments() -> void:
 			or reference.get("seed") != 581 or reference.get("per_team") != PER_TEAM \
 			or reference.get("teams") != 2 or reference.get("steps") != SNAPSHOTS - 1 \
 			or reference.get("step_seconds") != serialized_step \
-			or reference.get("engine") != Engine.get_version_info() \
+			or reference.get("engine") != serialized_engine \
 			or not reference.get("source_sha256") is Dictionary \
 			or reference.get("first_unfinished_tick") != SNAPSHOTS \
 			or reference.get("materialized_ticks") != SNAPSHOTS \
+			or reference.get("hot_active_checked_ticks") != SNAPSHOTS \
 			or reference.get("process_steps") != SNAPSHOTS - 1 \
 			or reference.get("snapshot_encoding") != "original_dictionary_order" \
 			or reference.get("A_unsupported_validation_deferred_to_B") != true):
@@ -449,11 +454,11 @@ func _merge_segments() -> void:
 				or segment.get("reference_frames_traversed") != SNAPSHOTS \
 				or segment.get("process_steps") != SNAPSHOTS - 1 \
 				or segment.get("checkpoint_checked") != CHECKPOINT_TICKS.size() \
-				or segment.get("checkpoint_ticks") != CHECKPOINT_TICKS \
+				or segment.get("checkpoint_ticks") != serialized_checkpoints \
 				or segment.get("snapshot_encoding") != "original_dictionary_order" \
 				or segment.get("native_exact_checks_both_values") != true \
 				or segment.get("source_manifest") != capture.hashes \
-				or segment.get("engine") != Engine.get_version_info() \
+				or segment.get("engine") != serialized_engine \
 				or segment.get("reference_binary_sha256") != binary_sha \
 				or segment.has("first_mismatch_tick") or segment.has("native_exact_result") \
 				or segment.has("first_inactive_tick") or segment.has("source_changed_during_run") \

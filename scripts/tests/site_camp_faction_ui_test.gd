@@ -14,9 +14,11 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Camp faction checkbox requires --site-test-ui")
 	assert(DisplayServer.get_name() == "headless")
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit faction-control fixture; formal startup has no worker.
 	root.add_child(lab)
 	lab.set_process(false)
 	lab.site_controller._auto_save_blocked = true
@@ -34,7 +36,7 @@ func _run() -> void:
 		assert(loaded.ok, str(loaded))
 		lab.bind_terrain(loaded.data)
 		assert((lab.npc.faction_id == lab.character.faction_id) == allied and lab.npc_allied_toggle.button_pressed == allied, "Restore checkbox from the saved original faction, never rewrite that faction")
-	print("SITE_CAMP_FACTION_UI_PASS: default original camp worker allied, actual checkbox changes faction, hostile and allied Store/bind both retain faction and synchronize the same checkbox")
+	print("SITE_CAMP_FACTION_UI_PASS: explicit original NPC fixture allied, actual checkbox changes faction, hostile and allied Store/bind both retain faction and synchronize the same checkbox")
 	lab.queue_free()
 	await process_frame
 	quit(0)

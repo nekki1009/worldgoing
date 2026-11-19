@@ -30,7 +30,7 @@ class PhaseActor extends TerrainTestCharacter:
 class PhaseArmy extends TerrainArmy:
 	var peers: Array[TerrainTestCharacter] = []
 	var elapsed := 0.0
-	func prepare_combat(delta: float) -> void:
+	func prepare_combat(delta: float, _game_seconds: float = -1.0) -> void:
 		elapsed += delta
 	func sample_combat() -> void:
 		for peer: TerrainTestCharacter in peers:
@@ -47,12 +47,15 @@ func run() -> void:
 	map.static_blocked.fill(0)
 	map.ramp_edges.fill(0)
 	var lab := PhaseLab.new()
+	lab.exchange_enabled = false # This fixture owns the historical 120 Hz geometry branch.
 	root.add_child(lab)
 	lab.terrain = map
 	var a := PhaseActor.new()
 	var b := PhaseActor.new()
 	var army := PhaseArmy.new()
+	army.exchange_enabled = false
 	for actor: PhaseActor in [a, b]:
+		actor.exchange_enabled = false
 		root.add_child(actor)
 		actor.set_process(false)
 		actor.data = map

@@ -194,6 +194,7 @@ func run() -> void:
 	create_timer(23.0).timeout.connect(func() -> void: quit(1))
 	assert(DisplayServer.get_name() != "headless", "This contract includes the original woman's live geometry; use the GPU verifier")
 	var lab := TerrainLab.new() # Only the original combat coordinator, no unrelated UI setup.
+	lab.exchange_enabled = false # This fixture exercises the original mesh sample/resolve branch.
 	var data := TerrainGenerator.generate(0, 581, {"size": Vector2i(48, 48)})
 	SiteEnvironment.initialize(data, "army-contact-batch-contract")
 	# Explicit spatial test fixture, not a generated-terrain save or game benchmark.

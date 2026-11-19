@@ -1,8 +1,14 @@
 extends SceneTree
 ## Formal main, actual team popup commands, untouched generated terrain and original common clock.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/npc_ai_acceptance_20260918/logistics"
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
+const DEADLINE_MS := 105000 # In-file budget. Synchronous loops below check it themselves, because SceneTree._process cannot run inside them.
 var deadline := 0
+var failure_recorded := false
 var lab: TerrainLab
 var results: Array[Dictionary] = []
 var paused_checks := 0
@@ -23,7 +29,7 @@ func _space_safe() -> bool:
 	return true
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 105000
+	deadline = Time.get_ticks_msec() + DEADLINE_MS
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
@@ -32,13 +38,26 @@ func _process(_delta: float) -> bool:
 		quit(1)
 	return false
 
-func _check(value: bool, message: String) -> bool:
-	if not value:
+# The first failure wins: later checks in a short-circuited caller must not overwrite the reason.
+func _fail(message: String) -> bool:
+	if not failure_recorded:
+		failure_recorded = true
 		var file := FileAccess.open(OUT + "/result.json", FileAccess.WRITE)
 		file.store_string(JSON.stringify({"passed":false,"failure":message,"cases":results}, "\t"))
 		push_error(message)
 		quit(1)
+	return false
+
+func _check(value: bool, message: String) -> bool:
+	if not value:
+		return _fail(message)
 	return value
+
+# Called once per iteration of every synchronous loop. A slow run fails here with the place it reached.
+func _deadline_ok(where: String) -> bool:
+	if Time.get_ticks_msec() <= deadline:
+		return true
+	return _fail("Multi-vehicle logistics acceptance exceeded its %d ms in-file budget inside %s (slow run, not a logic failure)" % [DEADLINE_MS, where])
 
 func _press(name: String) -> void:
 	var button := lab.site_controller.combat_window.find_child(name, true, false) as Button
@@ -48,6 +67,7 @@ func _press(name: String) -> void:
 func _patch(width: int) -> Vector2i:
 	for y in range(1, lab.terrain.size.y - width):
 		for x in range(1, lab.terrain.size.x - width):
+			if not _deadline_ok("origin patch scan"): return TerrainArmy.INVALID_CELL
 			var legal := true
 			for row in range(width):
 				for column in range(width):
@@ -70,7 +90,15 @@ func _large_anchor() -> Vector2i:
 	# Read-only choose an actual original 96-person footprint whose requested goals are real ground.
 	for y in range(lab.terrain.size.y - 10):
 		for x in range(9, lab.terrain.size.x - 1):
+			if not _deadline_ok("96-person anchor scan"): return TerrainArmy.INVALID_CELL
 			var anchor := Vector2i(x, y)
+			# Exact prefilter: each footprint offset is itself the first cell of a candidate formation, so a blocked offset cannot be legal.
+			var offsets_free := true
+			for offset: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.ONE, Vector2i.DOWN]:
+				var cell := anchor + offset
+				if not lab.terrain.is_walkable(cell) or lab.character.occupies_cell(cell) or (is_instance_valid(lab.npc) and lab.npc.occupies_cell(cell)):
+					offsets_free = false
+			if not offsets_free: continue
 			var legal := true
 			for offset: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.ONE, Vector2i.DOWN]:
 				if not lab._melee_trial_formation_legal(lab._melee_trial_formation(anchor + offset, 96, true), {}):
@@ -104,6 +132,8 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 	var ui: SiteController = lab.site_controller
 	var expected: Array[Vector2i] = []
 	for cell: Vector2i in team.cells: expected.append(cell + displacement)
+	var starts: Array[Vector2i] = []
+	starts.assign(team.cells)
 	ui.trial_command_team.select(0)
 	ui.selected = Vector2i(team.command_reference.floor()) + displacement
 	_press("TrialTeamMove")
@@ -114,6 +144,7 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 	var initial_goods := {}
 	for vehicle: Dictionary in ui.vehicles.records().values(): initial_goods[vehicle.id] = [vehicle.holder.duplicate(true), vehicle.cargo.duplicate(true), vehicle.team_id, vehicle.operator_id]
 	for tick in range(1800):
+		if not _deadline_ok("%s, MOVE tick %d of 1800" % [label, tick]): return false
 		lab._process(1.0 / 30.0)
 		if not _space_safe(): return false
 		elapsed += 1.0 / 30.0
@@ -126,7 +157,19 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 			ui.toggle_pause()
 			paused_checks += 1
 		arrived = team.moving_count() == 0
-		for index in range(expected.size()): arrived = arrived and team.cells[index] == expected[index]
+		# Each original person/member must stand on its own assigned goal (combat_slots), not a rigid translation of its start cell.
+		for index in range(team.cells.size()): arrived = arrived and team.cells[index] == team.combat_slots[index] and team.moving_to[index] == TerrainArmy.INVALID_CELL
+		# Movement must be real: the formation centroid lands within 2 cells (Chebyshev) of start centroid + displacement, and someone actually left its start cell.
+		var final_centroid := Vector2.ZERO
+		var start_centroid := Vector2.ZERO
+		var any_moved := false
+		for index in range(team.cells.size()):
+			final_centroid += Vector2(team.cells[index])
+			start_centroid += Vector2(starts[index])
+			if team.cells[index] != starts[index]: any_moved = true
+		var count := float(maxi(team.cells.size(), 1))
+		var centroid_error := final_centroid / count - (start_centroid / count + Vector2(displacement))
+		arrived = arrived and any_moved and maxf(absf(centroid_error.x), absf(centroid_error.y)) <= 2.0
 		if team.combat_order == TerrainArmy.CombatOrder.HOLD: break
 	var state := _state(team)
 	state["expected"] = expected.map(func(cell: Vector2i) -> Array: return [cell.x, cell.y])
@@ -156,8 +199,9 @@ func _duties(team: TerrainArmy) -> bool:
 	return true
 
 func _probe(slots: int) -> bool:
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
+	lab.npc = TerrainTestNPC.new() # Explicit NPC presenter: the Lab no longer creates one by default.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -183,6 +227,7 @@ func _probe(slots: int) -> bool:
 	ui.trial_wagons.friendly.value = 1 if slots == 4 else 2
 	ui.trial_friendly_spawn = _camp_anchor() if slots == 4 else (origin + Vector2i(3,3) if slots == 12 else _large_anchor())
 	if not _check(ui.trial_friendly_spawn != TerrainArmy.INVALID_CELL, "Find untouched legal 96-person original formation and all three goal formations"): return false
+	if not _deadline_ok("StartMeleeTrial for %d slots" % slots): return false
 	_press("StartMeleeTrial")
 	var team := lab.army
 	var cars := 2 if slots == 4 else 4
@@ -212,7 +257,7 @@ func _probe(slots: int) -> bool:
 
 func _run() -> void:
 	assert(DisplayServer.get_name() == "headless")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	if not await _probe(12): return
 	if not await _probe(100): return

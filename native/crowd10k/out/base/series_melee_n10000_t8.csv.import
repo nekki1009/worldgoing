@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://dysomee5mrjmb"
+
+[deps]
+
+files=["res://native/crowd10k/out/base/series_melee_n10000_t8.t.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.alive.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.down.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.captive.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.fighting.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.engaging.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.routed.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.deaths.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.bled.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.kos.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.pairs.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.shots.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.rescues.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.captures.translation"]
+
+source_file="res://native/crowd10k/out/base/series_melee_n10000_t8.csv"
+dest_files=["res://native/crowd10k/out/base/series_melee_n10000_t8.t.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.step.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.alive.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.down.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.captive.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.fighting.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.engaging.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.routed.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.deaths.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.bled.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.kos.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.pairs.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.shots.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.rescues.translation", "res://native/crowd10k/out/base/series_melee_n10000_t8.captures.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

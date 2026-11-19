@@ -1,0 +1,3277 @@
+{
+  "schema_version": 1,
+  "approved_date": "2026-10-03",
+  "approval": "User: 可以，接入",
+  "cell_pixels": 64,
+  "entries": {
+    "ram": {
+      "source": "ram_sheet.png",
+      "body_footprint_cells": [
+        2,
+        3
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "1d517892a392e795e44ac0d3308c5976b4e2db5251f787f5fba2d53e35ab55ff",
+      "gameplay_available": true,
+      "frames": {
+        "down": {
+          "source": "ram_down.png",
+          "region": [
+            0,
+            0,
+            1207,
+            1303
+          ],
+          "pivot": [
+            604.5,
+            888.5
+          ],
+          "scale": 0.142222,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              604.5,
+              888.5
+            ],
+            "front": [
+              604.5,
+              1124
+            ],
+            "rear": [
+              604.5,
+              653
+            ],
+            "side0": [
+              1010,
+              888.5
+            ],
+            "side1": [
+              199,
+              888.5
+            ],
+            "ground_points": [
+              [
+                199,
+                653
+              ],
+              [
+                1010,
+                653
+              ],
+              [
+                1010,
+                1124
+              ],
+              [
+                199,
+                1124
+              ]
+            ],
+            "source_sha256": "8308088d18c3cf27b89230309039944bbadf1a2adafe71eb003f1c80b77f6454",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Four wheel lower-edge sample points were measured at (271,654),(931.5,653),(933.5,1122),(267.142857,1122). Envelope x range expands to visible outer wheel/axle width instead of merely joining contact centres. Rectangle corners are manual conservative projections, not four measured contacts. Raised head is excluded."
+          }
+        },
+        "up": {
+          "source": "ram_up.png",
+          "region": [
+            0,
+            0,
+            1199,
+            1312
+          ],
+          "pivot": [
+            599,
+            967.5
+          ],
+          "scale": 0.142222,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              599,
+              967.5
+            ],
+            "front": [
+              599,
+              764
+            ],
+            "rear": [
+              599,
+              1171
+            ],
+            "side0": [
+              209,
+              967.5
+            ],
+            "side1": [
+              989,
+              967.5
+            ],
+            "ground_points": [
+              [
+                209,
+                764
+              ],
+              [
+                989,
+                764
+              ],
+              [
+                989,
+                1171
+              ],
+              [
+                209,
+                1171
+              ]
+            ],
+            "source_sha256": "e11dd4a6cc719aba32af203d2204507da9ccce374c74954ba3873d4f26357aa8",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Four wheel lower-edge sample points were measured at (263,764),(926.5,764),(918.5,1169),(276.5,1169). Envelope x range expands to visible outer wheel/axle width instead of merely joining contact centres. Rectangle corners are manual conservative projections, not four measured contacts. Raised head is excluded."
+          }
+        },
+        "left": {
+          "source": "ram_left.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            864.5,
+            829
+          ],
+          "scale": 0.142222,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              864.5,
+              829
+            ],
+            "front": [
+              230,
+              829
+            ],
+            "rear": [
+              1499,
+              829
+            ],
+            "side0": [
+              864.5,
+              880
+            ],
+            "side1": [
+              864.5,
+              778
+            ],
+            "ground_points": [
+              [
+                230,
+                778
+              ],
+              [
+                1499,
+                778
+              ],
+              [
+                1499,
+                880
+              ],
+              [
+                230,
+                880
+              ]
+            ],
+            "source_sha256": "ab462ec17ae2ec00cd999c586eff9b6fd4d568ed9e29660ca982f27aeda820e3",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; far feet occluded; centre estimated",
+            "details": "Only the two near wheels are visible. Their alpha>=128 bottom points were measured at (468.5,879) and (1191,878). Projected far contact line and centre are estimated from base timber depth; x extent includes chassis/axle overhang, excluding the raised ram head. This is not four measured physical contacts."
+          }
+        },
+        "right": {
+          "source": "ram_right.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            707.5,
+            842
+          ],
+          "scale": 0.142222,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              707.5,
+              842
+            ],
+            "front": [
+              1331,
+              842
+            ],
+            "rear": [
+              84,
+              842
+            ],
+            "side0": [
+              707.5,
+              786
+            ],
+            "side1": [
+              707.5,
+              898
+            ],
+            "ground_points": [
+              [
+                84,
+                786
+              ],
+              [
+                1331,
+                786
+              ],
+              [
+                1331,
+                898
+              ],
+              [
+                84,
+                898
+              ]
+            ],
+            "source_sha256": "6d667de50ae91ed669deba3b93a0b98929bdb966f243b2f189770e05aed226eb",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; far feet occluded; centre estimated",
+            "details": "Only the two near wheels are visible. Their alpha>=128 bottom points were measured at (363.5,896) and (1128.5,897). Projected far contact line and centre are estimated from base timber depth; x extent includes chassis/axle overhang, excluding the raised ram head. This is not four measured physical contacts."
+          }
+        }
+      },
+      "states": {
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                0,
+                0,
+                422,
+                512
+              ],
+              "pivot": [
+                211.0,
+                409.6
+              ],
+              "scale": 0.55,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                422,
+                0,
+                380,
+                512
+              ],
+              "pivot": [
+                190.0,
+                409.6
+              ],
+              "scale": 0.55,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                802,
+                0,
+                369,
+                512
+              ],
+              "pivot": [
+                184.5,
+                409.6
+              ],
+              "scale": 0.56,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                1171,
+                0,
+                365,
+                512
+              ],
+              "pivot": [
+                182.5,
+                409.6
+              ],
+              "scale": 0.56,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                0,
+                512,
+                418,
+                512
+              ],
+              "pivot": [
+                197.365010808,
+                305.095032424
+              ],
+              "scale": 0.643055556,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                418,
+                512,
+                387,
+                512
+              ],
+              "pivot": [
+                188.283987915,
+                291.667673728
+              ],
+              "scale": 0.486764706,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                805,
+                512,
+                382,
+                512
+              ],
+              "pivot": [
+                181.183510639,
+                296.837765927
+              ],
+              "scale": 0.395019455,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ram_states_grid.png",
+              "source_sha256": "7d5580829f61e180ab1a7fd8817882214286995b62a7c7330324bdaf20e447c3",
+              "region": [
+                1187,
+                512,
+                349,
+                512
+              ],
+              "pivot": [
+                166.027173913,
+                293.312499993
+              ],
+              "scale": 0.353594306,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      },
+      "components": {
+        "chassis": {
+          "frames": {
+            "right": {
+              "source": "ram_empty_chassis.png",
+              "source_sha256": "13a0d7de33bcbe8fa7cfd4ae04fd10bc420efe7f28d447e296cc774153f7838a",
+              "region": [
+                0,
+                0,
+                815,
+                510
+              ],
+              "pivot": [
+                427,
+                400
+              ],
+              "scale": 0.25,
+              "exclude_rects": [
+                [
+                  350,
+                  450,
+                  155,
+                  60
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ram_empty_chassis.png",
+              "source_sha256": "13a0d7de33bcbe8fa7cfd4ae04fd10bc420efe7f28d447e296cc774153f7838a",
+              "region": [
+                815,
+                0,
+                721,
+                510
+              ],
+              "pivot": [
+                342,
+                400
+              ],
+              "scale": 0.25,
+              "exclude_rects": [
+                [
+                  1092,
+                  450,
+                  118,
+                  60
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ram_empty_chassis.png",
+              "source_sha256": "13a0d7de33bcbe8fa7cfd4ae04fd10bc420efe7f28d447e296cc774153f7838a",
+              "region": [
+                174,
+                453,
+                480,
+                532
+              ],
+              "pivot": [
+                246,
+                442
+              ],
+              "scale": 0.27,
+              "exclude_rects": [
+                [
+                  174,
+                  453,
+                  120,
+                  52
+                ],
+                [
+                  550,
+                  453,
+                  104,
+                  52
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ram_empty_chassis.png",
+              "source_sha256": "13a0d7de33bcbe8fa7cfd4ae04fd10bc420efe7f28d447e296cc774153f7838a",
+              "region": [
+                913,
+                453,
+                470,
+                532
+              ],
+              "pivot": [
+                236,
+                442
+              ],
+              "scale": 0.27,
+              "exclude_rects": [
+                [
+                  913,
+                  453,
+                  104,
+                  52
+                ],
+                [
+                  1253,
+                  453,
+                  130,
+                  52
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "beam": {
+          "frames": {
+            "right": {
+              "source": "ram_beam.png",
+              "source_sha256": "a98b9cada7d730aafa123b9ee107a36dea3415c954a8fb4473bf767e12adb229",
+              "region": [
+                20,
+                80,
+                742,
+                225
+              ],
+              "pivot": [
+                715,
+                110
+              ],
+              "scale": 0.27,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ram_beam.png",
+              "source_sha256": "a98b9cada7d730aafa123b9ee107a36dea3415c954a8fb4473bf767e12adb229",
+              "region": [
+                776,
+                80,
+                742,
+                225
+              ],
+              "pivot": [
+                20,
+                110
+              ],
+              "scale": 0.27,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ram_beam.png",
+              "source_sha256": "a98b9cada7d730aafa123b9ee107a36dea3415c954a8fb4473bf767e12adb229",
+              "region": [
+                306,
+                319,
+                217,
+                682
+              ],
+              "pivot": [
+                109,
+                641
+              ],
+              "scale": 0.27,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ram_beam.png",
+              "source_sha256": "a98b9cada7d730aafa123b9ee107a36dea3415c954a8fb4473bf767e12adb229",
+              "region": [
+                1091,
+                319,
+                219,
+                682
+              ],
+              "pivot": [
+                110,
+                19
+              ],
+              "scale": 0.27,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    },
+    "ballista": {
+      "source": "ballista_concept.png",
+      "body_footprint_cells": [
+        2,
+        3
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "299a0522cd89f9a555764d0098d52f7adf8a0d051dcd687a420c4a952225513a",
+      "gameplay_available": true,
+      "frames": {
+        "right": {
+          "source": "ballista_right.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            912.206897,
+            751.534483
+          ],
+          "scale": 0.145,
+          "exclude_rects": [],
+          "muzzle": [
+            1486,
+            420.5
+          ],
+          "source_sha256": "2cff9007c7a19d66afdd86819df268c88b291584091ffb3a50b573269ee19836",
+          "calibration_status": "measured_terminal__estimated_base__muzzle_pin_derived__gpu_unverified"
+        },
+        "left": {
+          "source": "ballista_left.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            597.793103,
+            751.034483
+          ],
+          "scale": 0.145,
+          "exclude_rects": [],
+          "muzzle": [
+            24,
+            420
+          ],
+          "source_sha256": "02795e629f51dca13445b07abf4d476e4065798b6eb5123055e47c3cfcb55fee",
+          "calibration_status": "measured_terminal__estimated_base__muzzle_pin_derived__gpu_unverified"
+        },
+        "down": {
+          "source": "ballista_down.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            767,
+            794.487179
+          ],
+          "scale": 0.195,
+          "exclude_rects": [],
+          "muzzle": [
+            767,
+            975
+          ],
+          "source_sha256": "c2a9bbfc7360eef33deb2c947658ff1592be96a5de9f0ffa5a405795f48a62a5",
+          "calibration_status": "measured_terminal__estimated_base__muzzle_pin_derived__gpu_unverified"
+        },
+        "up": {
+          "source": "ballista_up.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            767.5,
+            690.820513
+          ],
+          "scale": 0.195,
+          "exclude_rects": [],
+          "muzzle": [
+            767.5,
+            18
+          ],
+          "source_sha256": "860d1c7d9bc0aa9bc36ae8868d72a872e54255bb7dd86dc7a7f8ad27230b474f",
+          "calibration_status": "measured_terminal__estimated_base__muzzle_pin_derived__gpu_unverified"
+        }
+      },
+      "calibration_status": "cardinal_generated__muzzle_pin__gpu_pending",
+      "states": {
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                0,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.59,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                384,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.59,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                768,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.57,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                1152,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.57,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                0,
+                512,
+                393,
+                512
+              ],
+              "pivot": [
+                275.246657455,
+                350.842130021
+              ],
+              "scale": 0.451908127,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ballista_left_wreck_v2.png",
+              "source_sha256": "ac85b098c6afde40d11247bea1ccd54bde224b86ba180988f60d2861cba4e43f",
+              "region": [
+                0,
+                0,
+                1536,
+                1024
+              ],
+              "pivot": [
+                595.430547062,
+                755.92918384
+              ],
+              "scale": 0.148352601,
+              "exclude_rects": [],
+              "calibration_status": "original_generated_wreck_near_foot_uniform_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                768,
+                512,
+                384,
+                512
+              ],
+              "pivot": [
+                197.71764706,
+                366.520009883
+              ],
+              "scale": 0.456192661,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ballista_states_clean.png",
+              "source_sha256": "446c381f1fb878651fe8861e256ca3ea820c52f484631222a14aa5ac6f506146",
+              "region": [
+                1152,
+                512,
+                384,
+                512
+              ],
+              "pivot": [
+                180.190789474,
+                329.865722112
+              ],
+              "scale": 0.511034483,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    },
+    "traction_trebuchet": {
+      "source": "traction_trebuchet_sheet.png",
+      "body_footprint_cells": [
+        3,
+        4
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "463669501ae4c932105a32dc2d700f91aa0199a6135ab7983397a6b18f0a9a9b",
+      "gameplay_available": true,
+      "frames": {
+        "down": {
+          "source": "traction_trebuchet_down.png",
+          "region": [
+            0,
+            0,
+            1199,
+            1312
+          ],
+          "pivot": [
+            600,
+            977.5
+          ],
+          "scale": 0.23623,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              600,
+              977.5
+            ],
+            "front": [
+              600,
+              1140
+            ],
+            "rear": [
+              600,
+              815
+            ],
+            "side0": [
+              982,
+              977.5
+            ],
+            "side1": [
+              218,
+              977.5
+            ],
+            "ground_points": [
+              [
+                218,
+                815
+              ],
+              [
+                982,
+                815
+              ],
+              [
+                982,
+                1140
+              ],
+              [
+                218,
+                1140
+              ]
+            ],
+            "source_sha256": "3a2bfc15b117082c2da5a65a6697770597faa4dd17283a12409f3a6ffda6cd84",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Ground long rails are vertical and crossmembers horizontal. The short-arm ropes are near the viewer at the lower end; the long-arm sling is at the far upper end. This agrees with attack heading down. About seven rope loops are visible. Ropes intentionally extend below the base envelope and are not part of ground-body footprint. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers."
+          }
+        },
+        "up": {
+          "source": "traction_trebuchet_up.png",
+          "region": [
+            0,
+            0,
+            1312,
+            1199
+          ],
+          "pivot": [
+            657.5,
+            862
+          ],
+          "scale": 0.23623,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              657.5,
+              862
+            ],
+            "front": [
+              657.5,
+              667
+            ],
+            "rear": [
+              657.5,
+              1057
+            ],
+            "side0": [
+              309,
+              862
+            ],
+            "side1": [
+              1006,
+              862
+            ],
+            "ground_points": [
+              [
+                309,
+                667
+              ],
+              [
+                1006,
+                667
+              ],
+              [
+                1006,
+                1057
+              ],
+              [
+                309,
+                1057
+              ]
+            ],
+            "source_sha256": "15a59ba7921add77323eefa406f34e079ca7ce208395c0cae132b59341b3f131",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Ground long rails are vertical and crossmembers horizontal. Short-arm pull ropes are at the far upper end; the long-arm sling is nearest the viewer. This agrees with attack heading up. About eight rope loops are visible. Sling hangs below the near long-arm endpoint. Apparent arm ratio and brace topology differ from side views. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers."
+          }
+        },
+        "left": {
+          "source": "traction_trebuchet_left.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            744.5,
+            840
+          ],
+          "scale": 0.23623,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              744.5,
+              840
+            ],
+            "front": [
+              305,
+              840
+            ],
+            "rear": [
+              1184,
+              840
+            ],
+            "side0": [
+              744.5,
+              909
+            ],
+            "side1": [
+              744.5,
+              771
+            ],
+            "ground_points": [
+              [
+                305,
+                771
+              ],
+              [
+                1184,
+                771
+              ],
+              [
+                1184,
+                909
+              ],
+              [
+                305,
+                909
+              ]
+            ],
+            "source_sha256": "11e7b7165f1cefe5f4d9c45107749c6d6a41c13b71b6715605c11c07e5c73537",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Ground long beams are horizontal. Short arm and pull ropes are on the left; the long sling arm is on the right. The two transverse ground supports project approximately vertically. About four pull-rope loops are visible. Base transverse members and side bracing differ from the right view. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers."
+          }
+        },
+        "right": {
+          "source": "traction_trebuchet_right.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            862.5,
+            841.5
+          ],
+          "scale": 0.23623,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              862.5,
+              841.5
+            ],
+            "front": [
+              1332,
+              841.5
+            ],
+            "rear": [
+              393,
+              841.5
+            ],
+            "side0": [
+              862.5,
+              786
+            ],
+            "side1": [
+              862.5,
+              897
+            ],
+            "ground_points": [
+              [
+                393,
+                786
+              ],
+              [
+                1332,
+                786
+              ],
+              [
+                1332,
+                897
+              ],
+              [
+                393,
+                897
+              ]
+            ],
+            "source_sha256": "c49198a83fec51b2b173f14e960151c448bbc303a77397c047d318561b084b07",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Two ground long beams are horizontal. The short arm and pull-rope attachments are on the right; the long arm with sling is on the left, so attack heading is right in the agreed near-horizontal ready pose. About four pull-rope loops are visible. Far/near rail ends differ in rendered extent; the rectangle is a conservative estimate rather than a measured rigid four-corner mesh. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers."
+          }
+        }
+      },
+      "states": {
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                0,
+                0,
+                440,
+                512
+              ],
+              "pivot": [
+                220.0,
+                409.6
+              ],
+              "scale": 0.68,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                440,
+                0,
+                440,
+                512
+              ],
+              "pivot": [
+                220.0,
+                409.6
+              ],
+              "scale": 0.68,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                880,
+                0,
+                320,
+                512
+              ],
+              "pivot": [
+                160.0,
+                409.6
+              ],
+              "scale": 0.79,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                1200,
+                0,
+                336,
+                512
+              ],
+              "pivot": [
+                168.0,
+                409.6
+              ],
+              "scale": 0.79,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                0,
+                550,
+                440,
+                474
+              ],
+              "pivot": [
+                269.0,
+                362.49520766
+              ],
+              "scale": 0.672181727,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                440,
+                550,
+                440,
+                474
+              ],
+              "pivot": [
+                177.5,
+                357.64505118
+              ],
+              "scale": 0.642867399,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                880,
+                550,
+                320,
+                474
+              ],
+              "pivot": [
+                152.0,
+                302.765706818
+              ],
+              "scale": 0.597614967,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "traction_trebuchet_states_clean.png",
+              "source_sha256": "f811b7ce332836b1751241edf5dd19e90418ffb7725b6508033f1083df2e9511",
+              "region": [
+                1200,
+                550,
+                336,
+                474
+              ],
+              "pivot": [
+                161.5,
+                289.705882413
+              ],
+              "scale": 0.573701429,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    },
+    "counterweight_trebuchet": {
+      "source": "counterweight_trebuchet_sheet.png",
+      "body_footprint_cells": [
+        4,
+        6
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "ee69c31a78e212a31f4c0172fd6c06825a9ad518f56e2a83638300e021ce1af7",
+      "gameplay_available": true,
+      "frames": {
+        "down": {
+          "source": "counterweight_trebuchet_down.png",
+          "region": [
+            0,
+            0,
+            1222,
+            1287
+          ],
+          "pivot": [
+            610,
+            965
+          ],
+          "scale": 0.313878,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              610,
+              965
+            ],
+            "front": [
+              610,
+              1210
+            ],
+            "rear": [
+              610,
+              720
+            ],
+            "side0": [
+              960,
+              965
+            ],
+            "side1": [
+              260,
+              965
+            ],
+            "ground_points": [
+              [
+                260,
+                720
+              ],
+              [
+                960,
+                720
+              ],
+              [
+                960,
+                1210
+              ],
+              [
+                260,
+                1210
+              ]
+            ],
+            "source_sha256": "f574ebefd1f54414a55a698f6e1d869057d0465f56275e1f4c321be6d6546e79",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "conservative_envelope_corners_from_visible_supports_and_occlusion_estimates__not_four_measured_feet",
+            "details": "Paired base supports converge symmetrically about a vertical centreline; transverse low timbers are horizontal. The short counterweight arm is on the lower/front side and the long sling arm extends upward/rearward. Counterweight, posts and braces hide the far ground contacts. Rect and four corners are conservative inferred projected support envelope, not measured contact feet."
+          }
+        },
+        "up": {
+          "source": "counterweight_trebuchet_up.png",
+          "region": [
+            0,
+            0,
+            1222,
+            1287
+          ],
+          "pivot": [
+            612.5,
+            830
+          ],
+          "scale": 0.313878,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              612.5,
+              830
+            ],
+            "front": [
+              612.5,
+              485
+            ],
+            "rear": [
+              612.5,
+              1175
+            ],
+            "side0": [
+              310,
+              830
+            ],
+            "side1": [
+              915,
+              830
+            ],
+            "ground_points": [
+              [
+                310,
+                485
+              ],
+              [
+                915,
+                485
+              ],
+              [
+                915,
+                1175
+              ],
+              [
+                310,
+                1175
+              ]
+            ],
+            "source_sha256": "29a5376fccf7a5e78934f1665b37eef9da6ad48fa1c7b3088dacee5d9ffc9f3f",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "conservative_envelope_corners_from_visible_supports_and_occlusion_estimates__not_four_measured_feet",
+            "details": "Paired base supports and arm centreline are vertically arranged; transverse ground timbers are horizontal. Short-arm counterweight is above/front; long arm and sling/bag below/rear. Far/front support plane is obscured by posts and counterweight, so the forward ground boundary is conservatively inferred. The hanging bag is excluded from the ground envelope."
+          }
+        },
+        "left": {
+          "source": "counterweight_trebuchet_left.png",
+          "region": [
+            0,
+            0,
+            1402,
+            1122
+          ],
+          "pivot": [
+            660,
+            852.5
+          ],
+          "scale": 0.313878,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              660,
+              852.5
+            ],
+            "front": [
+              100,
+              852.5
+            ],
+            "rear": [
+              1220,
+              852.5
+            ],
+            "side0": [
+              660,
+              985
+            ],
+            "side1": [
+              660,
+              720
+            ],
+            "ground_points": [
+              [
+                100,
+                720
+              ],
+              [
+                1220,
+                720
+              ],
+              [
+                1220,
+                985
+              ],
+              [
+                100,
+                985
+              ]
+            ],
+            "source_sha256": "95d8787b489cebbb65db956f9581cafea7c0d9e9496cbf851ab3c9489c019609",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "conservative_envelope_corners_from_visible_supports_and_occlusion_estimates__not_four_measured_feet",
+            "details": "Ground long timbers are horizontal; short-arm counterweight is left, long sling/bag is right. Three visible horizontal beam bands overlap in projection. Ground rectangle is a conservative estimate around the support ends, not a claim of three physical long rails or four measured feet."
+          }
+        },
+        "right": {
+          "source": "counterweight_trebuchet_right.png",
+          "region": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "pivot": [
+            855,
+            827.5
+          ],
+          "scale": 0.313878,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "cardinal_ground_axes_image_review_pass",
+          "calibration": {
+            "ground_center": [
+              855,
+              827.5
+            ],
+            "front": [
+              1430,
+              827.5
+            ],
+            "rear": [
+              280,
+              827.5
+            ],
+            "side0": [
+              855,
+              745
+            ],
+            "side1": [
+              855,
+              910
+            ],
+            "ground_points": [
+              [
+                280,
+                745
+              ],
+              [
+                1430,
+                745
+              ],
+              [
+                1430,
+                910
+              ],
+              [
+                280,
+                910
+              ]
+            ],
+            "source_sha256": "4e3f5cfed1690a25f3ea0e726db6b8fbcc429ebb1a7d1546d546431dc925af99",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "conservative_envelope_corners_from_visible_supports_and_occlusion_estimates__not_four_measured_feet",
+            "details": "Two long base timbers are horizontal; short-arm counterweight is right, long sling/bag is left. Conservative support-timber envelope includes beam-end thickness. Cross-axis near/far placement is estimated because timber thickness and the winch hide some contacts; not four measured feet."
+          }
+        }
+      },
+      "states": {
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                0,
+                0,
+                490,
+                443
+              ],
+              "pivot": [
+                245.0,
+                354.40000000000003
+              ],
+              "scale": 0.66,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                490,
+                0,
+                445,
+                443
+              ],
+              "pivot": [
+                222.5,
+                354.40000000000003
+              ],
+              "scale": 0.66,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                935,
+                0,
+                440,
+                443
+              ],
+              "pivot": [
+                220.0,
+                354.40000000000003
+              ],
+              "scale": 0.8,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                1375,
+                0,
+                399,
+                443
+              ],
+              "pivot": [
+                199.5,
+                354.40000000000003
+              ],
+              "scale": 0.8,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "counterweight_trebuchet_right_wreck_v1.png",
+              "source_sha256": "1c3be7e76c262a0b2fe1cfa3bb0d921ff2f43321252d943b74a61257b0a97845",
+              "region": [
+                0,
+                0,
+                1536,
+                1024
+              ],
+              "pivot": [
+                770.34914463,
+                730.776309053
+              ],
+              "scale": 0.230831362,
+              "exclude_rects": [],
+              "calibration_status": "original_generated_wreck_near_foot_uniform_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "counterweight_trebuchet_left_wreck_v1.png",
+              "source_sha256": "7c572f6f8675b5d265d1ce289db6f5deb9f11b11879a2a4b634db9e5b8b68603",
+              "region": [
+                0,
+                0,
+                1402,
+                1122
+              ],
+              "pivot": [
+                664.493020661,
+                855.144890957
+              ],
+              "scale": 0.315640369,
+              "exclude_rects": [],
+              "calibration_status": "original_generated_wreck_near_foot_uniform_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                935,
+                520,
+                440,
+                367
+              ],
+              "pivot": [
+                180.5,
+                203.649999987
+              ],
+              "scale": 0.781902491,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "counterweight_trebuchet_states.png",
+              "source_sha256": "613dda30d34e732cd288e9e50368fc7f024670a3a91845808d75d30ecc45f784",
+              "region": [
+                1375,
+                520,
+                399,
+                367
+              ],
+              "pivot": [
+                170.5,
+                141.900826358
+              ],
+              "scale": 0.680631505,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    },
+    "siege_ladder": {
+      "source": "siege_ladder_sheet.png",
+      "body_footprint_cells": [
+        1,
+        2
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "ff59f9f44ea467d722eafce70708c358368e413de40594b3971bd1270a21da85",
+      "gameplay_available": true,
+      "frames": {
+        "down": {
+          "source": "siege_ladder_treads_down_v3.png",
+          "region": [
+            0,
+            0,
+            1199,
+            1312
+          ],
+          "pivot": [
+            599,
+            361
+          ],
+          "scale": 0.099438,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "generated_two_tread_candidate_gpu_pending",
+          "calibration": {
+            "ground_center": [
+              599,
+              361
+            ],
+            "front": [
+              599,
+              572
+            ],
+            "rear": [
+              599,
+              150
+            ],
+            "side0": [
+              953,
+              361
+            ],
+            "side1": [
+              245,
+              361
+            ],
+            "ground_points": [
+              [
+                408,
+                150
+              ],
+              [
+                785,
+                150
+              ],
+              [
+                953,
+                572
+              ],
+              [
+                245,
+                572
+              ]
+            ],
+            "source_sha256": "d96815e1ac12058ec827bdc2f1e8d20edd049a153de19f988ec7bdbe1f741995",
+            "method": "manual_new_generated_source_visible_ground_landmarks",
+            "ground_point_status": "new-source visible toe-pair and brace-foot midpoint estimates; hooks excluded",
+            "details": "Corrected DOWN PNG. Plain climbing-rail toes are above the hooked end. Ground contacts combine visible far toes with nearer A-brace feet; hook-bearing points are excluded from ground axes. Positive deployed projection maps the visible hook to the original supporting-wall near edge at +64 screen pixels; the unchanged upper navigation centre remains at +32 screen pixels. All pixel placement remains GPU/manual PENDING. Native image edit adds two real timber tread plates; original ground envelope is retained except DOWN which is remeasured. This is no GPU acceptance."
+          },
+          "source_sha256": "d96815e1ac12058ec827bdc2f1e8d20edd049a153de19f988ec7bdbe1f741995",
+          "scale_xy": [
+            0.099438,
+            0.064
+          ],
+          "lower_attachment": [
+            599.0,
+            150.0
+          ],
+          "upper_attachment": [
+            599.0,
+            1150.0
+          ],
+          "attachment_calibration": {
+            "method": "manual_original_toe_hook_midpoints",
+            "source_sha256": "d96815e1ac12058ec827bdc2f1e8d20edd049a153de19f988ec7bdbe1f741995",
+            "source_pixel_uncertainty": 12,
+            "manual_gpu_review": "PENDING",
+            "details": "Corrected generated original source: upper plain wooden climbing-rail ends are the true toes, not the A-brace middle joint; hook crook bearings are below them. Original endpoint projection requires positive y foreshortening. Hook bearing maps to original external_upper support-wall near edge, not stair_upper navigation centre; no extra landing sprite or navigation change. Source updated by native image generation; toe/hook remain original visible endpoints except DOWN remeasured plain toe and metal crook pair. Two timber tread plates support original one/two-layer person cells without navigation or person changes."
+          }
+        },
+        "up": {
+          "source": "siege_ladder_treads_up_v3.png",
+          "region": [
+            0,
+            0,
+            1199,
+            1312
+          ],
+          "pivot": [
+            601.5,
+            1146
+          ],
+          "scale": 0.099438,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "generated_two_tread_candidate_gpu_pending",
+          "calibration": {
+            "ground_center": [
+              601.5,
+              1146
+            ],
+            "front": [
+              601.5,
+              1022
+            ],
+            "rear": [
+              601.5,
+              1270
+            ],
+            "side0": [
+              299,
+              1146
+            ],
+            "side1": [
+              904,
+              1146
+            ],
+            "ground_points": [
+              [
+                299,
+                1022
+              ],
+              [
+                904,
+                1022
+              ],
+              [
+                904,
+                1270
+              ],
+              [
+                299,
+                1270
+              ]
+            ],
+            "source_sha256": "8170341f09ae1c1b44362f27bab64b0eae0e2b663d3b9d1be9499e1435c4201d",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Entry feet and rung climbing face are nearest the viewer. The slope rises away from the viewer toward the high hooked end. Ground rail projection is vertical and base crossmembers horizontal. Ground depth is foreshortened and upper structure conceals part of the base. Projected base rectangle is conservative and manually estimated. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers. Native image edit adds two real timber tread plates; original ground envelope is retained except DOWN which is remeasured. This is no GPU acceptance."
+          },
+          "scale_xy": [
+            0.099438,
+            0.21658206429780033
+          ],
+          "lower_attachment": [
+            599.0,
+            1234.0
+          ],
+          "upper_attachment": [
+            599.0,
+            52.0
+          ],
+          "attachment_calibration": {
+            "method": "manual_original_toe_hook_midpoints",
+            "source_sha256": "8170341f09ae1c1b44362f27bab64b0eae0e2b663d3b9d1be9499e1435c4201d",
+            "source_pixel_uncertainty": 12,
+            "manual_gpu_review": "PENDING",
+            "details": "Central wooden climbing-rail toes and inner metal-hook bearing pair; common x599 follows the visible centreline, not four measured ground corners. Hook bearing maps to original external_upper support-wall near edge, not stair_upper navigation centre; no extra landing sprite or navigation change. Source updated by native image generation; toe/hook remain original visible endpoints except DOWN remeasured plain toe and metal crook pair. Two timber tread plates support original one/two-layer person cells without navigation or person changes."
+          },
+          "source_sha256": "8170341f09ae1c1b44362f27bab64b0eae0e2b663d3b9d1be9499e1435c4201d"
+        },
+        "left": {
+          "source": "siege_ladder_treads_left_v3.png",
+          "region": [
+            0,
+            0,
+            1312,
+            1199
+          ],
+          "pivot": [
+            763,
+            1081
+          ],
+          "scale": 0.099438,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "generated_two_tread_candidate_gpu_pending",
+          "calibration": {
+            "ground_center": [
+              763,
+              1081
+            ],
+            "front": [
+              378,
+              1081
+            ],
+            "rear": [
+              1148,
+              1081
+            ],
+            "side0": [
+              763,
+              1148
+            ],
+            "side1": [
+              763,
+              1014
+            ],
+            "ground_points": [
+              [
+                378,
+                1014
+              ],
+              [
+                1148,
+                1014
+              ],
+              [
+                1148,
+                1148
+              ],
+              [
+                378,
+                1148
+              ]
+            ],
+            "source_sha256": "58e9d02968bc9b049e90cf4d20ff0113336a2ca15f601833a30d9221ce7292e9",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Ground long rails are horizontal. Low entry feet are on the right and elevated hooked endpoint is on the left. Cross-axis depth is visible as parallel rail spacing; exact four physical contact corners remain estimated. The support leg topology differs from the right image; this does not reverse heading but is not an identical-mesh certification. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers. Native image edit adds two real timber tread plates; original ground envelope is retained except DOWN which is remeasured. This is no GPU acceptance."
+          },
+          "scale_xy": [
+            0.1693121693121693,
+            0.09968847352024922
+          ],
+          "lower_attachment": [
+            1106.0,
+            1072.0
+          ],
+          "upper_attachment": [
+            161.0,
+            109.0
+          ],
+          "attachment_calibration": {
+            "method": "manual_original_toe_hook_midpoints",
+            "source_sha256": "58e9d02968bc9b049e90cf4d20ff0113336a2ca15f601833a30d9221ce7292e9",
+            "source_pixel_uncertainty": 12,
+            "manual_gpu_review": "PENDING",
+            "details": "Two climbing-rail toes on the right and metal hook throats on the left; different bracing topology is not a mirrored-mesh claim. Hook bearing maps to original external_upper support-wall near edge, not stair_upper navigation centre; no extra landing sprite or navigation change. Source updated by native image generation; toe/hook remain original visible endpoints except DOWN remeasured plain toe and metal crook pair. Two timber tread plates support original one/two-layer person cells without navigation or person changes."
+          },
+          "source_sha256": "58e9d02968bc9b049e90cf4d20ff0113336a2ca15f601833a30d9221ce7292e9"
+        },
+        "right": {
+          "source": "siege_ladder_treads_right_v3.png",
+          "region": [
+            0,
+            0,
+            1312,
+            1199
+          ],
+          "pivot": [
+            579.5,
+            1099.5
+          ],
+          "scale": 0.099438,
+          "exclude_rects": [],
+          "source_panel": "single_cardinal_image",
+          "calibration_status": "generated_two_tread_candidate_gpu_pending",
+          "calibration": {
+            "ground_center": [
+              579.5,
+              1099.5
+            ],
+            "front": [
+              1026,
+              1099.5
+            ],
+            "rear": [
+              133,
+              1099.5
+            ],
+            "side0": [
+              579.5,
+              1038
+            ],
+            "side1": [
+              579.5,
+              1161
+            ],
+            "ground_points": [
+              [
+                133,
+                1038
+              ],
+              [
+                1026,
+                1038
+              ],
+              [
+                1026,
+                1161
+              ],
+              [
+                133,
+                1161
+              ]
+            ],
+            "source_sha256": "376e9ce280c541edc0077562113b888af7295ecf84164d4f8460efe30679e9da",
+            "method": "manual_ground_landmarks",
+            "ground_point_status": "estimated_projected_base_rect; rectangle corners derived from manually estimated visible ground envelope",
+            "details": "Ground long rails are horizontal. Low entry feet are on the left and elevated hooked endpoint is on the right. Ground cross-axis endpoints are partly hidden by timber thickness; projected rectangle is estimated. Two-part hinge, rung face and both terminal hooks are visible. Hook/rung/bracing details vary relative to the other generated views. High hook/arm landmarks are intentionally excluded from front/rear; these are ground-plane heading markers. Native image edit adds two real timber tread plates; original ground envelope is retained except DOWN which is remeasured. This is no GPU acceptance."
+          },
+          "scale_xy": [
+            0.1636828644501279,
+            0.09815950920245399
+          ],
+          "lower_attachment": [
+            232.0,
+            1074.0
+          ],
+          "upper_attachment": [
+            1209.5,
+            96.0
+          ],
+          "attachment_calibration": {
+            "method": "manual_original_toe_hook_midpoints",
+            "source_sha256": "376e9ce280c541edc0077562113b888af7295ecf84164d4f8460efe30679e9da",
+            "source_pixel_uncertainty": 12,
+            "manual_gpu_review": "PENDING",
+            "details": "Midpoints between the two climbing-rail wooden toes and visible hook throats; support-leg rectangle is not the entry attachment. Hook bearing maps to original external_upper support-wall near edge, not stair_upper navigation centre; no extra landing sprite or navigation change. Source updated by native image generation; toe/hook remain original visible endpoints except DOWN remeasured plain toe and metal crook pair. Two timber tread plates support original one/two-layer person cells without navigation or person changes."
+          },
+          "source_sha256": "376e9ce280c541edc0077562113b888af7295ecf84164d4f8460efe30679e9da"
+        }
+      },
+      "states": {
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                0,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.43,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                384,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.43,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                768,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.36,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                1152,
+                0,
+                384,
+                512
+              ],
+              "pivot": [
+                192.0,
+                409.6
+              ],
+              "scale": 0.36,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                0,
+                650,
+                384,
+                374
+              ],
+              "pivot": [
+                283.24972002,
+                247.953527441
+              ],
+              "scale": 0.448370546,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                384,
+                650,
+                384,
+                374
+              ],
+              "pivot": [
+                111.509090814,
+                247.125063702
+              ],
+              "scale": 0.381199913,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                768,
+                650,
+                384,
+                374
+              ],
+              "pivot": [
+                200.487055017,
+                600.775363438
+              ],
+              "scale": 0.200171609,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "siege_ladder_states_grid.png",
+              "source_sha256": "1e7b7a2a85cc90f6b52a278719a4fdfece1565b71cbe31d78cb0f396bf39577c",
+              "region": [
+                1152,
+                650,
+                384,
+                374
+              ],
+              "pivot": [
+                194.710743803,
+                -271.308761478
+              ],
+              "scale": 0.192820481,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        },
+        "folded": {
+          "frames": {
+            "down": {
+              "source": "ladder_folded.png",
+              "source_sha256": "32f684fe87a53ee3682d15f0da5a78389a70abc1c8aa3a49f1e7f0dd00565910",
+              "region": [
+                0,
+                0,
+                656,
+                640
+              ],
+              "pivot": [
+                328,
+                320
+              ],
+              "scale": 0.2,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "ladder_folded.png",
+              "source_sha256": "32f684fe87a53ee3682d15f0da5a78389a70abc1c8aa3a49f1e7f0dd00565910",
+              "region": [
+                656,
+                0,
+                656,
+                640
+              ],
+              "pivot": [
+                328,
+                320
+              ],
+              "scale": 0.2,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "ladder_folded.png",
+              "source_sha256": "32f684fe87a53ee3682d15f0da5a78389a70abc1c8aa3a49f1e7f0dd00565910",
+              "region": [
+                0,
+                640,
+                656,
+                559
+              ],
+              "pivot": [
+                328,
+                320
+              ],
+              "scale": 0.2,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "right": {
+              "source": "ladder_folded.png",
+              "source_sha256": "32f684fe87a53ee3682d15f0da5a78389a70abc1c8aa3a49f1e7f0dd00565910",
+              "region": [
+                656,
+                640,
+                656,
+                559
+              ],
+              "pivot": [
+                328,
+                320
+              ],
+              "scale": 0.2,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    },
+    "siege_tower": {
+      "source": "siege_tower_sheet.png",
+      "body_footprint_cells": [
+        3,
+        4
+      ],
+      "reference_region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_sha256": "ec916b0417824ee191a022bce69869e458529f0e121ab4b987d67a3d53a129e4",
+      "gameplay_available": true,
+      "frames": {
+        "right": {
+          "source": "siege_tower_navigation_right.png",
+          "source_sha256": "b469a712e09b080da17b87517224081e8f4d63c8d90342795aca5782fcd56253",
+          "region": [
+            280,
+            110,
+            766,
+            870
+          ],
+          "pivot": [
+            376.5,
+            566.0
+          ],
+          "scale": 1,
+          "exclude_rects": [],
+          "calibration_status": "sprite_region_candidate_gpu_pending",
+          "scale_xy": [
+            0.4176182707993475,
+            0.5260273972602739
+          ],
+          "deck_region": [
+            70,
+            201,
+            613,
+            365
+          ],
+          "deck_height_pixels": 96,
+          "parts": {
+            "bridge": {
+              "source": "siege_tower_navigation_right.png",
+              "source_sha256": "b469a712e09b080da17b87517224081e8f4d63c8d90342795aca5782fcd56253",
+              "region": [
+                1047,
+                311,
+                355,
+                445
+              ],
+              "pivot": [
+                177.5,
+                222.5
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.18028169014084508,
+                0.4314606741573034
+              ]
+            },
+            "entry_0": {
+              "source": "siege_tower_navigation_right.png",
+              "source_sha256": "b469a712e09b080da17b87517224081e8f4d63c8d90342795aca5782fcd56253",
+              "region": [
+                40,
+                402,
+                119,
+                255
+              ],
+              "pivot": [
+                59.5,
+                127.5
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.5378151260504201,
+                0.25098039215686274
+              ]
+            },
+            "entry_1": {
+              "source": "siege_tower_navigation_right.png",
+              "source_sha256": "b469a712e09b080da17b87517224081e8f4d63c8d90342795aca5782fcd56253",
+              "region": [
+                159,
+                402,
+                119,
+                255
+              ],
+              "pivot": [
+                59.5,
+                127.5
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.5378151260504201,
+                0.25098039215686274
+              ]
+            }
+          }
+        },
+        "left": {
+          "source": "siege_tower_navigation_left.png",
+          "source_sha256": "a0392c786bee44335b44581f5e76d8a6b6e2b2dfa93b1394a7f89f83401afecb",
+          "region": [
+            402,
+            130,
+            792,
+            835
+          ],
+          "pivot": [
+            378.0,
+            579.0
+          ],
+          "scale": 1,
+          "exclude_rects": [
+            [
+              66,
+              330,
+              347,
+              403
+            ],
+            [
+              1182,
+              388,
+              108,
+              290
+            ]
+          ],
+          "calibration_status": "sprite_region_candidate_gpu_pending",
+          "scale_xy": [
+            0.41025641025641024,
+            0.4897959183673469
+          ],
+          "deck_region": [
+            66,
+            187,
+            624,
+            392
+          ],
+          "deck_height_pixels": 96,
+          "parts": {
+            "bridge": {
+              "source": "siege_tower_navigation_left.png",
+              "source_sha256": "a0392c786bee44335b44581f5e76d8a6b6e2b2dfa93b1394a7f89f83401afecb",
+              "region": [
+                66,
+                330,
+                347,
+                403
+              ],
+              "pivot": [
+                173.5,
+                201.5
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.1844380403458213,
+                0.47642679900744417
+              ]
+            },
+            "entry_0": {
+              "source": "siege_tower_navigation_left.png",
+              "source_sha256": "a0392c786bee44335b44581f5e76d8a6b6e2b2dfa93b1394a7f89f83401afecb",
+              "region": [
+                1290,
+                410,
+                109,
+                290
+              ],
+              "pivot": [
+                54.5,
+                145.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.5871559633027523,
+                0.2206896551724138
+              ]
+            },
+            "entry_1": {
+              "source": "siege_tower_navigation_left.png",
+              "source_sha256": "a0392c786bee44335b44581f5e76d8a6b6e2b2dfa93b1394a7f89f83401afecb",
+              "region": [
+                1182,
+                388,
+                108,
+                290
+              ],
+              "pivot": [
+                54.0,
+                145.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.5925925925925926,
+                0.2206896551724138
+              ]
+            }
+          }
+        },
+        "down": {
+          "source": "siege_tower_navigation_down.png",
+          "source_sha256": "1f6edd03265fa6cbef5c4992b39a780b381bcdde5508c45472f8e5be153e8a35",
+          "region": [
+            318,
+            112,
+            816,
+            680
+          ],
+          "pivot": [
+            406.0,
+            479.875
+          ],
+          "scale": 1,
+          "exclude_rects": [
+            [
+              475,
+              650,
+              502,
+              306
+            ],
+            [
+              624,
+              18,
+              203,
+              95
+            ],
+            [
+              624,
+              113,
+              203,
+              110
+            ]
+          ],
+          "calibration_status": "sprite_region_candidate_gpu_pending",
+          "scale_xy": [
+            0.3950617283950617,
+            0.6023529411764705
+          ],
+          "deck_region": [
+            163,
+            108,
+            486,
+            425
+          ],
+          "deck_height_pixels": 96,
+          "parts": {
+            "bridge": {
+              "source": "siege_tower_navigation_down.png",
+              "source_sha256": "1f6edd03265fa6cbef5c4992b39a780b381bcdde5508c45472f8e5be153e8a35",
+              "region": [
+                475,
+                650,
+                502,
+                306
+              ],
+              "pivot": [
+                251.0,
+                153.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.38247011952191234,
+                0.20915032679738563
+              ]
+            },
+            "entry_0": {
+              "source": "siege_tower_navigation_down.png",
+              "source_sha256": "1f6edd03265fa6cbef5c4992b39a780b381bcdde5508c45472f8e5be153e8a35",
+              "region": [
+                624,
+                18,
+                203,
+                95
+              ],
+              "pivot": [
+                101.5,
+                47.5
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.31527093596059114,
+                0.6736842105263158
+              ]
+            },
+            "entry_1": {
+              "source": "siege_tower_navigation_down.png",
+              "source_sha256": "1f6edd03265fa6cbef5c4992b39a780b381bcdde5508c45472f8e5be153e8a35",
+              "region": [
+                624,
+                113,
+                203,
+                110
+              ],
+              "pivot": [
+                101.5,
+                55.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.31527093596059114,
+                0.5818181818181818
+              ]
+            }
+          }
+        },
+        "up": {
+          "source": "siege_tower_navigation_up.png",
+          "source_sha256": "b352b358f18821373e2f27e4ec92618cb7a56714add79ee9fc5defb25bbf37b7",
+          "region": [
+            192,
+            271,
+            833,
+            757
+          ],
+          "pivot": [
+            410.5,
+            561.125
+          ],
+          "scale": 1,
+          "exclude_rects": [
+            [
+              360,
+              30,
+              505,
+              312
+            ],
+            [
+              484,
+              940,
+              241,
+              150
+            ]
+          ],
+          "calibration_status": "sprite_region_candidate_gpu_pending",
+          "scale_xy": [
+            0.3713733075435203,
+            0.4857685009487666
+          ],
+          "deck_region": [
+            152,
+            100,
+            517,
+            527
+          ],
+          "deck_height_pixels": 96,
+          "parts": {
+            "bridge": {
+              "source": "siege_tower_navigation_up.png",
+              "source_sha256": "b352b358f18821373e2f27e4ec92618cb7a56714add79ee9fc5defb25bbf37b7",
+              "region": [
+                360,
+                30,
+                505,
+                312
+              ],
+              "pivot": [
+                252.5,
+                156.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.3801980198019802,
+                0.20512820512820512
+              ]
+            },
+            "entry_0": {
+              "source": "siege_tower_navigation_up.png",
+              "source_sha256": "b352b358f18821373e2f27e4ec92618cb7a56714add79ee9fc5defb25bbf37b7",
+              "region": [
+                484,
+                1090,
+                241,
+                152
+              ],
+              "pivot": [
+                120.5,
+                76.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.26556016597510373,
+                0.42105263157894735
+              ]
+            },
+            "entry_1": {
+              "source": "siege_tower_navigation_up.png",
+              "source_sha256": "b352b358f18821373e2f27e4ec92618cb7a56714add79ee9fc5defb25bbf37b7",
+              "region": [
+                484,
+                940,
+                241,
+                150
+              ],
+              "pivot": [
+                120.5,
+                75.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.26556016597510373,
+                0.4266666666666667
+              ]
+            }
+          }
+        }
+      },
+      "states": {
+        "mobile": {
+          "frames": {
+            "right": {
+              "source": "siege_tower_navigation_mobile_right.png",
+              "source_sha256": "ac938b46528579c91ef6579c9b8f492da379acf112f121625040a83900d7d1ba",
+              "region": [
+                0,
+                0,
+                1448,
+                1086
+              ],
+              "pivot": [
+                676.0,
+                674.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.39751552795031053,
+                0.5260273972602739
+              ]
+            },
+            "left": {
+              "source": "siege_tower_navigation_mobile_left.png",
+              "source_sha256": "de23108ebf2571091d66726d00cd5edf6ad88c545c6016d4810f0bb0c51ce629",
+              "region": [
+                0,
+                0,
+                1448,
+                1086
+              ],
+              "pivot": [
+                783.0,
+                709.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.40634920634920635,
+                0.49230769230769234
+              ]
+            },
+            "down": {
+              "source": "siege_tower_navigation_mobile_down.png",
+              "source_sha256": "d69bd3cebfcd48bd20ee0f3fb1a6a86b750f82154d388d40a9b754f4a277e73a",
+              "region": [
+                0,
+                0,
+                1448,
+                1086
+              ],
+              "pivot": [
+                723.5,
+                591.875
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.3958762886597938,
+                0.6023529411764705
+              ]
+            },
+            "up": {
+              "source": "siege_tower_navigation_mobile_up.png",
+              "source_sha256": "05b22d366ed63b68ae952de8b9b2b2548f9f5e2509a13127f639b9cedc065740",
+              "region": [
+                0,
+                0,
+                1199,
+                1312
+              ],
+              "pivot": [
+                603.0,
+                832.125
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.37065637065637064,
+                0.4857685009487666
+              ]
+            }
+          }
+        },
+        "damaged": {
+          "frames": {
+            "right": {
+              "source": "siege_tower_navigation_states_right.png",
+              "source_sha256": "703360421836adae8477c45514c2c8472b0191bc54847d7677ecab1898d8e61d",
+              "region": [
+                159,
+                280,
+                430,
+                535
+              ],
+              "pivot": [
+                216.5,
+                356.0
+              ],
+              "scale": 1,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.7687687687687688,
+                0.8275862068965517
+              ],
+              "deck_region": [
+                50,
+                124,
+                333,
+                232
+              ],
+              "deck_height_pixels": 96,
+              "parts": {
+                "bridge": {
+                  "source": "siege_tower_navigation_states_right.png",
+                  "source_sha256": "703360421836adae8477c45514c2c8472b0191bc54847d7677ecab1898d8e61d",
+                  "region": [
+                    589,
+                    396,
+                    151,
+                    296
+                  ],
+                  "pivot": [
+                    75.5,
+                    148.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.423841059602649,
+                    0.6486486486486487
+                  ]
+                },
+                "entry_0": {
+                  "source": "siege_tower_navigation_states_right.png",
+                  "source_sha256": "703360421836adae8477c45514c2c8472b0191bc54847d7677ecab1898d8e61d",
+                  "region": [
+                    18,
+                    456,
+                    71,
+                    174
+                  ],
+                  "pivot": [
+                    35.5,
+                    87.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.9014084507042254,
+                    0.367816091954023
+                  ]
+                },
+                "entry_1": {
+                  "source": "siege_tower_navigation_states_right.png",
+                  "source_sha256": "703360421836adae8477c45514c2c8472b0191bc54847d7677ecab1898d8e61d",
+                  "region": [
+                    89,
+                    456,
+                    70,
+                    174
+                  ],
+                  "pivot": [
+                    35.0,
+                    87.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.9142857142857143,
+                    0.367816091954023
+                  ]
+                }
+              }
+            },
+            "left": {
+              "source": "siege_tower_navigation_states_left.png",
+              "source_sha256": "1ef7b3e7439e19c7e3f6627350a459e0ecc04591d527588e22d9edaa736f43fb",
+              "region": [
+                220,
+                256,
+                448,
+                567
+              ],
+              "pivot": [
+                220.5,
+                454.0
+              ],
+              "scale": 1,
+              "exclude_rects": [
+                [
+                  16,
+                  389,
+                  208,
+                  293
+                ],
+                [
+                  648,
+                  434,
+                  67,
+                  206
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.750733137829912,
+                0.5853658536585366
+              ],
+              "deck_region": [
+                50,
+                126,
+                341,
+                328
+              ],
+              "deck_height_pixels": 96,
+              "parts": {
+                "bridge": {
+                  "source": "siege_tower_navigation_states_left.png",
+                  "source_sha256": "1ef7b3e7439e19c7e3f6627350a459e0ecc04591d527588e22d9edaa736f43fb",
+                  "region": [
+                    16,
+                    389,
+                    208,
+                    293
+                  ],
+                  "pivot": [
+                    104.0,
+                    146.5
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.3076923076923077,
+                    0.6552901023890785
+                  ]
+                },
+                "entry_0": {
+                  "source": "siege_tower_navigation_states_left.png",
+                  "source_sha256": "1ef7b3e7439e19c7e3f6627350a459e0ecc04591d527588e22d9edaa736f43fb",
+                  "region": [
+                    715,
+                    455,
+                    66,
+                    204
+                  ],
+                  "pivot": [
+                    33.0,
+                    102.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.9696969696969697,
+                    0.3137254901960784
+                  ]
+                },
+                "entry_1": {
+                  "source": "siege_tower_navigation_states_left.png",
+                  "source_sha256": "1ef7b3e7439e19c7e3f6627350a459e0ecc04591d527588e22d9edaa736f43fb",
+                  "region": [
+                    648,
+                    434,
+                    67,
+                    206
+                  ],
+                  "pivot": [
+                    33.5,
+                    103.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.9552238805970149,
+                    0.3106796116504854
+                  ]
+                }
+              }
+            },
+            "down": {
+              "source": "siege_tower_navigation_states_down.png",
+              "source_sha256": "14baa5195bed3419d9d4d9b594c14e56c347a6ecd7358b41d76b226eb0b2a0b4",
+              "region": [
+                0,
+                140,
+                741,
+                670
+              ],
+              "pivot": [
+                371.5,
+                492.625
+              ],
+              "scale": 1,
+              "exclude_rects": [
+                [
+                  138,
+                  707,
+                  472,
+                  267
+                ],
+                [
+                  250,
+                  137,
+                  218,
+                  115
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.41830065359477125,
+                0.5885057471264368
+              ],
+              "deck_region": [
+                142,
+                112,
+                459,
+                435
+              ],
+              "deck_height_pixels": 96,
+              "parts": {
+                "bridge": {
+                  "source": "siege_tower_navigation_states_down.png",
+                  "source_sha256": "14baa5195bed3419d9d4d9b594c14e56c347a6ecd7358b41d76b226eb0b2a0b4",
+                  "region": [
+                    138,
+                    707,
+                    472,
+                    267
+                  ],
+                  "pivot": [
+                    236.0,
+                    133.5
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.4067796610169492,
+                    0.2397003745318352
+                  ]
+                },
+                "entry_0": {
+                  "source": "siege_tower_navigation_states_down.png",
+                  "source_sha256": "14baa5195bed3419d9d4d9b594c14e56c347a6ecd7358b41d76b226eb0b2a0b4",
+                  "region": [
+                    250,
+                    49,
+                    218,
+                    88
+                  ],
+                  "pivot": [
+                    109.0,
+                    44.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.29357798165137616,
+                    0.7272727272727273
+                  ]
+                },
+                "entry_1": {
+                  "source": "siege_tower_navigation_states_down.png",
+                  "source_sha256": "14baa5195bed3419d9d4d9b594c14e56c347a6ecd7358b41d76b226eb0b2a0b4",
+                  "region": [
+                    250,
+                    137,
+                    218,
+                    115
+                  ],
+                  "pivot": [
+                    109.0,
+                    57.5
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.29357798165137616,
+                    0.5565217391304348
+                  ]
+                }
+              }
+            },
+            "up": {
+              "source": "siege_tower_navigation_states_up.png",
+              "source_sha256": "53534916e09c51a8b1c60fe5b508701f5b9ebb4628fb1c3e813c40b23fb4b486",
+              "region": [
+                68,
+                218,
+                652,
+                630
+              ],
+              "pivot": [
+                327.0,
+                461.125
+              ],
+              "scale": 1,
+              "exclude_rects": [
+                [
+                  201,
+                  34,
+                  377,
+                  270
+                ],
+                [
+                  295,
+                  812,
+                  181,
+                  103
+                ]
+              ],
+              "calibration_status": "sprite_region_candidate_gpu_pending",
+              "scale_xy": [
+                0.5,
+                0.5939675174013921
+              ],
+              "deck_region": [
+                135,
+                84,
+                384,
+                431
+              ],
+              "deck_height_pixels": 96,
+              "parts": {
+                "bridge": {
+                  "source": "siege_tower_navigation_states_up.png",
+                  "source_sha256": "53534916e09c51a8b1c60fe5b508701f5b9ebb4628fb1c3e813c40b23fb4b486",
+                  "region": [
+                    201,
+                    34,
+                    377,
+                    270
+                  ],
+                  "pivot": [
+                    188.5,
+                    135.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.5092838196286472,
+                    0.23703703703703705
+                  ]
+                },
+                "entry_0": {
+                  "source": "siege_tower_navigation_states_up.png",
+                  "source_sha256": "53534916e09c51a8b1c60fe5b508701f5b9ebb4628fb1c3e813c40b23fb4b486",
+                  "region": [
+                    295,
+                    915,
+                    181,
+                    102
+                  ],
+                  "pivot": [
+                    90.5,
+                    51.0
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.35359116022099446,
+                    0.6274509803921569
+                  ]
+                },
+                "entry_1": {
+                  "source": "siege_tower_navigation_states_up.png",
+                  "source_sha256": "53534916e09c51a8b1c60fe5b508701f5b9ebb4628fb1c3e813c40b23fb4b486",
+                  "region": [
+                    295,
+                    812,
+                    181,
+                    103
+                  ],
+                  "pivot": [
+                    90.5,
+                    51.5
+                  ],
+                  "scale": 1,
+                  "exclude_rects": [],
+                  "calibration_status": "sprite_region_candidate_gpu_pending",
+                  "scale_xy": [
+                    0.35359116022099446,
+                    0.6213592233009708
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "wrecked": {
+          "frames": {
+            "right": {
+              "source": "siege_tower_navigation_states_right.png",
+              "source_sha256": "703360421836adae8477c45514c2c8472b0191bc54847d7677ecab1898d8e61d",
+              "region": [
+                748,
+                0,
+                700,
+                1086
+              ],
+              "pivot": [
+                307.972672064,
+                639.330271441
+              ],
+              "scale": 0.908825664,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "left": {
+              "source": "siege_tower_navigation_states_left.png",
+              "source_sha256": "1ef7b3e7439e19c7e3f6627350a459e0ecc04591d527588e22d9edaa736f43fb",
+              "region": [
+                778,
+                0,
+                670,
+                1086
+              ],
+              "pivot": [
+                377.611599297,
+                669.566192049
+              ],
+              "scale": 0.791308127,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "down": {
+              "source": "siege_tower_navigation_states_down.png",
+              "source_sha256": "14baa5195bed3419d9d4d9b594c14e56c347a6ecd7358b41d76b226eb0b2a0b4",
+              "region": [
+                747,
+                0,
+                701,
+                1086
+              ],
+              "pivot": [
+                350.859195402,
+                548.38229215
+              ],
+              "scale": 0.459804286,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            },
+            "up": {
+              "source": "siege_tower_navigation_states_up.png",
+              "source_sha256": "53534916e09c51a8b1c60fe5b508701f5b9ebb4628fb1c3e813c40b23fb4b486",
+              "region": [
+                724,
+                0,
+                724,
+                1086
+              ],
+              "pivot": [
+                366.013552069,
+                650.299501263
+              ],
+              "scale": 0.499678865,
+              "exclude_rects": [],
+              "calibration_status": "sprite_region_candidate_gpu_pending"
+            }
+          }
+        }
+      }
+    }
+  },
+  "bolt": {
+    "source": "siege_bolt.png",
+    "region": [
+      44,
+      250,
+      2089,
+      234
+    ],
+    "screen_size": [
+      12,
+      6
+    ]
+  },
+  "notes": [
+    "Presentation assets only; SiteRuntime/SiteVehicleTransport own available gameplay kinds.",
+    "Original approved sheets retained unchanged as design references; twenty new cardinal PNGs replace the other five angled concept views.",
+    "Ballista cardinal images, pivots, scale and original muzzle pin remain unchanged.",
+    "All six kinds cardinal headings reviewed from ground base axes and functional front/rear; height slopes and foreshortened depth are retained.",
+    "New ground centres/contact envelopes are manual visible or estimated presentation landmarks, not exact physical feet or other five kinds navigation acceptance. Tower external access ladder extension is recorded separately.",
+    "Direction arrows and logical cell boxes belong only to the calibration test fixture."
+  ],
+  "direction_calibration_date": "2026-10-04",
+  "completion_date": "2026-10-04",
+  "calibration_method": "Sprite regions from generated PNGs; tower deck and appendages map to original Runtime cells. GPU acceptance is recorded separately.",
+  "stone": {
+    "source": "siege_stone.png",
+    "region": [
+      0,
+      21,
+      1202,
+      1215
+    ],
+    "source_sha256": "0cdb70aa01a9273155d30d36fbf1c7c24a6ad592f62f3777300973b3fc4c5281"
+  },
+  "turn_rope": {
+    "source": "turn_rope.png",
+    "region": [
+      47,
+      291,
+      2078,
+      131
+    ],
+    "source_sha256": "f87a5e65c33b9700e11eb5e076ec55bd4c09e287ab9cd98fd6c7673ed9111a5f"
+  }
+}

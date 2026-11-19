@@ -103,7 +103,7 @@ func _run() -> void:
 		"HOLD KO and death continue before think")
 	assert(float(hold.get_field(5, "think", 0.0)) == maxf(0.0, 0.5 - 0.1)
 		and float(hold.get_field(5, "age", 0.0)) == 0.25 + 0.1, "HOLD guard remains on the safe path")
-	var output := FileAccess.open("res://output/site_army_5k_hot_close_20260926/hot_projection_smoke.json", FileAccess.WRITE)
+	var output := FileAccess.open("res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/hot_projection_smoke.json", FileAccess.WRITE)
 	assert(output != null)
 	output.store_string(JSON.stringify({"checks": {"capture_columns": true, "capture_people": true,
 		"command_presence": true, "command_presence_delta": true, "render_idle": true,

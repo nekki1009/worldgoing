@@ -7,9 +7,13 @@ class Fixture extends RefCounted:
 	var character := TerrainTestCharacter.new()
 	var npc := TerrainTestNPC.new()
 	var army := TerrainArmy.new()
+	# Capture fields look up an actor's loyal team through TerrainLab.combat_armies.
+	var combat_armies: Array[TerrainArmy] = [army]
 	var actions := Actions.new()
 	var threatened := false
 	var controlled_id := 1
+	# Core SitePersonActions._person checks lab.site_controller (ship positions); none here.
+	var site_controller: Variant = null
 	var removal_allowed := true
 	var captivity_allowed := true
 	var changed: Array[int] = []
@@ -18,11 +22,15 @@ class Fixture extends RefCounted:
 	var ransom_destination: Dictionary = {}
 	var ransom_revisions := [0, 0]
 	var ransom_alias := false
+	# Original team supply entries: the query hands them out and the commit bumps their revisions.
+	var ransom_source_entry := {"revision": 0}
+	var ransom_destination_entry := {"revision": 0}
 	func _init() -> void:
 		terrain.allocate(Vector2i(12, 12))
 		terrain.flags.fill(TerrainData.Flag.WALKABLE)
 		terrain.site = {"minute": 0, "phase": 0.0, "paused": false, "manual": {"target": "", "cargo": {}}, "worker": {"target": "", "cargo": {}}}
 		assert(SiteRuntime.initialize_item_storage(terrain.site).ok)
+		terrain.site.team_supply = {"1": ransom_source_entry, "2": ransom_destination_entry}
 		character.person_id = 1
 		npc.person_id = 2
 		character.data = terrain
@@ -55,8 +63,11 @@ class Fixture extends RefCounted:
 			return SiteRuntime.ok("原隊伍食物庫存", {"source": ransom_source,
 				"destination": ransom_source if ransom_alias else ransom_destination,
 				"source_owner": "team:1", "destination_owner": "team:2",
-				"source_revision": ransom_revisions[0], "destination_revision": ransom_revisions[1]})
-		actions.ransom_exchange_committed = func(_query: Dictionary) -> void:
+				"source_revision": int(ransom_source_entry.revision), "destination_revision": int(ransom_destination_entry.revision),
+				"source_entry": ransom_source_entry, "destination_entry": ransom_destination_entry})
+		actions.ransom_exchange_committed = func(query: Dictionary) -> void:
+			query.source_entry.revision = int(query.source_entry.revision) + 1
+			query.destination_entry.revision = int(query.destination_entry.revision) + 1
 			ransom_revisions[0] += 1
 			ransom_revisions[1] += 1
 	func _combat_target(identity: int) -> Dictionary:
@@ -66,6 +77,11 @@ class Fixture extends RefCounted:
 		if identity == 3:
 			return {"owner": army, "unit": 0, "cell": army.cells[0], "hp": army.combat_units[0].hp}
 		return {}
+	# Core SitePersonActions._person reads TerrainLab._original_person_target.
+	func _original_person_target(identity: int, with_bodies: bool = false) -> Dictionary:
+		var person: Dictionary = _combat_target(identity)
+		if not person.is_empty() and with_bodies: person.bodies = []
+		return person
 	func controlled_person_id() -> int:
 		return controlled_id
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:
@@ -97,8 +113,9 @@ func run() -> void:
 	_check_interruptions()
 	_check_fatigue_and_race()
 	_check_captivity()
+	_check_surrender_capture()
 	_check_escape_and_ransom()
-	print("SITE PERSON ACTIONS PASS: original cargo/item owners, KO/ground loot, versions, final-contact rejection, capacity, 80/50 work, capture/sealed/ally-unbind, 30s escape, 100-ration ransom; no UI or equipment rendering claim")
+	print("SITE PERSON ACTIONS PASS: original cargo/item owners, KO/ground loot, versions, final-contact rejection, capacity, 80/50 work, KO/surrender capture/sealed/ally-unbind, 30s escape, 100-ration ransom; no UI or equipment rendering claim")
 	quit(0)
 
 func _check_loot() -> void:
@@ -260,6 +277,54 @@ func _check_captivity() -> void:
 	assert(not actions.settle_after_contacts()[0].ok and not fixture.npc.captive)
 	assert(fixture.terrain.site.ground_loot.size() == 1 and fixture.supply_commits.size() == 2)
 	fixture.close()
+
+func _check_surrender_capture() -> void:
+	for outcome: String in ["success", "cancel", "move", "hit", "version", "capacity", "withdrawn", "supply"]:
+		var fixture := Fixture.new()
+		var actions := fixture.actions
+		var unit: Dictionary = fixture.army.combat_units[0]
+		fixture.army.cells[0] = Vector2i(5, 4)
+		assert(not actions.begin_capture(1, 3, 1).ok, "Missing surrender_pending is false; awake units cannot be captured")
+		unit["surrender_pending"] = true
+		var weapon := SiteRuntime.create_equipment(fixture.terrain, unit.item_state, "weapon_fixture",
+			{"slot": "weapon", "asset": "weapon_fixture", "tint": [1.0, 1.0, 1.0, 1.0]}, 3, "weapon")
+		assert(weapon.ok)
+		unit.cargo.merge({"arrow": 2, "wood": 1})
+		var holder: Dictionary = unit.item_state
+		var version := int(holder.version)
+		actions.captivity_supply_commit = func(target: int, captor: int, capturing: bool) -> void:
+			assert(bool(fixture.army.combat_hot_get(0, &"captive")) == capturing and not bool(unit.surrender_pending))
+			fixture.supply_commits.append([target, captor, capturing])
+		assert(actions.begin_capture(1, 3, 1).seconds == Actions.BIND_SECONDS)
+		actions.advance(Actions.BIND_SECONDS - 0.001)
+		assert(actions.settle_after_contacts().is_empty() and bool(unit.surrender_pending) and not bool(unit.captive))
+		assert(fixture.terrain.site.captivity.is_empty() and fixture.terrain.site.ground_loot.is_empty())
+		actions.advance(0.001)
+		match outcome:
+			"cancel": assert(actions.cancel(1).ok)
+			"move": fixture.army.moving_to[0] = Vector2i(6, 4)
+			"hit": unit.hit_revision += 1
+			"version": holder.version += 1
+			"capacity":
+				for identity: int in range(10, 14):
+					fixture.terrain.site.captivity[str(identity)] = {"guard_id": 1}
+			"withdrawn": unit.surrender_pending = false
+			"supply": fixture.captivity_allowed = false
+		var results := actions.settle_after_contacts()
+		if outcome == "success":
+			assert(results.size() == 1 and results[0].ok and bool(unit.captive) and not bool(unit.surrender_pending))
+			assert(float(unit.hp) == 100.0 and float(unit.ko) == 0.0 and fixture.supply_commits == [[3, 1, true]])
+			var bag: Dictionary = fixture.terrain.site.ground_loot[results[0].container_id]
+			assert(bag.kind == "sealed" and bag.original_owner == 3 and bag.item_ids == [weapon.item_id] and bag.cargo == {"arrow": 2})
+			assert(holder.item_ids.is_empty() and unit.cargo == {"wood": 1} and int(holder.version) > version)
+			assert(actions.settle_after_contacts().is_empty() and fixture.supply_commits.size() == 1)
+		else:
+			assert(results.is_empty() if outcome == "cancel" else results.size() == 1 and not results[0].ok, outcome)
+			assert(not bool(unit.captive) and bool(unit.surrender_pending) == (outcome != "withdrawn"), outcome)
+			assert(not fixture.terrain.site.captivity.has("3") and fixture.terrain.site.ground_loot.is_empty() and fixture.supply_commits.is_empty(), outcome)
+			assert(holder.item_ids == [weapon.item_id] and unit.cargo == {"arrow": 2, "wood": 1}, outcome)
+		assert(is_same(holder, unit.item_state), "Capture keeps the original holder")
+		fixture.close()
 
 func _check_escape_and_ransom() -> void:
 	var fixture := Fixture.new()

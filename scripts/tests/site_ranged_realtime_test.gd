@@ -187,9 +187,9 @@ func _capture_crafting() -> bool:
 		return false
 	await process_frame
 	await RenderingServer.frame_post_draw
-	var names := {"bow": "弓 1 把", "crossbow": "弩 1 把", "arrow": "箭 10 支", "bolt": "弩矢 10 支"}
+	var names := {"bow": "弓 1 把", "crossbow": "弩 1 把", "arrow": "箭 10 支", "bolt": "弩矢 10 支", "fire_arrow": "火箭 5 支", "siege_bolt": "重弩矢 1 支", "siege_stone": "siege_stone", "camp_tent": "camp_tent"}
 	var labels := {}
-	var valid := dialog.visible and dialog.find_children("Craft_*", "Button", true, false).size() == 4
+	var valid := dialog.visible and dialog.find_children("Craft_*", "Button", true, false).size() == names.size() and names.size() == 8
 	for key: String in names:
 		var button := dialog.find_child("Craft_" + key, true, false) as Button
 		var recipe: Dictionary = Runtime.RANGED_RECIPES.get(key, {})
@@ -222,7 +222,11 @@ func _run() -> void:
 		_abort("Original time scale must remain one")
 		return
 	lab = MeasuredLab.new()
+	# Explicit original NPC fixture: formal startup no longer creates a default worker.
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
+	# Explicit legacy/reference owner and render regression; new physical admission has separate tests.
+	lab.physical_ranged_enabled = false
 	lab.combat_profile_enabled = "--profile" in OS.get_cmdline_user_args()
 	root.add_child(lab)
 	current_scene = lab
@@ -264,7 +268,7 @@ func _run() -> void:
 	lab.camera.zoom = Vector2.ONE * CAMERA_ZOOM
 	var camera_position := lab.camera.position
 	if not await _capture_crafting():
-		_abort("Original crafting dialog / four real recipe labels / read-only capture failed")
+		_abort("Original crafting dialog / eight real recipe labels / read-only capture failed")
 		return
 	lab.site_controller._capture_positions()
 	var save_path := output_path + "/before_battle.json"
@@ -429,4 +433,4 @@ func _run() -> void:
 	done = true
 	lab.queue_free()
 	await process_frame
-	quit(0) # Completed measurement is NOT an unmet performance gate PASS.
+	quit(0 if passed else 1) # Measurement remains saved when any acceptance gate fails.

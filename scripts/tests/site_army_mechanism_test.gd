@@ -197,8 +197,8 @@ func _store_smoke_valid(value: Variant) -> bool:
 		return false
 	for name: String in ["atomic_rejection", "capture", "get_set_erase", "load_and_isolation",
 			"numeric_and_flag_columns", "single_row_borrow", "pure_visual_no_owner_barrier",
-			"visual_expiry_ordered_barrier", "owner_reason_abi", "attack_reason",
-			"hold_think_reason", "pose_expiry_reason", "rescue_reason", "think_reason",
+			"visual_expiry_ordered_barrier", "owner_reason_abi", "packed_progress_abi", "attack_native_safe",
+			"hold_think_reason", "pose_expiry_reason", "rescue_reason", "think_nonhold_native_safe",
 			"visual_expiry_reason"]:
 		if value.checks.get(name) != true: return false
 	return value.get("cpp_sha256") == FileAccess.get_sha256("res://native/army_idle/army_idle.cpp") \
@@ -445,10 +445,10 @@ func _render_5k_valid(value: Variant, source_capture: Dictionary) -> bool:
 		var assessment: Variant = value.get(phase + "_assessment")
 		if not frames is Array or frames.size() != (4 if phase == "stationary" else 12) or not assessment is Dictionary or not bool(assessment.get("passed", false)):
 			return false
-		var zero_static := [0, 0]
-		var zero_upload := [0, 0]
-		var unchanged_output := [0, 0]
-		var upload_without_change := [0, 0]
+		var zero_static := [0.0, 0.0]
+		var zero_upload := [0.0, 0.0]
+		var unchanged_output := [0.0, 0.0]
+		var upload_without_change := [0.0, 0.0]
 		var sampled := [0, 0]
 		var stable_cells := ["", ""]
 		var previous_frame := -1
@@ -556,7 +556,7 @@ func _oracle_valid(reference: Variant, candidate: Variant, source_capture: Dicti
 				or segment.get("reference_frames_traversed") != Stream.SNAPSHOTS \
 				or segment.get("process_steps") != Stream.SNAPSHOTS - 1 \
 				or segment.get("checkpoint_checked") != Stream.CHECKPOINT_TICKS.size() \
-				or segment.get("checkpoint_ticks") != Stream.CHECKPOINT_TICKS \
+				or segment.get("checkpoint_ticks") != JSON.parse_string(JSON.stringify(Stream.CHECKPOINT_TICKS)) \
 				or segment.has("first_mismatch_tick") or segment.has("first_inactive_tick") \
 				or candidate.segment_sha256.get(path.get_file()) != FileAccess.get_sha256(path):
 			return false

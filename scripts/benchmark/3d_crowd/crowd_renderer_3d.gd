@@ -7,6 +7,7 @@ const CrowdNearActorPoolType = preload("res://scripts/benchmark/3d_crowd/crowd_n
 const CrowdLodInterfaceType = preload("res://scripts/benchmark/3d_crowd/crowd_lod_interface.gd")
 const SoldierVisualRegistryType = preload("res://scripts/benchmark/3d_crowd/soldier_visual_registry.gd")
 const FormationRenderBatchType = preload("res://scripts/benchmark/3d_crowd/formation_render_batch.gd")
+const CrowdGpuFormationWriterType = preload("res://scripts/benchmark/3d_crowd/crowd_gpu_formation_writer.gd")
 
 const CROWD_CHUNK_SIZE: float = 32.0
 const BATTLEFIELD_MIN: float = -192.0
@@ -22,7 +23,7 @@ const LOD_FAR_DISTANCE: float = CrowdLodInterfaceType.LOD_FAR_DISTANCE
 const FAR_UPDATE_INTERVAL: int = 3
 
 enum RenderLod { NEAR, MID, FAR, PLACEHOLDER }
-enum RenderPath { CURRENT_PER_INSTANCE, FORMATION_PARENT_TRANSFORM }
+enum RenderPath { CURRENT_PER_INSTANCE, FORMATION_PARENT_TRANSFORM, GPU_FORMATION_OUTPUT }
 
 var chunks: Array[CrowdChunk3D] = []
 var visible_chunk_count: int = 0
@@ -116,6 +117,17 @@ var _uploaded_animation_state: PackedInt32Array = PackedInt32Array()
 var _uploaded_packed_variant: PackedInt32Array = PackedInt32Array()
 var _formation_batches: Array[FormationRenderBatch] = []
 var _formation_layout_ready: bool = false
+var _gpu_writer
+var _gpu_descriptor_initialized: bool = false
+var _gpu_pending_events: Array[Dictionary] = []
+var _gpu_lod_cache: PackedInt32Array = PackedInt32Array()
+var _gpu_visible_cache: PackedByteArray = PackedByteArray()
+var _gpu_world_transform_cache: Transform3D = Transform3D.IDENTITY
+var _gpu_scenario_cache: RID
+var _gpu_proxy_counts: PackedInt32Array = PackedInt32Array()
+var _gpu_active_flags: PackedByteArray = PackedByteArray()
+var gpu_fallback_reason: String = ""
+var gpu_submitted_dispatch_count: int = 0
 var _formation_last_active_count: int = -1
 var _formation_last_mode: int = -1
 
@@ -180,32 +192,64 @@ func invalidate_layout() -> void:
 	_layout_ready = false
 	_formation_cache_valid = false
 	_formation_layout_ready = false
+	_gpu_descriptor_initialized = false
 
 func set_render_path(next_path: int) -> void:
-	var bounded_path: int = clampi(next_path, RenderPath.CURRENT_PER_INSTANCE, RenderPath.FORMATION_PARENT_TRANSFORM)
+	var bounded_path: int = clampi(next_path, RenderPath.CURRENT_PER_INSTANCE, RenderPath.GPU_FORMATION_OUTPUT)
 	if render_path == bounded_path:
 		return
+	var leaving_gpu: bool = render_path == RenderPath.GPU_FORMATION_OUTPUT
+	if leaving_gpu:
+		_teardown_gpu_batches()
 	render_path = bounded_path
 	_layout_ready = false
 	_formation_layout_ready = false
 	_formation_cache_valid = false
 	if render_path == RenderPath.FORMATION_PARENT_TRANSFORM:
 		_teardown_chunks()
-		_build_formation_batches()
+		if _formation_batches.is_empty():
+			_build_formation_batches()
+		elif leaving_gpu:
+			# The render-thread handoff changed the RS visibility directly. Refresh
+			# the Node property so the next B sync can show these batches again.
+			for batch: FormationRenderBatch in _formation_batches:
+				batch.visible = false
+	elif render_path == RenderPath.GPU_FORMATION_OUTPUT:
+		_teardown_chunks()
+		# Keep B visible until the first GPU packet commits on the render thread.
+		if _formation_batches.is_empty():
+			_build_formation_batches()
+		if not _build_gpu_batches():
+			set_render_path(RenderPath.FORMATION_PARENT_TRANSFORM)
 	else:
 		_teardown_formation_batches()
 		_build_chunks()
 
 func render_path_name() -> String:
-	return "FORMATION_PARENT_TRANSFORM" if render_path == RenderPath.FORMATION_PARENT_TRANSFORM else "CURRENT_PER_INSTANCE"
+	match render_path:
+		RenderPath.FORMATION_PARENT_TRANSFORM:
+			return "FORMATION_PARENT_TRANSFORM"
+		RenderPath.GPU_FORMATION_OUTPUT:
+			if _gpu_writer == null or int(_gpu_writer.status().get("completed_frames", 0)) == 0:
+				return "GPU_PENDING_PARENT_BRIDGE"
+			return "GPU_FORMATION_OUTPUT"
+		_:
+			return "CURRENT_PER_INSTANCE"
 
 func formation_culling_mode_name() -> String:
-	return "HYBRID_FORMATION_AABB"
+	return "GPU_RENDERER_LOCAL_AABB" if render_path == RenderPath.GPU_FORMATION_OUTPUT else "HYBRID_FORMATION_AABB"
 
 func formation_gpu_transform_supported() -> bool:
-	# Godot 4.6.2 does not expose a small, standard MultiMesh shader buffer
-	# contract for arbitrary per-instance formation matrix lookup.
-	return false
+	if _gpu_writer == null:
+		return false
+	var writer_status: Dictionary = _gpu_writer.status()
+	return bool(writer_status.get("ready", false)) and int(writer_status.get("ready_batches", 0)) == int(writer_status.get("batch_count", 0))
+
+func crowd_gpu_status() -> Dictionary:
+	var result: Dictionary = _gpu_writer.status() if _gpu_writer != null else {"ready": false}
+	result["fallback_reason"] = gpu_fallback_reason
+	result["submitted_commands"] = gpu_submitted_dispatch_count
+	return result
 
 func configure_update_profile(
 	enable_dirty_buffer: bool,
@@ -281,6 +325,9 @@ func sync_from_simulation(view_camera: Camera3D) -> void:
 		return
 	_frame_index += 1
 	_reset_formation_frame_metrics()
+	if render_path == RenderPath.GPU_FORMATION_OUTPUT:
+		_sync_gpu_formation_output(view_camera, started_usec)
+		return
 	if render_path == RenderPath.FORMATION_PARENT_TRANSFORM:
 		_sync_formation_parent_transform(view_camera, started_usec)
 		return
@@ -302,6 +349,7 @@ func sync_from_simulation(view_camera: Camera3D) -> void:
 	last_update_cpu_ms = float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 func _reset_formation_frame_metrics() -> void:
+	gpu_submitted_dispatch_count = 0
 	last_gdscript_crowd_loop_cpu_ms = 0.0
 	last_formation_transform_cpu_ms = 0.0
 	last_formation_transform_updates = 0
@@ -363,7 +411,8 @@ func _sync_formation_parent_transform(view_camera: Camera3D, started_usec: int) 
 			updated_formations += 1
 		if batch.rebuild_local_slots(formation.spacing):
 			last_formation_local_slot_rebuilds += 1
-		var next_lod: int = _formation_lod_for(formation.center_position, view_camera)
+		var world_center: Vector3 = global_transform * formation.center_position
+		var next_lod: int = _formation_lod_for(world_center, view_camera)
 		if batch.set_lod(next_lod):
 			changed_formations += 1
 		if layout_rebuilt:
@@ -379,7 +428,8 @@ func _sync_formation_parent_transform(view_camera: Camera3D, started_usec: int) 
 		batch.set_formation_active(formation.active)
 		var is_visible: bool = view_camera == null or (
 			formation.active and _is_world_position_visible(
-				view_camera, formation.center_position, aspect, half_width, half_height, batch.culling_radius()
+				view_camera, world_center, aspect, half_width, half_height,
+				_formation_world_culling_radius(batch.culling_radius())
 			)
 		)
 		batch.visible = is_visible
@@ -461,6 +511,9 @@ func _formation_lod_for(center: Vector3, view_camera: Camera3D) -> int:
 		return RenderLod.MID
 	return RenderLod.MID if view_camera.global_position.distance_to(center) <= lod_interface.mid_distance else RenderLod.FAR
 
+func _formation_world_culling_radius(local_radius: float) -> float:
+	return local_radius * maxf(global_transform.basis.x.length(), global_transform.basis.z.length())
+
 func _is_formation_soldier_render_active(soldier_index: int) -> bool:
 	return (
 		soldier_index >= 0
@@ -471,7 +524,16 @@ func _is_formation_soldier_render_active(soldier_index: int) -> bool:
 	)
 
 func _set_formation_soldier_active(soldier_index: int) -> void:
-	if render_path != RenderPath.FORMATION_PARENT_TRANSFORM or _formation_batches.is_empty():
+	if render_path == RenderPath.GPU_FORMATION_OUTPUT:
+		if _gpu_descriptor_initialized and soldier_index >= 0 and soldier_index < _simulation.active_soldier_count:
+			var next_active: int = 1 if _is_formation_soldier_render_active(soldier_index) else 0
+			if _gpu_active_flags[soldier_index] != next_active:
+				_gpu_active_flags[soldier_index] = next_active
+				_gpu_proxy_counts[_simulation.soldier_formation_id[soldier_index]] += 1 if next_active != 0 else -1
+				_gpu_pending_events.append(_gpu_event_for_soldier(soldier_index))
+	if render_path != RenderPath.FORMATION_PARENT_TRANSFORM and render_path != RenderPath.GPU_FORMATION_OUTPUT:
+		return
+	if _formation_batches.is_empty():
 		return
 	if soldier_index < 0 or soldier_index >= _simulation.active_soldier_count:
 		return
@@ -492,7 +554,8 @@ func _update_formation_near_visibility(view_camera: Camera3D, visible_crowd_inst
 	for slot: int in range(_near_count):
 		var soldier_index: int = _near_soldier_ids[slot]
 		var is_visible: bool = view_camera == null or _is_world_position_visible(
-			view_camera, _simulation.get_soldier_world_position(soldier_index), aspect, half_width, half_height, 2.0
+			view_camera, global_transform * _simulation.get_soldier_world_position(soldier_index),
+			aspect, half_width, half_height, _formation_world_culling_radius(2.0)
 		)
 		near_actor_pool.set_actor_visible(slot, is_visible)
 		if is_visible:
@@ -502,7 +565,8 @@ func _update_formation_near_visibility(view_camera: Camera3D, visible_crowd_inst
 		if soldier_index < 0 or soldier_index >= _simulation.active_soldier_count:
 			continue
 		var is_visible: bool = view_camera == null or _is_world_position_visible(
-			view_camera, _simulation.get_soldier_world_position(soldier_index), aspect, half_width, half_height, 2.0
+			view_camera, global_transform * _simulation.get_soldier_world_position(soldier_index),
+			aspect, half_width, half_height, _formation_world_culling_radius(2.0)
 		)
 		if is_visible:
 			visible_external_near_count += 1
@@ -706,6 +770,227 @@ func _teardown_formation_batches() -> void:
 	_formation_batches.clear()
 	formation_batch_node_count = 0
 
+func _build_gpu_batches() -> bool:
+	if _simulation == null or not is_inside_tree():
+		gpu_fallback_reason = "GPU backend needs an initialized renderer in a World3D"
+		return false
+	_gpu_writer = CrowdGpuFormationWriterType.new()
+	if not _gpu_writer.start():
+		gpu_fallback_reason = String(_gpu_writer.status().get("error", "GPU writer initialization failed"))
+		_teardown_gpu_batches()
+		return false
+	var mid_meshes: Array[Mesh] = registry.mid_meshes()
+	var bounds := AABB(Vector3(-512.0, -8.0, -512.0), Vector3(1024.0, 32.0, 1024.0))
+	for formation_id: int in range(BattleCrowdSimulationType.FORMATION_COUNT):
+		var archetype_id: int = posmod(formation_id, ARCHETYPE_COUNT)
+		if not _gpu_writer.create_batch(
+			formation_id, get_world_3d().scenario, global_transform,
+			mid_meshes[archetype_id], _formation_mid_materials[archetype_id],
+			BattleCrowdSimulationType.SOLDIERS_PER_FORMATION, bounds
+		):
+			gpu_fallback_reason = String(_gpu_writer.status().get("error", "GPU batch allocation failed"))
+			_teardown_gpu_batches()
+			return false
+	_gpu_lod_cache.resize(BattleCrowdSimulationType.FORMATION_COUNT)
+	_gpu_lod_cache.fill(-1)
+	_gpu_visible_cache.resize(BattleCrowdSimulationType.FORMATION_COUNT)
+	_gpu_visible_cache.fill(255)
+	_gpu_proxy_counts.resize(BattleCrowdSimulationType.FORMATION_COUNT)
+	_gpu_proxy_counts.fill(0)
+	_gpu_active_flags.resize(_simulation.soldier_id.size())
+	_gpu_active_flags.fill(0)
+	_gpu_pending_events.clear()
+	_gpu_descriptor_initialized = false
+	_gpu_world_transform_cache = Transform3D.IDENTITY
+	_gpu_scenario_cache = get_world_3d().scenario
+	gpu_fallback_reason = ""
+	return true
+
+func _teardown_gpu_batches() -> void:
+	if _gpu_writer != null:
+		_gpu_writer.dispose()
+		_gpu_writer = null
+	_gpu_pending_events.clear()
+	_gpu_descriptor_initialized = false
+	_gpu_lod_cache = PackedInt32Array()
+	_gpu_visible_cache = PackedByteArray()
+	_gpu_proxy_counts = PackedInt32Array()
+	_gpu_active_flags = PackedByteArray()
+	_gpu_scenario_cache = RID()
+
+func _exit_tree() -> void:
+	_teardown_gpu_batches()
+
+func _gpu_event_for_soldier(soldier_index: int) -> Dictionary:
+	return {
+		"key": _simulation.soldier_formation_id[soldier_index],
+		"slot": _simulation.soldier_slot_index[soldier_index],
+		"phase": _simulation.soldier_animation_phase[soldier_index],
+		"state": _simulation.soldier_animation_state[soldier_index],
+		"active": _gpu_active_flags[soldier_index] != 0,
+		"variant": _packed_variant_id(soldier_index),
+	}
+
+func _sync_gpu_formation_output(view_camera: Camera3D, started_usec: int) -> void:
+	if _gpu_writer == null:
+		gpu_fallback_reason = "GPU writer was disposed"
+		set_render_path(RenderPath.FORMATION_PARENT_TRANSFORM)
+		_sync_formation_parent_transform(view_camera, started_usec)
+		return
+	var writer_status: Dictionary = _gpu_writer.status()
+	var writer_error: String = String(writer_status.get("error", ""))
+	if not writer_error.is_empty():
+		gpu_fallback_reason = writer_error
+		set_render_path(RenderPath.FORMATION_PARENT_TRANSFORM)
+		_sync_formation_parent_transform(view_camera, started_usec)
+		return
+	if not bool(writer_status.get("ready", false)) or int(writer_status.get("ready_batches", 0)) != int(writer_status.get("batch_count", 0)):
+		_sync_formation_parent_transform(view_camera, started_usec)
+		return
+	var current_scenario: RID = get_world_3d().scenario
+	if current_scenario != _gpu_scenario_cache:
+		for formation_id: int in range(BattleCrowdSimulationType.FORMATION_COUNT):
+			_gpu_writer.set_batch_scenario(formation_id, current_scenario)
+		_gpu_scenario_cache = current_scenario
+	if int(writer_status.get("completed_frames", 0)) > 0 and not _formation_batches.is_empty():
+		_teardown_formation_batches()
+	visible_external_near_count = 0
+	visible_soldier_count = 0
+	if _last_material_mode != int(_simulation.mode):
+		_apply_material_mode()
+		_last_material_mode = int(_simulation.mode)
+	if _near_actor_budget > 0:
+		_resolve_near_candidates(view_camera)
+		near_actor_pool.update_near_soldiers(_near_soldier_ids, _near_count, _simulation)
+	near_actor_count = _near_count
+	last_near_actor_cpu_ms = near_actor_pool.last_update_cpu_ms
+	var loop_started_usec: int = Time.get_ticks_usec()
+	var events: Array[Dictionary] = _gpu_pending_events
+	_gpu_pending_events = []
+	if not _gpu_descriptor_initialized:
+		_gpu_proxy_counts.fill(0)
+		for soldier_index: int in range(_simulation.soldier_id.size()):
+			var active: int = 1 if _is_formation_soldier_render_active(soldier_index) else 0
+			_gpu_active_flags[soldier_index] = active
+			if active != 0:
+				_gpu_proxy_counts[_simulation.soldier_formation_id[soldier_index]] += 1
+			events.append(_gpu_event_for_soldier(soldier_index))
+		_gpu_descriptor_initialized = true
+	else:
+		for event_index: int in range(_simulation.animation_dirty_count):
+			var soldier_index: int = _simulation.soldier_animation_dirty_ids[event_index]
+			if soldier_index >= 0 and soldier_index < _simulation.active_soldier_count:
+				events.append(_gpu_event_for_soldier(soldier_index))
+	var commands: Array[Dictionary] = []
+	var viewport_size: Vector2 = view_camera.get_viewport().get_visible_rect().size if view_camera != null else Vector2(1600.0, 900.0)
+	var aspect: float = maxf(viewport_size.x / maxf(viewport_size.y, 1.0), 0.1)
+	var half_height: float = view_camera.size * 0.5 if view_camera != null else 210.0
+	var half_width: float = half_height * aspect
+	var mid_meshes: Array[Mesh] = registry.mid_meshes()
+	var far_meshes: Array[Mesh] = registry.far_meshes()
+	var world_transform_changed: bool = global_transform != _gpu_world_transform_cache
+	var total_proxy: int = 0
+	var visible_proxy: int = 0
+	var visible_formations: int = 0
+	mid_soldier_count = 0
+	far_soldier_count = 0
+	placeholder_soldier_count = 0
+	for formation_id: int in range(BattleCrowdSimulationType.FORMATION_COUNT):
+		var formation: CrowdFormationState = _simulation.formations[formation_id]
+		var active: bool = formation_id < _simulation.active_formation_count and formation.active
+		# Formation coordinates are local to CrowdRenderer3D, as in the parent-node path.
+		var local_center: Vector3 = formation.center_position
+		var local_basis: Basis = Basis(Vector3.UP, formation.facing)
+		var radius: float = Vector2(formation.formation_width, formation.formation_depth).length() * 0.5 + formation.spacing
+		if active:
+			commands.append({
+				"key": formation_id, "center": local_center,
+				"facing": formation.facing, "right": local_basis.x, "forward": local_basis.z,
+				"spacing": formation.spacing,
+				"columns": BattleCrowdSimulationType.SLOT_COLUMNS,
+				"rows": BattleCrowdSimulationType.SLOT_ROWS,
+				"span": BattleCrowdSimulationType.SOLDIERS_PER_FORMATION,
+				"bounds": AABB(local_center - Vector3(radius, 1.0, radius), Vector3(radius * 2.0, 5.0, radius * 2.0)),
+			})
+		var world_center: Vector3 = global_transform * local_center
+		var visible: bool = active and (view_camera == null or _is_world_position_visible(
+			view_camera, world_center, aspect, half_width, half_height,
+			_formation_world_culling_radius(radius)
+		))
+		var lod: int = _formation_lod_for(world_center, view_camera)
+		var archetype_id: int = posmod(formation_id, ARCHETYPE_COUNT)
+		var mesh: Mesh = mid_meshes[archetype_id]
+		var material: Material = _formation_mid_materials[archetype_id]
+		if lod == RenderLod.FAR:
+			mesh = far_meshes[archetype_id]
+			material = _formation_far_materials[archetype_id]
+		elif lod == RenderLod.PLACEHOLDER:
+			mesh = registry.placeholder_mesh
+			material = _formation_placeholder_material
+		var visible_byte: int = 1 if visible else 0
+		if _gpu_lod_cache[formation_id] != lod or _gpu_visible_cache[formation_id] != visible_byte or world_transform_changed:
+			_gpu_writer.set_batch_visual(formation_id, mesh, material, visible, global_transform)
+		_gpu_lod_cache[formation_id] = lod
+		_gpu_visible_cache[formation_id] = visible_byte
+		if not active:
+			continue
+		var proxy_count: int = _gpu_proxy_counts[formation_id]
+		total_proxy += proxy_count
+		if lod == RenderLod.FAR:
+			far_soldier_count += proxy_count
+		elif lod == RenderLod.PLACEHOLDER:
+			placeholder_soldier_count += proxy_count
+		else:
+			mid_soldier_count += proxy_count
+		if visible:
+			visible_formations += 1
+			visible_proxy += proxy_count
+	var handoff_instances: Array[RID] = []
+	if not _formation_batches.is_empty():
+		for batch: FormationRenderBatch in _formation_batches:
+			handoff_instances.append(batch.get_instance())
+	_gpu_writer.submit_frame(commands, events, handoff_instances)
+	_gpu_world_transform_cache = global_transform
+	gpu_submitted_dispatch_count = commands.size()
+	formation_batch_node_count = 0
+	visible_formation_count = visible_formations
+	visible_chunk_count = visible_formations
+	visible_crowd_instance_count = visible_proxy
+	visible_soldier_count = visible_proxy
+	multimesh_group_count = _simulation.active_formation_count
+	multimesh_instance_count = total_proxy
+	last_updated_chunk_count = commands.size()
+	last_formation_transform_updates = commands.size()
+	last_updated_custom_instances = events.size()
+	last_formation_custom_data_updates = events.size()
+	last_updated_transform_instances = 0
+	last_instance_transform_updates = 0
+	last_instance_transform_constructions = 0
+	last_instance_basis_constructions = 0
+	last_formation_local_slot_rebuilds = 0
+	last_formation_slot_transform_writes = 0
+	last_formation_structural_changes = 0
+	last_dirty_chunk_count = commands.size()
+	last_dirty_visible_chunk_count = visible_formations
+	last_transform_dirty_instances = 0
+	last_animation_dirty_instances = events.size()
+	last_visual_dirty_instances = 0
+	last_structural_change_count = 0
+	last_chunk_migration_count = 0
+	last_multimesh_upload_calls = 0
+	last_transform_upload_calls = 0
+	last_custom_upload_calls = 0
+	last_bulk_upload_calls = 0
+	last_instances_uploaded = 0
+	last_bytes_uploaded = 0
+	last_transform_preparation_cpu_ms = 0.0
+	last_custom_preparation_cpu_ms = float(Time.get_ticks_usec() - loop_started_usec) / 1000.0
+	last_formation_transform_cpu_ms = last_custom_preparation_cpu_ms
+	last_multimesh_upload_cpu_ms = 0.0
+	last_gdscript_crowd_loop_cpu_ms = last_custom_preparation_cpu_ms
+	_update_formation_near_visibility(view_camera, visible_proxy)
+	last_update_cpu_ms = float(Time.get_ticks_usec() - started_usec) / 1000.0
+
 func _update_formation_dirty() -> void:
 	last_formation_dirty_count = 0
 	for formation_id: int in range(BattleCrowdSimulationType.FORMATION_COUNT):
@@ -739,24 +1024,30 @@ func _resolve_near_candidates(view_camera: Camera3D) -> bool:
 	_near_count = 0
 	if can_promote:
 		var near_distance_squared: float = lod_interface.near_distance * lod_interface.near_distance
+		var parent_basis: Basis = global_transform.basis
+		var camera_local: Vector3 = global_transform.affine_inverse() * view_camera.global_position
+		var conformal_parent: bool = parent_basis.is_conformal()
+		var uniform_scale_squared: float = parent_basis.x.length_squared()
+		var selected_distances: Array[float] = []
+		selected_distances.resize(_near_actor_budget)
 		for soldier_index: int in range(active_count):
-			var distance_squared: float = view_camera.global_position.distance_squared_to(
-				_simulation.soldier_world_positions[soldier_index]
+			var local_delta: Vector3 = _simulation.soldier_world_positions[soldier_index] - camera_local
+			var distance_squared: float = (
+				local_delta.length_squared() * uniform_scale_squared if conformal_parent
+				else (parent_basis * local_delta).length_squared()
 			)
 			if distance_squared > near_distance_squared:
 				continue
 			if _near_count < _near_actor_budget:
 				_near_soldier_ids[_near_count] = soldier_index
 				_near_flags[soldier_index] = 1
+				selected_distances[_near_count] = distance_squared
 				_near_count += 1
 				continue
 			var farthest_slot: int = 0
 			var farthest_distance_squared: float = -1.0
 			for candidate_slot: int in range(_near_count):
-				var candidate_id: int = _near_soldier_ids[candidate_slot]
-				var candidate_distance_squared: float = view_camera.global_position.distance_squared_to(
-					_simulation.soldier_world_positions[candidate_id]
-				)
+				var candidate_distance_squared: float = selected_distances[candidate_slot]
 				if candidate_distance_squared > farthest_distance_squared:
 					farthest_distance_squared = candidate_distance_squared
 					farthest_slot = candidate_slot
@@ -764,6 +1055,7 @@ func _resolve_near_candidates(view_camera: Camera3D) -> bool:
 				_near_flags[_near_soldier_ids[farthest_slot]] = 0
 				_near_soldier_ids[farthest_slot] = soldier_index
 				_near_flags[soldier_index] = 1
+				selected_distances[farthest_slot] = distance_squared
 	for index: int in range(active_count):
 		if _near_flags[index] != _previous_near_flags[index]:
 			_previous_near_flags[index] = _near_flags[index]
@@ -1021,12 +1313,12 @@ func _recompute_multimesh_counts() -> void:
 		multimesh_instance_count += group_indices.size()
 
 func _render_lod_for(soldier_index: int, view_camera: Camera3D) -> int:
+	if _external_near_flags[soldier_index] != 0:
+		return RenderLod.NEAR
 	if _simulation.mode == BattleCrowdSimulationType.BenchmarkMode.PLACEHOLDER:
 		return RenderLod.PLACEHOLDER
 	if _simulation.mode != BattleCrowdSimulationType.BenchmarkMode.HUMANOID_LOD:
 		return RenderLod.MID
-	if _external_near_flags[soldier_index] != 0:
-		return RenderLod.NEAR
 	if _near_flags[soldier_index] != 0:
 		return RenderLod.NEAR
 	if view_camera == null:

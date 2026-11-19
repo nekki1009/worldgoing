@@ -34,8 +34,9 @@ func setup(target_controller: CrowdPromotionBenchmarkController) -> void:
 	box.add_child(controls)
 	var path_controls := HBoxContainer.new()
 	for path: Dictionary in [
-		{"label": "Current per-instance", "path": 0},
-		{"label": "Formation parent", "path": 1}
+		{"label": "CPU instances", "path": 0},
+		{"label": "Formation parent", "path": 1},
+		{"label": "GPU output", "path": 2}
 	]:
 		var path_button := Button.new()
 		path_button.text = path.label

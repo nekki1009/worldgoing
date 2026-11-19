@@ -1,0 +1,25 @@
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -11141,7 +11141,7 @@
+ 		"prefix_steps": int(_region_cold_isolated.prefix_steps), "exact_steps": int(_region_cold_isolated.exact_steps),
+ 		"prefix_game_seconds": float(_region_cold_isolated.prefix_game_seconds), "prefix_action_seconds": float(_region_cold_isolated.prefix_action_seconds),
+ 		"fallback": str(_region_cold_isolated.fallback), "source_sha256": str(_region_cold_isolated.source_sha256),
+-		"owner_generation": int(_region_cold_isolated.owner_generation), "progress": progress, "data": terrain,
++		"owner_generation": int(_region_cold_isolated.owner_generation), "progress": progress, "data": replay.data if complete and replay.get("data") is TerrainData else terrain,
+ 		"interval_complete": complete, "effects_complete": complete, "published": false})
+ 
+ ## This is called only by the existing parent's retained _cold_replay_lab.
+--- a/scripts/region_lab/region_travel_site.gd
++++ b/scripts/region_lab/region_travel_site.gd
+@@ -173,6 +173,11 @@
+ 	if not receipt.get("complete", false) or str(receipt.get("owner", "")) != str(data.site.id) \
+ 			or int(receipt.get("generation", -1)) != int(committed.generation):
+ 		return Runtime.fail("BIND_FAILED_AFTER_COMMIT", "旅隊已提交抵達，原人物／物品／租約尚未完整綁定；請從主選單繼續重試")
++	# attach_active_site marks the attached Site committed-unbound until its bind
++	# is acknowledged; the arrival bind completed before the attach, so the main
++	# lab re-acknowledges the same complete receipt (live, this generation).
++	var live: Dictionary = candidate.acknowledge_region_bind(data, receipt)
++	if not live.ok: return live
+ 	controller._region_manifest_path = manifest_path
+ 	controller._auto_save_blocked = false
+ 	controller.save_path = candidate.site_path(destination)

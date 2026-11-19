@@ -1,0 +1,82 @@
+diff --git a/scripts/terrain_lab/site_controller.gd b/scripts/terrain_lab/site_controller.gd
+index f39b5bd..b3020ec 100644
+--- a/scripts/terrain_lab/site_controller.gd
++++ b/scripts/terrain_lab/site_controller.gd
+@@ -562,7 +562,8 @@ func _build_ui() -> void:
+ 		_formal_columns[id] = built.column
+ 		_button(launcher.column, str(titles[id]), "OpenSite_" + id, func() -> void: open_window(id))
+ 	_button(launcher.column, "台灣地圖", "OpenRegionMap", _open_region_map)
+-	_button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.depart(self)))
++	_button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
++	_resume_region_party_map_button = _button(launcher.column, "原旅隊繼續地圖旅行", "ResumeOriginalPartyMap", _resume_region_party_map)
+ 	_button(launcher.column, "回主選單", "ReturnMainMenu", func() -> void: _request_exit(RegionEntry.MAIN_MENU))
+ 	var column: VBoxContainer = _formal_columns.map
+ 	_button(column, "地點／區域／世界的已保存建設", "OpenRegionBuildingSummary", _open_region_building_summary)
+@@ -658,6 +659,8 @@ func _build_ui() -> void:
+ 	_build_ladder_actions(column)
+ 	_siege_construction_form = {"trial": false}
+ 	_build_siege_construction_controls(column, _siege_construction_form)
++	_install_settlement_engineering_controls(column)
++	_install_irrigation_controls(column)
+ 	if lab.exchange_enabled:
+ 		_button(column, "營地旁：製作弓弩／彈藥", "RangedCrafting", _open_ranged_crafting)
+ 	column = _formal_columns.equipment
+@@ -668,6 +671,7 @@ func _build_ui() -> void:
+ 	if lab.exchange_enabled:
+ 		_button(column, "營地領取實物／彈藥", "TakeDepotItems", func() -> void: _open_person_inventory(true))
+ 	_button(column, "軍事首長：設定未來領裝標準", "EquipmentStandards", _open_equipment_standards)
++	_button(column, "國家制度／具名公務", "NationOperations", _open_nation_operations)
+ 	column = _formal_columns.people
+ 	_button(column, "查看所選格人物／遺留物", "InspectLoot", _open_person_inventory)
+ 	_button(column, "攻擊所選目標", "AttackSelectedPerson", lab.attack_selected_soldier)
+@@ -2653,6 +2657,7 @@ func finish_tick() -> void:
+ 	var data: TerrainData = lab.terrain
+ 	if data == null or data.site.is_empty() or bool(data.site.paused):
+ 		return
++	if _finish_region_departure(): return
+ 	if _save_elapsed >= 30 and float(data.site.combat_left) <= 0 and not _auto_save_blocked:
+ 		var result := save_to(save_path)
+ 		# A due save waits for the original pending death/capture handoff. It must
+@@ -3040,10 +3045,14 @@ func _confirm_unsaved_exit(reason: String, next_scene: String = "") -> void:
+ func update_ui(refresh_combat_window: bool = true) -> void:
+ 	if lab.restore_only: return
+ 	_update_region_travel_status()
++	_update_region_party_map_resume_button()
+ 	if _ui_control_id != lab.controlled_person_id(): invalidate_ui_context()
+ 	if lab.terrain == null or details == null:
+ 		return
+ 	if formal_windows.has("family") and formal_windows.family.visible: _tech_window.refresh()
++	if formal_windows.has("construction") and formal_windows.construction.visible:
++		_refresh_settlement_engineering_controls()
++		_refresh_irrigation_controls()
+ 	fps_label.text = "FPS %d" % Engine.get_frames_per_second()
+ 	message.tooltip_text = message.text
+ 	if _equipment_sync.is_valid() and is_instance_valid(_equipment_dialog) and _equipment_dialog.visible:
+diff --git a/scripts/terrain_lab/terrain_lab.gd b/scripts/terrain_lab/terrain_lab.gd
+index 24a02ff..2ae6258 100644
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -1083,6 +1083,7 @@ func _release_movement_input_actor() -> void:
+ func _advance_movement_input() -> void:
+ 	# The original body owns its committed step. Input is sampled once per shared
+ 	# action tick, never once per rendered frame or with a second move cooldown.
++	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return
+ 	if not movement_input_enabled:
+ 		_clear_movement_input()
+ 		if crowd_site != null and crowd_site.active:
+@@ -1139,6 +1140,7 @@ func controlled_member_index(team: TerrainArmy) -> int:
+ 	return -1
+ 
+ func controlled_attack(target_id: int) -> bool:
++	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return false
+ 	if _region_operation_pending(): return false
+ 	if _ship_person_in_journey(controlled_person_id()): return false
+ 	if site_controller != null and site_controller.person_actions.intercept_housing_input(controlled_person_id()): return false
+@@ -1197,6 +1199,7 @@ func _report_move(moved: bool) -> void:
+ 		show_status("Blocked: water, cliff edge or map boundary. Use a marked ramp.")
+ 
+ func _try_move(direction: Vector2i) -> void:
++	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return
+ 	if _region_operation_pending(): return
+ 	if _ship_person_in_journey(controlled_person_id()): return
+ 	if site_controller != null and (site_controller.ground_crossing_blocks_input() or site_controller.region_operation_pending()): return

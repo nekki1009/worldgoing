@@ -1,0 +1,282 @@
+--- a/scripts/terrain_lab/site_controller.gd
++++ b/scripts/terrain_lab/site_controller.gd
+@@ -2884,9 +2884,12 @@
+ 
+ func _load_compatible_site(path: String) -> Dictionary:
+ 	var slot_path := region_slot.folder.replace("\\", "/").trim_suffix("/") + "/" if region_slot != null else ""
+-	var result: Dictionary = region_slot.load_compatible_site(path) if not slot_path.is_empty() and path.replace("\\", "/").begins_with(slot_path) else Store.load_site(path, Callable(), clampi(OS.get_processor_count(), 1, 8))
++	var selected_slot_path := not slot_path.is_empty() and path.replace("\\", "/").begins_with(slot_path)
++	var result: Dictionary = region_slot.load_compatible_site(path) if selected_slot_path else Store.load_site(path, Callable(), clampi(OS.get_processor_count(), 1, 8))
+ 	if result.ok:
+-		var guard: Dictionary = lab.exchange_snapshot_guard(result.data)
++		var selected_restore: bool = result.data.site.has("region_snapshot")
++		if selected_restore and not selected_slot_path: return Runtime.fail("INVALID_SELECTED_REGION_RESTORE", "原完整快照只由目前存檔槽選定檔恢復")
++		var guard: Dictionary = Store.validate_region_snapshot(result.data, {}) if selected_restore else lab.exchange_snapshot_guard(result.data)
+ 		if not guard.ok: return guard
+ 	return result
+ 
+@@ -2906,32 +2909,45 @@
+ 	if lab.terrain != null and float(lab.terrain.site.combat_left) > 0:
+ 		return _load_failure(Runtime.fail("BUSY", "脫戰後才能載入"))
+ 	var result := _load_compatible_site(path)
+-	if result.ok and not is_instance_valid(lab.npc):
++	var selected_restore: bool = result.ok and result.data.site.has("region_snapshot")
++	if result.ok and not selected_restore and not is_instance_valid(lab.npc):
+ 		var retired := Store.retire_default_worker(result.data)
+ 		if not retired.ok: result = retired
+ 	if not result.ok: return _load_failure(result)
+ 	var work_guard := _siege_work_saved_guard(result.data)
+ 	if not work_guard.ok: return _load_failure(work_guard)
+-	var prepared: Dictionary = lab.prepare_crowd_load(result.data, result.get("crowd_native"))
++	var prepared: Dictionary = lab.prepare_selected_region_owner_restore(result.data, region_slot) if selected_restore else lab.prepare_crowd_load(result.data, result.get("crowd_native"))
+ 	# Only the staged CrowdSite keeps the accepted candidate. Do not expose a
+ 	# second native owner through the public load result after this transaction.
+ 	result.erase("crowd_native")
+ 	if not prepared.ok: return _load_failure(prepared)
++	var selected_generation := int(region_slot._marker.generation) if selected_restore else -1
++	if selected_restore: result["data"] = prepared.data # Canonical readback and its private ticket stay together.
+ 	var transport_guard: Dictionary = lab.fire_transport_bind_guard(result.data,
+ 		is_instance_valid(prepared.get("crowd_site")) or lab.crowd_startup_requested)
+ 	if not transport_guard.ok:
+ 		if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
++		if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
+ 		return _load_failure(transport_guard)
+-	if path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():
++	# A selected reload keeps this exact published generation; ordinary replacement still archives.
++	if not selected_restore and path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():
+ 		var archive := save_to(_archive_path())
+ 		if not archive.ok:
+ 			if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
+ 			return _load_failure(archive)
++	if selected_restore:
++		var admission: Dictionary = lab._region_bind_ticket_admission(result.data, prepared)
++		if not admission.ok:
++			lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
++			return _load_failure(admission)
+ 	_cancel_facing_move()
+ 	_clear_formation_candidate()
+ 	lab.bind_terrain(result.data, prepared)
+-	if not lab.region_bind_receipt(result.data).get("complete", false):
++	var bound: Dictionary = lab.region_bind_receipt(result.data)
++	if not bound.get("complete", false) or selected_restore and (int(bound.get("generation", -1)) != selected_generation
++			or str(bound.get("owner", "")) != str(region_slot.control.active_site_id) or str(bound.get("mode", "")) != "live"):
+ 		if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
++		if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
+ 		return _load_failure(Runtime.fail("INVALID_CROWD", "載入未提交；保留目前場景"))
+ 	_auto_save_blocked = false
+ 	return result
+@@ -9119,7 +9135,7 @@
+ 
+ 
+ func ship_journey_active() -> bool:
+-	return not _ship_journey.is_empty() or region_operation_pending()
++	return not _ship_journey.is_empty() or region_operation_pending() or vehicles != null and lab != null and lab.terrain != null and not vehicles._region_original_ship_drive(lab.terrain) and not vehicles._region_ship_frames(lab.terrain).is_empty()
+ 
+ func region_operation_pending() -> bool:
+ 	return not _region_pending.is_empty()
+@@ -9156,10 +9172,10 @@
+ 
+ 
+ func ship_vehicle_in_journey(identity: String) -> bool:
+-	return not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
++	return vehicles != null and vehicles.has_region_ship_projection(identity) or not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
+ 
+ func ship_person_in_journey(identity: int) -> bool:
+-	if _ship_journey.is_empty(): return false
++	if _ship_journey.is_empty() and vehicles._region_ship_frames(lab.terrain).is_empty(): return false
+ 	for original: TerrainArmy in lab.combat_armies:
+ 		var index := original.index_for_identity(identity)
+ 		if index >= 0 and index < original.combat_units.size():
+--- a/scripts/terrain_lab/site_vehicle_transport.gd
++++ b/scripts/terrain_lab/site_vehicle_transport.gd
+@@ -874,6 +874,7 @@
+ 	return blocks_cell(cell)
+ 
+ func _claims(vehicle: Dictionary) -> Dictionary:
++	if is_ship(vehicle) and has_region_ship_projection(str(vehicle.get("id", ""))): return region_ship_claims(vehicle)
+ 	var result := {}
+ 	if is_ship(vehicle) and _ship_in_journey(str(vehicle.id)): return controller.ship_journey_claims(vehicle)
+ 	for cell: Vector2i in footprint(lab.terrain, vehicle): result[cell] = true
+@@ -1675,7 +1676,7 @@
+ 
+ func ship_person_ground(identity: int) -> Vector2:
+ 	var vehicle := ship_for_person(identity)
+-	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)): return Vector2(-1.0, -1.0)
++	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)): return Vector2(-1.0, -1.0)
+ 	var job: Dictionary = controller.person_actions.job_for(identity)
+ 	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
+ 		return (_ship_job_point(job) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+@@ -1683,13 +1684,14 @@
+ 
+ func ship_person_cell(identity: int) -> Vector2i:
+ 	var point := ship_person_ground(identity)
+-	if point.x < 0.0 or point.y < 0.0: return TerrainArmy.INVALID_CELL
++	var boat := ship_for_person(identity)
++	if (point.x < 0.0 or point.y < 0.0) and not has_region_ship_projection(str(boat.get("id", ""))): return TerrainArmy.INVALID_CELL
+ 	return Vector2i((point / TerrainRenderer.CELL_PIXELS).floor())
+ 
+ func ship_loot_ground(container: Dictionary) -> Vector2:
+ 	var vehicle: Dictionary = records().get(str(container.get("vehicle_id", "")), {})
+ 	var local: Array = container.get("local_position", [])
+-	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
++	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
+ 	return ship_local_ground(vehicle, Vector2(float(local[0]), float(local[1])))
+ 
+ func ship_load(vehicle_id: String) -> float:
+--- a/scripts/terrain_lab/site_vehicle_view.gd
++++ b/scripts/terrain_lab/site_vehicle_view.gd
+@@ -171,7 +171,7 @@
+ 			if _ship_loot_nodes.has(identity): _ship_loot_nodes[identity].visible = false
+ 			continue
+ 		var point: Vector2 = lab.site_controller.vehicles.ship_loot_ground(container)
+-		if point.x < 0.0:
++		if point.x < 0.0 and not lab.site_controller.vehicles.has_region_ship_projection(str(boat.get("id", ""))):
+ 			if _ship_loot_nodes.has(identity): _ship_loot_nodes[identity].visible = false
+ 			continue
+ 		var node: Node2D = _ship_loot_nodes.get(identity)
+@@ -687,7 +687,7 @@
+ 	return result
+ 
+ func _ship_in_journey(identity: String) -> bool:
+-	return lab != null and lab.site_controller != null and lab.site_controller.has_method("ship_vehicle_in_journey") and bool(lab.site_controller.call("ship_vehicle_in_journey", identity))
++	return lab != null and lab.site_controller != null and lab.site_controller.has_method("ship_vehicle_in_journey") and bool(lab.site_controller.call("ship_vehicle_in_journey", identity)) and not lab.site_controller.vehicles.has_region_ship_projection(identity)
+ 
+ func _ship_pose_rectangle(kind: String, pose: Dictionary) -> Rect2:
+ 	var spec: Dictionary = Ship.definition(kind)
+--- a/scripts/terrain_lab/terrain_army.gd
++++ b/scripts/terrain_lab/terrain_army.gd
+@@ -537,6 +537,7 @@
+ 
+ func _hide_journey_person(index: int) -> bool:
+ 	if not _ship_in_journey(index): return false
++	if vehicle_transport != null and vehicle_transport.has_region_ship_projection(_ship_vehicle_id(index)): return false
+ 	if _batch_view != null: _batch_view.remove(index)
+ 	if index >= 0 and index < _sprites.size() and _sprites[index] != null: _sprites[index].visible = false
+ 	return true
+--- a/scripts/region_lab/region_save_slot.gd
++++ b/scripts/region_lab/region_save_slot.gd
+@@ -54,7 +54,7 @@
+ 	if prepare_new and not _initial_context_ok(initial_context): return fail("INVALID_INITIAL_SCENARIO")
+ 	if map_data == null or map_data.manifest.is_empty(): return fail("MISSING_BASE", "尚未載入固定地圖")
+ 	if not _safe_part(world_instance_id) or not _safe_part(slot_id): return fail("INVALID_SLOT")
+-	var empty_policy := TechnologyPolicy.new_policy([])
++	var empty_policy := TechnologyPolicy.new_policy(_initial_technology_categories())
+ 	if not empty_policy.ok: return empty_policy
+ 	var expected := {"format": 2, "world_instance_id": world_instance_id, "slot_id": slot_id,
+ 		"technology_policy": empty_policy.policy, "atlas_id": str(map_data.manifest.atlas_id),
+@@ -96,13 +96,13 @@
+ 		if not pending_read.ok: return pending_read
+ 		if not _initial_pending_ok(pending_read.payload, expected): return fail("INITIAL_PIN_CONFLICT")
+ 		pending_record = pending_read.payload
+-		if prepare_new and (pending_record.starting_site != initial_context.starting_site or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
++		if prepare_new and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
+ 	elif not manifest_exists:
+ 		# A valid same-pin pending write can be completed after a rename crash.
+ 		if FileAccess.file_exists(pending_path + ".tmp"):
+ 			var pending_read := _read_document(pending_path + ".tmp", 16384)
+ 			if pending_read.ok and _initial_pending_ok(pending_read.get("payload"), expected):
+-				if prepare_new and (pending_read.payload.starting_site != initial_context.starting_site or pending_read.payload.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
++				if prepare_new and (not _initial_site_same(pending_read.payload.starting_site, initial_context.starting_site) or pending_read.payload.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+ 				if DirAccess.rename_absolute(ProjectSettings.globalize_path(pending_path + ".tmp"), ProjectSettings.globalize_path(pending_path)) != OK: return fail("SAVE_IO")
+ 				pending_record = pending_read.payload
+ 			elif folder == location and _initial_pending_ok(_initialization, expected):
+@@ -134,7 +134,7 @@
+ 			pending_record = _initialization.duplicate(true)
+ 		if pending_record.is_empty() and prepare_new and not recover_first_marker:
+ 			pending_record = {"version": 1, "pin": expected.duplicate(true), "starting_site": initial_context.starting_site.duplicate(), "initial_scenario_id": str(initial_context.initial_scenario_id)}
+-	if prepare_new and not pending_record.is_empty() and (pending_record.starting_site != initial_context.starting_site or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
++	if prepare_new and not pending_record.is_empty() and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+ 	source = map_data
+ 	pin = expected
+ 	folder = location
+@@ -147,7 +147,7 @@
+ 		var derived := _derive_initial_context()
+ 		if not derived.ok: return derived
+ 		_initialization = derived.context
+-		if prepare_new and (_initialization.starting_site != initial_context.starting_site or _initialization.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
++		if prepare_new and (not _initial_site_same(_initialization.starting_site, initial_context.starting_site) or _initialization.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+ 	if not _initialization.is_empty():
+ 		if not FileAccess.file_exists(pending_path):
+ 			var pending_written := _write_new_document(pending_path, _initialization)
+@@ -418,12 +418,17 @@
+ func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
+ 	var file := FileAccess.open(path, FileAccess.READ)
+ 	if file == null or file.get_length() > maximum: return fail("SAVE_IO", "存檔槽記錄無法讀取")
+-	var envelope: Variant = JSON.parse_string(file.get_as_text())
++	var envelope_parser := JSON.new()
++	var envelope_error := envelope_parser.parse(file.get_as_text())
+ 	file.close()
++	if envelope_error != OK: return fail("CORRUPT_SAVE", "存檔槽記錄格式損毀，原代保留")
++	var envelope: Variant = envelope_parser.data
+ 	if not envelope is Dictionary or envelope.size() != 2 or not envelope.get("payload") is String \
+ 			or not envelope.get("checksum") is String or str(envelope.payload).sha256_text() != str(envelope.checksum):
+ 		return fail("CORRUPT_SAVE", "存檔槽記錄校驗失敗，原代保留")
+-	var payload: Variant = JSON.parse_string(envelope.payload)
++	var payload_parser := JSON.new()
++	if payload_parser.parse(envelope.payload) != OK: return fail("CORRUPT_SAVE", "存檔槽記錄格式")
++	var payload: Variant = payload_parser.data
+ 	return {"ok": true, "payload": payload} if payload is Dictionary else fail("CORRUPT_SAVE", "存檔槽記錄格式")
+ 
+ func _write_new_document(path: String, payload: Dictionary) -> Dictionary:
+@@ -5101,6 +5106,13 @@
+ 
+ var _initial_candidate: Dictionary = {}
+ 
++static func _initial_site_same(left: Variant, right: Variant) -> bool:
++	if not left is Array or not right is Array or left.size() != 2 or right.size() != 2: return false
++	for index: int in 2:
++		if not _whole(left[index], -10000000, 10000000) or not _whole(right[index], -10000000, 10000000) or int(left[index]) != int(right[index]): return false
++	return true
++
++
+ static func _initial_context_ok(context: Variant) -> bool:
+ 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
+ 
+@@ -5110,7 +5122,7 @@
+ 
+ 
+ func _initial_complete_ok(record: Variant) -> bool:
+-	return record is Dictionary and record.size() == 5 and _whole(record.get("version"), 1, 1) and _whole(record.get("first_generation"), 1, 1) and _same_pin(record.get("pin"), pin) and record.get("starting_site") == _initialization.get("starting_site") and record.get("initial_scenario_id") == _initialization.get("initial_scenario_id")
++	return record is Dictionary and record.size() == 5 and _whole(record.get("version"), 1, 1) and _whole(record.get("first_generation"), 1, 1) and _same_pin(record.get("pin"), pin) and _initial_site_same(record.get("starting_site"), _initialization.get("starting_site")) and record.get("initial_scenario_id") == _initialization.get("initial_scenario_id")
+ 
+ 
+ func initialization_pending() -> bool:
+@@ -5153,7 +5165,8 @@
+ 	if scenario.is_empty():
+ 		if state.has("initial_scenario") or not state.get("armies", []).is_empty() or state.has("technology_artisans"): return fail("INVALID_INITIAL_POPULATION")
+ 	else:
+-		if state.get("initial_scenario", {}) != {"version": 1, "scenario_id": scenario, "world_id": str(pin.world_instance_id)}: return fail("INVALID_INITIAL_SCENARIO")
++		var receipt: Variant = state.get("initial_scenario")
++		if not receipt is Dictionary or receipt.size() != 3 or not _whole(receipt.get("version"), 1, 1) or receipt.get("scenario_id") != scenario or receipt.get("world_id") != str(pin.world_instance_id): return fail("INVALID_INITIAL_SCENARIO")
+ 		var teams := 1 if scenario == InitialArtisans.PRIMARY else 3
+ 		if state.get("armies", []).size() != teams: return fail("INVALID_INITIAL_POPULATION")
+ 		for roster: Dictionary in state.armies:
+@@ -5198,7 +5211,7 @@
+ 	if not initialization_pending() or not _marker.is_empty() or not _initial_candidate.is_empty(): return fail("INITIAL_ALREADY_PREPARED")
+ 	var coordinate := _coordinate(data)
+ 	if not coordinate.ok: return coordinate
+-	if [coordinate.site.x, coordinate.site.y] != _initialization.starting_site or str(data.site.get("world_pin", {}).get("world_instance_id", "")) != str(pin.world_instance_id): return fail("INITIAL_PIN_CONFLICT")
++	if not _initial_site_same([coordinate.site.x, coordinate.site.y], _initialization.starting_site) or str(data.site.get("world_pin", {}).get("world_instance_id", "")) != str(pin.world_instance_id): return fail("INITIAL_PIN_CONFLICT")
+ 	var scenario := str(_initialization.initial_scenario_id)
+ 	if not scenario.is_empty(): data.site.initial_scenario = {"version": 1, "scenario_id": scenario, "world_id": str(pin.world_instance_id)}
+ 	elif data.site.has("initial_scenario"): return fail("INVALID_INITIAL_SCENARIO")
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -691,7 +691,7 @@
+ 	for kind: String in ranged_results:
+ 		ranged_results[kind] = 0
+ 	for team: TerrainArmy in combat_armies:
+-		team.clear()
++		team.clear(str(region_admission.get("token", "")) if trusted_region else "")
+ 	if combat_movement_coordinator != null:
+ 		combat_movement_coordinator.reset_for_site_replacement()
+ 	_trim_empty_army_slots()
+@@ -818,7 +818,7 @@
+ 		"session": str(OS.get_process_id()) + ":" + str(get_instance_id()),
+ 		"parts": ["actors", "armies", "movement", "items", "supply", "controller", "fire_transport", "fire_owners", "region_owners"]}
+ 	terrain.set_meta(&"region_bind_receipt", Callable(self, "region_bind_receipt"))
+-	if not restore_only and site_controller.region_slot != null:
++	if not restore_only and site_controller.region_slot != null and not terrain.has_meta(&"region_party_owner"):
+ 		var activated: Dictionary = site_controller.region_slot.acknowledge_region_bind(terrain, region_bind_receipt(terrain))
+ 		if not activated.ok:
+ 			_region_bind_receipt_value = activated

@@ -29,6 +29,9 @@ func run() -> void:
 	army.roster_size = 3
 	var selected: Array[Vector2i] = [Vector2i(10, 10), Vector2i(12, 10), Vector2i(13, 10)]
 	assert(army.deploy_at(data, null, null, selected) and army.enable_combat(false, 0))
+	var prepared_source: RefCounted = TerrainArmy._contact_source
+	assert(prepared_source != null, "Original enable_combat prepares the shared male contact source before queries")
+	var prepared_sample_calls := int(prepared_source.query_profile.sample_calls)
 	for initial_row: Dictionary in army.combat_units:
 		initial_row.cargo = {"arrow": 0, "bolt": 2}
 		initial_row.appearance = TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
@@ -165,9 +168,13 @@ func run() -> void:
 	assert(army.projectiles.size() == count + int(supported))
 	if not supported:
 		assert("圖集" in str(ordinary.status))
-	assert(geometry_calls == 0 and TerrainArmy._contact_source == null)
+	assert(geometry_calls == 0, "Original ranged owner must not query legacy target geometry")
+	assert(is_same(TerrainArmy._contact_source, prepared_source), "Ranged operations must reuse the source prepared at admission")
+	assert(int(prepared_source.query_profile.sample_calls) == prepared_sample_calls,
+		"Original cell-ranged owner must not add exact geometry sampling after admission")
 	army.clear()
 	assert(army.projectiles.is_empty())
 	army.free()
-	print("SITE_RANGED_ARMY_PASS: original equipment and ammo alias/conservation, blocked/empty/changed weapon, authored bow/crossbow, frozen released shot, power/brace cooldown, rescue/movement hit guards, original KO/death, no geometry, explicit atlas admission")
+	TerrainArmy.release_contact_source()
+	print("SITE_RANGED_ARMY_PASS: original equipment and ammo alias/conservation, blocked/empty/changed weapon, authored bow/crossbow, frozen released shot, power/brace cooldown, rescue/movement hit guards, original KO/death, no additional geometry queries/sampling after shared-source admission, explicit atlas admission")
 	quit(0)

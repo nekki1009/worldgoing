@@ -1,12 +1,12 @@
 extends "res://scripts/tests/site_workflow_test.gd"
 
 func _run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Run the explicit NPC consent contract with --site-test-ui")
 	var lab := TerrainLab.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
 	lab.character.set_process(false)
-	lab.npc.set_process(false)
 	var data := _fixture()
 	lab.bind_terrain(data)
 	var controller: SiteController = lab.site_controller
@@ -16,7 +16,7 @@ func _run() -> void:
 	for y: int in range(5, 15):
 		for x: int in range(5, data.size.x - 5):
 			var cell := Vector2i(x, y)
-			if positions.size() < 100 and data.is_walkable(cell) and not lab.character.occupies_cell(cell) and not lab.npc.occupies_cell(cell):
+			if positions.size() < 100 and data.is_walkable(cell) and not lab.character.occupies_cell(cell):
 				positions.append(cell)
 	assert(positions.size() == 100, "Use original natural legal cells, not unsaved flattened terrain")
 	var source: TerrainArmy = lab.army
@@ -30,6 +30,7 @@ func _run() -> void:
 		originals[source.combat_identity(index)] = {"body": row, "cargo": row.cargo, "holder": row.item_state, "cell": source.cells[index]}
 	controller._open_roster()
 	var dialog := lab.get_node("SiteUI/RosterDialog") as AcceptDialog
+	assert(dialog.find_child("ReceiverCommanderConfirmation", true, false) == null, "Formal roster must not expose simulated receiving-commander consent")
 	var members := dialog.find_child("RosterMembers", true, false) as ItemList
 	assert(members.item_count == 100)
 	for index: int in range(1, 4):
@@ -57,6 +58,14 @@ func _run() -> void:
 	assert(members.item_count == 97)
 	(dialog.find_child("MergeRosterTeam", true, false) as Button).pressed.emit()
 	assert(source.combat_units.size() == 97 and target.combat_units.size() == 3, "No implicit receiving-commander authority")
+	assert(dialog.find_child("ReceiverCommanderConfirmation", true, false) == null)
+	dialog.free()
+	assert(lab.site_test_window != null)
+	controller._open_roster(true, lab.site_test_window)
+	dialog = lab.site_test_window.get_node("RosterDialog") as AcceptDialog
+	assert(dialog.visible and dialog.get_parent() == lab.site_test_window)
+	(dialog.find_child("MergeRosterTeam", true, false) as Button).pressed.emit()
+	assert(source.combat_units.size() == 97 and target.combat_units.size() == 3, "Developer entry still requires explicit receiving-commander consent")
 	(dialog.find_child("ReceiverCommanderConfirmation", true, false) as CheckButton).button_pressed = true
 	# Only the confirmation-identity race is injected here; actual command
 	# succession/death is covered by the original command contracts.

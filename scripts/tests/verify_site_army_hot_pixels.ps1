@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $ProjectPath).Path
-$evidenceRoot = Join-Path $project 'output/site_army_5k_hot_close_20260926'
+$evidenceRoot = Join-Path $project 'output/site_army_5k_tail_close_20260927/main_delivery_oracle'
 $pixelRoot = Join-Path $project 'output/site_army_scale_20260914'
 $runName = '{0}_{1}' -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss_fff'), $PID
 $runDir = Join-Path $evidenceRoot ('pixel_occlusion_runs/' + $runName)
@@ -58,7 +58,7 @@ $report = [ordered]@{
     pixel_result_sha256 = ''
     stdout_marker = $false
     asset_file_count = 0
-    run_dir = 'res://output/site_army_5k_hot_close_20260926/pixel_occlusion_runs/' + $runName
+    run_dir = 'res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/pixel_occlusion_runs/' + $runName
 }
 
 try {

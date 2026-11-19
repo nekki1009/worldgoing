@@ -1,0 +1,370 @@
+{
+	"admission": {
+		"admitted_count": 1,
+		"code": "",
+		"ok": true,
+		"optional_missing": [],
+		"required_failed": [],
+		"source_hash_calls": {
+			"bundle_fingerprints": 1,
+			"extra_sources": 2
+		},
+		"unique_count": 1
+	},
+	"baseline": true,
+	"cases": [],
+	"checks": 743,
+	"native_build": "b6acbfcbbc16e2da9f557634a45b06ede91796e45b1798c43c27932974b32c92",
+	"profile_contract": {
+		"actions": [
+			{
+				"duration": -1.0,
+				"id": "idle",
+				"loop": true,
+				"phase1": true,
+				"samples": 4
+			},
+			{
+				"duration": -1.0,
+				"id": "walk",
+				"loop": true,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "run",
+				"loop": true,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": 1.0,
+				"id": "civilian_carry",
+				"loop": true,
+				"phase1": false,
+				"samples": 8
+			},
+			{
+				"duration": 1.6,
+				"id": "civilian_lift",
+				"loop": false,
+				"phase1": false,
+				"reverse_reuse": true,
+				"samples": 12
+			},
+			{
+				"duration": 1.2,
+				"hold_last": true,
+				"id": "civilian_sit",
+				"loop": false,
+				"phase1": false,
+				"reverse_reuse": true,
+				"samples": 8
+			},
+			{
+				"duration": 2.4,
+				"id": "civilian_fetch_water",
+				"loop": false,
+				"phase1": false,
+				"samples": 12
+			},
+			{
+				"duration": -1.0,
+				"id": "hit",
+				"loop": false,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "knockback",
+				"loop": false,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "down",
+				"loop": false,
+				"phase1": true,
+				"samples": 12
+			},
+			{
+				"duration": -1.0,
+				"id": "unconscious",
+				"loop": true,
+				"phase1": true,
+				"samples": 4
+			},
+			{
+				"duration": -1.0,
+				"id": "get_up",
+				"loop": false,
+				"phase1": true,
+				"samples": 12
+			}
+		],
+		"catalog": [
+			{
+				"appearance": {
+					"body": 0,
+					"coat": "bay",
+					"equipment_dyes": {
+						"armor": "396fbbff",
+						"outfit": "d8dce3ff"
+					},
+					"hair_dye": "9b775dff",
+					"hair_dyed": false,
+					"hair_mask": "auto",
+					"mounted": false,
+					"parts": {
+						"armor": "outfit_medieval_chinese_01",
+						"boots": "boots_civilian_straw_01",
+						"cape": "none",
+						"face": "face_standard_01",
+						"hair": "hair_male_01",
+						"helmet": "none",
+						"outfit": "outfit_underlayer_01",
+						"shield": "none",
+						"weapon": "none"
+					},
+					"tack": true
+				},
+				"id": "CIV-M01",
+				"palette_preset": "blue",
+				"profile": "civilian_v1",
+				"publication": "UNPUBLISHED",
+				"required_new_parts": [
+					"boots_civilian_straw_01"
+				]
+			},
+			{
+				"appearance": {
+					"body": 0,
+					"coat": "bay",
+					"equipment_dyes": {
+						"armor": "825438ff",
+						"outfit": "84966aff"
+					},
+					"hair_dye": "9b775dff",
+					"hair_dyed": false,
+					"hair_mask": "auto",
+					"mounted": false,
+					"parts": {
+						"armor": "outfit_medieval_chinese_01",
+						"boots": "boots_civilian_straw_01",
+						"cape": "none",
+						"face": "face_standard_01",
+						"hair": "hair_male_01",
+						"helmet": "helmet_civilian_straw_01",
+						"outfit": "outfit_underlayer_01",
+						"shield": "none",
+						"weapon": "none"
+					},
+					"tack": true
+				},
+				"id": "CIV-M02",
+				"palette_preset": "brown",
+				"profile": "civilian_v1",
+				"publication": "UNPUBLISHED",
+				"required_new_parts": [
+					"boots_civilian_straw_01",
+					"helmet_civilian_straw_01"
+				]
+			},
+			{
+				"appearance": {
+					"body": 1,
+					"coat": "bay",
+					"equipment_dyes": {
+						"armor": "396fbbff",
+						"outfit": "d8dce3ff"
+					},
+					"hair_dye": "9b775dff",
+					"hair_dyed": false,
+					"hair_mask": "auto",
+					"mounted": false,
+					"parts": {
+						"armor": "outfit_medieval_chinese_01",
+						"boots": "boots_civilian_straw_01",
+						"cape": "none",
+						"face": "face_standard_01",
+						"hair": "hair_female_01",
+						"helmet": "none",
+						"outfit": "outfit_underlayer_01",
+						"shield": "none",
+						"weapon": "none"
+					},
+					"tack": true
+				},
+				"id": "CIV-F01",
+				"palette_preset": "blue",
+				"profile": "civilian_v1",
+				"publication": "UNPUBLISHED",
+				"required_new_parts": [
+					"boots_civilian_straw_01"
+				]
+			},
+			{
+				"appearance": {
+					"body": 1,
+					"coat": "bay",
+					"equipment_dyes": {
+						"armor": "825438ff",
+						"outfit": "84966aff"
+					},
+					"hair_dye": "9b775dff",
+					"hair_dyed": false,
+					"hair_mask": "auto",
+					"mounted": false,
+					"parts": {
+						"armor": "outfit_medieval_chinese_01",
+						"boots": "boots_civilian_straw_01",
+						"cape": "none",
+						"face": "face_standard_01",
+						"hair": "hair_female_01",
+						"helmet": "helmet_civilian_straw_01",
+						"outfit": "outfit_underlayer_01",
+						"shield": "none",
+						"weapon": "none"
+					},
+					"tack": true
+				},
+				"id": "CIV-F02",
+				"palette_preset": "brown",
+				"profile": "civilian_v1",
+				"publication": "UNPUBLISHED",
+				"required_new_parts": [
+					"boots_civilian_straw_01",
+					"helmet_civilian_straw_01"
+				]
+			}
+		],
+		"directions": [
+			"down",
+			"left",
+			"up",
+			"right"
+		],
+		"frames_per_recipe": 416,
+		"geometry_recipes": 4,
+		"native_directions": [
+			"up",
+			"right",
+			"down",
+			"left"
+		],
+		"new_work_choice": "carry_lift_not_hoe",
+		"palette_only_no_extra_pages": true,
+		"phase1_actions": [
+			{
+				"duration": -1.0,
+				"id": "idle",
+				"loop": true,
+				"phase1": true,
+				"samples": 4
+			},
+			{
+				"duration": -1.0,
+				"id": "walk",
+				"loop": true,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "run",
+				"loop": true,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "hit",
+				"loop": false,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "knockback",
+				"loop": false,
+				"phase1": true,
+				"samples": 8
+			},
+			{
+				"duration": -1.0,
+				"id": "down",
+				"loop": false,
+				"phase1": true,
+				"samples": 12
+			},
+			{
+				"duration": -1.0,
+				"id": "unconscious",
+				"loop": true,
+				"phase1": true,
+				"samples": 4
+			},
+			{
+				"duration": -1.0,
+				"id": "get_up",
+				"loop": false,
+				"phase1": true,
+				"samples": 12
+			}
+		],
+		"phase1_frames_per_recipe": 256,
+		"profile": "civilian_v1",
+		"source_sha256": {
+			"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "c64f19535243188272a976219299326b5781adfffe75907f08a19741b323ff60",
+			"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "7e036554d4a2cec608e936dd8168e0a4a034f5ed3e2e8a364f289edf417af0e3",
+			"res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json": "f5a4a7719491aff41a2062b886639fc8424dfa8bf065e170f93670e941f22092",
+			"res://native/crowd10k/godot/crowd10k_gdext.cpp": "b337ceb7fe867eda228a010a3fbeb586b38f0397b11c636a002689f74af6609e",
+			"res://native/crowd10k/src/crowd_core.hpp": "e6141d8770cc42042e74c08b7ce33b8248d69fc4fe114220b2b81cd29119ba63",
+			"res://native/crowd10k/src/render.cpp": "3fa95c35d194e489d9281fd01f312e41d31e758f1e2a6e350fe6dd25e82315db",
+			"res://scripts/terrain_lab/terrain_army_batch_view.gd": "6a38ee187d9c2ba685e9957f178fd164fab3e5c2958aab8bb89d98f29b4a0986",
+			"res://scripts/terrain_lab/terrain_army_civilian_atlas.gd": "6d0c9271e06d584fea6477dee9232afe8b0b6e66be1734ab649e739eb41443a6",
+			"res://scripts/terrain_lab/terrain_army_equipment_atlas.gd": "3fff86dc2cecf16d8ca90134c6b5d68d6dc6049074247a770d0d45c838c4d24d",
+			"res://scripts/ui/equipment_dye.gd": "6d76e4d02fd36116f6f242ea2d5cb62de02655503acd5eb36da54e82b7f57bf6",
+			"res://scripts/ui/human_character_3d_editor.gd": "2363b0bcf74d213e8dcb8360140de1bc5b5f98824003c05bfff5eb4d86c0b573"
+		},
+		"status": "CONTRACT_ONLY_UNPUBLISHED",
+		"version": 1
+	},
+	"samples": [
+		{
+			"name": "step_000",
+			"native_state_hash": "1662818648482560068",
+			"packet_sha256": "f7ccacdf57f2c6f87f44c764e609ae9b8611b66b15808a335bff9583dfbc0b3f",
+			"save_sha256": "52e9260d0eb35ec94703789a6fded385f5d12333eff6611a6f1d5948d8cdab0f"
+		},
+		{
+			"name": "step_001",
+			"native_state_hash": "-1821938671070204331",
+			"packet_sha256": "186aa301a889363c7f3f50844e19b8d4e305811001557c34756531507634389f",
+			"save_sha256": "27ddebcddb1729326ab8d67f7a407a300cdd744db2a3c7611d53987984c34561"
+		},
+		{
+			"name": "step_015",
+			"native_state_hash": "2448788296999121318",
+			"packet_sha256": "38a6cdc8d39a811297c5cc0e9f87260cc74f55ff2e9daacc1049324edeee9538",
+			"save_sha256": "d153a47c2f86e8805e0466c295fce8b319f3628c6d8202c776d29fcd3983ab1b"
+		},
+		{
+			"name": "step_060",
+			"native_state_hash": "-1377405388923215535",
+			"packet_sha256": "f7d4224b2215118cfce0a6e096467a187b35f5d484b11f94a778e7aec1c5edba",
+			"save_sha256": "308e42460c8c07d031030f6940b4abdac9afa4c1a4d8d7bac650aa81d5816d9b"
+		},
+		{
+			"name": "step_120",
+			"native_state_hash": "876226254372992543",
+			"packet_sha256": "5f779fcf8bf30ac81459464410cb2d424ef3bb862ebbaaeea93e7adde82cf041",
+			"save_sha256": "70ce48c9b97d14083d78cb216ab22da5e97823b91e557a1c2df74efca201fb1e"
+		}
+	],
+	"scope": "CA-01 native headless sampling only; actual admitted source page; no new art, resident owner, GPU or FPS claim",
+	"status": "PASS"
+}

@@ -3,7 +3,19 @@ extends "res://scripts/tests/site_vehicle_route_review_test.gd"
 ## Sprite/MultiMesh RGBA comparison. Neither mode measures performance.
 const Rider = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const Recipe = preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd")
-const VISUAL_OUT := "res://output/site_wagon_rider_display_20260918/batch_visual"
+const VISUAL_OUT := "res://output/site_ship_implementation_20261003/regressions/vehicle_rider_batch"
+var _acceptance_completed := false
+
+func _process(delta: float) -> bool:
+	# The inherited watchdog guards unfinished work; completed assertions may clean up.
+	if _acceptance_completed: return false
+	return super._process(delta)
+
+func _check_headless_completion() -> void:
+	# Headless acceptance is synchronous; only final fixture cleanup awaits a frame.
+	if not _acceptance_completed:
+		push_error("Vehicle rider batch did not complete its original acceptance assertions")
+		quit(1)
 
 func _gear_bytes(lab: TerrainLab, team: TerrainArmy) -> PackedByteArray:
 	var people := []
@@ -28,6 +40,7 @@ func _capture_batch_scene(lab: TerrainLab, name: String) -> Image:
 
 func _run() -> void:
 	var visual := DisplayServer.get_name() != "headless"
+	if not visual: _check_headless_completion.call_deferred()
 	if visual:
 		deadline = Time.get_ticks_msec() + 70000
 		assert(DirAccess.make_dir_recursive_absolute(VISUAL_OUT) == OK)
@@ -35,6 +48,7 @@ func _run() -> void:
 		root.content_scale_size = root.size
 		root.gui_embed_subwindows = true
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit original occupancy fixture; formal startup has no default worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -176,6 +190,7 @@ func _run() -> void:
 			quit(1)
 			return
 		print("SITE VEHICLE RIDER BATCH GPU PASS: actual 1800x1100 mounted/dismounted main scenes, 62/63 foot batch people, frozen Sprite/MultiMesh complete RGBA equal; no FPS claim")
+	_acceptance_completed = true
 	lab.queue_free()
 	await process_frame
 	TerrainArmy.release_contact_source()

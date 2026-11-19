@@ -1,0 +1,4841 @@
+[
+ {
+  "file": "scripts/region_lab/region_data.gd",
+  "func": "load_manifest",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if parsed.has(\"land_condition_rule\") and parsed.get(\"synthetic_fixture\") != true and resource_layer.get(\"manifest\", {}).is_empty():",
+    []
+   ],
+   [
+    "return fail(\"MISSING_RESOURCE_PAIR\", \"Declared fixed land source has no released geography/resource pair\")",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/region_lab/region_data.gd",
+  "func": "_validate_manifest",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if value.has(\"land_condition_rule\") and (not value.land_condition_rule is String or value.land_condition_rule != \"terrain_mapped_potential_v",
+    []
+   ],
+   [
+    "return fail(\"INVALID_LAND_CONDITION_RULE\", \"Unknown fixed source land-condition rule\")",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/region_lab/region_data.gd",
+  "func": "_read_resource_manifest",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var pair: Dictionary = RESOURCE_SOURCE_PAIRS.get(geography_hash, {})",
+    []
+   ],
+   [
+    "if pair.is_empty():",
+    []
+   ],
+   [
+    "var file := FileAccess.open(str(pair.path), FileAccess.READ)",
+    []
+   ],
+   [
+    "if text.sha256_text() != str(pair.sha256):",
+    []
+   ],
+   [
+    "return fail(\"HASH_MISMATCH\", \"Paired resource manifest checksum differs; original source retained\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if geography_hash != RESOURCE_GEOGRAPHY_SHA:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var file := FileAccess.open(RESOURCE_MANIFEST, FileAccess.READ)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/region_lab/region_route.gd",
+  "func": "clear_memory_cache",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "_table_memo_order.clear()",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/region_lab/region_route.gd",
+  "func": "table_from_terrain",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var table_key := \"c|%d|%d|%s\" % [_navigation_content_hash(data), hash(resource_cover), str(effective)]",
+    []
+   ],
+   [
+    "var cached: Variant = _table_memo.get(table_key)",
+    [
+     "7461b8e"
+    ]
+   ],
+   [
+    "if bool(computed.get(\"ok\", false)):",
+    []
+   ],
+   [
+    "if not _table_memo.has(table_key):",
+    []
+   ],
+   [
+    "_table_memo[table_key] = computed.duplicate(true)",
+    [
+     "7461b8e"
+    ]
+   ],
+   [
+    "_table_memo_order.append(table_key)",
+    []
+   ],
+   [
+    "while _table_memo_order.size() > TABLE_MEMO_LIMIT: _table_memo.erase(_table_memo_order.pop_front())",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var owner_key: String = str(_terrain_memo_owner.get(data.get_instance_id(), \"\"))",
+    [
+     "102db72",
+     "7461b8e"
+    ]
+   ],
+   [
+    "var table_key := \"%s#%d#%s\" % [owner_key, hash(resource_cover), str(effective)] if not owner_key.is_empty() else \"\"",
+    [
+     "7461b8e"
+    ]
+   ],
+   [
+    "var cached: Variant = _table_memo.get(table_key) if not table_key.is_empty() else null",
+    [
+     "7461b8e"
+    ]
+   ],
+   [
+    "if not table_key.is_empty() and bool(computed.get(\"ok\", false)):",
+    [
+     "7461b8e"
+    ]
+   ],
+   [
+    "if _terrain_memo_owner.get(data.get_instance_id(), \"\") == owner_key: _table_memo[table_key] = computed.duplicate(true)",
+    [
+     "7461b8e"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "open_map",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var empty_policy := TechnologyPolicy.new_policy(_initial_technology_categories())",
+    []
+   ],
+   [
+    "if prepare_new and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_i",
+    []
+   ],
+   [
+    "if prepare_new and (not _initial_site_same(pending_read.payload.starting_site, initial_context.starting_site) or pending_read.payload.initia",
+    []
+   ],
+   [
+    "if prepare_new and not pending_record.is_empty() and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or",
+    []
+   ],
+   [
+    "if prepare_new and (not _initial_site_same(_initialization.starting_site, initial_context.starting_site) or _initialization.initial_scenario",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var empty_policy := TechnologyPolicy.new_policy([])",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if prepare_new and (pending_record.starting_site != initial_context.starting_site or pending_record.initial_scenario_id != initial_context.i",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if prepare_new and (pending_read.payload.starting_site != initial_context.starting_site or pending_read.payload.initial_scenario_id != initi",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if prepare_new and not pending_record.is_empty() and (pending_record.starting_site != initial_context.starting_site or pending_record.initia",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if prepare_new and (_initialization.starting_site != initial_context.starting_site or _initialization.initial_scenario_id != initial_context",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "open_site",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not hot.ok: return hot",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var storage := Runtime.initialize_item_storage(data.site)",
+    [
+     "fa3cec1"
+    ]
+   ],
+   [
+    "if not storage.ok: return storage",
+    [
+     "fa3cec1"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_save_checked",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not readback.ok:",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "return readback",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "captured[\"source\"] = \"save_checked\"",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "captured[\"site_id\"] = str(data.site.get(\"id\", \"\"))",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not readback.ok: return readback",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_read_document",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var envelope_parser := JSON.new()",
+    []
+   ],
+   [
+    "var envelope_error := envelope_parser.parse(file.get_as_text())",
+    []
+   ],
+   [
+    "if envelope_error != OK: return fail(\"CORRUPT_SAVE\", \"存檔槽記錄格式損毀，原代保留\")",
+    []
+   ],
+   [
+    "var envelope: Variant = envelope_parser.data",
+    []
+   ],
+   [
+    "var payload_parser := JSON.new()",
+    []
+   ],
+   [
+    "if payload_parser.parse(envelope.payload) != OK: return fail(\"CORRUPT_SAVE\", \"存檔槽記錄格式\")",
+    []
+   ],
+   [
+    "var payload: Variant = payload_parser.data",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var envelope: Variant = JSON.parse_string(file.get_as_text())",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var payload: Variant = JSON.parse_string(envelope.payload)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 7
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_detached_cold_copy",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "str(data.site.get(\"id\", \"\")), before_hash, after_hash, str(data.site.get(\"region_snapshot\") == stored_snapshot),",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not stored.ok:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if str(stored.get(\"code\", \"\")) == \"CORRUPT_REGION_SNAPSHOT\":",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "stored[\"source\"] = \"cold_detach_unbound\"",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "stored[\"site_id\"] = str(data.site.get(\"id\", \"\"))",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "return stored",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not capture.ok: return capture",
+    [
+     "102db72",
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if not fresh.ok:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if str(fresh.get(\"code\", \"\")) == \"CORRUPT_REGION_SNAPSHOT\":",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "fresh[\"source\"] = \"cold_detach_fresh\"",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "fresh[\"site_id\"] = str(data.site.get(\"id\", \"\"))",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "return fresh",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "checkpoint_region_site",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not validated.ok: return validated",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_initial_complete_ok",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "return record is Dictionary and record.size() == 5 and _whole(record.get(\"version\"), 1, 1) and _whole(record.get(\"first_generation\"), 1, 1) ",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return record is Dictionary and record.size() == 5 and _whole(record.get(\"version\"), 1, 1) and _whole(record.get(\"first_generation\"), 1, 1) ",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_check_initial_record",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var receipt: Variant = state.get(\"initial_scenario\")",
+    []
+   ],
+   [
+    "if not receipt is Dictionary or receipt.size() != 3 or not _whole(receipt.get(\"version\"), 1, 1) or receipt.get(\"scenario_id\") != scenario or",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if state.get(\"initial_scenario\", {}) != {\"version\": 1, \"scenario_id\": scenario, \"world_id\": str(pin.world_instance_id)}: return fail(\"INVALI",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "prepare_initial_site",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not _initial_site_same([coordinate.site.x, coordinate.site.y], _initialization.starting_site) or str(data.site.get(\"world_pin\", {}).get(\"",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if [coordinate.site.x, coordinate.site.y] != _initialization.starting_site or str(data.site.get(\"world_pin\", {}).get(\"world_instance_id\", \"\"",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "record_completed_region_travel_step",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var party_host: bool = host is TerrainLab and host.terrain != null and host.terrain.has_meta(&\"region_party_owner\")",
+    []
+   ],
+   [
+    "if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self or prepared.get(\"travel_host\") != host",
+    []
+   ],
+   [
+    "if not party_host and originals.get(str(host.terrain.site.id)) != host: return fail(\"INVALID_TRAVEL_HOST\")",
+    []
+   ],
+   [
+    "var party_original: TerrainLab = prepared.get(\"travel_party\")",
+    []
+   ],
+   [
+    "var fingerprint := Marshalls.raw_to_base64(var_to_bytes(outcome.party)).sha256_text()",
+    []
+   ],
+   [
+    "if not is_instance_valid(party_original) or party_original.terrain == null or party_original._region_bound_data != party_original.terrain \\",
+    []
+   ],
+   [
+    "or get_meta(&\"region_party_owner_labs\", {}).get(token) != party_original or party_original._region_party_token != token \\",
+    []
+   ],
+   [
+    "or _travel_party_runtime_token != token or str(party_original.terrain.site.id) != \"travel:\" + token \\",
+    []
+   ],
+   [
+    "or party_original._region_party_input_hash != fingerprint \\",
+    []
+   ],
+   [
+    "or party_original.terrain.get_meta(&\"region_party_owner\", {}).get(\"party_hash\") != fingerprint: return fail(\"INCOMPLETE_PARTY_PROGRESS\")",
+    []
+   ],
+   [
+    "if party_host and (party_original != host or not host._region_point_pending.get(\"interval_complete\", false)): return fail(\"INCOMPLETE_PARTY_",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self or not host.restore_only or _region_or",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if originals.get(str(host.terrain.site.id)) != host: return fail(\"INVALID_TRAVEL_HOST\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 11
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_region_player_down_settlement",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var party_owner := owner.is_empty()",
+    []
+   ],
+   [
+    "if party_owner:",
+    []
+   ],
+   [
+    "if party_owner:",
+    []
+   ],
+   [
+    "if party_owner:",
+    []
+   ],
+   [
+    "var token := str(region_travel_journey().get(\"token\", \"\"))",
+    []
+   ],
+   [
+    "if not _safe_part(token): return {}",
+    []
+   ],
+   [
+    "owner = \"travel:\" + token",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not GameplayClock.validate_mode(mode, owner, float(control.logical_game_seconds)).ok or float(mode.game_seconds) != float(control.logical",
+    []
+   ],
+   [
+    "var party: Dictionary = {}",
+    []
+   ],
+   [
+    "var selected := _region_life_current_party(owner.trim_prefix(\"travel:\"))",
+    []
+   ],
+   [
+    "if not selected.ok: return {}",
+    []
+   ],
+   [
+    "original = selected.lab",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "party = selected.party",
+    []
+   ],
+   [
+    "elif region_owner_lab.is_valid():",
+    []
+   ],
+   [
+    "if remaining <= TerrainLab.ACTION_TIME_EPSILON and not point_pending: return {}",
+    []
+   ],
+   [
+    "if absf(float(party.upkeep.get(\"at\", -1.0)) - float(control.logical_game_seconds)) > TerrainLab.ACTION_TIME_EPSILON \\",
+    []
+   ],
+   [
+    "or absf(float(party.upkeep.get(\"owner_action_seconds\", -1.0)) - float(control.fire_clock.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON:",
+    []
+   ],
+   [
+    "return {}",
+    null
+   ],
+   [
+    "else:",
+    null
+   ],
+   [
+    "var settlement := validate_settlement(original.terrain.site, float(control.logical_game_seconds))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not settlement.ok or settlement.legacy or float(settlement.pending) > 0.00000001: return {}",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var fire: Dictionary = original.terrain.site.get(\"fire_settlement\", {})",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if not validate_fire_settlement(original.terrain.site, control.fire_clock).ok or int(fire.get(\"sequence\", -1)) != int(control.fire_clock.seq",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if payload.get(\"controlled\") != true or payload.get(\"death\") != true or payload.has(\"family_control_transition\"): continue",
+    []
+   ],
+   [
+    "if party_owner:",
+    []
+   ],
+   [
+    "var target := _region_life_original_owner(event)",
+    [
+     "f507067"
+    ]
+   ],
+   [
+    "if not target.ok or target.lab != original or int(target.person_id) != identity: continue",
+    []
+   ],
+   [
+    "elif int(payload.get(\"person_id\", -1)) != identity or payload.get(\"destination_site\") != owner: continue",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if owner.is_empty(): return {}",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not GameplayClock.validate_mode(mode, owner, float(control.logical_game_seconds)).ok or float(mode.game_seconds) != float(control.logical",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if region_owner_lab.is_valid():",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if remaining <= TerrainLab.ACTION_TIME_EPSILON: return {}",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var settlement := validate_settlement(original.terrain.site, float(control.logical_game_seconds))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not settlement.ok or settlement.legacy or float(settlement.pending) > 0.00000001: return {}",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var fire: Dictionary = original.terrain.site.get(\"fire_settlement\", {})",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if not validate_fire_settlement(original.terrain.site, control.fire_clock).ok or int(fire.get(\"sequence\", -1)) != int(control.fire_clock.seq",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if payload.get(\"controlled\") != true or payload.get(\"death\") != true or int(payload.get(\"person_id\", -1)) != identity or payload.get(\"destin",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 7,
+  "epoch_lines_new": 19
+ },
+ {
+  "file": "scripts/region_lab/region_save_slot.gd",
+  "func": "_region_family_life_source",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not snapshot.ok: return snapshot",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/region_lab/region_terrain_adapter.gd",
+  "func": "build",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if source.manifest.has(\"land_condition_rule\"):",
+    []
+   ],
+   [
+    "if not source.manifest.land_condition_rule is String or source.manifest.land_condition_rule != \"terrain_mapped_potential_v1\": return {\"ok\": ",
+    []
+   ],
+   [
+    "data.parameters[\"fixed_land_condition_rule\"] = str(source.manifest.land_condition_rule)",
+    []
+   ],
+   [
+    "if data.parameters.has(\"fixed_land_condition_rule\"):",
+    []
+   ],
+   [
+    "base[\"land_condition_rule\"] = data.parameters.fixed_land_condition_rule",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/region_lab/region_travel.gd",
+  "func": "validate_identity",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "return false",
+    [
+     "016e1d4",
+     "ef39140"
+    ]
+   ],
+   [
+    "if field not in [\"version\", \"namespace\", \"next_sequence\", \"refs\", \"family_members\"]: return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if kind not in IDENTITY_TYPES or not value.refs[kind] is Dictionary: return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return false",
+    [
+     "016e1d4",
+     "ef39140"
+    ]
+   ],
+   [
+    "if seen.has(key): return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not value.family_members is Dictionary: return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or not _identity_integer(reference.get(\"lineage\"), 1, MAX_IDENTITY_SEQUENCE): return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if family_locations.has(location): return false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if family_seen.has(key): return false",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/crowd_person_owner.gd",
+  "func": "publish_host_ranged_ammo_inputs",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "assert(crowd_site.set_soldier_fields(int(row.unit), {\"ammo\": int(row.amount)}))",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var ammo_published: bool = crowd_site.set_soldier_fields(int(row.unit), {\"ammo\": int(row.amount)})",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "assert(ammo_published)",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/crowd_site.gd",
+  "func": "_refresh_kits",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "return _register_kits(appearances)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/crowd_site.gd",
+  "func": "_register_kits",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "func _register_kits(kit_keys: Array) -> bool:",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/crowd_site.gd",
+  "func": "_commit_captivity",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "relations[str(identity)].merge(SitePersonActions.new_capture_fields(lab.terrain)) # Plan 6.1 / F02.",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "relations[str(identity)].merge(controller.person_actions.capture_fields(identity, person)) # Plan 4.2 / 6.1.",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/crowd_site.gd",
+  "func": "prepare_load",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not _register_kits(appearances): return SiteRuntime.fail(\"MISSING_ASSET\", \"存檔士兵外觀不被圖集接受\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_audio_view.gd",
+  "func": "set_loops",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if source.has(\"vehicle_id\"):",
+    []
+   ],
+   [
+    "row.vehicle_id = str(source.vehicle_id)",
+    []
+   ],
+   [
+    "row.vehicle_record = source.get(\"vehicle_record\")",
+    []
+   ],
+   [
+    "row.source_data = source.get(\"source_data\")",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_audio_view.gd",
+  "func": "_process",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "var environment_now := Time.get_ticks_msec()",
+    []
+   ],
+   [
+    "if _last_fire_refresh_msec < 0 or environment_now - _last_fire_refresh_msec >= 100:",
+    []
+   ],
+   [
+    "var environment_data: Variant = _lab.get(\"terrain\")",
+    []
+   ],
+   [
+    "if environment_data is TerrainData:",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_audio_view.gd",
+  "func": "_clear_sound",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "_environment_loop_requests.clear()",
+    []
+   ],
+   [
+    "_last_animal_call_msec = -1",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_audio_view.gd",
+  "func": "_refresh_loops",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "requests.append_array(_environment_loop_requests)",
+    []
+   ],
+   [
+    "if row.has(\"vehicle_id\"):",
+    []
+   ],
+   [
+    "if not vehicle_ground.is_finite():",
+    []
+   ],
+   [
+    "continue",
+    null
+   ],
+   [
+    "row.position = vehicle_ground",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_audio_view.gd",
+  "func": "_priority",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if person_id == _controlled_id and kind in [&\"hurt\", &\"contact\", &\"shield\", &\"down\"]:",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if person_id == _controlled_id and kind in [&\"hurt\", &\"contact\", &\"shield\"]:",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_captivity_supply.gd",
+  "func": "_prepare_change",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}) -> Dictionary:",
+    [
+     "7c2504d",
+     "ef39140"
+    ]
+   ],
+   [
+    "var destination := _home(captor_id if capturing else target_id)",
+    [
+     "7c2504d",
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}, destination_override: Dictionary = {})",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "var destination := destination_override if not destination_override.is_empty() else _home(captor_id if capturing else target_id)",
+    [
+     "7c2504d"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "_update_ecology_ui",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not person.is_empty(): task = person.body.get(\"work_task\", {}) if int(person.unit) >= 0 else (lab.terrain.site.worker if person.owner == ",
+    [
+     "ebbed52",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "var settlement_offices: Variant = Settlement.record(lab.terrain).get(\"offices\", {})",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var cache_key := [view.selection, source_key, kinds.selected, lab.terrain.environment_revision, int(lab.terrain.site.minute),",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "lab.controlled_person_id(), int(settlement_offices.get(\"revision\", -1)) if settlement_offices is Dictionary else -1,",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "Runtime._ship_runtime_pending(lab.terrain), _crowd_active(), _ecology_person_signature()]",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if cache_key == _ecology_ui_cache_key:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "ecology_status.text = _ecology_ui_cache_text",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not source_key.is_empty(): details.text += \"\\n\" + _ecology_ui_cache_description",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return",
+    null
+   ],
+   [
+    "if not person.is_empty():",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "var held: Variant = lab.terrain.site.worker if person.owner == lab.npc else lab.terrain.site.manual",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if int(person.unit) >= 0:",
+    [
+     "ebbed52",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "held = person.body.get(\"work_task\", {}) if person.body is Dictionary else person.body.get(\"work_task\")",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if held is Dictionary: task = held",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "_ecology_ui_cache_key = cache_key",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "_ecology_ui_cache_text = ecology_status.text",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "_ecology_ui_cache_description = _ecology_description(source_key) if not source_key.is_empty() else \"\"",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "_load_compatible_site",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var selected_slot_path := not slot_path.is_empty() and path.replace(\"\\\\\", \"/\").begins_with(slot_path)",
+    []
+   ],
+   [
+    "var result: Dictionary = region_slot.load_compatible_site(path) if selected_slot_path else Store.load_site(path, Callable(), clampi(OS.get_p",
+    []
+   ],
+   [
+    "var selected_restore: bool = result.data.site.has(\"region_snapshot\")",
+    []
+   ],
+   [
+    "if selected_restore and not selected_slot_path: return Runtime.fail(\"INVALID_SELECTED_REGION_RESTORE\", \"原完整快照只由目前存檔槽選定檔恢復\")",
+    []
+   ],
+   [
+    "var guard: Dictionary = Store.validate_region_snapshot(result.data, {}) if selected_restore else lab.exchange_snapshot_guard(result.data)",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var result: Dictionary = region_slot.load_compatible_site(path) if not slot_path.is_empty() and path.replace(\"\\\\\", \"/\").begins_with(slot_pat",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var guard: Dictionary = lab.exchange_snapshot_guard(result.data)",
+    [
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "if not guard.ok: return guard",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "load_from",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var selected_restore: bool = result.ok and result.data.site.has(\"region_snapshot\")",
+    []
+   ],
+   [
+    "if result.ok and not selected_restore and not is_instance_valid(lab.npc):",
+    []
+   ],
+   [
+    "var prepared: Dictionary = lab.prepare_selected_region_owner_restore(result.data, region_slot) if selected_restore else lab.prepare_crowd_lo",
+    []
+   ],
+   [
+    "var selected_generation := int(region_slot._marker.generation) if selected_restore else -1",
+    []
+   ],
+   [
+    "if selected_restore: result[\"data\"] = prepared.data # Canonical readback and its private ticket stay together.",
+    []
+   ],
+   [
+    "if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))",
+    []
+   ],
+   [
+    "if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))",
+    []
+   ],
+   [
+    "if not selected_restore and path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():",
+    []
+   ],
+   [
+    "if selected_restore:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var admission: Dictionary = lab._region_bind_ticket_admission(result.data, prepared)",
+    []
+   ],
+   [
+    "if not admission.ok:",
+    []
+   ],
+   [
+    "lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))",
+    []
+   ],
+   [
+    "return _load_failure(admission)",
+    []
+   ],
+   [
+    "var bound: Dictionary = lab.region_bind_receipt(result.data)",
+    []
+   ],
+   [
+    "if not bound.get(\"complete\", false) or selected_restore and (int(bound.get(\"generation\", -1)) != selected_generation",
+    []
+   ],
+   [
+    "or str(bound.get(\"owner\", \"\")) != str(region_slot.control.active_site_id) or str(bound.get(\"mode\", \"\")) != \"live\"):",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if result.ok and not is_instance_valid(lab.npc):",
+    [
+     "39f1444"
+    ]
+   ],
+   [
+    "var prepared: Dictionary = lab.prepare_crowd_load(result.data, result.get(\"crowd_native\"))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not lab.region_bind_receipt(result.data).get(\"complete\", false):",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 15
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "deposit_owned_equipment",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var original_transfer := func() -> Dictionary:",
+    []
+   ],
+   [
+    "return original_transfer.call()",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return Runtime.transfer_items(lab.terrain, person.holder, person.cargo, depot,",
+    [
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "lab.terrain.site.inventory, {}, item_ids, expected_version, int(depot.version), int(lab.terrain.site.capacity))",
+    [
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "_office_orgs",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "\"recruit_candidates\": func() -> Array[int]: return team.recruit_candidates() if is_instance_valid(team) else [] as Array[int],",
+    []
+   ],
+   [
+    "\"recruit\": func(person_id: int) -> Dictionary: return team.recruit_row(lab.controlled_person_id(), person_id),",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "\"recruit_candidates\": func() -> Array[int]: return _recruit_candidates(team),",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "\"social\": func() -> String: return _social_summary(team), # R2 §8.4 visible state",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "\"recruit\": func(person_id: int) -> Dictionary: return _recruit(team, person_id),",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "_open_offices",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "recruit_button.text = \"募兵：編入所選退隊原人物\"",
+    []
+   ],
+   [
+    "var org: Dictionary = state.org",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var org: Dictionary = state.org",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var org: Dictionary = state.org",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var org: Dictionary = state.org",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var org: Dictionary = state.org",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return",
+    null
+   ],
+   [
+    "return",
+    null
+   ],
+   [
+    "state.ops.clear()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var recruitable: Array = org.recruit_candidates.call() if org.has(\"recruit_candidates\") else []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "recruit_row.visible = not recruitable.is_empty()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "recruit_pick.clear()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "for identity: int in recruitable:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "recruit_pick.add_item(\"#%d（已退隊）\" % identity)",
+    []
+   ],
+   [
+    "recruit_pick.set_item_metadata(recruit_pick.item_count - 1, identity)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "recruit_button.disabled = _crowd_active() or not (org.has(\"recruit_ok\") and bool(org.recruit_ok.call()))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var pending: Array = org.pending.call() if org.has(\"pending\") else []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "release_button.visible = not pending.is_empty()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "release_button.disabled = not editable",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not pending.is_empty():",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var listed: Array[String] = []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "for identity: int in pending: listed.append(\"#%d\" % identity)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "note.text += \"\\n⚠ 待分職幹部（MIGRATION_REQUIRED，舊存檔遷移）：%s。他們沒有指揮權；請任命到武官職位，或選取後按「解除待分職幹部」。\" % \"、\".join(listed)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "for button: Button in edit_buttons: button.disabled = not editable",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "name_input.editable = editable",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.syncing = true",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "ai_toggle.button_pressed = bool(current.get(\"duty_ai\", false))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "ai_toggle.disabled = not editable or not org.ai.is_valid()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.syncing = false",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "plan_label.text = _office_plan_text(shown, state.ops)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if state.ops.is_empty():",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not check_label.text.begins_with(\"人事已由他處\"): check_label.text = \"\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "elif not bool(preview.ok):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"⚠ \" + str(preview.message)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "else:",
+    null
+   ],
+   [
+    "var checked := SiteOffices.apply_plan(current, str(org.kind), int(current.revision), state.ops,",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "func(_person: int, _office_class: String) -> bool: return true, str(org.kind) != \"team\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"✓ 方案可套用（任職資格於套用時由原 owner 核對）\" if bool(checked.ok) else \"⚠ \" + str(checked.message)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var queue := func(op: Dictionary) -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not context_ok.call() or not can_edit.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.ops.append(op)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call()",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "var need_seat := func() -> String:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = selected_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if seat.is_empty(): check_label.text = \"⚠ 請先在左側選取職位\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return seat",
+    null
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"改名\", \"OfficeRename\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not seat.is_empty(): queue.call({\"op\": \"rename\", \"position_id\": seat, \"name\": name_input.text.strip_edges()})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"新增文官\", \"OfficeAdd\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "queue.call({\"op\": \"add\", \"name\": name_input.text.strip_edges(), \"ref\": \"new_%d\" % state.ops.size(), \"office_class\": \"civil\"})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"新增武官\", \"OfficeAddMilitary\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "queue.call({\"op\": \"add\", \"name\": name_input.text.strip_edges(), \"ref\": \"new_%d\" % state.ops.size(), \"office_class\": \"military\"})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"切換文官／武官\", \"OfficeClassify\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat_id: String = need_seat.call()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if seat_id.is_empty(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var current_seat := SiteOffices.position(SiteOffices.preview_plan(state.org.offices.call(), state.ops).offices, seat_id)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "queue.call({\"op\": \"classify\", \"position_id\": seat_id, \"office_class\": \"civil\" if str(current_seat.get(\"office_class\", \"military\")) == \"milit",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"裁撤\", \"OfficeAbolish\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not seat.is_empty(): queue.call({\"op\": \"abolish\", \"position_id\": seat})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"任命\", \"OfficeAppoint\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var person := int(people.get_item_metadata(people.selected)) if people.selected >= 0 else -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var person := int(people.get_item_metadata(people.selected)) if people.selected >= 0 else -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var person := int(people.get_item_metadata(people.selected)) if people.selected >= 0 else -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if person <= 0: check_label.text = \"⚠ 請先選擇任職人選\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "elif not seat.is_empty(): queue.call({\"op\": \"appoint\", \"position_id\": seat, \"person_id\": person})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(plan_row, \"免職\", \"OfficeDismiss\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not seat.is_empty(): queue.call({\"op\": \"dismiss\", \"position_id\": seat})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(duty_row, \"所選職責改由所選職位負責\", \"OfficeAssignDuty\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var picked := duties.get_selected_items()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if picked.is_empty(): check_label.text = \"⚠ 請先在右側選取職責\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "elif not seat.is_empty(): queue.call({\"op\": \"assign\", \"duty_id\": str(state.duty_ids[int(picked[0])]), \"position_id\": seat})))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(duty_row, \"撤回上一步\", \"OfficeUndo\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not state.ops.is_empty(): state.ops.pop_back()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call()))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call()))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call()))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(apply_row, \"套用方案\", \"OfficeApply\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not context_ok.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not context_ok.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not context_ok.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not context_ok.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var result: Dictionary = org.apply.call(int(state.revision), state.ops)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "show_result(result)",
+    [
+     "b41c6b3",
+     "ef39140",
+     "24eaf20",
+     "39f1444",
+     "bdf48bd",
+     "51adc2f",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ],
+   [
+    "show_result(result)",
+    [
+     "b41c6b3",
+     "ef39140",
+     "24eaf20",
+     "39f1444",
+     "bdf48bd",
+     "51adc2f",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ],
+   [
+    "show_result(result)",
+    [
+     "b41c6b3",
+     "ef39140",
+     "24eaf20",
+     "39f1444",
+     "bdf48bd",
+     "51adc2f",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ],
+   [
+    "show_result(result)",
+    [
+     "b41c6b3",
+     "ef39140",
+     "24eaf20",
+     "39f1444",
+     "bdf48bd",
+     "51adc2f",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ],
+   [
+    "check_label.text = (\"✓ \" if bool(result.ok) else \"⚠ \") + str(result.get(\"message\", \"\"))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = (\"✓ \" if bool(result.ok) else \"⚠ \") + str(result.get(\"message\", \"\"))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = (\"✓ \" if bool(result.ok) else \"⚠ \") + str(result.get(\"message\", \"\"))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = (\"✓ \" if bool(result.ok) else \"⚠ \") + str(result.get(\"message\", \"\"))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if bool(result.ok):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.revision = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "edit_buttons.append(_button(apply_row, \"清除方案\", \"OfficeClear\", func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.ops.clear()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.ops.clear()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.ops.clear()",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "recruit_button.pressed.connect(func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not org.has(\"recruit\") or recruit_pick.selected < 0: return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var result: Dictionary = org.recruit.call(int(recruit_pick.get_item_metadata(recruit_pick.selected)))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.revision = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.revision = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.revision = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.revision = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call())",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "refresh.call())",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "refresh.call())",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "refresh.call())",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "refresh.call())",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "release_button.pressed.connect(func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if person <= 0 or not org.has(\"release\") or not org.pending.call().has(person):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"⚠ 請先在人選中選取一名待分職幹部\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var result: Dictionary = org.release.call(person)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "claim_button.pressed.connect(func() -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if person <= 0:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "check_label.text = \"⚠ 請先選擇首長人選\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var result: Dictionary = org.claim.call(person)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "ai_toggle.toggled.connect(func(enabled: bool) -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if bool(state.syncing) or not context_ok.call(): return",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "show_result(org.ai.call(enabled))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "org_choice.item_selected.connect(func(index: int) -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "state.org = orgs[index]",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "filter.item_selected.connect(func(_index: int) -> void: refresh.call())",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "seats.item_selected.connect(func(index: int) -> void:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var seat := SiteOffices.position(SiteOffices.preview_plan(state.org.offices.call(), state.ops).offices, str(state.seat_ids[index]))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not seat.is_empty(): name_input.text = str(seat.name))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "dialog.close_requested.connect(dialog.queue_free)",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "refresh.call()",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "_show_dialog(dialog, \"offices\", ui_context, host)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "recruit_button.text = \"募兵：編入所選原人物（退隊者或自由人物）\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var social_text: String = org.social.call() if org.has(\"social\") else \"\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not social_text.is_empty(): note.text += \"",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 129,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "ship_journey_active",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "return not _ship_journey.is_empty() or region_operation_pending() or vehicles != null and lab != null and lab.terrain != null and not vehicl",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return not _ship_journey.is_empty() or region_operation_pending()",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "ship_vehicle_in_journey",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "return vehicles != null and vehicles.has_region_ship_projection(identity) or not _ship_journey.is_empty() and _ship_journey.get(\"boat_ids\", ",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return not _ship_journey.is_empty() and _ship_journey.get(\"boat_ids\", []).has(identity)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "ship_person_in_journey",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if _ship_journey.is_empty() and vehicles._region_ship_frames(lab.terrain).is_empty(): return false",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if _ship_journey.is_empty(): return false",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_controller.gd",
+  "func": "prepare_shared_native_training_requests",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var entry: Dictionary = lab.terrain.site.team_supply.get(str(owner.team_id), {})",
+    [
+     "ebbed52",
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "var entry: Dictionary = lab.terrain.site.get(\"team_supply\", {}).get(str(owner.team_id), {})",
+    [
+     "ebbed52"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_duty_ai.gd",
+  "func": "review",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if bool(team.team_offices().duty_ai): teams.append(team)",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if bool(team.team_offices().duty_ai) and team.pending_cadre().is_empty(): teams.append(team)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_duty_ai.gd",
+  "func": "review_prison",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "var relation: Dictionary = lab.terrain.site.captivity[key]",
+    [
+     "7c2504d",
+     "ef39140"
+    ]
+   ],
+   [
+    "var controlled_now := int(lab.controlled_person_id())",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "var inmate_keys: Array = lab.terrain.site.get(\"captivity\", {}).keys()",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "inmate_keys.sort()",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "for key: String in inmate_keys:",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "if int(key) == controlled_now or not prisons.has(str(relation.get(\"prison_id\", \"\"))): continue",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "var offer := PoliticalAdoption.standing_offer(lab, relation)",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "if offer.is_empty() or int(offer.admission_decider) == controlled_now: continue",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "var adopted := PoliticalAdoption.adopt(lab, int(key), offer, decider, int(offer.admission_decider))",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "if bool(adopted.get(\"ok\", false)):",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "_record_settlement(resolved, mind, {}, {\"inmate\": int(key), \"nation\": str(offer.nation_id)}, \"adopt %s into %s\" % [key, str(offer.nation_id)",
+    [
+     "7c2504d"
+    ]
+   ],
+   [
+    "return adopted",
+    [
+     "7c2504d"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_duty_ai.gd",
+  "func": "_cadence_state",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "registry = lab.site_controller.region_slot.region_registry()",
+    [
+     "ebbed52",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "registry = lab.site_controller.region_slot.region_registry_view()",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if registry.is_empty(): return {}",
+    [
+     "ebbed52"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_equipment_orders.gd",
+  "func": "_normalize_public_order",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if order.tech_id == \"N08\":",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "receipt.source_operator_id = int(receipt.source_operator_id)",
+    []
+   ],
+   [
+    "receipt.operator_reference.lineage = int(receipt.operator_reference.lineage)",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_equipment_orders.gd",
+  "func": "nation_offices",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if read_only and int(current.get(\"version\", SiteOffices.VERSION)) < SiteOffices.VERSION: current = current.duplicate(true)",
+    [
+     "0b4e53c",
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if read_only and (int(current.get(\"version\", SiteOffices.VERSION)) < SiteOffices.VERSION or not _catalog_complete(current)): current = curre",
+    [
+     "0b4e53c"
+    ]
+   ],
+   [
+    "if SiteOffices.ensure_catalog(current, \"nation\") and not read_only:",
+    [
+     "0b4e53c"
+    ]
+   ],
+   [
+    "current.revision = mini(SiteOffices.MAX_SEQ, int(current.revision) + 1)",
+    [
+     "0b4e53c"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_equipment_orders.gd",
+  "func": "_valid_public_order",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var receipt_fields := [\"id\", \"site_id\", \"binding\", \"operator_id\", \"target_id\", \"work_seconds\", \"item_ids\"]",
+    []
+   ],
+   [
+    "if raw.tech_id == \"N08\": receipt_fields.append_array([\"source_operator_id\", \"operator_reference\", \"transfer_token\"])",
+    []
+   ],
+   [
+    "if not Technology.keys(receipt, receipt_fields) or not _public_reference(receipt.id) \\",
+    []
+   ],
+   [
+    "or receipt.site_id != (raw.payload.destination_site_id if raw.tech_id == \"N08\" else raw.scope_site_id) or not Technology.finite_number(recei",
+    []
+   ],
+   [
+    "or not _operation_person(receipt.operator_id, {} if raw.tech_id == \"N08\" else people) or not _public_reference(receipt.target_id) or not rec",
+    []
+   ],
+   [
+    "if raw.tech_id == \"N08\" and (not _operation_person(receipt.source_operator_id, people) or not _portable_ref(receipt.operator_reference, \"per",
+    []
+   ],
+   [
+    "or receipt.transfer_token != raw.payload.travel_token): return false",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not Technology.keys(receipt, [\"id\", \"site_id\", \"binding\", \"operator_id\", \"target_id\", \"work_seconds\", \"item_ids\"]) or not _public_referen",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or receipt.site_id != raw.scope_site_id or not Technology.finite_number(receipt.work_seconds, _public_receipt_seconds(str(receipt.get(\"bindi",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or not _operation_person(receipt.operator_id, people) or not _public_reference(receipt.target_id) or not receipt.item_ids is Array: return f",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 7
+ },
+ {
+  "file": "scripts/terrain_lab/site_equipment_orders.gd",
+  "func": "_public_receipt_matches_order",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "return index == 0 and receipt.binding == \"public_route\" and payload.loaded and not payload.travel_token.is_empty() and target == payload.des",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return index == 0 and receipt.binding == \"public_route\" and payload.loaded and not payload.travel_token.is_empty() and target == payload.des",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_garrison.gd",
+  "func": "_authority",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var person: Dictionary = lab.site_controller.person_actions._person(int(lab.controlled_person_id()))",
+    [
+     "5fe600a",
+     "ef39140"
+    ]
+   ],
+   [
+    "if person.is_empty() or int(person.faction) != int(layout.owner_faction): return Runtime.fail(\"NO_AUTHORITY\", \"只能管理同陣營軍營\")",
+    [
+     "5fe600a",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "var controlled := int(lab.controlled_person_id())",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "var person: Dictionary = lab.site_controller.person_actions._person(controlled)",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "if person.is_empty(): return Runtime.fail(\"NO_AUTHORITY\", \"只能管理同陣營軍營\")",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "if Settlement.garrison_governed(lab, str(layout.get(\"id\", \"\"))):",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "var refused: Dictionary = Settlement.garrison_authority(lab, str(layout.id), controlled)",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "if not refused.is_empty(): return refused",
+    [
+     "5fe600a"
+    ]
+   ],
+   [
+    "elif int(person.faction) != int(layout.owner_faction): return Runtime.fail(\"NO_AUTHORITY\", \"只能管理同陣營軍營\")",
+    [
+     "5fe600a"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "_commit",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var result: Dictionary = equipment_orders.commit_team_issue(job.order) if str(job.order.mode) == \"team_issue\" else equipment_orders.commit(j",
+    []
+   ],
+   [
+    "var changed: bool = not result.get(\"changed_ids\", []).is_empty() if str(job.order.mode) == \"team_issue\" else job.order.planned != job.order.",
+    []
+   ],
+   [
+    "return result",
+    [
+     "b41c6b3",
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "if (not job.resources.is_empty() or not job.item_ids.is_empty() or float(job.open_amount) > 0.0) \\",
+    []
+   ],
+   [
+    "relation.merge(new_capture_fields(lab.terrain))",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return equipment_orders.commit_team_issue(job.order) if str(job.order.mode) == \"team_issue\" else equipment_orders.commit(job.order)",
+    [
+     "24eaf20"
+    ]
+   ],
+   [
+    "relation.merge(capture_fields(int(job.target_id), target))",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "_social_before_release(int(job.target_id), target, str(job.kind) == \"ransom\")",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "begin_technology_lesson",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var check := _technology_authority(requester_id, \"family.teaching\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var check := _technology_authority(requester_id, \"family.teach\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "_technology_lesson_context",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not bool(_technology_duty(\"family.teaching\").get(\"ok\", false)): return Runtime.fail(\"NO_AUTHORITY\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not bool(_technology_duty(\"family.teach\").get(\"ok\", false)): return Runtime.fail(\"NO_AUTHORITY\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "technology_query",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "\"research_decider\": int(_technology_duty(\"family.research\").get(\"decider\", -1)), \"teaching_decider\": int(_technology_duty(\"family.teaching\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "\"research_decider\": int(_technology_duty(\"family.research\").get(\"decider\", -1)), \"teaching_decider\": int(_technology_duty(\"family.teach\").ge",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "_technology_matching_original_task",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var original_job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})",
+    []
+   ],
+   [
+    "if original_job.get(\"kind\") == \"food_order\":",
+    []
+   ],
+   [
+    "return settlement_food_own_job(person, original_job.get(\"food_order\", {})) and is_same(original_job.get(\"nation_token\"), token) \\",
+    []
+   ],
+   [
+    "and Runtime._settlement_food_token(lab.terrain, token, original_job.food_order)",
+    []
+   ],
+   [
+    "if original_job.get(\"kind\") == \"water_schedule\":",
+    []
+   ],
+   [
+    "return is_same(original_job.get(\"executor_body\"), person.body) \\",
+    []
+   ],
+   [
+    "and is_same(original_job.get(\"terrain\"), lab.terrain) and is_same(original_job.get(\"site_state\"), lab.terrain.site) \\",
+    []
+   ],
+   [
+    "and original_job.get(\"nation_token\") == token and token.get(\"binding\") == \"water_priority\" \\",
+    []
+   ],
+   [
+    "and token.get(\"target_id\") == \"feature:\" + str(Settlement.record(lab.terrain).get(\"center_id\", \"\"))",
+    []
+   ],
+   [
+    "var job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if job.get(\"kind\") in [\"technology_feature\", \"technology_vehicle\"] and is_same(job.get(\"technology_executor_body\"), person.body) \\",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "and is_same(job.get(\"site_state\"), lab.terrain.site): task = job.work_task",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "var named_transit: bool = Technology.integer(task.get(\"version\"), 3, 3) and task.get(\"named\") == true and str(task.get(\"mode\", \"\")) in [\"idl",
+    []
+   ],
+   [
+    "if task.is_empty() or str(task.get(\"mode\", \"\")) not in [\"work\", \"rest\"] and not named_transit: return false",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if task.is_empty() or str(task.get(\"mode\", \"\")) not in [\"work\", \"rest\"]: return false",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 3,
+  "epoch_lines_new": 11
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "scope_technology_query",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var teaching := _technology_duty(\"family.teaching\") if scope == \"family\" else Runtime.fail(\"NO_FAMILY_LESSON\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var teaching := _technology_duty(\"family.teach\") if scope == \"family\" else Runtime.fail(\"NO_FAMILY_LESSON\")",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_person_actions.gd",
+  "func": "publish_gd_custody_terminal",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "else: prepared.captivity.erase(str(job.target_id))",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "prepared.next_relation.merge(capture_fields(int(job.target_id), target), true)",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "else:",
+    null
+   ],
+   [
+    "_social_before_release(int(job.target_id), target, str(job.kind) == \"ransom\")",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "prepared.captivity.erase(str(job.target_id))",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_runtime.gd",
+  "func": "cancel_feature",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if feature.has(\"technology_siege_yard\") or feature.has(\"technology_shipyard_work\"): return fail(\"BUSY\", \"請先由原首長合法撤回指定場地／船塢配置\")",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_runtime.gd",
+  "func": "publish_feature_output",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "prepared.feature_before, \"produce\", int(prepared.receipt.get(\"operator_id\", 0)), prepared.output,",
+    []
+   ],
+   [
+    "prepared.products.get(\"item_ids\", []))",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_runtime.gd",
+  "func": "harvest",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var result := ok(\"取得 \" + items_text(output), {\"items\": output, \"taken\": taken})",
+    []
+   ],
+   [
+    "return result",
+    [
+     "b41c6b3",
+     "ef39140",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "return ok(\"取得 \" + items_text(output), {\"items\": output, \"taken\": taken})",
+    [
+     "a643aee"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_runtime.gd",
+  "func": "validate_technology_target_storage",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "or not event.binding is String or not Technology.finite_number(event.work_seconds, 0.000000001) or not event.item_ids is Array \\",
+    [
+     "ebbed52",
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "or not event.binding is String or not Technology.finite_number(event.work_seconds, 0.000000001) or float(event.work_seconds) > 1.0e12 or not",
+    [
+     "ebbed52"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_runtime.gd",
+  "func": "_technology_original_siege_stations",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not data.contains(cell): return []",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if not data.contains(cell):",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if six: return []",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "continue",
+    null
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "save",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "var social_schema := _validate_unadmitted_social_state(data.site)",
+    []
+   ],
+   [
+    "if not social_schema.ok: return social_schema",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_same_fixed_base",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if left.has(\"land_condition_rule\") or right.has(\"land_condition_rule\"):",
+    []
+   ],
+   [
+    "if not left.get(\"land_condition_rule\") is String or not right.get(\"land_condition_rule\") is String or left.get(\"land_condition_rule\") != \"te",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_validate_state",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "var social_schema := _validate_unadmitted_social_state(state)",
+    []
+   ],
+   [
+    "if not social_schema.ok: return social_schema",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_validate_site_values",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "var water_schedule_validation := Runtime.validate_water_schedule_storage(data, state)",
+    []
+   ],
+   [
+    "if not water_schedule_validation.ok: return water_schedule_validation",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "load_site",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if params.has(\"fixed_land_condition_rule\") != data.parameters.has(\"fixed_land_condition_rule\") or params.get(\"fixed_land_condition_rule\") !=",
+    []
+   ],
+   [
+    "return Runtime.fail(\"SAVE_VERSION\", \"Fixed land-condition source differs; original archive retained\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not region_loaded.ok: return region_loaded",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_normalize_state",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if state.has(\"capture_episode_next\"): state.capture_episode_next = int(state.capture_episode_next)",
+    []
+   ],
+   [
+    "for relation: Dictionary in state.get(\"captivity\", {}).values():",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "var sequence := int(state.get(\"capture_episode_next\", 1))",
+    []
+   ],
+   [
+    "state.capture_episode_next = sequence + 1",
+    []
+   ],
+   [
+    "relation.episode = \"%s:%d\" % [str(state.get(\"id\", \"\")), sequence]",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "for relation_key: String in state.get(\"captivity\", {}):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var relation: Dictionary = state.captivity[relation_key]",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.episode = {\"site_id\": str(state.get(\"id\", \"\")), \"person_id\": int(relation_key), \"seq\": 0}",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.loyal_org = null",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.rank_snapshot = \"unknown\"",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.settled_days = 0",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.settled_days = int(relation.settled_days)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.episode.person_id = int(relation.episode.person_id)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "relation.episode.seq = int(relation.episode.seq)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "prepare_ecology_candidate",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not checkpoint.ok: return checkpoint",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_validate_captivity",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if state.has(\"capture_episode_next\") and not _integer(state.capture_episode_next, 1, 2147483647):",
+    []
+   ],
+   [
+    "return Runtime.fail(\"CORRUPT_SAVE\", \"拘押期序號\")",
+    []
+   ],
+   [
+    "if not _serial(key, 2147483648) or not relation is Dictionary or not _integer(relation.get(\"version\"), 1, 3) or relation.size() != [5, 6, 10",
+    []
+   ],
+   [
+    "or not relation.get(\"episode\") is String or str(relation.episode).is_empty() or not relation.get(\"legacy_observed\") is bool:",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not _serial(key, 2147483648) or not relation is Dictionary or not _integer(relation.get(\"version\"), 1, 3) or relation.size() != [5, 6, 13",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or not relation.get(\"legacy_observed\") is bool:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var episode: Variant = relation.get(\"episode\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not episode is Dictionary or episode.size() != 3 or not episode.get(\"site_id\") is String or not _integer(episode.get(\"person_id\"), 1, 214",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or int(episode.person_id) != int(key) or not _integer(episode.get(\"seq\"), 0, 2147483647):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return Runtime.fail(\"CORRUPT_SAVE\", \"捕獲 episode\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if relation.get(\"loyal_org\") != null and not TerrainTestCharacter.PersonSocial.valid_org_ref(relation.loyal_org) \\",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or str(relation.get(\"rank_snapshot\", \"\")) not in TerrainTestCharacter.PersonSocial.RANKS \\",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "or not _integer(relation.get(\"settled_days\"), 0, floori(maxf(0.0, site_seconds - float(captured)) / 86400.0)):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return Runtime.fail(\"CORRUPT_SAVE\", \"效忠組織／身分快照／已結算拘押日\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "restore_region_snapshot",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not checked.ok: return checked",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/site_store.gd",
+  "func": "_validate_unadmitted_social_state",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if body is Dictionary and body.has(\"social_state\"):",
+    []
+   ],
+   [
+    "if body is Dictionary and body.has(\"social_state\"):",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if body is Dictionary and body.has(\"social_state\") and not TerrainTestCharacter.PersonSocial.valid(body.social_state):",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if body is Dictionary and body.has(\"social_state\") and not TerrainTestCharacter.PersonSocial.valid(body.social_state):",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_training_ground.gd",
+  "func": "inspect",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if not owner is TerrainArmy and bool(members[identity].get(\"present\", false)) and not controller.lab.crowd_site.work_fatigue_work_start_read",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "_claims",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if is_ship(vehicle) and has_region_ship_projection(str(vehicle.get(\"id\", \"\"))): return region_ship_claims(vehicle)",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "transfer",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var original_transfer := func() -> Dictionary:",
+    []
+   ],
+   [
+    "return Runtime.publish_item_transfer(prepared)",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "return Runtime.publish_item_transfer(prepared)",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "ship_person_ground",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)): return Vector2(-1.0, -1.0)",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)): return Vector2(-1.0, -1.0)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "ship_person_cell",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var boat := ship_for_person(identity)",
+    []
+   ],
+   [
+    "if (point.x < 0.0 or point.y < 0.0) and not has_region_ship_projection(str(boat.get(\"id\", \"\"))): return TerrainArmy.INVALID_CELL",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if point.x < 0.0 or point.y < 0.0: return TerrainArmy.INVALID_CELL",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "ship_loot_ground",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)) or local.size() != 2: retur",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_transport.gd",
+  "func": "_transfer_ship",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var original_transfer := func() -> Dictionary:",
+    []
+   ],
+   [
+    "return original_transfer.call()",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return Runtime.transfer_items(lab.terrain, source.holder, source.cargo, target.holder, target.cargo, resources, item_ids, source_version, de",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_view.gd",
+  "func": "_refresh_ship_loot",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if point.x < 0.0 and not lab.site_controller.vehicles.has_region_ship_projection(str(boat.get(\"id\", \"\"))):",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if point.x < 0.0:",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/site_vehicle_view.gd",
+  "func": "_ship_in_journey",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "return lab != null and lab.site_controller != null and lab.site_controller.has_method(\"ship_vehicle_in_journey\") and bool(lab.site_controlle",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "return lab != null and lab.site_controller != null and lab.site_controller.has_method(\"ship_vehicle_in_journey\") and bool(lab.site_controlle",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "_hide_journey_person",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "if vehicle_transport != null and vehicle_transport.has_region_ship_projection(_ship_vehicle_id(index)): return false",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "_audio_begin_step",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var mounted: bool = vehicle_transport != null and bool(vehicle_transport.occupies_own_horse(identity, source))",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var mounted: bool = vehicle_transport != null and vehicle_transport.occupies_own_horse(identity, source)",
+    [
+     "02a2442"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "set_military_role",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if next_role == \"officer\" and index != formal_commander: _auto_seat_officers([index])",
+    [
+     "5fe600a",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if next_role == \"officer\" and index != formal_commander and garrison_feature_id.is_empty(): _auto_seat_officers([index])",
+    [
+     "5fe600a"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "apply_office_plan",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if not office_ops.is_empty(): offices = result.offices",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if not office_ops.is_empty():",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "_record_dismissals(offices, result.offices, requester_id)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "offices = result.offices",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "_install_roster",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "_head_established = formal_commander >= 0 # A new split team founds its own captain.",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "_head_established = formal_commander >= 0 or bool(metadata.get(\"established\", false)) # Split teams name theirs explicitly (3.5).",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "transfer_members_to",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "func transfer_members_to(recipient: TerrainArmy, identities: Array[int], requester: int, recipient_requester: int = -1) -> Dictionary:",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "if index < 0 or index == PLAYER_MEMBER or not is_member(index) or recipient.index_for_identity(identity) >= 0:",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "var target_meta := recipient._roster_metadata() if existing else source_meta.duplicate()",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "for field: String in [\"officers\", \"service\"]:",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "for identity: int in source_meta[field]:",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "if selected.has(identity) and not target_meta[field].has(identity):",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "target_meta[field].append(identity)",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "incoming_living += int(not member_gone(index))",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "func transfer_members_to(recipient: TerrainArmy, identities: Array[int], requester: int, recipient_requester: int = -1, new_captain_id: int ",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if index < 0 or index == PLAYER_MEMBER or is_member(index) == retired_rows or recipient.index_for_identity(identity) >= 0:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var target_meta := recipient._roster_metadata() if existing else source_meta.duplicate(true)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var captain := new_captain_id",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if captain < 0:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var moving_officers: Array[int] = []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "for identity: int in identities:",
+    [
+     "ef39140",
+     "39f1444",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "var index := index_for_identity(identity)",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "if index >= 0 and military_role(index) == \"officer\" and not member_gone(index): moving_officers.append(identity)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if moving_officers.size() > 1:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"NEEDS_CAPTAIN\", \"拆出名單有多名軍官：須明確指定新隊隊長\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "captain = moving_officers[0] if moving_officers.size() == 1 else -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "elif not selected.has(captain) or military_role(index_for_identity(captain)) != \"officer\" or member_gone(index_for_identity(captain)):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"NOT_ELIGIBLE\", \"新隊隊長須是本次拆出的在世軍官\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.formal = captain",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.acting = -1",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.current = captain",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.officers = []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.service = []",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "target_meta.established = true # No founding pick: vacant until a real claim.",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "incoming_living += int(not member_gone(index) and is_member(index))",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 8,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "split_members_to",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "func split_members_to(recipient: TerrainArmy, identities: Array[int], requester: int) -> Dictionary:",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ],
+   [
+    "return transfer_members_to(recipient, identities, requester)",
+    [
+     "ef39140",
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "func split_members_to(recipient: TerrainArmy, identities: Array[int], requester: int, new_captain_id: int = -1) -> Dictionary:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return transfer_members_to(recipient, identities, requester, -1, new_captain_id)",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "apply_unit_contact",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if hp <= 0.0 and not bool(packet.get(\"environmental\", false)) and data != null:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "unit.combat_death_minute = int(data.site.get(\"minute\", 0)) # R2: a real battle death (not hunger/fire).",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_army.gd",
+  "func": "technology_work_consent",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "func technology_work_consent(person_id: int, purpose: String, controlled_id: int) -> Dictionary:",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "return policy.technology_work_consent(self, person_id, purpose, controlled_id)",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "func technology_work_consent(person_id: int, purpose: String, controlled_id: int, physical_context: Variant = null) -> Dictionary:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "return policy.technology_work_consent(self, person_id, purpose, controlled_id, physical_context)",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_finish_native_checked_body_prefixes",
+  "cat": "A",
+  "epoch_only": [
+   [
+    "for row: Dictionary in _native_begin_shared_window_prepared.ranged.releases:",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_bind_original_terrain",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "team.clear(str(region_admission.get(\"token\", \"\")) if trusted_region else \"\")",
+    []
+   ],
+   [
+    "if not restore_only and site_controller.region_slot != null and not terrain.has_meta(&\"region_party_owner\"):",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "team.clear()",
+    [
+     "ef39140",
+     "bdf48bd"
+    ]
+   ],
+   [
+    "if not restore_only and site_controller.region_slot != null:",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "replay_site_to",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var pending := float(window.pending)",
+    [
+     "ebbed52",
+     "ef39140"
+    ]
+   ],
+   [
+    "pending = float(result.pending)",
+    [
+     "ebbed52",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if site_controller != null:",
+    [
+     "ebbed52",
+     "b41c6b3",
+     "ef39140",
+     "24eaf20",
+     "39f1444",
+     "bdf48bd",
+     "7e1f9d6",
+     "a643aee"
+    ]
+   ],
+   [
+    "var step_fault: Dictionary = site_controller.original_step_fault_guard()",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if not step_fault.ok: return step_fault",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "var pending := _replay_pending_residue(float(window.pending))",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if not result.has(\"pending\"):",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"CLOCK_CONTRACT\", \"補算步進未完成且無欠秒：\" + str(result.get(\"status\", \"\")))",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "pending = _replay_pending_residue(float(result.pending))",
+    [
+     "ebbed52"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_advance_fatigue",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var action_seconds: Dictionary = site_controller.person_actions.advance(seconds, {\"jobs\": _shared_work_plan.get(\"jobs\", {}).get(\"person_acti",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "site_controller.captive_escort.advance(seconds)",
+    [
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "var action_seconds: Dictionary = {}",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not accepted_prefix_only:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "action_seconds = site_controller.person_actions.advance(seconds, {\"jobs\": _shared_work_plan.get(\"jobs\", {}).get(\"person_actions\", {})} if no",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "site_controller.captive_escort.advance(seconds)",
+    [
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_resolve_ranged_arrival",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var noise := _region_legacy_noise(flight, int(target.id))",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "var noise := (int(flight.shooter_id) * 73856093) ^ (int(flight.shot_id) * 83492791) ^ (int(target.id) * 19349663) ^ terrain.seed_value",
+    [
+     "7e1f9d6"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_advance_original_cold_site",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "fire_guard[\"source\"] = \"cold_settle\"",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "fire_guard[\"site_id\"] = str(data.site.get(\"id\", \"\"))",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "return fire_guard",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_fire_save_guard_impl",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "and (not intent.get(\"work\", []).is_empty() or not intent.get(\"hazard\", {}).is_empty() or not intent.get(\"deployment\", {}).is_empty()):",
+    [
+     "0b4e53c",
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "and (not intent.get(\"work\", []).is_empty() or not intent.get(\"hazard\", {}).is_empty() or _fire_deployment_has_intent(intent.get(\"deployment\"",
+    [
+     "0b4e53c"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 1,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_prepare_fire_transport_restore",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not region.ok: return region",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_capture_original_owner_state",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var party_clock := _region_party_capture_clock(context)",
+    []
+   ],
+   [
+    "if not party_clock.ok: return party_clock",
+    []
+   ],
+   [
+    "if slot != null and not party_clock.party:",
+    []
+   ],
+   [
+    "if not party_clock.party:",
+    []
+   ],
+   [
+    "var settled := RegionSaveSlot.validate_settlement(terrain.site, context.game_seconds)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not settled.ok or not bool(settled.legacy) and float(settled.pending) > 0.00000001:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"STALE_REGION_OWNER\", \"Original Site has an incomplete global interval\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "var legacy := _region_validate_legacy_roots(terrain, roots, terrain.get_meta(&\"region_party_runtime_mapping\", {}))",
+    []
+   ],
+   [
+    "if not legacy.ok: return legacy",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if slot != null:",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "var settled := RegionSaveSlot.validate_settlement(terrain.site, context.game_seconds)",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not settled.ok or not bool(settled.legacy) and float(settled.pending) > 0.00000001:",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"STALE_REGION_OWNER\", \"Original Site has an incomplete global interval\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 4,
+  "epoch_lines_new": 5
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_restore_region_owners",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not snapshot.ok: return snapshot",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "validate_region_owner_bind_payload",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not metadata.ok: return metadata",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_prepare_region_main_interval",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var party_host := terrain.has_meta(&\"region_party_owner\")",
+    []
+   ],
+   [
+    "if travelling:",
+    []
+   ],
+   [
+    "if not str(slot.control.active_site_id).is_empty(): return SiteRuntime.fail(\"INVALID_TRAVEL_HOST\")",
+    []
+   ],
+   [
+    "if party_host:",
+    []
+   ],
+   [
+    "var selected: Dictionary = slot.region_travel_party()",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not selected.ok: return selected",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "var current: Dictionary = slot.region_original_party_runtime_proof(_region_party_token, selected.party)",
+    []
+   ],
+   [
+    "if not current.ok or current.get(\"lab\") != self: return current if not current.ok else SiteRuntime.fail(\"INVALID_TRAVEL_HOST\")",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "elif not restore_only or slot._region_original_labs.get(str(terrain.site.id)) != self: return SiteRuntime.fail(\"INVALID_TRAVEL_HOST\")",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if travelling and (not restore_only or not str(slot.control.active_site_id).is_empty() or slot._region_original_labs.get(str(terrain.site.id",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 3,
+  "epoch_lines_new": 6
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_register_replayed_bind_source",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not metadata.ok: return metadata",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_bootstrap_bind_child",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not saved.ok: return saved",
+    [
+     "f507067",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_bind_ticket_admission",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if ticket.kind in [\"party-bootstrap\", \"party-candidate\", \"party-published\"]:",
+    []
+   ],
+   [
+    "var party_admission := _region_party_bind_admission(ticket, data)",
+    []
+   ],
+   [
+    "if not party_admission.ok: return party_admission",
+    []
+   ],
+   [
+    "elif ticket.kind in [\"bootstrap\", \"projection\"]:",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if ticket.kind in [\"bootstrap\", \"projection\"]:",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 4
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_verify_canonical_bind_source",
+  "cat": "B",
+  "epoch_only": [],
+  "d_only": [
+   [
+    "if not saved.ok: return saved",
+    [
+     "f507067",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_prepare_selected_owner_restore",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if slot.region_bind_proof(canonical) != proof or FileAccess.get_sha256(path) != str(proof.sha256):",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"STALE_SELECTED_REGION_COMMIT\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if not snapshot.ok: return snapshot",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "if slot.region_bind_proof(canonical) != proof or FileAccess.get_sha256(path) != str(proof.sha256): return SiteRuntime.fail(\"STALE_SELECTED_R",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_region_check_selected_restore_ticket",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "or int(slot.region_registry().revision) != int(ticket.revision):",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "return SiteRuntime.fail(\"STALE_SELECTED_REGION_COMMIT\")",
+    [
+     "ef39140"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "or int(slot.region_registry().revision) != int(ticket.revision): return SiteRuntime.fail(\"STALE_SELECTED_REGION_COMMIT\")",
+    [
+     "ef39140"
+    ]
+   ],
+   [
+    "if not snapshot.ok: return snapshot",
+    [
+     "b41c6b3",
+     "ef39140"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 2,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_audio_step_completed",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "var native_owned: bool = crowd_site != null and crowd_site.active and crowd_site.contains_person(identity)",
+    []
+   ],
+   [
+    "if native_owned != native_source: return",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if crowd_site != null and crowd_site.active and crowd_site.contains_person(identity): return",
+    [
+     "02a2442"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 2
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_audio_exchange_add",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if identity == listener_id and identity > 0 and kind in [&\"hurt\", &\"contact\", &\"shield\", &\"down\"] \\",
+    []
+   ]
+  ],
+  "d_only": [
+   [
+    "if identity == listener_id and identity > 0 and kind in [&\"hurt\", &\"contact\", &\"shield\"] \\",
+    [
+     "02a2442"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_advance_original_shared_step",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "view.set_loops([])",
+    []
+   ]
+  ],
+  "d_only": [],
+  "epoch_lines_d_removed": 0,
+  "epoch_lines_new": 1
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "_prepare_native_begin_shared_window",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "for owner_ref: CrowdPersonOwner in crowd_site.owners:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "var inputs: Dictionary = owner_ref.prepare_host_ranged_ammo_inputs()",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not inputs.ok: return inputs",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "input_batches.append({\"owner\": owner_ref, \"rows\": inputs.rows})",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if crowd_site.fire_host_active():",
+    [
+     "8136bcb",
+     "b41c6b3",
+     "ef39140"
+    ]
+   ],
+   [
+    "for owner_ref: CrowdPersonOwner in crowd_site.owners:",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "var inputs: Dictionary = owner_ref.prepare_host_ranged_ammo_inputs()",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if not inputs.ok: return inputs",
+    [
+     "b41c6b3"
+    ]
+   ],
+   [
+    "input_batches.append({\"owner\": owner_ref, \"rows\": inputs.rows})",
+    [
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 4,
+  "epoch_lines_new": 0
+ },
+ {
+  "file": "scripts/terrain_lab/terrain_lab.gd",
+  "func": "prepare_native_begin_ranged",
+  "cat": "B",
+  "epoch_only": [
+   [
+    "if crowd_site == null or not crowd_site.active or not crowd_site.fire_host_active() \\",
+    [
+     "ebbed52",
+     "b41c6b3"
+    ]
+   ],
+   [
+    "or crowd_site.crowd == null or not crowd_site.crowd.has_method(\"preview_host_ranged_batch\"): return SiteRuntime.fail(\"CLOCK_NOT_READY\")",
+    [
+     "ebbed52",
+     "b41c6b3"
+    ]
+   ],
+   [
+    "if bool(draft.query_due):",
+    [
+     "8136bcb",
+     "b41c6b3"
+    ]
+   ]
+  ],
+  "d_only": [
+   [
+    "if crowd_site == null or not crowd_site.active or crowd_site.crowd == null: return SiteRuntime.fail(\"CLOCK_NOT_READY\")",
+    [
+     "ebbed52"
+    ]
+   ],
+   [
+    "if bool(draft.query_due) and crowd_site.fire_host_active():",
+    [
+     "8136bcb"
+    ]
+   ],
+   [
+    "if not crowd_site.fire_host_active() or not crowd_site.crowd.has_method(\"preview_host_ranged_batch\"): return SiteRuntime.fail(\"CLOCK_NOT_REA",
+    [
+     "ebbed52"
+    ]
+   ]
+  ],
+  "epoch_lines_d_removed": 3,
+  "epoch_lines_new": 0
+ }
+]

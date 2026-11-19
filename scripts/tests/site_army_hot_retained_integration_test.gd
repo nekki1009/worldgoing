@@ -1,6 +1,6 @@
 extends SceneTree
 
-const OUTPUT := "res://output/site_army_5k_hot_close_20260926/hot_retained_integration_smoke.json"
+const OUTPUT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/hot_retained_integration_smoke.json"
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -46,6 +46,119 @@ func _cached_clock_matches(army: TerrainArmy, index: int, label: String, require
 		return false
 	return true
 
+func _hold_think_visual_check(army: TerrainArmy) -> Dictionary:
+	# Use the admitted original callbacks so both due HOLD reviews exercise the
+	# new native path. Full submission remains an independent visual oracle.
+	var lab := TerrainLab.new()
+	lab.terrain = army.data
+	lab.combat_armies.append(army)
+	var original_enemy := army.enemy_query
+	var original_control := army.controlled_person_query
+	var original_ages: PackedFloat64Array = army.combat_hot_column(&"age")
+	var original_thinks: PackedFloat64Array = army.combat_hot_column(&"think")
+	var original_order := army.combat_order
+	var original_attacking := army.combat_attacking
+	var original_native_hold := army.native_hold_no_patient_enabled
+	var original_diagnostics := army.combat_hot_diagnostics_enabled
+	var original_mechanism: bool = army._batch_view.mechanism_enabled
+	army.enemy_query = lab._nearest_unit_enemy
+	army.controlled_person_query = lab.controlled_person_id
+	army.combat_order = TerrainArmy.CombatOrder.HOLD
+	army.combat_attacking = false
+	army.native_hold_no_patient_enabled = true
+	army._batch_view.mechanism_enabled = true
+	army.combat_hot_diagnostics_enabled = true
+	for index in range(army.combat_units.size()):
+		army.combat_hot_set(index, &"age", 0.0)
+		army.combat_hot_set(index, &"think", 0.0)
+	army._visual_full_dirty = true
+	army._visual_dirty = true
+	army.advance_frame(0.0)
+	var initial_frames: PackedInt32Array = army._batch_view._frames.duplicate()
+	var initial_ages: PackedFloat64Array = army.combat_hot_column(&"age")
+	var first_frame_change := INF
+	for index in range(initial_frames.size()):
+		var page_index: int = army._batch_view._page[index]
+		if page_index < 0: continue
+		var page: Dictionary = army._batch_view._pages[page_index]
+		var samples: Array = page.samples[army._batch_view._sequence[index]]
+		for sample: Dictionary in samples:
+			if float(sample.sample_time) > 0.0 and (sample.rect != samples[0].rect or sample.anchor_offset != samples[0].anchor_offset):
+				first_frame_change = minf(first_frame_change, float(sample.sample_time))
+	# The shipped idle atlas first changes at 1.145833373 seconds. Seventeen
+	# 30-Hz steps cover two HOLD reviews but cannot reach that authored frame.
+	var steps := maxi(17, ceili(first_frame_change * 30.0) + 1) if is_finite(first_frame_change) else 17
+	var animated := false
+	var clock_samples := 0
+	var column_uses := army.hold_rescue_column_uses
+	army.combat_hot_reset_stats()
+	for step in range(steps):
+		army.prepare_combat(1.0 / 30.0)
+		army.advance_frame(0.0)
+		var mechanism: Dictionary = army._batch_view.mechanism_stats()
+		if int(mechanism.static_observations) != 0 or int(mechanism.ground_projections) != 0 or int(mechanism.animation_samples) <= 0:
+			_fail("Ordinary HOLD resubmitted static source at step %d: %s" % [step + 1, mechanism])
+			return {}
+		var current_ages: PackedFloat64Array = army.combat_hot_column(&"age")
+		for index in range(initial_frames.size()):
+			var page_index: int = army._batch_view._page[index]
+			if page_index < 0: continue
+			var sample_key := Vector2i(page_index, army._batch_view._sequence[index])
+			var sampled_times: Dictionary = army._batch_view._sampled_frames.get(sample_key, {})
+			if current_ages[index] <= initial_ages[index] or not sampled_times.has(current_ages[index]):
+				_fail("Retained HOLD did not sample the exact advancing owner age at step %d row %d" % [step + 1, index])
+				return {}
+			clock_samples += 1
+			if army._batch_view._frames[index] != initial_frames[index]:
+				animated = true
+		if not _compare_with_full(army, "HOLD due-cycle step %d" % [step + 1]): return {}
+	var stats: Dictionary = army.combat_hot_stats()
+	var reviews := army.hold_rescue_column_uses - column_uses
+	army.enemy_query = original_enemy
+	army.controlled_person_query = original_control
+	lab.combat_armies.clear()
+	lab.free()
+	if (is_finite(first_frame_change) and not animated) or clock_samples == 0 or reviews < 2 or int(stats.native_rows) != steps * army.combat_units.size() \
+			or int(stats.fallback_rows) != 0 or not (stats.barriers as Dictionary).is_empty():
+		_fail("HOLD due reviews did not retain advancing idle animation without owner fallback: %s reviews=%d animated=%s" % [stats, reviews, animated])
+		return {}
+	# A direct caller with a stale supplied column must still honor a borrowed
+	# owner Dictionary. This also checks that the column is never retained.
+	var stale_exits: PackedFloat64Array = army.combat_hot_column(&"site_exited")
+	var ages: PackedFloat64Array = army.combat_hot_column(&"age")
+	army._borrow_combat_hot_row(2)
+	army.combat_units[2]["site_exited"] = true
+	assert(army._batch_view.begin_retained())
+	var sampled: int = army._batch_view.sample_retained_animations(ages, PackedByteArray(), stale_exits)
+	var borrowed_removed: bool = army._batch_view._page[2] == -1 and army._batch_view._index_row[2] == -1
+	army.combat_units[2]["site_exited"] = false
+	army._return_combat_hot_row()
+	army._batch_view.flush_retained()
+	# This case must not age the following pose-expiry/catch-up fixtures. Restore
+	# their original owner clocks and switches before priming the full baseline.
+	for index in range(army.combat_units.size()):
+		army.combat_hot_set(index, &"age", original_ages[index])
+		army.combat_hot_set(index, &"think", original_thinks[index])
+	army.combat_order = original_order
+	army.combat_attacking = original_attacking
+	army.native_hold_no_patient_enabled = original_native_hold
+	army.combat_hot_diagnostics_enabled = original_diagnostics
+	army._batch_view.mechanism_enabled = original_mechanism
+	army.hold_rescue_column_uses = column_uses
+	army._visual_full_dirty = true
+	army._visual_dirty = true
+	army.advance_frame(0.0)
+	if var_to_bytes(army.combat_hot_column(&"age")) != var_to_bytes(original_ages) \
+			or var_to_bytes(army.combat_hot_column(&"think")) != var_to_bytes(original_thinks):
+		_fail("HOLD visual helper changed the following fixtures' original clocks")
+		return {}
+	if sampled < 0 or not borrowed_removed:
+		_fail("A supplied exit column bypassed the current borrowed owner row")
+		return {}
+	return {"steps": steps, "due_reviews": reviews, "owner_clock_samples": clock_samples,
+		"first_authored_frame_change": first_frame_change if is_finite(first_frame_change) else -1.0, "idle_frames_advanced": animated,
+		"borrowed_exit_column_fallback": borrowed_removed, "native": stats}
+
 func _run() -> void:
 	create_timer(25.0).timeout.connect(func() -> void: _fail("Hot retained integration timed out"))
 	var data := TerrainGenerator.generate(0, 581)
@@ -75,6 +188,8 @@ func _run() -> void:
 	if not army.combat_hot_active() or army._batch_view == null:
 		_fail("Formal roster did not activate hot BatchView: hot=%s batch=%s" % [army.combat_hot_active(), army._batch_view != null])
 		return
+	var hold_visual := _hold_think_visual_check(army)
+	if hold_visual.is_empty(): return
 	army.combat_order = TerrainArmy.CombatOrder.ATTACK
 	for index in range(64): army.combat_hot_set(index, &"think", 5.0)
 	army._batch_view.mechanism_enabled = true
@@ -229,6 +344,7 @@ func _run() -> void:
 		_fail("Cannot write hot retained result")
 		return
 	output.store_string(JSON.stringify({"checks": {"formal_admission": true, "stable_no_rebuild": true,
+		"hold_two_due_reviews_zero_static_exact_full": true, "hold_authored_idle_clock_and_frames": true,
 		"stable_exact_full": true, "two_step_single_frame_exact": true,
 		"local_ko_bounded_exact": true, "moving_bounded_exact": true,
 		"native_no_barrier": true, "visual_pure_retained_exact": true,
@@ -241,7 +357,7 @@ func _run() -> void:
 		"visual_render": visual_render_stats, "attack_two_step": attack_stats,
 		"attack_render": attack_render_stats, "ended_visual": ended_visual_stats,
 		"facing": facing_stats, "distinct_clock": distinct_clock_stats,
-		"live_sprite": live_sprite_stats,
+		"live_sprite": live_sprite_stats, "hold_visual": hold_visual,
 		"army_sha256": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_army.gd"),
 		"batch_sha256": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_army_batch_view.gd"),
 		"dll_sha256": FileAccess.get_sha256("res://native/army_idle/bin/army_idle.windows.x86_64.dll"),

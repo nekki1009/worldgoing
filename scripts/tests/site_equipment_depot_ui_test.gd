@@ -2,8 +2,16 @@ extends "res://scripts/tests/site_work_team_clock_test.gd"
 ## Actual loose-ground loot -> original personal holder -> inventory UI deposit
 ## -> original NPC 5-second formal issue. No item/office is minted by the UI.
 
+func _press(controller: SiteController, button_name: String) -> void:
+	var category := "people" if button_name in ["ChooseRecoveryWorker", "ChoosePlayerLooter", "InspectLoot"] else "equipment"
+	controller.open_window(category)
+	var window: Window = controller.formal_windows[category]
+	var button := window.find_child(button_name, true, false) as Button
+	assert(button != null and not button.disabled and button.is_visible_in_tree(), "Actual formal control missing or unavailable: " + button_name)
+	button.pressed.emit()
+
 func _equipment_dialog(lab: TerrainLab, item_id: String) -> AcceptDialog:
-	_press(lab.site_controller, "EquipmentInventory")
+	_press(lab.site_controller, "EquipmentInventory" if lab.site_controller.person_executor_id == lab.controlled_person_id() else "SelectedEquipmentInventory")
 	var dialog := lab.get_node("SiteUI/EquipmentInventoryDialog") as AcceptDialog
 	var items := dialog.find_child("OwnedEquipmentItems", true, false) as ItemList
 	var found := false
@@ -22,6 +30,7 @@ func _stock(lab: TerrainLab) -> Array:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit command-test fixture; production startup has no worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -102,10 +111,11 @@ func _run() -> void:
 	controller.select_cell(recipient.terrain_cell)
 	_press(controller, "ChooseRecoveryWorker")
 	assert(controller.person_executor_id == recipient.person_id)
-	for name: String in ["WearOwnedItem", "RemoveOwnedItem", "DepositOwnedEquipment", "IssueEquipment"]:
-		(dialog.find_child(name, true, false) as Button).pressed.emit()
-		assert(controller.message.text.begins_with("STALE"))
-	dialog.free()
+	assert(controller._control_family_person(null, recipient.person_id).ok)
+	assert(not is_instance_valid(dialog) and not controller._ui_dialogs.has("equipment"), "Control change must dispose every action in the original inventory dispatch scope")
+	assert(_stock(lab) == before and not controller.person_actions.is_busy(player.person_id) and not controller.person_actions.is_busy(recipient.person_id))
+	assert(controller._control_family_person(null, player.person_id).ok)
+	controller.person_executor_id = recipient.person_id
 	dialog = _equipment_dialog(lab, str(npc_holder.equipped.armor))
 	(dialog.find_child("DepositOwnedEquipment", true, false) as Button).pressed.emit()
 	assert(controller.message.text.begins_with(Runtime.fail("NO_AUTHORITY").message))
@@ -123,8 +133,9 @@ func _run() -> void:
 	(dialog.find_child("DepositOwnedEquipment", true, false) as Button).pressed.emit()
 	assert(not holder.item_ids.has(item_id) and depot.item_ids.has(item_id))
 	assert(data.site.item_records[item_id].holder == "depot" and Runtime.now(data) == clock_before)
+	var deposited := _stock(lab)
 	(dialog.find_child("DepositOwnedEquipment", true, false) as Button).pressed.emit()
-	assert(controller.message.text.begins_with("STALE") and depot.item_ids.count(item_id) == 1)
+	assert(_stock(lab) == deposited and depot.item_ids.count(item_id) == 1, "The refreshed original panel cannot deposit the same real item twice")
 	dialog.free()
 	assert(holder.equipped.weapon == worn and is_same(cargo, data.site.manual.cargo))
 	assert(is_same(holder, player.item_state) and is_same(depot, data.site.depot_items) and is_same(inventory, data.site.inventory))
@@ -136,7 +147,7 @@ func _run() -> void:
 	assert(not npc_holder.equipped.has("weapon"))
 	controller.select_cell(recipient.terrain_cell)
 	_press(controller, "ChooseRecoveryWorker")
-	_press(controller, "EquipmentInventory")
+	_press(controller, "SelectedEquipmentInventory")
 	dialog = lab.get_node("SiteUI/EquipmentInventoryDialog") as AcceptDialog
 	var standard := dialog.find_child("IssueStandard", true, false) as OptionButton
 	assert(standard.item_count == 2 and standard.get_item_metadata(1) == ["depot_test", "recovered"])

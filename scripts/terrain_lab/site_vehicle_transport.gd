@@ -1,20 +1,980 @@
 class_name SiteVehicleTransport
 extends RefCounted
-## Borrows Site vehicle records and the original Army person's committed step.
-## No independent people, inventory ledger, pathfinder or movement clock.
+## Original Site vehicle records own ship steps; land carts borrow Army steps.
+## Original people, item holders and TerrainData remain the only authorities.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
+const SiegeWorkPose = preload("res://scripts/terrain_lab/site_siege_work_pose.gd")
+const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
+const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
+const SiegeEnvironment = preload("res://scripts/terrain_lab/site_environment.gd")
+const Ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const CAPACITY := {"cart": 100, "wagon": 300}
 const LENGTH := {"cart": 1, "wagon": 3}
 var controller: Variant
 var lab: Variant
+signal crew_assignment_finished(request: Dictionary, result: Dictionary)
+var _crew_asset_queue: Array[Dictionary] = []
+var _crew_asset_running := false
+
+func _queue_crew_assets(vehicle: Dictionary, person: Dictionary, person_id: int, slot: String, requester: int, dispatch: bool) -> Dictionary:
+	for request: Dictionary in _crew_asset_queue:
+		if int(request.person) != person_id: continue
+		if request.vehicle != vehicle.id or request.slot != slot or int(request.requester) != requester or bool(request.dispatch) != dispatch: return Runtime.fail("BUSY")
+		return Runtime.fail("SIEGE_ASSET_PENDING", "正準備原人員外觀與工作圖集；完成後重新驗證派工").merged({"pending": true})
+	_crew_asset_queue.append({"vehicle": str(vehicle.id), "person": person_id, "slot": slot,
+		"requester": requester, "dispatch": dispatch, "terrain": lab.terrain, "record": vehicle, "owner": person.owner})
+	if not _crew_asset_running:
+		_crew_asset_running = true
+		_prepare_crew_queue.call_deferred()
+	return Runtime.fail("SIEGE_ASSET_PENDING", "正準備原人員外觀與工作圖集；完成後重新驗證派工").merged({"pending": true})
+
+func _prepare_crew_queue() -> void:
+	while not _crew_asset_queue.is_empty():
+		var request: Dictionary = _crew_asset_queue[0]
+		var result := Runtime.fail("STALE_SOURCE")
+		if not bool(request.get("cancelled", false)) and is_same(lab.terrain, request.terrain) and is_same(records().get(request.vehicle), request.record):
+			var prepared: bool = await controller._prepare_siege_work_people([int(request.person)])
+			if is_same(lab.terrain, request.terrain) and is_same(records().get(request.vehicle), request.record) and is_same(_operator(int(request.person)).get("owner"), request.owner):
+				result = Runtime.fail("SIEGE_ASSET_FAILED", "原人員外觀或工作圖集準備失敗；未指派操作班")
+				if prepared and not bool(request.get("cancelled", false)) and _siege_work_assets_guard(int(request.person)).ok:
+					result = assign_crew(str(request.vehicle), int(request.person), str(request.slot), int(request.requester), bool(request.dispatch))
+		if bool(request.get("cancelled", false)): result = Runtime.fail("CANCELLED")
+		_crew_asset_queue.pop_front()
+		crew_assignment_finished.emit({"vehicle": request.vehicle, "person": request.person, "slot": request.slot}, result)
+
+	_crew_asset_running = false
+
+# Ship id -> the last refused route step of a live NPC ship (code, action, destination,
+# facing). Observation only: never saved, never part of the owner graph, never read
+# by movement. Cleared when that ship next commits a step.
+var ship_step_refusals: Dictionary = {}
+
+static func is_siege(value: Variant) -> bool:
+	return Runtime.SIEGE_DEFINITIONS.has(str(value.get("kind", "")) if value is Dictionary else str(value))
+
+func has_siege() -> bool:
+	for vehicle: Dictionary in records().values():
+		if is_siege(vehicle): return true
+	return false
+
+func is_siege_crew(identity: int) -> bool:
+	return is_siege(_operated(identity))
+
+func crew_cell(vehicle: Dictionary, slot: Variant, turning: bool = false) -> Vector2i:
+	return Runtime.siege_crew_cell(lab.terrain, vehicle, slot, turning)
+
+func _crew_ground_station(vehicle: Dictionary, cell: Vector2i) -> bool:
+	var data: TerrainData = lab.terrain
+	if not data.contains(cell) or not data.is_walkable(cell): return false
+	var index := data.index(cell)
+	var foundation: int = int(data.height_levels[int(vehicle.cell)]) if str(vehicle.kind) == "siege_tower" else data.effective_height(data.cell_from_index(int(vehicle.cell)))
+	return data.effective_height(cell) == foundation and data.effective_height(cell) == int(data.height_levels[index]) and Runtime.technology_siege_ground_cell_allowed(data, vehicle, cell) and int(data.surface_types[index]) not in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]
+
+# Grid people stand exactly on the station cell. Crowd people count within the shared pose radius of its centre.
+func _crew_at_station(vehicle: Dictionary, slot: String, person: Dictionary, turning: bool = false) -> bool:
+	var owner_ref: Variant = person.owner
+	var crowd: bool = owner_ref is CrowdPersonOwner
+	var native_position := Vector2(person.get("position", Vector2.ZERO)) if crowd else Vector2.ZERO
+	return SiegeWorkPose.at_crew_station(lab.terrain, vehicle, slot, person.cell, crowd, native_position, turning)
+
+func crew_count(vehicle: Dictionary, ready_only: bool = true) -> int:
+	var count := 0
+	for slot: String in vehicle.get("crew_slots", {}):
+		var person := _operator(int(vehicle.crew_slots[slot]))
+		if not _available(person) or int(person.owner.team_id) != int(vehicle.team_id): continue
+		if ready_only and (person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or not _crew_at_station(vehicle, slot, person) or not _crew_ground_station(vehicle, crew_cell(vehicle, slot)) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle"): continue
+		count += 1
+	return count
+
+func crew_ready(vehicle: Dictionary) -> bool:
+	for identity: int in vehicle.get("crew_slots", {}).values():
+		if not _siege_work_assets_guard(identity).ok: return false
+	var definition: Dictionary = Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {})
+	return not definition.is_empty() and crew_count(vehicle) >= int(definition.min_crew) and crew_count(vehicle) == vehicle.get("crew_slots", {}).size()
+
+func crew_multiplier(vehicle: Dictionary) -> float:
+	var definition: Dictionary = Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {})
+	return SiteCombatRules.siege_crew_multiplier(crew_count(vehicle), int(definition.get("min_crew", 1)), int(definition.get("standard_crew", 2)))
+
+
+func _siege_work_assets_guard(identity: int) -> Dictionary:
+	# Headless verifies mechanics only. GPU commands require real work assets
+	# prepared at the shared command/load boundary, never an idle stand-in.
+	if DisplayServer.get_name() == "headless": return Runtime.ok()
+	return Runtime.ok() if SiegeWorkAppend.ready(controller.person_appearance(identity)) else Runtime.fail("MISSING_ASSET", "原人員推運／裝填／拉繩動作尚未完整備妥")
+
+func siege_work_pose(identity: int) -> Dictionary:
+	var vehicle := _operated(identity)
+	if not is_siege(vehicle): return {}
+	var person := _operator(identity)
+	if person.is_empty(): return {}
+	var owner: Variant = person.owner
+	var index := int(person.unit)
+	var state: Dictionary = {}
+	if owner is TerrainArmy:
+		state = {"cell": owner.cells[index], "moving_to": owner.moving_to[index], "progress": float(owner.move_progress[index]),
+			"pose": str(owner.combat_hot_get(index, &"pose")), "hp": float(owner.combat_hot_get(index, &"hp")), "ko": float(owner.combat_hot_get(index, &"ko")),
+			"reacting": not owner.combat_hot_get(index, &"exchange_visual", {}).is_empty() or float(owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0,
+			"can_act": owner.combat_can_act(index)}
+	elif owner.has_method("siege_work_person_state"):
+		state = owner.siege_work_person_state(index)
+	return SiegeWorkPose.sample(lab.terrain, vehicle, identity, state)
+
+func _crew_moving(vehicle: Dictionary) -> bool:
+	for identity: int in vehicle.get("crew_slots", {}).values():
+		var person := _operator(identity)
+		if not person.is_empty() and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return true
+	return false
+
+func siege_save_guard() -> Dictionary:
+	for vehicle: Dictionary in records().values():
+		if is_siege(vehicle) and (not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or _crew_moving(vehicle) or str(vehicle.get("command", {}).get("type", "")) in ["crew", "move", "turn", "release"]):
+			return Runtime.fail("BUSY", "攻城操作或 crew 原人物步尚未收束")
+	return convoy_save_guard()
+
+func _siege_guard() -> Dictionary:
+	if bool(lab.terrain.site.get("paused", false)): return Runtime.fail("BUSY")
+	if lab.crowd_site != null and lab.crowd_site.active:
+		return Runtime.ok() if lab.crowd_site.siege_native_supported() else Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城介面")
+	return Runtime.ok()
+
+## The team that holds a team id's cargo: the crowd owner while the crowd is active, otherwise the grid army.
+func _team_owner(team_id: int) -> Variant:
+	if _native_siege(): return lab.crowd_site.siege_team_owner(team_id)
+	for team: TerrainArmy in lab.combat_armies:
+		if team.team_id == team_id: return team
+	return null
+
+func _siege_team(vehicle: Dictionary) -> Variant:
+	if _native_siege(): return lab.crowd_site.siege_team_owner(int(vehicle.team_id))
+	for team: TerrainArmy in lab.combat_armies:
+		if team.team_id == int(vehicle.team_id) and team.has_army(): return team
+	return null
+
+func assign_crew(vehicle_id: String, person_id: int, slot: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var guard := _siege_guard()
+	if not guard.ok: return guard
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var person := _operator(person_id)
+	if not is_siege(vehicle) or str(vehicle.phase) in ["building", "wrecked"] or not vehicle.get("repair", {}).is_empty() or not slot.is_valid_int() or slot != str(int(slot)) or int(slot) < 0 or int(slot) >= Runtime.siege_crew_offsets(str(vehicle.kind)).size(): return Runtime.fail("NO_TARGET")
+	if not _available(person) or int(person.owner.team_id) != int(vehicle.team_id): return Runtime.fail("NO_AUTHORITY", "須由原隊可行動成員操作")
+	if not _authorized(person.owner, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var index := int(person.unit)
+	if is_operator(person_id) or vehicle.crew_slots.has(slot) or not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or (person.owner.is_walking(index) if person.owner is CrowdPersonOwner else person.owner.moving_to[index] != TerrainArmy.INVALID_CELL) or str(person.owner.combat_hot_get(index, &"pose")) != "idle" or bool(person.owner.combat_hot_get(index, &"attack")) or float(person.owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0: return Runtime.fail("BUSY")
+	var destination := crew_cell(vehicle, slot)
+	if not _crew_ground_station(vehicle, destination) or blocks_cell(destination): return Runtime.fail("UNREACHABLE")
+	var work_assets := _siege_work_assets_guard(person_id)
+	if not work_assets.ok: return _queue_crew_assets(vehicle, person, person_id, slot, requester_id, test_dispatch)
+	if person.owner is CrowdPersonOwner and not person.owner.siege_crew_assigned(person_id): return Runtime.fail("BUSY", "原人物的群眾承諾步尚未收束")
+	vehicle.crew_slots[slot] = person_id
+	vehicle["operator_id"] = int(vehicle.crew_slots.get("0", 0))
+	if not person.owner is CrowdPersonOwner: person.owner.siege_crew_assigned(person_id)
+	vehicle["command"] = {"type": "crew"}
+	if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty(): vehicle["phase"] = "idle"
+	return Runtime.ok("原隊員逐格前往器具操作位；人員編制不變")
+
+func _queue_crew_release(vehicle: Dictionary, people: Array, reason: String, resume_attack: bool = false) -> void:
+	cancel_native_siege_step(vehicle)
+	var previous: Dictionary = vehicle.get("command", {})
+	var resume: Dictionary = previous.get("resume", {}).duplicate(true) if str(previous.get("type", "")) == "release" else (previous.duplicate(true) if str(previous.get("type", "")) in ["attack", "move"] else {})
+	var pending: Array = vehicle.get("command", {}).get("people", []).duplicate() if str(vehicle.get("command", {}).get("type", "")) == "release" else []
+	for identity: int in people:
+		if not pending.has(identity): pending.append(identity)
+	vehicle["command"] = {"type": "release", "people": pending, "reason": reason}
+	if resume_attack and not resume.is_empty(): vehicle.command.resume = resume
+	var action: Dictionary = vehicle.get("action", {})
+	var committed := str(action.get("stage", "")) in ["rotate", "recovering"] or str(action.get("stage", "")) == "collision" and not str(action.get("attack_id", "")).is_empty()
+	if str(action.get("stage", "")) in ["tower_deploy", "tower_retract"] and not resume_attack: vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.get("settled_phase", "idle"))
+	if float(vehicle.hp) <= 0.0 and str(action.get("stage", "")) != "rotate" or not committed and not resume_attack: vehicle["action"] = {}
+
+func _settle_crew_release(vehicle: Dictionary) -> void:
+	if str(vehicle.get("command", {}).get("type", "")) != "release" or not vehicle.get("move", {}).is_empty() or str(vehicle.get("action", {}).get("stage", "")) == "rotate": return
+	var pending: Array = vehicle.command.people
+	for identity: int in pending.duplicate():
+		var person := _operator(identity)
+		if not person.is_empty() and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: continue
+		for slot: String in vehicle.crew_slots.keys():
+			if int(vehicle.crew_slots[slot]) == identity: vehicle.crew_slots.erase(slot)
+		pending.erase(identity)
+		vehicle["operator_id"] = int(vehicle.crew_slots.get("0", 0))
+		if not person.is_empty(): person.owner.siege_crew_released(identity)
+	if pending.is_empty():
+		var tower_phase: String = str(vehicle.phase) if str(vehicle.kind) == "siege_tower" and not vehicle.get("deployed_pose", {}).is_empty() and float(vehicle.hp) > 0.0 else ""
+		var resume: Dictionary = vehicle.command.get("resume", {})
+		vehicle["command"] = resume if float(vehicle.hp) > 0.0 and not resume.is_empty() and crew_ready(vehicle) else {"type": "stop", "reason": str(vehicle.command.get("reason", "released"))}
+		vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else ("recovering" if str(vehicle.get("action", {}).get("stage", "")) == "recovering" else "idle")
+		if str(vehicle.command.get("type", "")) == "attack" and vehicle.action.is_empty(): vehicle["phase"] = "ready"
+		if float(vehicle.hp) <= 0.0: vehicle["command"] = {}
+		if not tower_phase.is_empty(): vehicle["phase"] = tower_phase
+
+func unassign_crew(vehicle_id: String, person_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var guard := _siege_guard()
+	if not guard.ok: return guard
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var team: Variant = _siege_team(vehicle) if is_siege(vehicle) else null
+	if team == null or not _authorized(team, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var cancelled := false
+	for request: Dictionary in _crew_asset_queue:
+		if is_same(request.terrain, lab.terrain) and is_same(request.record, vehicle) and (person_id == 0 or int(request.person) == person_id):
+			request["cancelled"] = true
+			cancelled = true
+	if person_id != 0 and not vehicle.crew_slots.values().has(person_id): return Runtime.ok("已取消等待中的操作班派工") if cancelled else Runtime.fail("NO_TARGET")
+	_queue_crew_release(vehicle, vehicle.crew_slots.values() if person_id == 0 else [person_id], "released")
+	_settle_crew_release(vehicle)
+	return Runtime.ok("原 crew 安全收束後解除；器具與貨物留現場")
+
+func order_siege(vehicle_id: String, kind: String, target: Dictionary = {}, requester_id: int = 0, test_dispatch: bool = false, selected_ammo: String = "", operator_id: int = 0, technology_token: Dictionary = {}) -> Dictionary:
+	var guard := _siege_guard()
+	if not guard.ok: return guard
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var team: Variant = _siege_team(vehicle) if is_siege(vehicle) else null
+	if team == null or not _authorized(team, requester_id, 0, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	if kind == "stop":
+		cancel_native_siege_step(vehicle)
+		var retained_phase: String = str(vehicle.action.get("settled_phase", vehicle.phase))
+		if str(vehicle.command.get("type", "")) == "release":
+			vehicle.command.erase("resume")
+			vehicle.command.reason = "ordered"
+		else: vehicle["command"] = {"type": "stop", "reason": "ordered"}
+		var stage := str(vehicle.get("action", {}).get("stage", ""))
+		if stage not in ["rotate", "recovering"] and not (stage == "collision" and not str(vehicle.action.get("attack_id", "")).is_empty()): vehicle["action"] = {}
+		if not vehicle.get("move", {}).is_empty(): vehicle["stop_pending"] = true
+		if vehicle.get("move", {}).is_empty() and not _crew_moving(vehicle) and vehicle.action.is_empty(): vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else (retained_phase if str(vehicle.kind) == "siege_tower" and not vehicle.get("deployed_pose", {}).is_empty() else "idle")
+		if float(vehicle.hp) <= 0.0 and vehicle.action.is_empty() and vehicle.crew_slots.is_empty(): vehicle["command"] = {}
+		return Runtime.ok("停止新攻城操作，已承諾動作安全收束")
+	if float(vehicle.hp) <= 0.0 or str(vehicle.phase) == "building" or not vehicle.get("move", {}).is_empty() or not vehicle.get("repair", {}).is_empty() or not vehicle.action.is_empty() or _crew_moving(vehicle) or str(vehicle.command.get("type", "")) == "release": return Runtime.fail("BUSY")
+	for identity: int in vehicle.get("crew_slots", {}).values():
+		var work_assets := _siege_work_assets_guard(identity)
+		if not work_assets.ok: return work_assets
+	var definition: Dictionary = Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)]
+	if kind in ["deploy", "retract"]: return _order_tower_surface(vehicle, kind)
+	if str(vehicle.phase) == "deployed" or not vehicle.get("deployed_pose", {}).is_empty(): return Runtime.fail("BUSY", "先清空塔面並完成收橋，才可推運或轉向")
+	if kind == "move":
+		var value: Variant = target.get("cell", [])
+		if float(definition.move_speed) <= 0.0 or target.get("type") != "ground" or not value is Array or value.size() != 2: return Runtime.fail("INVALID_ORDER", "此器具不支援推運，或目標不是本 Site 地面格")
+		var goal := Vector2i(int(value[0]), int(value[1]))
+		if not lab.terrain.contains(goal) or crew_count(vehicle, false) < int(definition.min_crew): return Runtime.fail("UNREACHABLE", "未達最低可用原操作班，或目的格不合法")
+		vehicle["command"] = {"type": "move", "target": {"type": "ground", "cell": [goal.x, goal.y]}}
+		vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
+		return Runtime.ok("原操作班到位後，以原 Grid 整組推運到目標格")
+	if kind == "turn":
+		var value: Variant = target.get("facing", [])
+		if not value is Array or value.size() != 2: return Runtime.fail("INVALID")
+		var direction := Vector2i(int(value[0]), int(value[1]))
+		var old := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+		if not TerrainData.DIRECTIONS.has(direction) or Vector2(direction).dot(Vector2(old)) != 0.0 or crew_count(vehicle, false) < int(definition.min_crew): return Runtime.fail("INVALID", "九十度轉向須達最低操作班")
+		vehicle["command"] = {"type": "turn", "facing": [direction.x, direction.y]}
+		vehicle["action"] = {"stage": "approach", "elapsed": 0.0, "facing": [direction.x, direction.y], "participants": vehicle.crew_slots.values().duplicate(), "sweep": []}
+		vehicle["phase"] = "turning"
+		return Runtime.ok("原人物先逐格走到轉向工位")
+	if kind == "attack":
+		if str(vehicle.kind) == "siege_tower" or str(target.get("type", "")) not in ["structure", "vehicle", "person", "ground"] or crew_count(vehicle, false) < int(definition.min_crew) or str(vehicle.kind) == "ram" and str(target.get("type", "")) != "structure": return Runtime.fail("INVALID")
+		var ammo := str(definition.get("ammo", "")) if selected_ammo.is_empty() else selected_ammo
+		if not ammo.is_empty() and not Runtime.siege_ammo_valid(str(vehicle.kind), ammo): return Runtime.fail("INVALID")
+		if ammo == "fire_pot":
+			var admission: Dictionary = controller.person_actions.fire_pot_ammo_guard(vehicle, operator_id, technology_token)
+			if not admission.ok: return admission
+		vehicle["command"] = {"type": "attack", "target": target.duplicate(true)}
+		if ammo == "fire_pot":
+			vehicle.command.merge({"ammo": ammo, "operator_id": operator_id})
+			if not technology_token.is_empty(): vehicle.command.tech_trial = technology_token
+		vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
+		return Runtime.ok("器具按真實接觸目標操作；原 crew 先實際到位")
+	return Runtime.fail("INVALID_ORDER")
+
+func _crew_walk(vehicle: Dictionary, turning: bool) -> bool:
+	var arrived := true
+	for slot: String in vehicle.crew_slots:
+		var person := _operator(int(vehicle.crew_slots[slot]))
+		if not _available(person): return false
+		var index := int(person.unit)
+		var goal := crew_cell(vehicle, slot, turning)
+		if not _crew_ground_station(vehicle, goal):
+			vehicle["command"] = {"type": "stop", "reason": "操作工位地面已改變"}
+			vehicle["action"] = {}
+			if str(vehicle.phase) != "deployed": vehicle["phase"] = "disabled"
+			return false
+		if person.owner.moving_to[index] != TerrainArmy.INVALID_CELL: arrived = false; continue
+		if _crew_at_station(vehicle, slot, person, turning): continue # Same station rule as crew_count: no walk-back for an arrived crowd crew.
+		arrived = false
+		if person.owner is CrowdPersonOwner:
+			if not person.owner.siege_approach_step(index, goal): _yield_crew_station(vehicle, goal, turning)
+			continue
+		# Combat foot routes use -1: the legacy per-person search quota advances
+		# only in peaceful formation ticks. Original reserve still checks this row.
+		var path: Array[Vector2i] = person.owner._find_local_route(person.cell, goal, 256, false, -1)
+		if path.size() >= 2: person.owner._reserve_combat_step(index, path[1], 0, false, false, true)
+	return arrived
+
+# SIEGE-YIELD (crew stations): a same-team soldier that is not crew and stands on a crew station steps to a free
+# neighbouring cell, so the crew can reach it. A soldier that yielded out of a turn sweep may have stopped exactly on
+# the station of the new facing; without this the turn's return stage never ends. The controlled person, enemies and
+# other teams are never moved.
+func _yield_crew_station(vehicle: Dictionary, station: Vector2i, turning: bool) -> void:
+	if not _native_siege(): return
+	var stations := {}
+	for slot: String in vehicle.crew_slots: stations[crew_cell(vehicle, slot, turning)] = true
+	for identity: int in _turn_yielders_at(vehicle, station, {}):
+		if identity == int(lab.controlled_person_id()): continue
+		var person: Dictionary = lab.crowd_site.siege_original_person(identity)
+		if person.is_empty() or bool(person.get("moving", false)): continue
+		for offset: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]:
+			var cell: Vector2i = station + offset
+			if not lab.terrain.contains(cell) or stations.has(cell) or not lab.terrain.is_walkable(cell) or not lab.terrain.can_step(station, cell): continue
+			if lab.crowd_site.siege_approach_step(identity, cell): break
+
+func _turn_sweep(vehicle: Dictionary) -> Array[int]:
+	var value: Array = vehicle.get("action", {}).get("facing", vehicle.facing)
+	return Runtime.siege_turn_sweep(lab.terrain, vehicle, Vector2i(int(value[0]), int(value[1])))
+
+# Native turns: the crew are the turning people; their stations lie inside the sweep, so they are exempt.
+func _turn_exempt(vehicle: Dictionary) -> Dictionary:
+	var exempt := {}
+	if not _native_siege(): return exempt
+	for identity: int in vehicle.crew_slots.values(): exempt[identity] = true
+	return exempt
+
+func _turn_fits(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}) -> bool:
+	return _turn_block(vehicle, sweep, exempt).is_empty()
+
+# First cell that blocks a turn sweep, with its reason. Empty when the sweep is clear.
+func _turn_block(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}) -> Dictionary:
+	if sweep.is_empty(): return {"reason": "empty_sweep"}
+	var base: int = lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))
+	for value: int in sweep:
+		var cell: Vector2i = lab.terrain.cell_from_index(value)
+		var height: int = lab.terrain.effective_height(cell)
+		var reason := ""
+		if not lab.terrain.is_walkable(cell): reason = "terrain_unwalkable"
+		elif height != base: reason = "height_differs_from_vehicle"
+		elif height != int(lab.terrain.height_levels[value]): reason = "height_not_natural"
+		elif not Runtime.technology_siege_ground_cell_allowed(lab.terrain, vehicle, cell): reason = "technology_ground"
+		elif int(lab.terrain.surface_types[value]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: reason = "surface_water_or_wetland"
+		elif _turn_people_block(vehicle, cell, exempt): reason = "person"
+		if not reason.is_empty():
+			return {"cell": [cell.x, cell.y], "reason": reason, "height": height, "vehicle_base": base,
+				"natural": int(lab.terrain.height_levels[value]), "surface": int(lab.terrain.surface_types[value]),
+				"people": _turn_people_at(cell, exempt)}
+		for other: Dictionary in records().values():
+			if str(other.id) != str(vehicle.id) and _claims(other).has(cell):
+				return {"cell": [cell.x, cell.y], "reason": "claim", "claimed_by": str(other.id)}
+	return {}
+
+# SIEGE-YIELD (native turns): a same-team soldier that is not crew steps out of the sweep by itself (World claims the
+# sweep; convoy_evacuation rules), so it does not block. Enemies, other teams, Actors and army members still block.
+func _turn_people_block(vehicle: Dictionary, cell: Vector2i, exempt: Dictionary) -> bool:
+	if not _siege_people_except(cell, exempt): return false
+	if not _native_siege(): return true
+	var ignored := exempt.duplicate()
+	for identity: int in _turn_yielders_at(vehicle, cell, exempt): ignored[identity] = true
+	return _siege_people_except(cell, ignored)
+
+# Native people on cell who yield to this vehicle's turn: same team, not exempt crew of any vehicle, able to act.
+func _turn_yielders_at(vehicle: Dictionary, cell: Vector2i, exempt: Dictionary) -> Array[int]:
+	var found: Array[int] = []
+	if not _native_siege(): return found
+	var crew := {}
+	for other: Dictionary in records().values():
+		for identity: Variant in other.get("crew_slots", {}).values(): crew[int(identity)] = true
+	for team: Dictionary in lab.crowd_site.teams:
+		for identity: int in team.person_ids:
+			if exempt.has(identity) or crew.has(identity): continue
+			var person: Dictionary = lab.crowd_site.siege_original_person(identity)
+			if person.is_empty() or person.get("cell", Vector2i(-1, -1)) != cell: continue
+			if int(person.owner.team_id) != int(vehicle.team_id) or not person.owner.combat_can_act(int(person.unit)): continue
+			found.append(identity)
+	return found
+
+# Diagnostic only: identities standing on a cell (native teams, GD actors and army members).
+func _turn_people_at(cell: Vector2i, exempt: Dictionary) -> Array:
+	var found: Array = []
+	if _native_siege():
+		for team: Variant in lab.crowd_site.teams:
+			for identity: int in team.person_ids:
+				if exempt.has(identity): continue
+				var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+				if not person.is_empty() and person.cell == cell: found.append("native:%d" % identity)
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if not exempt.has(actor.person_id) and actor.terrain_cell == cell: found.append("actor:%d" % actor.person_id)
+	for team: TerrainArmy in lab.combat_armies:
+		for index in range(team.cells.size()):
+			if team.cells[index] == cell: found.append("army:%d" % team.combat_identity(index))
+	return found
+
+func update_siege(delta: float) -> void:
+	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
+	_sync_convoys()
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle): continue
+		var invalid: Array = []
+		var team: Variant = _siege_team(vehicle)
+		for identity: int in vehicle.crew_slots.values():
+			var person := _operator(identity)
+			if float(vehicle.hp) <= 0.0 or not _available(person) or team == null or person.owner != team or not team.command_eligible(team.current_commander) or team.combat_order == TerrainArmy.CombatOrder.RETREAT or team.is_sustain_routed(): invalid.append(identity); continue
+			var original: Dictionary = controller.person_actions._person(identity, false)
+			if not original.is_empty() and controller.person_actions._threat(original, {}): invalid.append(identity)
+		if not invalid.is_empty():
+			var can_continue: bool = float(vehicle.hp) > 0.0 and team != null and team.command_eligible(team.current_commander) and team.combat_order != TerrainArmy.CombatOrder.RETREAT and not team.is_sustain_routed() and vehicle.crew_slots.size() - invalid.size() >= int(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].min_crew)
+			_queue_crew_release(vehicle, invalid, "crew_unavailable", can_continue)
+		var stage := str(vehicle.get("action", {}).get("stage", ""))
+		if stage == "rotate":
+			if int(vehicle.action.get("native_token", 0)) > 0: continue # World owns this elapsed value and whole-group barrier.
+			var sweep: Array[int] = []; sweep.assign(vehicle.action.get("sweep", []))
+			var source_changed := false
+			var drop := 0
+			for value: String in vehicle.action.get("source_heights", {}):
+				var old_height: int = int(vehicle.action.source_heights[value])
+				var current_height: int = lab.terrain.effective_height(lab.terrain.cell_from_index(int(value)))
+				source_changed = source_changed or old_height != current_height
+				drop = maxi(drop, old_height - current_height)
+			if source_changed or not _turn_fits(vehicle, sweep, _turn_exempt(vehicle)):
+				vehicle.action = {}
+				if drop > 0: Runtime.damage_siege_vehicle(lab.terrain, str(vehicle.id), float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp) * 0.25 * drop)
+				_queue_crew_release(vehicle, vehicle.crew_slots.values(), "terrain_changed")
+				_settle_crew_release(vehicle)
+				vehicle.command = {} if float(vehicle.hp) <= 0.0 else {"type": "stop", "reason": "terrain_changed"}
+				vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "disabled"
+				continue
+			vehicle.action.elapsed = float(vehicle.action.elapsed) + delta
+			if float(vehicle.action.elapsed) + 0.00000001 >= float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_seconds):
+				vehicle.facing = vehicle.action.facing.duplicate()
+				if str(vehicle.command.get("type", "")) in ["stop", "release"] or float(vehicle.hp) <= 0.0:
+					vehicle.action = {}
+					vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "idle"
+				else:
+					vehicle.action = {"stage": "return", "elapsed": 0.0}
+			_settle_crew_release(vehicle)
+			continue
+		_settle_crew_release(vehicle)
+		if str(vehicle.kind) == "siege_tower":
+			if str(vehicle.get("action", {}).get("stage", "")) in ["tower_deploy", "tower_retract"]:
+				_advance_tower_surface(vehicle, delta)
+				continue
+			if str(vehicle.phase) == "deploying" and vehicle.action.is_empty(): vehicle.phase = "disabled" if not vehicle.get("deployed_pose", {}).is_empty() else "idle"
+		if not vehicle.get("move", {}).is_empty(): continue # Original Coordinator owns the whole physical commit barrier.
+		if vehicle.action.is_empty() and str(vehicle.command.get("type", "")) == "stop" and str(vehicle.phase) == "turning" and not _crew_moving(vehicle):
+			# A stop during approach/return retains only each original committed
+			# foot edge. Once those edges finish, the canceled turn is stable.
+			vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "idle"
+			if float(vehicle.hp) <= 0.0 and vehicle.crew_slots.is_empty(): vehicle.command = {}
+		if float(vehicle.hp) <= 0.0 or str(vehicle.phase) == "building" or not vehicle.get("repair", {}).is_empty(): continue
+		if stage == "approach":
+			if not _crew_walk(vehicle, true): continue
+			# Ready work stations wait for one original Grid sweep admission.
+			continue
+		elif stage == "return":
+			if _crew_walk(vehicle, false):
+				vehicle.action = {}
+				vehicle.command = {"type": "stop", "reason": "turned"}
+				vehicle.phase = "ready" if crew_ready(vehicle) else "idle"
+		elif str(vehicle.command.get("type", "")) in ["crew", "attack", "move"] and vehicle.action.is_empty():
+			if _crew_walk(vehicle, false):
+				if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty(): vehicle.phase = "ready" if crew_ready(vehicle) else "disabled"
+				if str(vehicle.command.type) == "crew": vehicle.command = {"type": "stop", "reason": "assigned"}
+
+func touches_vehicle(cell: Vector2i, vehicle: Dictionary) -> bool:
+	for occupied: Vector2i in footprint(lab.terrain, vehicle):
+		if absi(occupied.x - cell.x) + absi(occupied.y - cell.y) == 1 and lab.terrain.can_step(cell, occupied): return true
+	return false
+
+func _tower_surface_people_block(cell: Vector2i) -> bool:
+	if _native_siege() and lab.crowd_site.siege_people_block(cell, []): return true
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if _native_siege() and lab.crowd_site.contains_person(actor.person_id): continue
+		if not actor.site_exited and (actor.terrain_cell == cell or actor.is_moving() and actor.movement_from_cell == cell): return true
+	for team: TerrainArmy in lab.combat_armies:
+		if _native_siege() and lab.crowd_site.owns_original_team(team): continue
+		for index in range(team.cells.size()):
+			if bool(team.combat_hot_get(index, &"site_exited", false)) or team._ship_embarked(index): continue
+			if team.cells[index] == cell or team.moving_to[index] == cell: return true
+		if team._reserved_cells.has(cell) or team._passage_cell_is_protected(cell): return true
+		var deployment: CombatDeploymentPlan = team.get_active_deployment_plan()
+		if deployment != null and (deployment.slot_owner_map.has(cell) or deployment.slot_lease_timers.has(cell)): return true
+	return false
+
+func _tower_surface_preview(vehicle: Dictionary, kind: String) -> Dictionary:
+	if str(vehicle.get("kind", "")) != "siege_tower" or float(vehicle.hp) <= 0.0: return Runtime.fail("NO_TARGET")
+	if not crew_ready(vehicle): return Runtime.fail("BUSY", "最低四名原操作班須全員在合法地面工位")
+	var candidate: Dictionary = vehicle.duplicate(true)
+	if kind == "deploy":
+		candidate["deployed_pose"] = Runtime.siege_tower_pose(lab.terrain, vehicle)
+		candidate["phase"] = "deployed"
+		var geometry: Dictionary = Runtime.siege_tower_geometry(lab.terrain, candidate)
+		if not bool(geometry.support_valid): return Runtime.fail("UNREACHABLE", str(geometry.reason))
+	elif kind != "retract" or vehicle.get("deployed_pose", {}).is_empty(): return Runtime.fail("NO_TARGET", "塔尚無可收束的原部署位姿")
+	var empty: Dictionary = Runtime.siege_tower_surface_guard(lab.terrain, candidate, _tower_surface_people_block)
+	if not empty.ok: return empty
+	return Runtime.ok("原塔面與所有進出預約均已清空", {"pose": candidate.deployed_pose.duplicate(true)})
+
+func _order_tower_surface(vehicle: Dictionary, kind: String) -> Dictionary:
+	if str(vehicle.kind) != "siege_tower" or kind == "deploy" and str(vehicle.phase) == "deployed": return Runtime.fail("INVALID_ORDER")
+	var preview := _tower_surface_preview(vehicle, kind)
+	if not preview.ok: return preview
+	if not lab._charge_siege_round(vehicle): return Runtime.fail("BUSY", "原操作班疲勞交易未通過；未開始塔具作業")
+	vehicle["command"] = {"type": kind}
+	vehicle["action"] = {"stage": "tower_" + kind, "elapsed": 0.0, "settled_phase": str(vehicle.phase)}
+	if kind == "deploy": vehicle["phase"] = "deploying"
+	return Runtime.ok("原操作班按共同動作時間架設十五秒／收橋十秒；表面在提交時改變")
+
+func _advance_tower_surface(vehicle: Dictionary, delta: float) -> void:
+	var action: Dictionary = vehicle.action
+	var kind := "deploy" if str(action.stage) == "tower_deploy" else "retract"
+	var preview := _tower_surface_preview(vehicle, kind)
+	if not preview.ok:
+		vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.settled_phase)
+		vehicle["action"] = {}
+		vehicle["command"] = {"type": "stop", "reason": str(preview.get("message", "塔作業條件已改變"))}
+		return
+	action["elapsed"] = float(action.elapsed) + delta
+	if float(action.elapsed) + 0.000000001 < (15.0 if kind == "deploy" else 10.0): return
+	# This same pure preview checks current original people, reservations and
+	# supports before changing the same vehicle's sole deployed pose.
+	vehicle["deployed_pose"] = preview.pose.duplicate(true) if kind == "deploy" else {}
+	vehicle["phase"] = "deployed" if kind == "deploy" else "idle"
+	vehicle["action"] = {}
+	vehicle["command"] = {"type": "stop", "reason": "deployed" if kind == "deploy" else "retracted"}
+	SiegeEnvironment.rebuild_indexes(lab.terrain)
+
+func blocks_person_cell(cell: Vector2i, ignore_operator: int = 0, ignore_team: int = 0) -> bool:
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle) and not is_ship(vehicle) and (ignore_operator > 0 and int(vehicle.operator_id) == ignore_operator or ignore_team > 0 and int(vehicle.team_id) == ignore_team): continue
+		if not _claims(vehicle).has(cell): continue
+		if str(vehicle.kind) == "siege_tower":
+			var geometry: Dictionary = Runtime.siege_tower_geometry(lab.terrain, vehicle)
+			if bool(geometry.active) and geometry.heights.has(lab.terrain.index(cell)) and vehicle.move.is_empty() and vehicle.action.is_empty(): continue
+		return true
+	return false
+
+func blocks_person_step(identity: int, origin: Vector2i, from: Vector2i, to: Vector2i, goal: Vector2i) -> bool:
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle) and not is_ship(vehicle) and identity > 0 and int(vehicle.operator_id) == identity: continue
+		if not _claims(vehicle).has(to): continue
+		if str(vehicle.kind) == "siege_tower" and vehicle.move.is_empty() and vehicle.action.is_empty():
+			if origin == from and from == to and person_origin_exception(identity, to): continue # Standing/waking at the original settled cell; never a navigation edge.
+			if Runtime.siege_person_step_allowed(lab.terrain, vehicle, origin, from, to, goal): continue
+		return true
+	return false
+
+func person_origin_exception(identity: int, cell: Vector2i) -> bool:
+	var person: Dictionary = lab._combat_target(identity)
+	if person.is_empty() or person.cell != cell or not lab.terrain.is_walkable(cell): return false
+	if person.owner is TerrainArmy:
+		if person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return false
+	elif person.owner is TerrainTestCharacter:
+		if person.owner.is_moving() or person.owner.site_exited: return false
+	elif person.owner is CrowdPersonOwner:
+		# Native row: the same settled-cell rule, read from the stationary native person.
+		var row: Dictionary = person.owner.person(int(person.unit), false)
+		if row.is_empty() or row.cell != cell or bool(row.get("moving", true)) or person.owner.member_gone(int(person.unit)): return false
+		if person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return false
+	else: return false
+	for vehicle: Dictionary in records().values():
+		if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty() or not vehicle.move.is_empty() or not vehicle.action.is_empty(): continue
+		var geometry: Dictionary = Runtime.siege_tower_geometry(lab.terrain, vehicle)
+		if geometry.physical.has(cell) and (bool(geometry.active) or float(vehicle.hp) <= 0.0 or str(vehicle.phase) == "disabled" or not bool(geometry.support_valid)): return true
+	return false
+
+func person_path_exception(cell: Vector2i, identity: int = 0, origin: Vector2i = TerrainArmy.INVALID_CELL, from: Vector2i = TerrainArmy.INVALID_CELL, goal: Vector2i = TerrainArmy.INVALID_CELL) -> bool:
+	if not blocks_cell(cell, identity): return false
+	return not blocks_person_step(identity, origin, from, cell, goal) if from != TerrainArmy.INVALID_CELL else not blocks_person_cell(cell, identity)
+
+func _siege_people_except(cell: Vector2i, participants: Dictionary) -> bool:
+	if _native_siege() and lab.crowd_site.siege_people_block(cell, participants.keys()): return true
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if _native_siege() and lab.crowd_site.contains_person(actor.person_id): continue
+		# Physical original bodies retain both endpoints even after KO/death.
+		# The live-combat eligibility maps deliberately omit those people.
+		if not participants.has(actor.person_id) and not actor.site_exited and (actor.terrain_cell == cell or actor.is_moving() and actor.movement_from_cell == cell): return true
+	for team: TerrainArmy in lab.combat_armies:
+		if _native_siege() and lab.crowd_site.owns_original_team(team): continue
+		for index in range(team.cells.size()):
+			if participants.has(team.combat_identity(index)) or bool(team.combat_hot_get(index, &"site_exited", false)) or team._ship_embarked(index): continue
+			if team.cells[index] == cell or team.moving_to[index] == cell: return true
+		for claims: Dictionary in [team._cell_owners, team._reserved_cells]:
+			if claims.has(cell) and not participants.has(team.combat_identity(int(claims[cell]))): return true
+	return false
+
+func _siege_gate_passage_floor(vehicle: Dictionary, cell: Vector2i, base: int) -> bool:
+	# Only the ram's existing navigation may occupy completed gate passage
+	# floor. Foundations, frame parts, other features and tower work stay strict.
+	if str(vehicle.get("kind", "")) != "ram": return false
+	var data: TerrainData = lab.terrain
+	if not data.contains(cell): return false
+	var value := data.index(cell)
+	if int(data.static_blocked[value]) != 0 or data.effective_height(cell) != base or int(data.height_levels[value]) != base: return false
+	var feature: Dictionary = data.site.features.get(str(data.feature_at[value]), {})
+	if str(feature.get("kind", "")) != "gate" or str(feature.get("stage", "")) != "complete" or int(feature.get("layout_version", 0)) <= 0 or not feature.get("cells", []).has(value) or str(feature.get("gate", {}).get("pending", "")) != "": return false
+	var geometry: Dictionary = Runtime.feature_geometry(data, feature)
+	if geometry.blocked.has(value): return false
+	for part: Dictionary in geometry.parts.values():
+		if str(part.get("role", "")) == "frame" and part.cells.has(value): return false
+	return true
+
+func _siege_cells_clear(vehicle: Dictionary, cells: Array[Vector2i], participants: Dictionary, base: int, check_people: bool = true) -> bool:
+	for cell: Vector2i in cells:
+		if not lab.terrain.contains(cell) or not lab.terrain.is_walkable(cell): return false
+		var value: int = lab.terrain.index(cell)
+		if lab.terrain.effective_height(cell) != base or lab.terrain.effective_height(cell) != int(lab.terrain.height_levels[value]) or (not Runtime.technology_siege_ground_cell_allowed(lab.terrain, vehicle, cell) and not _siege_gate_passage_floor(vehicle, cell, base)) or int(lab.terrain.surface_types[value]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: return false
+		if check_people and _siege_people_except(cell, participants): return false
+		for other: Dictionary in records().values():
+			if str(other.id) != str(vehicle.id) and _claims(other).has(cell): return false
+	return true
+
+func _siege_route_step(vehicle: Dictionary, from: Vector2i, destination: Vector2i) -> Dictionary:
+	var direction := destination - from
+	if absi(direction.x) + absi(direction.y) != 1 or float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].move_speed) <= 0.0: return {"invalid": true}
+	var source_pose := {"kind": vehicle.kind, "cell": lab.terrain.index(from), "facing": vehicle.facing}
+	var next_pose := {"kind": vehicle.kind, "cell": lab.terrain.index(destination), "facing": vehicle.facing}
+	var checked: Array[Vector2i] = Runtime.siege_cells(lab.terrain, source_pose)
+	for cell: Vector2i in Runtime.siege_cells(lab.terrain, next_pose):
+		if not checked.has(cell): checked.append(cell)
+	var participants := {}
+	for slot: String in vehicle.crew_slots:
+		participants[int(vehicle.crew_slots[slot])] = true
+		var source := Runtime.siege_crew_cell(lab.terrain, source_pose, slot)
+		var next := Runtime.siege_crew_cell(lab.terrain, next_pose, slot)
+		if not lab.terrain.can_step(source, next): return {"invalid": true}
+		for cell: Vector2i in [source, next]:
+			if not checked.has(cell): checked.append(cell)
+	var base: int = lab.terrain.effective_height(from)
+	if not _siege_cells_clear(vehicle, checked, participants, base): return {"invalid": true}
+	var sweep: Array[int] = []
+	for cell: Vector2i in checked: sweep.append(lab.terrain.index(cell))
+	return {"cell": lab.terrain.index(destination), "facing": vehicle.facing.duplicate(), "sweep": sweep}
+
+func _siege_move_plan(vehicle: Dictionary, next: Vector2i) -> Dictionary:
+	var team: Variant = _siege_team(vehicle)
+	if team == null or not crew_ready(vehicle): return {}
+	var source: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+	var step := _siege_route_step(vehicle, source, next)
+	if step.has("invalid"): return {}
+	var participants: Array[Dictionary] = []
+	var first := 2147483647
+	for slot: String in vehicle.crew_slots:
+		var identity := int(vehicle.crew_slots[slot])
+		var person := _operator(identity)
+		if person.is_empty(): return {}
+		first = mini(first, identity)
+		participants.append({"person_id": identity, "slot": slot, "from": lab.terrain.index(person.cell), "to": lab.terrain.index(person.cell + next - source)})
+	var direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+	var reverse := 0.5 if Vector2(direction).dot(Vector2(next - source)) < 0.0 else 1.0
+	var duration := 1.0 / (float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].move_speed) * crew_multiplier(vehicle) * reverse)
+	var heights := {}
+	for cell: Vector2i in Runtime.siege_cells(lab.terrain, vehicle): heights[str(lab.terrain.index(cell))] = lab.terrain.effective_height(cell)
+	return _siege_plan_envelope(vehicle, {"mode": "translate", "vehicle_id": str(vehicle.id), "priority_member": first, "from": int(vehicle.cell), "cell": int(step.cell), "facing": vehicle.facing.duplicate(), "participants": participants, "sweep": step.sweep, "duration": duration, "source_heights": heights, "command": vehicle.command.duplicate(true)})
+
+func _turn_crew_ready(vehicle: Dictionary) -> bool:
+	if crew_count(vehicle, false) < int(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].min_crew): return false
+	for slot: String in vehicle.crew_slots:
+		var person := _operator(int(vehicle.crew_slots[slot]))
+		if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or not _crew_at_station(vehicle, slot, person, true) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle" or not _crew_ground_station(vehicle, crew_cell(vehicle, slot, true)): return false
+	return true
+
+func _siege_turn_plan(vehicle: Dictionary) -> Dictionary:
+	var team: Variant = _siege_team(vehicle)
+	if team == null or not _turn_crew_ready(vehicle) or not _turn_contacts_valid(vehicle): return {}
+	var sweep := _turn_sweep(vehicle)
+	if not _turn_fits(vehicle, sweep, _turn_exempt(vehicle)): return {}
+	var participants: Array[Dictionary] = []
+	var first := 2147483647
+	for slot: String in vehicle.crew_slots:
+		var identity := int(vehicle.crew_slots[slot])
+		var cell: Vector2i = _operator(identity).cell
+		first = mini(first, identity)
+		participants.append({"person_id": identity, "slot": slot, "from": lab.terrain.index(cell), "to": lab.terrain.index(cell)})
+	var heights := {}
+	for cell: Vector2i in Runtime.siege_cells(lab.terrain, vehicle): heights[str(lab.terrain.index(cell))] = lab.terrain.effective_height(cell)
+	return _siege_plan_envelope(vehicle, {"mode": "rotate", "vehicle_id": str(vehicle.id), "priority_member": first, "from": int(vehicle.cell), "cell": int(vehicle.cell), "facing": vehicle.action.facing.duplicate(), "participants": participants, "sweep": sweep, "duration": float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_seconds), "source_heights": heights, "command": vehicle.command.duplicate(true)})
+
+func has_pending_siege_compounds() -> bool:
+	for vehicle: Dictionary in records().values():
+		if is_siege(vehicle) and float(vehicle.hp) > 0.0 and vehicle.get("move", {}).is_empty() and (str(vehicle.get("command", {}).get("type", "")) == "move" or str(vehicle.get("action", {}).get("stage", "")) == "approach"): return true
+	return false
+
+func propose_siege_compounds(grid: Object) -> void:
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle) or float(vehicle.hp) <= 0.0 or not vehicle.get("move", {}).is_empty(): continue
+		var team: Variant = _siege_team(vehicle)
+		# Under crowd the team is the native owner: it has no grid coordinator and no grid A*.
+		# Its turn plan is built from native positions only (S4); moves stay on the grid path.
+		var native := _native_siege()
+		if team == null or (not native and team._coordinator == null): continue
+		var plan := {}
+		var members: Array[Dictionary] = []
+		if str(vehicle.get("action", {}).get("stage", "")) == "approach":
+			plan = _siege_turn_plan(vehicle)
+		elif not native and str(vehicle.get("command", {}).get("type", "")) == "move" and vehicle.action.is_empty() and crew_ready(vehicle):
+			var pair: Array = vehicle.command.target.cell
+			var goal := Vector2i(int(pair[0]), int(pair[1]))
+			var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+			if anchor == goal:
+				vehicle.command = {"type": "stop", "reason": "arrived"}
+				vehicle.phase = "ready"
+				continue
+			var leader := 2147483647
+			for identity: int in vehicle.crew_slots.values(): leader = mini(leader, identity)
+			var route: Array[Vector2i] = team._find_local_route(anchor, goal, 256, false, -1, leader, false)
+			if route.size() < 2:
+				vehicle.phase = "disabled"
+				continue # Temporary occupancy waits; no partial claim or extra clock.
+			plan = _siege_move_plan(vehicle, route[1])
+			for movement: Dictionary in plan.get("participants", []):
+				members.append({"member_id": int(movement.person_id), "from_cell": lab.terrain.cell_from_index(int(movement.from)), "to_cell": lab.terrain.cell_from_index(int(movement.to))})
+		if not plan.is_empty(): grid.propose_compound(self, plan, members)
+
+func can_commit_siege_compound(plan: Dictionary, occupancy: Dictionary, blocked: Dictionary) -> bool:
+	var vehicle: Dictionary = records().get(str(plan.get("vehicle_id", "")), {})
+	if not is_siege(vehicle) or float(vehicle.hp) <= 0.0 or not vehicle.get("move", {}).is_empty() or int(vehicle.cell) != int(plan.get("from", -1)) or vehicle.command != plan.get("command", {}) or plan.get("participants", []).size() != vehicle.crew_slots.size(): return false
+	var ids := {}
+	for movement: Dictionary in plan.participants:
+		var identity := int(movement.person_id)
+		var person := _operator(identity)
+		if person.is_empty() or not _available(person) or int(vehicle.crew_slots.get(str(movement.slot), 0)) != identity or lab.terrain.index(person.cell) != int(movement.from) or occupancy.get(person.cell, -1) != identity: return false
+		ids[identity] = true
+	var cells: Array[Vector2i] = []
+	for value: int in plan.sweep:
+		var cell: Vector2i = lab.terrain.cell_from_index(value)
+		if blocked.has(cell) or occupancy.has(cell) and not ids.has(int(occupancy[cell])): return false
+		cells.append(cell)
+	# A turn's people are judged by _turn_fits (same-team soldiers yield); a translation keeps the full people check.
+	if not _siege_cells_clear(vehicle, cells, ids, lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell))), str(plan.mode) != "rotate"): return false
+	if str(plan.mode) == "rotate": return str(vehicle.action.get("stage", "")) == "approach" and _turn_crew_ready(vehicle) and _turn_contacts_valid(vehicle) and _turn_fits(vehicle, plan.sweep, _turn_exempt(vehicle))
+	if str(plan.mode) != "translate" or not crew_ready(vehicle) or str(vehicle.command.get("type", "")) != "move": return false
+	var source: Vector2i = lab.terrain.cell_from_index(int(plan.from))
+	var next: Vector2i = lab.terrain.cell_from_index(int(plan.cell))
+	if _siege_route_step(vehicle, source, next).has("invalid"): return false
+	for movement: Dictionary in plan.participants:
+		var person := _operator(int(movement.person_id))
+		if person.owner is CrowdPersonOwner: continue # World preflights the complete native group atomically.
+		if not person.owner.can_begin_siege_member_move(int(movement.person_id), lab.terrain.cell_from_index(int(movement.from)), lab.terrain.cell_from_index(int(movement.to)), ids): return false
+	return true
+
+func begin_siege_compound(plan: Dictionary) -> void:
+	var vehicle: Dictionary = records()[str(plan.vehicle_id)]
+	if _native_siege():
+		_begin_native_siege_compound(vehicle, plan)
+		return
+	if str(plan.mode) == "rotate":
+		vehicle.action.stage = "rotate"
+		vehicle.action.elapsed = 0.0
+		vehicle.action.sweep = plan.sweep.duplicate()
+		vehicle.action.source_heights = plan.source_heights.duplicate()
+		vehicle.action.compound_id = str(plan.compound_id)
+		return
+	# One admitted original-owner primitive; native may join only with whole-group
+	# prepare/commit, never by invoking independent one-person order wrappers.
+	vehicle["move"] = plan.duplicate(true)
+	vehicle["phase"] = "moving"
+	for movement: Dictionary in plan.participants:
+		var person := _operator(int(movement.person_id))
+		person.owner.begin_committed_move(int(movement.person_id), lab.terrain.cell_from_index(int(movement.from)), lab.terrain.cell_from_index(int(movement.to)), float(plan.duration))
+
+func _siege_compound(identity: String) -> Dictionary:
+	for vehicle: Dictionary in records().values():
+		if is_siege(vehicle) and str(vehicle.get("move", {}).get("compound_id", "")) == identity: return vehicle
+	return {}
+
+func _siege_member_transaction(identity: int) -> Dictionary:
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle) or vehicle.get("move", {}).is_empty(): continue
+		for movement: Dictionary in vehicle.move.get("participants", []):
+			if int(movement.person_id) == identity: return vehicle
+	return {}
+
+func is_siege_committed_member(identity: int) -> bool:
+	return not _siege_member_transaction(identity).is_empty()
+
+func siege_member_duration_matches(identity: int, duration: float) -> bool:
+	var vehicle := _siege_member_transaction(identity)
+	return not vehicle.is_empty() and is_finite(duration) and duration > 0.0 and is_equal_approx(float(vehicle.move.duration), duration)
+
+func siege_compound_terrain_invalid(identity: String) -> bool:
+	var vehicle := _siege_compound(identity)
+	if vehicle.is_empty(): return true
+	var cells: Array[Vector2i] = []
+	for value: int in vehicle.move.sweep: cells.append(lab.terrain.cell_from_index(value))
+	var base: int = lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.move.from)))
+	if not _siege_cells_clear(vehicle, cells, {}, base, false): return true
+	for value: String in vehicle.move.source_heights:
+		if lab.terrain.effective_height(lab.terrain.cell_from_index(int(value))) != int(vehicle.move.source_heights[value]): return true
+	for movement: Dictionary in vehicle.move.participants:
+		if not lab.terrain.can_step(lab.terrain.cell_from_index(int(movement.from)), lab.terrain.cell_from_index(int(movement.to))): return true
+	return false
+
+func siege_member_terrain_legal(identity: int, from: Vector2i, to: Vector2i) -> bool:
+	var vehicle := _siege_member_transaction(identity)
+	if vehicle.is_empty() or siege_compound_terrain_invalid(str(vehicle.move.compound_id)): return false
+	for movement: Dictionary in vehicle.move.participants:
+		if int(movement.person_id) == identity: return lab.terrain.index(from) == int(movement.from) and lab.terrain.index(to) == int(movement.to)
+	return false
+
+func siege_member_destination_clear(identity: int, cell: Vector2i) -> bool:
+	var vehicle := _siege_member_transaction(identity)
+	if vehicle.is_empty(): return false
+	var participants := {}
+	for movement: Dictionary in vehicle.move.participants: participants[int(movement.person_id)] = true
+	if _siege_people_except(cell, participants): return false
+	for other: Dictionary in records().values():
+		if str(other.id) != str(vehicle.id) and _claims(other).has(cell): return false
+	return true
+
+func can_finish_siege_compound(identity: String) -> bool:
+	var vehicle := _siege_compound(identity)
+	if vehicle.is_empty() or siege_compound_terrain_invalid(identity): return false
+	for movement: Dictionary in vehicle.move.participants:
+		var person := _operator(int(movement.person_id))
+		if person.is_empty(): return false
+		var index := int(person.unit)
+		if lab.terrain.index(person.cell) != int(movement.from) or person.owner.moving_to[index] != lab.terrain.cell_from_index(int(movement.to)) or float(person.owner.move_progress[index]) < 1.0 or not siege_member_destination_clear(int(movement.person_id), person.owner.moving_to[index]): return false
+	return true
+
+func commit_siege_compound_pose(identity: String) -> void:
+	var vehicle := _siege_compound(identity)
+	assert(not vehicle.is_empty())
+	vehicle.cell = int(vehicle.move.cell)
+	vehicle.facing = vehicle.move.facing.duplicate()
+	Runtime.clear_technology_yard_reference_after_move(lab.terrain, vehicle)
+
+func finish_siege_compound(identity: String) -> void:
+	var vehicle := _siege_compound(identity)
+	assert(not vehicle.is_empty())
+	vehicle.move = {}
+	vehicle.stop_pending = false
+	_settle_crew_release(vehicle)
+	vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else ("ready" if crew_ready(vehicle) else "disabled")
+	if str(vehicle.command.get("type", "")) == "stop": vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "idle"
+
+func cancel_siege_compound(identity: String) -> void:
+	var vehicle := _siege_compound(identity)
+	if vehicle.is_empty(): return
+	var drop := 0
+	for value: String in vehicle.move.source_heights:
+		drop = maxi(drop, int(vehicle.move.source_heights[value]) - lab.terrain.effective_height(lab.terrain.cell_from_index(int(value))))
+	vehicle.move = {}
+	vehicle.stop_pending = false
+	if drop > 0: Runtime.damage_siege_vehicle(lab.terrain, str(vehicle.id), float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp) * 0.25 * drop)
+	_queue_crew_release(vehicle, vehicle.crew_slots.values(), "terrain_changed")
+	_settle_crew_release(vehicle)
+	vehicle.command = {} if float(vehicle.hp) <= 0.0 else {"type": "stop", "reason": "terrain_changed"}
+	vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "disabled"
+
+func _turn_contacts_valid(vehicle: Dictionary) -> bool:
+	var contacts: Array = Runtime.siege_turn_contacts(lab.terrain, vehicle)
+	var participants := {}
+	for identity: int in vehicle.crew_slots.values(): participants[identity] = true
+	for slot: String in vehicle.crew_slots:
+		var found := false
+		for contact: Dictionary in contacts:
+			if int(contact.slot) != int(slot): continue
+			var station: Vector2i = contact.station
+			var attachment: Vector2 = contact.attachment
+			if station != crew_cell(vehicle, slot, true) or not attachment.is_finite(): return false
+			var segment: Array[Vector2i] = []
+			var start := Vector2(station) + Vector2.ONE * 0.5
+			var steps := maxi(1, ceili(start.distance_to(attachment) * 4.0))
+			for index in range(steps + 1):
+				var point := start.lerp(attachment, float(index) / float(steps))
+				var cell := Vector2i(floori(point.x), floori(point.y))
+				if not segment.has(cell): segment.append(cell)
+			if not _siege_cells_clear(vehicle, segment, _turn_contact_ignored(vehicle, segment, participants), lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))): return false
+			found = true
+			break
+		if not found: return false
+	return not vehicle.crew_slots.is_empty()
+
+# SIEGE-YIELD: a same-team yielder on a contact segment cell inside the turn sweep steps out once World claims the
+# sweep, so it does not stop the turn from starting. Outside the sweep nobody yields and the person still blocks.
+func _turn_contact_ignored(vehicle: Dictionary, segment: Array[Vector2i], participants: Dictionary) -> Dictionary:
+	if not _native_siege(): return participants
+	var sweep := _turn_sweep(vehicle)
+	var ignored := participants.duplicate()
+	for cell: Vector2i in segment:
+		if not sweep.has(lab.terrain.index(cell)): continue
+		for identity: int in _turn_yielders_at(vehicle, cell, participants): ignored[identity] = true
+	return ignored
+
+func advance_ram_actions(delta: float) -> void:
+	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
+	for vehicle: Dictionary in records().values():
+		if str(vehicle.get("kind", "")) == "ram" and float(vehicle.get("hp", 0.0)) > 0.0: _advance_ram_action(vehicle, delta)
+
+func _advance_ram_action(vehicle: Dictionary, delta: float) -> void:
+	var action: Dictionary = vehicle.get("action", {})
+	if str(action.get("stage", "")) in ["approach", "rotate", "return"] or not vehicle.get("move", {}).is_empty(): return
+	if str(action.get("stage", "")) == "recovering":
+		action["elapsed"] = float(action.elapsed) + delta
+		if float(action.elapsed) + 0.000000001 >= 0.75 / float(action.multiplier):
+			vehicle["action"] = {}
+			vehicle["phase"] = "ready" if crew_ready(vehicle) and str(vehicle.command.get("type", "")) == "attack" else "idle"
+		return
+	var committed_collision := str(action.get("stage", "")) == "collision" and not str(action.get("attack_id", "")).is_empty()
+	if not committed_collision and (str(vehicle.command.get("type", "")) != "attack" or not crew_ready(vehicle)):
+		if str(action.get("stage", "")) in ["preparing", "collision"] and str(action.get("attack_id", "")).is_empty(): vehicle["action"] = {}
+		return
+	if not committed_collision:
+		var target: Dictionary = vehicle.command.target if action.is_empty() else action.target
+		var preview: Dictionary = lab.siege_ram_preview(vehicle, target, bool(vehicle.command.get("ai", false)))
+		if not bool(preview.get("ok", false)) or bool(vehicle.command.get("ai", false)) and not preview.get("friendly_ids", []).is_empty():
+			vehicle["action"] = {}
+			vehicle["phase"] = "disabled"
+			vehicle.command.reason = str(preview.get("message", "前端目標或友軍阻擋"))
+			return
+	if action.is_empty():
+		action = {"stage": "preparing", "elapsed": 0.0, "multiplier": crew_multiplier(vehicle), "target": vehicle.command.target.duplicate(true), "attack_id": "", "people": {}, "parts": {}}
+		if not lab._charge_siege_round(vehicle):
+			vehicle["action"] = {}
+			vehicle["phase"] = "disabled"
+			vehicle["command"] = {"type": "stop", "reason": "原操作班疲勞交易未通過；未開始撞擊"}
+			return
+		vehicle["action"] = action
+	var remaining := delta
+	for _transition in range(3):
+		var duration := (2.0 if str(action.stage) == "preparing" else (0.25 if str(action.stage) == "collision" else 0.75)) / float(action.multiplier)
+		var previous := float(action.elapsed)
+		var consumed := minf(remaining, maxf(0.0, duration - previous))
+		action["elapsed"] = previous + consumed
+		remaining -= consumed
+		vehicle["phase"] = str(action.stage)
+		if str(action.stage) == "collision" and consumed > 0.0:
+			action["contact_step_offset"] = maxf(0.0, delta - remaining - consumed)
+			lab.siege_ram_hit(vehicle, action.target, str(action.attack_id), previous / duration, float(action.elapsed) / duration)
+		if float(action.elapsed) + 0.000000001 < duration: break
+		action["elapsed"] = 0.0
+		if str(action.stage) == "preparing": action["stage"] = "collision"
+		elif str(action.stage) == "collision": action["stage"] = "recovering"
+		else:
+			vehicle["action"] = {}
+			vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
+			break
+		vehicle["phase"] = str(action.stage)
+		if remaining <= 0.000000001: break
+
+func clear_siege_wreck(vehicle_id: String, executor_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var guard := _siege_guard()
+	if not guard.ok: return guard
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var person: Dictionary = controller.person_actions._person(executor_id, false)
+	if not is_siege(vehicle) or float(vehicle.get("hp", 1.0)) != 0.0 or str(vehicle.get("phase", "")) != "wrecked": return Runtime.fail("NO_TARGET")
+	if person.is_empty() or (not test_dispatch and requester_id != lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY")
+	if person.owner is TerrainArmy:
+		# Clearing yourself is personal; dispatching another member is team.salvage.
+		if not person.owner.is_member(int(person.unit)) or not (requester_id == executor_id or person.owner.duty_decider("team.salvage") == requester_id): return Runtime.fail("NO_AUTHORITY")
+	elif requester_id != executor_id: return Runtime.fail("NO_AUTHORITY")
+	if not controller.person_actions._ready(person) or controller.person_actions.is_busy(executor_id) or controller.work_team.is_assigned(executor_id) or controller._is_delivering_person(executor_id): return Runtime.fail("BUSY")
+	if not touches_vehicle(person.cell, vehicle): return Runtime.fail("UNREACHABLE", "本人須實際相鄰原殘骸")
+	if str(vehicle.kind) == "siege_tower": return Runtime.clear_siege_wreck(lab.terrain, vehicle_id, person.cell, _tower_surface_people_block)
+	return Runtime.clear_siege_wreck(lab.terrain, vehicle_id, person.cell, func(cell: Vector2i) -> bool: return _people_block(cell))
 
 func init(owner: Variant) -> void:
 	controller = owner
 	lab = owner.lab
 	if lab.terrain != null:
-		if not lab.terrain.site.has("vehicles"): lab.terrain.site.vehicles = {}
-		if not lab.terrain.site.has("next_vehicle"): lab.terrain.site.next_vehicle = 1
+		lab.terrain.item_transfer_guard = ship_transfer_guard
+		lab.terrain.ground_loot_removed = clear_ship_remains_reference
+		if not lab.terrain.site.has("vehicles"): lab.terrain.site["vehicles"] = {}
+		if not lab.terrain.site.has("next_vehicle"): lab.terrain.site["next_vehicle"] = 1
 
 func records() -> Dictionary:
 	return lab.terrain.site.get("vehicles", {}) if lab != null and lab.terrain != null else {}
@@ -23,12 +983,26 @@ static func anchor_from_operator(kind: String, cell: Vector2i, facing: Vector2i)
 	return cell - facing * 2 if kind == "wagon" else cell + facing
 
 func operator_cell(vehicle: Dictionary, movement: bool = false) -> Vector2i:
+	if is_ship(vehicle):
+		var pose: Dictionary = vehicle.move if movement else vehicle
+		return Ship.world_cell(lab.terrain.cell_from_index(int(pose.cell)), Vector2i(int(pose.facing[0]), int(pose.facing[1])), Ship.local_position(str(vehicle.ship_type), 0))
 	var value: Dictionary = vehicle.move if movement else vehicle
 	var anchor: Vector2i = lab.terrain.cell_from_index(int(value.cell))
 	var direction := Vector2i(int(value.facing[0]), int(value.facing[1]))
 	return anchor + direction * 2 if str(vehicle.kind) == "wagon" else anchor - direction
 
 static func footprint(data: TerrainData, vehicle: Dictionary, movement: bool = false) -> Array[Vector2i]:
+	# Convoy-owned vehicles report the native body cells, synced each frame, so the GD view and the native body are one set.
+	if not movement and is_convoy(vehicle) and vehicle.has("convoy_body"):
+		var native_cells: Array[Vector2i] = []
+		for value: Variant in vehicle.convoy_body: native_cells.append(data.cell_from_index(int(value)))
+		return native_cells
+	if str(vehicle.get("kind", "")) == "siege_tower": return Runtime.siege_tower_physical_cells(data, vehicle)
+	if is_siege(vehicle): return Runtime.siege_cells(data, vehicle)
+	if is_ship(vehicle):
+		var pose: Dictionary = vehicle.get("move", {}) if movement else vehicle
+		if pose.is_empty(): return []
+		return Ship.footprint(str(vehicle.ship_type), data.cell_from_index(int(pose.cell)), Vector2i(int(pose.facing[0]), int(pose.facing[1])))
 	var value: Dictionary = vehicle.get("move", {}) if movement else vehicle
 	var result: Array[Vector2i] = []
 	if value.is_empty(): return result
@@ -39,7 +1013,7 @@ static func footprint(data: TerrainData, vehicle: Dictionary, movement: bool = f
 
 func blocks_cell(cell: Vector2i, ignore_operator: int = 0, ignore_team: int = 0) -> bool:
 	for vehicle: Dictionary in records().values():
-		if ignore_operator > 0 and int(vehicle.operator_id) == ignore_operator or ignore_team > 0 and int(vehicle.team_id) == ignore_team: continue
+		if not is_siege(vehicle) and not is_ship(vehicle) and (ignore_operator > 0 and int(vehicle.operator_id) == ignore_operator or ignore_team > 0 and int(vehicle.team_id) == ignore_team): continue
 		if _claims(vehicle).has(cell): return true
 	return false
 
@@ -49,13 +1023,32 @@ func team_blocks_cell(team: TerrainArmy, cell: Vector2i) -> bool:
 		if int(vehicle.team_id) == team.team_id and _claims(vehicle).has(cell): return true
 	return false
 
+func team_blocks_person_cell(team: TerrainArmy, cell: Vector2i) -> bool:
+	if not team.has_army(): return false
+	for vehicle: Dictionary in records().values():
+		if int(vehicle.team_id) != team.team_id or not _claims(vehicle).has(cell): continue
+		if str(vehicle.kind) == "siege_tower":
+			var geometry: Dictionary = Runtime.siege_tower_geometry(lab.terrain, vehicle)
+			if bool(geometry.active) and geometry.heights.has(lab.terrain.index(cell)) and vehicle.move.is_empty() and vehicle.action.is_empty(): continue
+		return true
+	return false
+
 func reserves_cell(cell: Vector2i) -> bool:
 	return blocks_cell(cell)
 
 func _claims(vehicle: Dictionary) -> Dictionary:
+	if is_ship(vehicle) and has_region_ship_projection(str(vehicle.get("id", ""))): return region_ship_claims(vehicle)
 	var result := {}
+	if is_ship(vehicle) and _ship_in_journey(str(vehicle.id)): return controller.ship_journey_claims(vehicle)
 	for cell: Vector2i in footprint(lab.terrain, vehicle): result[cell] = true
 	for value: int in vehicle.get("move", {}).get("sweep", []): result[lab.terrain.cell_from_index(value)] = true
+	if is_siege(vehicle) and str(vehicle.get("action", {}).get("stage", "")) == "rotate":
+		for value: int in vehicle.action.get("sweep", []): result[lab.terrain.cell_from_index(value)] = true
+	if is_ship(vehicle):
+		for job: Dictionary in controller.person_actions._jobs.values():
+			if str(job.get("vehicle_id", "")) != str(vehicle.get("id", "")): continue
+			if str(job.get("kind", "")) == "ship_disembark" and job.shore != TerrainArmy.INVALID_CELL: result[job.shore] = true
+			if str(job.get("kind", "")) == "ship_evac": result[Vector2i((job.path.back() as Vector2).round())] = true
 	return result
 
 func is_operator(identity: int) -> bool:
@@ -67,24 +1060,28 @@ func is_operating(identity: int) -> bool:
 func _operated(identity: int) -> Dictionary:
 	if identity <= 0: return {}
 	for vehicle: Dictionary in records().values():
-		if int(vehicle.operator_id) == identity: return vehicle
+		if int(vehicle.operator_id) == identity or is_siege(vehicle) and vehicle.get("crew_slots", {}).values().has(identity): return vehicle
 	return {}
 
 func team_vehicle_count(team: TerrainArmy) -> int:
 	var count := 0
-	for vehicle: Dictionary in records().values(): count += int(int(vehicle.team_id) == team.team_id)
+	for vehicle: Dictionary in records().values(): count += int(int(vehicle.team_id) == team.team_id and not is_siege(vehicle) and not is_ship(vehicle))
 	return count
 
 func has_team_vehicles(team: TerrainArmy) -> bool:
-	return team_vehicle_count(team) > 0
+	for vehicle: Dictionary in records().values():
+		if int(vehicle.team_id) == team.team_id: return true
+	return false
 
 func checkpoint() -> Dictionary:
 	return {"ids": records().keys(), "next_vehicle": int(lab.terrain.site.get("next_vehicle", 1))}
 
 func rollback(saved: Dictionary) -> void:
 	for identity: String in records().keys():
-		if identity not in saved.ids: records().erase(identity)
-	lab.terrain.site.next_vehicle = int(saved.next_vehicle)
+		if identity not in saved.ids:
+			_convoy_release(records()[identity]) # S5: the native convoy goes with its record, never outlives it
+			records().erase(identity)
+	lab.terrain.site["next_vehicle"] = int(saved.next_vehicle)
 
 func plan_claims(plan: Array) -> Dictionary:
 	var result := {}
@@ -93,6 +1090,7 @@ func plan_claims(plan: Array) -> Dictionary:
 	return result
 
 func _route_vacating(team: TerrainArmy, index: int) -> bool:
+	if is_embarked(team.combat_identity(index)) or is_siege(_operated(team.combat_identity(index))): return false
 	return team.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN] and team.cells[index] != team.combat_slots[index] and not team.is_controlled_person(index) and _available(_operator(team.combat_identity(index)))
 
 func route_vacating_cell(team: TerrainArmy, cell: Vector2i) -> bool:
@@ -186,17 +1184,73 @@ func deploy_plan(team: TerrainArmy, plan: Array) -> Dictionary:
 		var vehicle: Dictionary = plan[offset].duplicate(true)
 		var index := int(vehicle.operator_index)
 		vehicle.erase("operator_index")
-		vehicle.id = str(next + offset)
-		vehicle.operator_id = team.combat_identity(index) if index >= 0 and team.combat_can_act(index) else 0
-		vehicle.holder = Runtime.new_item_state("vehicle:" + vehicle.id)
-		vehicle.cargo = {}
-		vehicle.move = {}
-		vehicle.stop_pending = false
+		vehicle["id"] = str(next + offset)
+		vehicle["operator_id"] = team.combat_identity(index) if index >= 0 and team.combat_can_act(index) else 0
+		vehicle["holder"] = Runtime.new_item_state("vehicle:" + vehicle.id)
+		vehicle["cargo"] = {}
+		vehicle["move"] = {}
+		vehicle["stop_pending"] = false
 		lab.terrain.site.vehicles[vehicle.id] = vehicle
-	lab.terrain.site.next_vehicle = next + plan.size()
+	lab.terrain.site["next_vehicle"] = next + plan.size()
 	return Runtime.ok("已建立原車輛；沒有操作人的車輛保持停泊")
 
+# Crowd trial deployment. plans[slot] is the plan_team output for crowd side `slot`, whose team id is first_team + slot.
+# Records are written as deploy_plan writes them. Each operator then goes through assign_operator, and its
+# native convoy is created at once, so the crew is convoy-owned before any formation step.
+func deploy_crowd_plans(plans: Array, first_team: int) -> Dictionary:
+	var next := int(lab.terrain.site.get("next_vehicle", 1))
+	var total := 0
+	for plan: Variant in plans:
+		if plan is Array: total += plan.size()
+	if next < 1 or next + total > 2147483647: return Runtime.fail("NO_IDS")
+	var created: Array[String] = []
+	var operations: Array[Dictionary] = []
+	for slot in range(plans.size()):
+		var plan: Array = plans[slot]
+		if plan.is_empty(): continue
+		var owner: Variant = lab.crowd_site.siege_team_owner(first_team + slot)
+		if owner == null: return Runtime.fail("INVALID", "群眾隊未建立，車輛未生成")
+		# plan_team numbers operators by formation position; the crowd owner keys its members by native soldier index,
+		# deployed in formation order (found 2026-11-14: every side after the first was refused INVALID).
+		var members: Array = owner.combat_units.keys()
+		members.sort()
+		for planned: Dictionary in plan:
+			var vehicle: Dictionary = planned.duplicate(true)
+			var index := int(vehicle.operator_index)
+			if index >= members.size(): index = -2 # Not a member of this side: refused below.
+			elif index >= 0: index = int(members[index])
+			if index == -2 or index >= 0 and not owner.combat_units.has(index): return Runtime.fail("INVALID", "車輛操作人不屬本隊，未生成")
+			vehicle.erase("operator_index")
+			vehicle["id"] = str(next + created.size())
+			vehicle["operator_id"] = 0
+			vehicle["holder"] = Runtime.new_item_state("vehicle:" + vehicle.id)
+			vehicle["cargo"] = {}
+			vehicle["move"] = {}
+			vehicle["stop_pending"] = false
+			lab.terrain.site.vehicles[vehicle.id] = vehicle
+			created.append(str(vehicle.id))
+			if index >= 0: operations.append({"vehicle": str(vehicle.id), "person": int(owner.combat_identity(index))})
+	lab.terrain.site["next_vehicle"] = next + created.size()
+	for operation: Dictionary in operations:
+		var assigned: Dictionary = assign_operator(operation.vehicle, operation.person, operation.person, true)
+		if not assigned.ok:
+			_discard_crowd_vehicles(created)
+			return assigned
+		var convoy: Dictionary = _convoy_create(records()[operation.vehicle])
+		if not convoy.ok:
+			_discard_crowd_vehicles(created)
+			return convoy
+	return Runtime.ok("群眾隊車輛已建立；操作人已接入原生後勤車隊")
+
+func _discard_crowd_vehicles(ids: Array[String]) -> void:
+	for id: String in ids:
+		if not records().has(id): continue
+		_convoy_release(records()[id])
+		records().erase(id)
+	lab.terrain.site["next_vehicle"] = int(lab.terrain.site.get("next_vehicle", 1)) - ids.size()
+
 func _operator(identity: int) -> Dictionary:
+	if _native_siege() and lab.crowd_site.contains_person(identity): return lab.crowd_site.siege_original_person(identity)
 	var person: Dictionary = lab._combat_target(identity)
 	if person.is_empty() or not person.owner is TerrainArmy or int(person.unit) < 0: return {}
 	person["row"] = person.owner.combat_units[int(person.unit)]
@@ -205,13 +1259,18 @@ func _operator(identity: int) -> Dictionary:
 func _available(person: Dictionary) -> bool:
 	if person.is_empty() or not person.owner.combat_can_act(int(person.unit)) or not person.owner.is_member(int(person.unit)): return false
 	var identity: int = int(person.id) if person.has("id") else person.owner.combat_identity(int(person.unit))
-	return person.row.get("work_task", {}).is_empty() and not controller.person_actions.is_busy(identity) and not controller.person_actions.is_guarding(identity) and not controller.work_team.is_assigned(identity) and not controller._is_delivering_person(identity)
+	var work: Dictionary = person.owner._cold_get(int(person.unit), "work_task", {}) if person.owner is CrowdPersonOwner else person.row.get("work_task", {})
+	return work.is_empty() and not controller.person_actions.is_busy(identity) and not controller.person_actions.is_guarding(identity) and not controller.work_team.is_assigned(identity) and not controller._is_delivering_person(identity)
 
-func _authorized(team: TerrainArmy, requester_id: int, operator_id: int = 0, test_dispatch: bool = false) -> bool:
+func _authorized(team: Variant, requester_id: int, operator_id: int = 0, test_dispatch: bool = false) -> bool:
 	return (test_dispatch or requester_id == lab.controlled_person_id()) and (requester_id == operator_id or team.command_eligible(team.current_commander) and team.combat_identity(team.current_commander) == requester_id)
 
-func can_offer_operator_team(vehicle: Dictionary, team: TerrainArmy) -> bool:
-	if vehicle.is_empty() or team == null or not team.combat_enabled or team.role != "logistics" or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty(): return false
+func can_offer_operator_team(vehicle: Dictionary, team: Variant) -> bool:
+	if is_ship(vehicle): return false # Water ownership uses a legal original boarding transaction.
+	if vehicle.is_empty() or team == null or not team.combat_enabled or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty(): return false
+	# A crowd team may take over only its own convoys; transfers between crowd teams are not in G4.
+	if team is CrowdPersonOwner: return int(vehicle.team_id) == team.team_id
+	if team.role != "logistics": return false
 	var old_team := int(vehicle.team_id)
 	if old_team == team.team_id: return true
 	if team.combat_units.size() + team_vehicle_count(team) >= 100: return false
@@ -220,13 +1279,70 @@ func can_offer_operator_team(vehicle: Dictionary, team: TerrainArmy) -> bool:
 		if original.has_army() and original.team_id == old_team: return original.faction_id == team.faction_id
 	return false
 
+## A Region-owned public route (N08) resumes its OWN named driver on its OWN wagon,
+## which arrival parked without an operator. The accepted order is the authority;
+## every physical check of assign_operator still applies, and nothing else is taken.
+func region_route_reboard(vehicle_id: String, person_id: int) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if vehicle.is_empty() or str(vehicle.get("kind", "")) != "wagon" or int(vehicle.operator_id) != 0 or not vehicle.move.is_empty(): return Runtime.fail("NO_TARGET")
+	var person := _operator(person_id)
+	if _available(person) and person.owner is CrowdPersonOwner: return _crowd_route_reboard(vehicle, person, person_id)
+	if not _available(person) or not person.owner is TerrainArmy or int(person.owner.team_id) != int(vehicle.team_id): return Runtime.fail("NO_DRIVER")
+	var team: TerrainArmy = person.owner
+	if is_operator(person_id) or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY")
+	if not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))): return Runtime.fail("MISSING_ASSET")
+	var position := operator_cell(vehicle)
+	if person.cell == position: return Runtime.fail("UNREACHABLE")
+	if absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position):
+		return Runtime.fail("UNREACHABLE", "車伕須先走到馬格相鄰合法格")
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
+	if not team._reserve_combat_step(int(person.unit), position):
+		vehicle["operator_id"] = 0
+		return Runtime.fail("UNREACHABLE", "上馬一步被阻擋")
+	return Runtime.ok("原車伕重新上馬")
+
+## The crowd form of region_route_reboard (2026-11-11, N08 on a crowd Site): the named driver stands on a legal cell beside
+## the horse; it becomes the operator and the native convoy takes it as its rider (_sync_convoys, convoy_set_crew).
+func _crowd_route_reboard(vehicle: Dictionary, person: Dictionary, person_id: int) -> Dictionary:
+	var team: CrowdPersonOwner = person.owner
+	if int(team.team_id) != int(vehicle.team_id): return Runtime.fail("NO_DRIVER")
+	if is_operator(person_id) or team.is_walking(int(person.unit)) and person.cell != operator_cell(vehicle): return Runtime.fail("BUSY")
+	if not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))) \
+		and DisplayServer.get_name() != "headless": return Runtime.fail("MISSING_ASSET") # Nekki 11/11 A: headless is mechanics-only.
+	var position := operator_cell(vehicle)
+	if absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position):
+		return Runtime.fail("UNREACHABLE", "車伕須先走到馬格相鄰合法格")
+	# The native convoy steers its crew onto the rider slot itself (convoy_steer); the walk's station hold ends here.
+	team.siege_cancel_step(int(person.unit))
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
+	_convoy_refused.erase(str(vehicle.get("id", "")))
+	# A parked wagon is a static siege body on the native ground; with its operator it becomes a convoy body instead, so
+	# the native ground is resynchronised before the convoy anchors on its own cells.
+	var synced: Dictionary = lab.crowd_site.sync_siege_inputs()
+	if synced.ok: _sync_convoys()
+	if int(vehicle.get("convoy_id", 0)) <= 0:
+		vehicle["operator_id"] = 0
+		return Runtime.fail("UNREACHABLE", "原生車隊未接受車伕；車輛與名額未移轉")
+	return Runtime.ok("原車伕重新上馬")
+
 func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if is_ship(vehicle):
+		return controller.person_actions.begin_ship_helm(person_id, vehicle_id, requester_id, test_dispatch, _siege_team(vehicle) != null and _siege_team(vehicle).is_sustain_routed()) if is_embarked(person_id) else controller.person_actions.begin_ship_board(person_id, vehicle_id, requester_id, 0, test_dispatch)
+	if is_siege(vehicle):
+		for slot in range(Runtime.siege_crew_offsets(str(vehicle.kind)).size()):
+			if not vehicle.crew_slots.has(str(slot)): return assign_crew(vehicle_id, person_id, str(slot), requester_id, test_dispatch)
+		return Runtime.fail("BUSY", "此器具操作位已滿")
 	var person := _operator(person_id)
 	if vehicle.is_empty() or not _available(person): return Runtime.fail("NO_TARGET")
-	var team: TerrainArmy = person.owner
+	var team: Variant = person.owner
 	if not _authorized(team, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
-	if is_operator(person_id) or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty() or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
+	# A crowd body standing on its arrived station hold reports moving_to == its own cell; walking is what makes it busy
+	# (the same reading as _crowd_route_reboard and the arrived-hold rule, a7a8a85).
+	var walking: bool = team.is_walking(int(person.unit)) if team is CrowdPersonOwner else team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL
+	if is_operator(person_id) or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty() or walking:
 		return Runtime.fail("BUSY", "同隊清醒原人物一次只能操作一車；先完成原動作")
 	if not can_offer_operator_team(vehicle, team): return Runtime.fail("NO_AUTHORITY", "僅未滿額同陣營後勤隊可接手停止無人的車；不能奪取敵車")
 	if str(vehicle.kind) == "wagon" and not RiderAtlas.supports(Runtime.equipment_appearance(lab.terrain, person.row.get("item_state", {}), person.row.get("appearance", {}))): return Runtime.fail("MISSING_ASSET", "原人物資料或固定布裝騎姿未就緒，未上馬或改動原裝備")
@@ -235,44 +1351,116 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 	if boarding and (absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position)) or not boarding and person.cell != position:
 		return Runtime.fail("UNREACHABLE", "手推車須到車後；馬車須到馬格相鄰合法格後上馬")
 	if str(vehicle.kind) == "cart" and not lab.terrain.can_step(person.cell, lab.terrain.cell_from_index(int(vehicle.cell))): return Runtime.fail("UNREACHABLE")
+	# Crowd wagon take-over (Nekki 2026-11-14 「要做換人上馬」): a person of the wagon's own crowd team standing on a legal cell
+	# beside the horse becomes its operator and the native convoy steers it onto the rider slot, as an N08 driver reboards
+	# (_crowd_route_reboard). All authority/team/asset checks above have already passed.
+	if boarding and team is CrowdPersonOwner: return _crowd_route_reboard(vehicle, person, person_id)
 	var old_team := int(vehicle.team_id)
-	vehicle.team_id = team.team_id
-	vehicle.operator_id = person_id
-	vehicle.stop_pending = false
+	vehicle["team_id"] = team.team_id
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
 	if boarding and not team._reserve_combat_step(int(person.unit), position):
-		vehicle.team_id = old_team
-		vehicle.operator_id = 0
+		vehicle["team_id"] = old_team
+		vehicle["operator_id"] = 0
 		return Runtime.fail("UNREACHABLE", "上馬一步被阻擋，車輛與名額未移轉")
 	return Runtime.ok("原人物已操作此車")
 
 func unassign_operator(vehicle_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if is_ship(vehicle):
+		if _region_operation_pending() or _ship_in_journey(vehicle_id): return Runtime.fail("BUSY", "原船旅程或冷交換期間不能解除當值職務；失能由原生命入口釋放")
+		var original := ship_person(int(vehicle.operator_id))
+		if original.is_empty() or not _authorized(original.owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
+		if not vehicle.move.is_empty() or not ship_job(vehicle_id).is_empty(): return Runtime.fail("BUSY")
+		vehicle["operator_id"] = 0
+		vehicle["command"] = {}
+		vehicle["revision"] = int(vehicle.revision) + 1
+		return Runtime.ok("已解除駕駛職務；原人留原席")
+	if is_siege(vehicle): return unassign_crew(vehicle_id, 0, requester_id, test_dispatch)
 	if vehicle.is_empty(): return Runtime.fail("NO_TARGET")
 	var person := _operator(int(vehicle.operator_id))
 	if person.is_empty() or not _authorized(person.owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	return _stop_operator(vehicle, person)
+
+func prepare_morale_retreat(team: TerrainArmy, index: int) -> bool:
+	if team == null or index < 0 or index >= team.combat_units.size(): return false
+	if is_embarked(team.combat_identity(index)): return false # A boat passenger has no land retreat step.
+	var vehicle := _operated(team.combat_identity(index))
+	if vehicle.is_empty(): return true
+	if is_siege(vehicle):
+		_queue_crew_release(vehicle, [team.combat_identity(index)], "retreat")
+		_settle_crew_release(vehicle)
+		return not is_operator(team.combat_identity(index))
+	if team.combat_order != TerrainArmy.CombatOrder.RETREAT or not team.is_sustain_routed() or team.is_controlled_person(index): return false
+	var person := _operator(team.combat_identity(index))
+	if person.is_empty() or person.owner != team: return false
+	# Reuse the original committed step and saved dismount packet. A blocked
+	# rider stays aboard and retries; neither the vehicle nor cargo leaves Site.
+	var result := _stop_operator(vehicle, person)
+	return bool(result.get("ok", false)) and not is_operator(team.combat_identity(index))
+
+func morale_retreat_terrain_trapped(team: TerrainArmy, index: int) -> bool:
+	if team == null or index < 0 or index >= team.combat_units.size() or team.moving_to[index] != TerrainArmy.INVALID_CELL: return false
+	var vehicle := _operated(team.combat_identity(index))
+	if vehicle.is_empty() or str(vehicle.kind) != "wagon" or not vehicle.move.is_empty() or not _available(_operator(team.combat_identity(index))): return false
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		if not _step_plan(team, index, team.cells[index] + direction, TerrainArmy.INVALID_CELL, Vector2i.ZERO, false, true).has("invalid"):
+			return false
+	return true
+
+func _stop_operator(vehicle: Dictionary, person: Dictionary) -> Dictionary:
 	if not vehicle.move.is_empty(): return Runtime.fail("BUSY", "先完成原已預約人車一步")
-	if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if not _available(person): return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	# A crowd crew member has no grid step; "stopped" means its native convoy has settled.
+	if person.owner is CrowdPersonOwner and vehicle.has("convoy_id") and not bool(convoy_state(vehicle).get("complete", false)):
+		return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if not person.owner is CrowdPersonOwner and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if person.owner is CrowdPersonOwner:
+		# The native convoy owns its crew; releasing it returns the person to ordinary behaviour. A wagon rider first steps
+		# off the vehicle's cells as the grid rider does (one legal step beside the horse; Nekki 2026-11-14 take-over: a
+		# rider left standing on the horse is a living body inside the parked wagon and no other person can board it).
+		var cells: Array = footprint(lab.terrain, vehicle) if str(vehicle.kind) == "wagon" else []
+		_convoy_release(vehicle)
+		vehicle["operator_id"] = 0
+		vehicle["stop_pending"] = false
+		if cells.has(person.cell):
+			var identity := int(person.owner.combat_identity(int(person.unit)))
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var off: Vector2i = person.cell + direction
+				if cells.has(off) or not lab.terrain.is_walkable(off) or not lab.terrain.can_step(person.cell, off) or lab.crowd_site.siege_people_block(off, [identity]): continue
+				if lab.crowd_site.siege_approach_step(identity, off):
+					_crowd_dismount_steps[identity] = off
+					return Runtime.ok("原人物正走下馬匹；車輛停泊，車上貨物保留")
+		return Runtime.ok("車輛停泊，車上貨物保留")
 	if str(vehicle.kind) == "wagon":
 		var previous_stop := bool(vehicle.stop_pending)
-		vehicle.stop_pending = true
+		vehicle["stop_pending"] = true
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			if person.owner._reserve_combat_step(int(person.unit), person.cell + direction): return Runtime.ok("原人物正走下馬匹；完成這一步後車輛停泊")
-		vehicle.stop_pending = previous_stop
+		vehicle["stop_pending"] = previous_stop
 		return Runtime.fail("NO_SPACE", "馬匹周圍沒有合法下馬格，保留原人車")
-	vehicle.operator_id = 0
-	vehicle.stop_pending = false
+	vehicle["operator_id"] = 0
+	vehicle["stop_pending"] = false
 	return Runtime.ok("車輛停泊，車上貨物保留")
 
-func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vector2i = TerrainArmy.INVALID_CELL, route_facing: Vector2i = Vector2i.ZERO, anticipate: bool = false) -> Dictionary:
+func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vector2i = TerrainArmy.INVALID_CELL, route_facing: Vector2i = Vector2i.ZERO, anticipate: bool = false, terrain_only: bool = false) -> Dictionary:
 	var vehicle := _operated(team.combat_identity(index))
 	if vehicle.is_empty(): return {}
-	if not vehicle.move.is_empty() or not _available(_operator(team.combat_identity(index))): return {"invalid": true}
+	if is_ship(vehicle): return {"invalid": true}
+	if is_siege(vehicle):
+		# Only the original bounded vehicle A* asks for a hypothetical anchor edge.
+		# Ordinary crew approach/return remains an original one-person foot step.
+		return _siege_route_step(vehicle, route_from, next) if route_from != TerrainArmy.INVALID_CELL and float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].move_speed) > 0.0 else {}
+	if _convoy_owner(vehicle) != null: return {"invalid": true} # Native convoys steer their own crew; no grid step.
+	var person := _operator(team.combat_identity(index))
+	var escorted_dismount := bool(vehicle.stop_pending) and _retained_rider(vehicle) and bool(team.combat_hot_get(index, &"captive", false))
+	if not vehicle.move.is_empty() or not _available(person) and not escorted_dismount: return {"invalid": true}
 	var from := team.cells[index] if route_from == TerrainArmy.INVALID_CELL else route_from
 	var direction := next - from
 	if absi(direction.x) + absi(direction.y) != 1: return {"invalid": true}
 	var old_direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])) if route_facing == Vector2i.ZERO else route_facing
 	var boarding := route_from == TerrainArmy.INVALID_CELL and str(vehicle.kind) == "wagon" and from != operator_cell(vehicle)
-	var dismount := route_from == TerrainArmy.INVALID_CELL and str(vehicle.kind) == "wagon" and bool(vehicle.stop_pending)
+	var dismount := route_from == TerrainArmy.INVALID_CELL and str(vehicle.kind) == "wagon" and (bool(vehicle.stop_pending) or terrain_only)
 	if bool(vehicle.stop_pending) and not dismount: return {"invalid": true}
 	if boarding and next != operator_cell(vehicle) or dismount and footprint(lab.terrain, vehicle).has(next): return {"invalid": true}
 	# Backing up keeps the body ahead of its operator, rather than flipping through them.
@@ -304,17 +1492,18 @@ func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vecto
 	for y in range(minimum.y, maximum.y + 1):
 		for x in range(minimum.x, maximum.x + 1):
 			var cell := Vector2i(x, y)
-			if not lab.terrain.is_walkable(cell) or _people_block(cell, team, index, future): return {"invalid": true}
-			for other: Dictionary in records().values():
-				if int(other.operator_id) == team.combat_identity(index): continue
-				var other_index := team.index_for_identity(int(other.operator_id)) if int(other.team_id) == team.team_id else -1
-				if future and other_index >= 0 and _route_vacating(team, other_index): continue
-				if _claims(other).has(cell): return {"invalid": true}
+			if not lab.terrain.is_walkable(cell) or not terrain_only and _people_block(cell, team, index, future): return {"invalid": true}
+			if not terrain_only:
+				for other: Dictionary in records().values():
+					if int(other.operator_id) == team.combat_identity(index): continue
+					var other_index := team.index_for_identity(int(other.operator_id)) if int(other.team_id) == team.team_id else -1
+					if future and other_index >= 0 and _route_vacating(team, other_index): continue
+					if _claims(other).has(cell): return {"invalid": true}
 			if x > minimum.x and not lab.terrain.can_step(cell - Vector2i.RIGHT, cell) or y > minimum.y and not lab.terrain.can_step(cell - Vector2i.DOWN, cell): return {"invalid": true}
 			sweep.append(lab.terrain.index(cell))
 	var result := {"cell": lab.terrain.index(destination), "facing": [direction.x, direction.y], "operator_from": lab.terrain.index(from), "operator_to": lab.terrain.index(next), "sweep": sweep}
-	if boarding: result.boarding = true
-	if dismount: result.dismount = true
+	if boarding: result["boarding"] = true
+	if dismount: result["dismount"] = true
 	return result
 
 func route_step(team: TerrainArmy, index: int, from: Vector2i, next: Vector2i, direction: Vector2i, anticipate: bool = false) -> Dictionary:
@@ -324,34 +1513,40 @@ func operator_facing(identity: int) -> Vector2i:
 	var vehicle := _operated(identity)
 	return Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])) if not vehicle.is_empty() else Vector2i.ZERO
 
-func before_step(team: TerrainArmy, index: int, next: Vector2i) -> bool:
-	if blocks_cell(next, team.combat_identity(index)): return false
+func before_step(team: TerrainArmy, index: int, next: Vector2i, route_goal: Vector2i = TerrainArmy.INVALID_CELL) -> bool:
+	if is_embarked(team.combat_identity(index)): return false
+	var goal: Vector2i = route_goal if route_goal != TerrainArmy.INVALID_CELL else team._follower_route_goals.get(index, team.combat_slots[index])
+	if blocks_person_step(team.combat_identity(index), team.cells[index], team.cells[index], next, goal): return false
 	return not _step_plan(team, index, next).has("invalid")
 
 func commit_step_reservation(team: TerrainArmy, index: int, next: Vector2i) -> void:
 	var vehicle := _operated(team.combat_identity(index))
-	if vehicle.is_empty(): return
+	if vehicle.is_empty() or is_siege(vehicle) or is_ship(vehicle): return
 	var plan := _step_plan(team, index, next)
 	assert(not plan.is_empty() and not plan.has("invalid"))
 	vehicle.move = plan
 
+func cancel_step(team: TerrainArmy, index: int) -> void:
+	var vehicle := _operated(team.combat_identity(index))
+	if not vehicle.is_empty() and not is_siege(vehicle) and not is_ship(vehicle): vehicle.move = {} # The original source/heading/cargo never left its owner.
+
 func complete_step(team: TerrainArmy, index: int) -> void:
 	var vehicle := _operated(team.combat_identity(index))
-	if vehicle.is_empty() or vehicle.move.is_empty(): return
+	if vehicle.is_empty() or is_siege(vehicle) or is_ship(vehicle) or vehicle.move.is_empty(): return
 	var dismount := bool(vehicle.move.get("dismount", false))
 	vehicle.cell = int(vehicle.move.cell)
 	vehicle.facing = vehicle.move.facing
 	vehicle.move = {}
 	if bool(vehicle.stop_pending) or not _available(_operator(team.combat_identity(index))):
-		if not dismount and _unconscious_rider(vehicle): vehicle.stop_pending = true
+		if not dismount and _retained_rider(vehicle): vehicle.stop_pending = true
 		else:
 			vehicle.operator_id = 0
 			vehicle.stop_pending = false
 
-func _unconscious_rider(vehicle: Dictionary) -> bool:
+func _retained_rider(vehicle: Dictionary) -> bool:
 	if str(vehicle.kind) != "wagon": return false
 	var person := _operator(int(vehicle.operator_id))
-	return not person.is_empty() and person.cell == operator_cell(vehicle) and float(person.owner.combat_hot_get(int(person.unit), &"hp")) > 0.0 and (float(person.owner.combat_hot_get(int(person.unit), &"ko")) > 0.0 or str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "get_up") and not bool(person.owner.combat_hot_get(int(person.unit), &"captive")) and not bool(person.owner.combat_hot_get(int(person.unit), &"departed")) and person.owner.is_member(int(person.unit))
+	return not person.is_empty() and person.cell == operator_cell(vehicle) and float(person.owner.combat_hot_get(int(person.unit), &"hp")) > 0.0 and (float(person.owner.combat_hot_get(int(person.unit), &"ko")) > 0.0 or str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "get_up" or bool(person.owner.combat_hot_get(int(person.unit), &"surrender_pending", false)) or bool(person.owner.combat_hot_get(int(person.unit), &"captive"))) and not bool(person.owner.combat_hot_get(int(person.unit), &"departed")) and not bool(person.owner.combat_hot_get(int(person.unit), &"site_exited", false)) and person.owner.is_member(int(person.unit))
 
 func occupies_own_horse(identity: int, cell: Vector2i) -> bool:
 	var vehicle := _operated(identity)
@@ -359,7 +1554,9 @@ func occupies_own_horse(identity: int, cell: Vector2i) -> bool:
 
 func settle_operators() -> void:
 	for vehicle: Dictionary in records().values():
-		if int(vehicle.operator_id) <= 0: continue
+		if is_siege(vehicle) or is_ship(vehicle): continue # update_siege owns safe crew/turn settlement.
+		lab._audio_vehicle_observed(lab.terrain, vehicle)
+		if int(vehicle.operator_id) <= 0 or _convoy_owner(vehicle) != null: continue # Native convoy crew are not grid-settled.
 		var person := _operator(int(vehicle.operator_id))
 		# A relocation by the original person owner cannot leave remote vehicle control.
 		# Never relocate the person or vehicle to repair the relation.
@@ -371,13 +1568,19 @@ func settle_operators() -> void:
 			if vehicle.move.is_empty(): vehicle.stop_pending = false
 			continue
 		if not vehicle.move.is_empty(): vehicle.stop_pending = true
-		elif _unconscious_rider(vehicle): vehicle.stop_pending = true
+		elif _retained_rider(vehicle): vehicle.stop_pending = true
 		else:
 			vehicle.operator_id = 0
 			vehicle.stop_pending = false
 
 func can_park_team(team: TerrainArmy) -> Dictionary:
+	if team_has_ship_activity(team.team_id): return Runtime.fail("BUSY", "原隊人物仍在船上或有未完船內作業")
+	var entry: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(team.team_id), {})
+	for key: String in entry.get("locations", {}):
+		var stock: Dictionary = entry.locations[key]
+		if key.begins_with("vehicle:") and (Runtime.inventory_size(stock.inventory) > 0 or float(stock.open_rations) > 0.0): return Runtime.fail("BUSY", "先依法移交船上原共用補給")
 	for vehicle: Dictionary in records().values():
+		if int(vehicle.team_id) == team.team_id and is_siege(vehicle) and (not vehicle.get("action", {}).is_empty() or _crew_moving(vehicle)): return Runtime.fail("BUSY", "攻城操作及原人物步尚未收束")
 		if int(vehicle.team_id) == team.team_id and not vehicle.move.is_empty(): return Runtime.fail("BUSY", "人車原步進未完成，不能解散或遺失貨物")
 	return Runtime.ok()
 
@@ -386,47 +1589,84 @@ func park_team(team: TerrainArmy) -> Dictionary:
 	if not ready.ok: return ready
 	for vehicle: Dictionary in records().values():
 		if int(vehicle.team_id) == team.team_id:
+			if is_siege(vehicle):
+				_queue_crew_release(vehicle, vehicle.crew_slots.values(), "team_cleared")
+				_settle_crew_release(vehicle)
 			vehicle.team_id = 0
 			vehicle.operator_id = 0
 			vehicle.stop_pending = false
+			if is_ship(vehicle): vehicle.command = {}
 	return Runtime.ok("車輛原地停泊，貨物與原物權保留")
 
-func _stock(identity: String) -> Dictionary:
+func _stock(identity: String, allow_independent_person: bool = false) -> Dictionary:
+	if identity.begins_with("feature:"): return Stockpiles.stock_endpoint(lab.terrain, identity.trim_prefix("feature:"))
 	if identity == "depot": return {"holder": lab.terrain.site.depot_items, "cargo": lab.terrain.site.inventory, "cell": lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell)), "capacity": int(lab.terrain.site.capacity), "team_id": 0}
+	if identity.begins_with("person:"):
+		var value := identity.trim_prefix("person:")
+		if not value.is_valid_int() or str(int(value)) != value or int(value) <= 0: return {}
+		var person: Dictionary = controller.person_actions._person(int(value))
+		if person.is_empty(): return {}
+		if person.owner is CrowdPersonOwner:
+			# S5: a crowd person carries cargo as the operator of a convoy (the crew of its vehicle record); 2026-11-11: also as
+			# its team's named logistics carrier, or as the controlled person at a feature, the same two cases the grid row has.
+			# 2026-11-13: also as the crew of a siege engine (its ammunition), as the grid row does.
+			var crowd_carrier: bool = is_convoy(_operated(int(value))) or is_siege(_operated(int(value))) or bool(person.owner._cold_get(int(person.unit), "logistics", false)) or allow_independent_person and int(value) == int(lab.controlled_person_id())
+			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not crowd_carrier: return {}
+		elif not person.owner is TerrainArmy:
+			if not allow_independent_person or not person.owner is TerrainTestCharacter: return {}
+		elif int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not bool(person.body.get("logistics", false)) and not is_siege(_operated(int(value))) 			and not (allow_independent_person and int(value) == int(lab.controlled_person_id())): return {}
+		# Since 11/03 the controlled person is a row of their own start team; the same feature
+		# exchange an independent controlled person had keeps working from that row.
+		return {"holder": person.holder, "cargo": person.cargo, "cell": person.cell, "capacity": Runtime.CARRY_CAPACITY,
+			"team_id": int(person.owner.team_id) if person.owner is TerrainArmy or person.owner is CrowdPersonOwner else 0, "person_id": int(value)}
 	var vehicle: Dictionary = records().get(identity, {})
 	if vehicle.is_empty() or not vehicle.move.is_empty(): return {}
-	return {"holder": vehicle.holder, "cargo": vehicle.cargo, "cell": lab.terrain.cell_from_index(int(vehicle.cell)), "capacity": int(CAPACITY[vehicle.kind]), "team_id": int(vehicle.team_id), "vehicle_id": identity}
+	return {"holder": vehicle.holder, "cargo": vehicle.cargo, "cell": lab.terrain.cell_from_index(int(vehicle.cell)), "capacity": capacity_of(vehicle), "team_id": int(vehicle.team_id), "vehicle_id": identity}
 
 func transfer(source_id: String, destination_id: String, resources: Dictionary, item_ids: Array, source_version: int, destination_version: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
-	if bool(lab.terrain.site.paused): return Runtime.fail("BUSY")
-	if not test_dispatch and requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
-	var person: Dictionary = controller.person_actions._person(requester_id)
-	var operated := _operated(requester_id)
-	var ready: bool = not person.is_empty() and controller._delivery_person_ready(person)
-	if not operated.is_empty() and str(operated.id) in [source_id, destination_id]:
-		var original := _operator(requester_id)
-		ready = _available(original) and operated.move.is_empty() and not bool(person.moving) and str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "idle" and not bool(person.owner.combat_hot_get(int(person.unit), &"attack")) and float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) <= 0.0
-	if not ready: return Runtime.fail("BUSY", "本人須清醒停止且無其他職務，才可裝卸")
-	var source := _stock(source_id)
-	var destination := _stock(destination_id)
-	if source.is_empty() or destination.is_empty(): return Runtime.fail("NO_TARGET")
-	if int(source.team_id) == 0 and int(destination.team_id) == 0 and requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
-	for stock: Dictionary in [source, destination]:
-		var offset: Vector2i = stock.cell - person.cell
-		var aboard_own: bool = not operated.is_empty() and str(operated.kind) == "wagon" and str(stock.get("vehicle_id", "")) == str(operated.id) and person.cell == operator_cell(operated)
-		if not aboard_own and (absi(offset.x) + absi(offset.y) != 1 or not lab.terrain.can_step(person.cell, stock.cell)): return Runtime.fail("UNREACHABLE", "本人須實際相鄰庫存；騎乘人僅可從馬格裝卸本車，不能遠距搬運")
-		if int(stock.team_id) > 0:
-			var owned := false
-			for team: TerrainArmy in lab.combat_armies:
-				if team.team_id == int(stock.team_id) and _authorized(team, requester_id, requester_id if not operated.is_empty() and int(operated.team_id) == team.team_id else 0, test_dispatch): owned = true
-			if not owned: return Runtime.fail("NO_AUTHORITY", "車載庫存由原隊合格指揮者調度")
-	return Runtime.transfer_items(lab.terrain, source.holder, source.cargo, destination.holder, destination.cargo, resources, item_ids, source_version, destination_version, int(destination.capacity))
+	var involves_ship := is_ship(records().get(source_id, {})) or is_ship(records().get(destination_id, {}))
+	for key: String in [source_id, destination_id]:
+		if key.begins_with("person:") and key.trim_prefix("person:").is_valid_int(): involves_ship = involves_ship or is_embarked(int(key.trim_prefix("person:")))
+	if involves_ship: return _transfer_ship(source_id, destination_id, resources, item_ids, source_version, destination_version, requester_id, test_dispatch)
+	var prepared := prepare_transfer(source_id, destination_id, resources, item_ids, source_version, destination_version, requester_id, test_dispatch)
+	if not prepared.ok: return prepared
+	if not lab.has_method("_audio_p3_transfer"): return Runtime.publish_item_transfer(prepared)
+	# Pure metadata from the endpoints already accepted by prepare_transfer.
+	var audio_identity := requester_id
+	for audio_endpoint: String in [source_id, destination_id]:
+		if audio_endpoint.begins_with("person:"): audio_identity = int(audio_endpoint.trim_prefix("person:"))
+	var audio_person: Dictionary = controller.person_actions._person(audio_identity)
+	var audio_ground: Vector2 = audio_person.get("position", Vector2(-1, -1))
+	var original_transfer := func() -> Dictionary:
+		return Runtime.publish_item_transfer(prepared)
+	return lab.call("_audio_p3_transfer", original_transfer, audio_identity, audio_ground, resources, item_ids)
 
 func render_state(vehicle: Dictionary) -> Dictionary:
+	if is_ship(vehicle):
+		var pose := ship_render_pose(vehicle)
+		return {"position": (Vector2(pose.anchor) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS, "facing": Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), "moving": bool(pose.moving), "progress": float(pose.progress), "kind": "ship", "operator_id": int(vehicle.operator_id)}
 	var position := (Vector2(lab.terrain.cell_from_index(int(vehicle.cell))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	var direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
 	var moving := false
 	var progress := 0.0
+	if is_siege(vehicle) and int(vehicle.get("move", {}).get("native_token", 0)) > 0:
+		var state: Dictionary = lab.crowd_site.siege_group_state(int(vehicle.move.native_token))
+		if not state.is_empty():
+			progress = 0.0 if bool(state.aborted) else clampf(float(state.elapsed) / float(state.duration), 0.0, 1.0)
+			var from := (Vector2(lab.terrain.cell_from_index(int(vehicle.move.from))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+			var to := (Vector2(lab.terrain.cell_from_index(int(vehicle.move.cell))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+			return {"position": from.lerp(to, progress), "facing": direction, "moving": not bool(state.complete), "progress": progress, "kind": str(vehicle.kind), "operator_id": int(vehicle.operator_id)}
+		return {"position": position, "facing": direction, "moving": true, "progress": 0.0, "kind": str(vehicle.kind), "operator_id": int(vehicle.operator_id)}
+	if is_siege(vehicle) and not vehicle.get("move", {}).is_empty():
+		var leader: int = int(vehicle.move.priority_member)
+		var participant := _operator(leader)
+		if not participant.is_empty():
+			progress = clampf(float(participant.owner.move_progress[int(participant.unit)]), 0.0, 1.0)
+			var source := (Vector2(lab.terrain.cell_from_index(int(vehicle.move.from))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+			# Borrow the same original movement_weight as the actual pushers.
+			var person_source := (Vector2(participant.cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+			var travel: Vector2 = participant.owner.combat_ground(int(participant.unit)) - person_source
+			return {"position": source + travel, "facing": direction, "moving": true, "progress": progress, "kind": str(vehicle.kind), "operator_id": int(vehicle.operator_id)}
 	var person := _operator(int(vehicle.operator_id))
 	if not vehicle.move.is_empty() and not person.is_empty() and not bool(vehicle.move.get("boarding", false)) and not bool(vehicle.move.get("dismount", false)):
 		var from := (Vector2(lab.terrain.cell_from_index(int(vehicle.move.operator_from))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
@@ -444,3 +1684,2092 @@ func rider_state(identity: int) -> Dictionary:
 	var person := _operator(identity)
 	if person.is_empty() or not person.owner.combat_can_act(int(person.unit)): return {}
 	return render_state(vehicle)
+
+
+# Insert in the original SiteVehicleTransport after the coordinated handover.
+# Add const Ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd").
+
+static func is_ship(value: Variant) -> bool:
+	return str(value.get("kind", "")) == "ship" if value is Dictionary else str(value) == "ship"
+
+static func capacity_of(vehicle: Dictionary) -> int:
+	if is_ship(vehicle): return int(Ship.definition(str(vehicle.get("ship_type", ""))).get("capacity", 0))
+	return int(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].capacity) if is_siege(vehicle) else int(CAPACITY.get(str(vehicle.get("kind", "")), 0))
+
+# Read original rows directly. Calling lab._combat_target here would recurse via
+# TerrainArmy.combat_ground, which consumes the projection below.
+func ship_person(identity: int) -> Dictionary:
+	# G1 S2: a crowd soldier with an original row is read through its CrowdPersonOwner (position from the native body).
+	var crowd_person := _crowd_ship_person(identity)
+	if not crowd_person.is_empty(): return crowd_person
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled: continue
+		var index := team.index_for_identity(identity)
+		if index < 0 or index >= team.combat_units.size(): continue
+		var row: Dictionary = team.combat_units[index]
+		return {"id": identity, "person_id": identity, "owner": team, "unit": index,
+			"row": row, "body": row, "cell": team.cells[index], "faction": team.faction_id,
+			"hp": float(team.combat_hot_get(index, &"hp", 0.0)), "ko": float(team.combat_hot_get(index, &"ko", 0.0)),
+			"hit": int(row.get("hit_revision", 0)), "captive": bool(team.combat_hot_get(index, &"captive", false)),
+			"moving": team.moving_to[index] != TerrainArmy.INVALID_CELL,
+			"holder": row.get("item_state", {}), "cargo": row.get("cargo", {})}
+	return {} # Native and independent Actor owners require their own admission.
+
+# G1 S2: the CrowdPersonOwner of an original-row soldier, or null. Actors have no ship row and do not board yet.
+func _crowd_owner_of(identity: int) -> Variant:
+	if not _native_siege(): return null
+	var owner: Variant = lab.crowd_site.person_owner(identity)
+	if not owner is CrowdPersonOwner: return null
+	return owner if int(owner.index_for_identity(identity)) >= 0 else null
+
+func _crowd_ship_person(identity: int) -> Dictionary:
+	var owner: Variant = _crowd_owner_of(identity)
+	if owner == null: return {}
+	var index: int = int(owner.index_for_identity(identity))
+	if not owner.records.has(index): return {}
+	var person: Dictionary = owner.person(index, false)
+	if person.is_empty(): return {}
+	person["id"] = identity
+	person["row"] = person.body
+	return person
+
+func _crowd_ship_people(vehicle: Dictionary, alive_only: bool) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if not _native_siege(): return result
+	for owner: Variant in lab.crowd_site.person_owners():
+		if not owner is CrowdPersonOwner: continue
+		for index: int in owner.records:
+			if str(owner.records[index].get("embarked_vehicle_id", "")) != str(vehicle.get("id", "")): continue
+			var person := ship_person(owner.combat_identity(index))
+			if not person.is_empty() and (not alive_only or float(person.hp) > 0.0): result.append(person)
+	return result
+
+# A living, non-aboard crowd soldier stands in the cell. The native occupancy mask already leaves aboard soldiers out.
+func _crowd_people_block(cell: Vector2i) -> bool:
+	return _native_siege() and lab.crowd_site.reserves_cell(cell)
+
+# Landing or deck-fit blockers: land people (grid or crowd). Ship contacts deliberately ignore people, as before,
+# because the boarding person stands on the contact cell.
+func _ship_landing_blocked(cell: Vector2i) -> bool:
+	return _people_block(cell) or _crowd_people_block(cell)
+
+# G1 S2: each tick the native deck point of every living crowd passenger follows the GD deck point (in cell units).
+# Called once per tick right after update_ships. The native position is presentation and ranged origin only.
+## The aboard crowd person's native body moves to its current deck point at once (the per-tick sync's single-person form).
+func _crowd_place_on_deck(person: Dictionary) -> void:
+	var point: Vector2 = ship_person_ground(int(person.id)) / TerrainRenderer.CELL_PIXELS
+	if point.x >= 0.0 and point.y >= 0.0: person.owner.ship_set_deck(int(person.unit), point)
+
+func sync_ship_decks() -> void:
+	if not _native_siege(): return
+	for vehicle: Dictionary in records().values():
+		if not is_ship(vehicle): continue
+		for person: Dictionary in _crowd_ship_people(vehicle, true):
+			var point: Vector2 = ship_person_ground(int(person.id)) / TerrainRenderer.CELL_PIXELS
+			if point.x < 0.0 or point.y < 0.0: continue
+			person.owner.ship_set_deck(int(person.unit), point)
+
+# G1 S2 load gate, pure (changes nothing). Every crowd roster row that names an embarked vehicle must be native aboard on
+# that vehicle, and every native aboard soldier must be such a row. GD rows keep berth and deck; native holds aboard only.
+static func ship_record_check(data: TerrainData, crowd: Variant) -> Dictionary:
+	var expected := {}
+	for roster: Dictionary in data.site.get("armies", []):
+		if not bool(roster.get("crowd", false)): continue
+		for row: Dictionary in roster.get("units", []):
+			if not row.has("embarked_vehicle_id"): continue
+			if crowd == null or not crowd.has_method("site_person_aboard"):
+				return Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少船上原生狀態介面")
+			var soldier: int = int(crowd.soldier_index(int(row.person_id)))
+			if soldier < 0: return Runtime.fail("CROWD_SHIP_MISMATCH", "乘船群眾人物不在原生群眾中")
+			expected[soldier] = int(str(row.embarked_vehicle_id))
+	for soldier: int in range(int(crowd.soldier_count()) if crowd != null else 0):
+		var state: PackedFloat64Array = crowd.site_person_aboard(soldier)
+		if state.size() != 2: return Runtime.fail("CROWD_SHIP_MISMATCH", "原生船上狀態讀取失敗")
+		var aboard := state[0] > 0.5
+		if aboard != expected.has(soldier) or aboard and int(state[1]) != int(expected[soldier]):
+			return Runtime.fail("CROWD_SHIP_MISMATCH", "原生船上狀態與原乘船記錄不符")
+	return Runtime.ok()
+
+func ship_for_person(identity: int) -> Dictionary:
+	var person := ship_person(identity)
+	if person.is_empty(): return {}
+	var vehicle: Dictionary = records().get(str(person.row.get("embarked_vehicle_id", "")), {})
+	return vehicle if is_ship(vehicle) else {}
+
+func is_embarked(identity: int) -> bool:
+	return not ship_for_person(identity).is_empty()
+
+static func ship_afloat(vehicle: Dictionary) -> bool:
+	return is_ship(vehicle) and str(vehicle.get("naval", {}).get("state", "afloat")) == "afloat"
+
+func _ship_in_journey(vehicle_id: String) -> bool:
+	return controller != null and controller.has_method("ship_vehicle_in_journey") and controller.ship_vehicle_in_journey(vehicle_id)
+
+func _region_operation_pending() -> bool:
+	return controller != null and controller.has_method("region_operation_pending") and controller.region_operation_pending()
+
+func _ship_journey_active() -> bool:
+	return controller != null and controller.has_method("ship_journey_active") and controller.ship_journey_active()
+
+func ship_can_attack(identity: int) -> bool:
+	var vehicle := ship_for_person(identity)
+	var person := ship_person(identity)
+	return ship_afloat(vehicle) and not _ship_in_journey(str(vehicle.id)) and not person.is_empty() and int(vehicle.operator_id) != identity and person.owner.combat_can_act(int(person.unit)) and not bool(person.captive) and not bool(person.moving) and not controller.person_actions.is_busy(identity) and not controller.person_actions.is_guarding(identity)
+
+func ship_combat_contact(attacker_id: int, target_id: int) -> bool:
+	var a := ship_for_person(attacker_id)
+	var b := ship_for_person(target_id)
+	if a.is_empty() and b.is_empty(): return false
+	if _ship_in_journey(str(a.get("id", ""))) or _ship_in_journey(str(b.get("id", ""))): return false
+	if not a.is_empty() and (not ship_afloat(a) or not a.move.is_empty()): return false
+	if not b.is_empty() and (not ship_afloat(b) or not b.move.is_empty()): return false
+	var pa := ship_person(attacker_id)
+	var pb := ship_person(target_id)
+	if pa.is_empty() or pb.is_empty(): return false
+	var first: Vector2 = ship_person_ground(attacker_id) if not a.is_empty() else pa.owner.combat_ground(int(pa.unit))
+	var second: Vector2 = ship_person_ground(target_id) if not b.is_empty() else pb.owner.combat_ground(int(pb.unit))
+	return first.distance_to(second) <= TerrainRenderer.CELL_PIXELS * 1.05
+
+func _ship_job_point(job: Dictionary) -> Vector2:
+	var path: Array = job.path
+	var remaining := minf(float(job.elapsed), float(job.duration)) * float(job.speed)
+	for index in range(1, path.size()):
+		var distance: float = path[index - 1].distance_to(path[index])
+		if remaining <= distance: return path[index - 1].lerp(path[index], remaining / maxf(distance, 0.000001))
+		remaining -= distance
+	return path.back()
+
+func _deck_point_free(vehicle: Dictionary, point: Vector2, ignore_id: int) -> bool:
+	if not Ship.deck_contains(str(vehicle.ship_type), point): return false
+	for other: Dictionary in ship_people(vehicle):
+		if int(other.id) != ignore_id and ship_local_position(int(other.id)).distance_to(point) < 0.13: return false
+	return true
+
+func _deck_segment_free(vehicle: Dictionary, start: Vector2, target: Vector2, identity: int) -> bool:
+	var count := maxi(1, ceili(start.distance_to(target) / 0.05))
+	for index in range(count + 1):
+		if not _deck_point_free(vehicle, start.lerp(target, float(index) / float(count)), identity): return false
+	return true
+
+func ship_deck_path(identity: int, target: Vector2) -> Array[Vector2]:
+	var path: Array[Vector2] = []
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty() or not _deck_point_free(vehicle, target, identity): return path
+	return _ship_deck_path_on(vehicle, identity, ship_local_position(identity), target)
+
+func _ship_deck_path_on(vehicle: Dictionary, identity: int, start: Vector2, target: Vector2) -> Array[Vector2]:
+	var path: Array[Vector2] = []
+	if not _deck_point_free(vehicle, start, identity) or not _deck_point_free(vehicle, target, identity): return path
+	var spec := Ship.definition(str(vehicle.ship_type))
+	var grid := AStarGrid2D.new()
+	grid.region = Rect2i(0, 0, int(spec.width) * 4 - 1, int(spec.length) * 4 - 1)
+	grid.cell_size = Vector2.ONE * 0.25
+	grid.offset = Vector2.ONE * -0.25
+	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	grid.update()
+	for y in range(grid.region.size.y):
+		for x in range(grid.region.size.x):
+			var cell := Vector2i(x, y)
+			if not _deck_point_free(vehicle, grid.get_point_position(cell), identity): grid.set_point_solid(cell)
+	var source := Vector2i(((start + Vector2.ONE * 0.25) * 4.0).round())
+	var destination := Vector2i(((target + Vector2.ONE * 0.25) * 4.0).round())
+	if not grid.region.has_point(source) or not grid.region.has_point(destination) or grid.is_point_solid(source) or grid.is_point_solid(destination): return path
+	var points: PackedVector2Array = grid.get_point_path(source, destination)
+	if points.is_empty(): return path
+	path.append(start)
+	for point: Vector2 in points:
+		if not point.is_equal_approx(path.back()): path.append(point)
+	if not target.is_equal_approx(path.back()): path.append(target)
+	for index in range(1, path.size()):
+		if not _deck_segment_free(vehicle, path[index - 1], path[index], identity): path.clear(); break
+	return path
+
+func ship_walk_query(identity: int, target: Vector2, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var person := ship_person(identity)
+	var vehicle := ship_for_person(identity)
+	if not ship_afloat(vehicle) or person.is_empty(): return Runtime.fail("NO_TARGET")
+	var fixed: Dictionary = link_fixed_refusal(vehicle)
+	if not fixed.ok: return fixed
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	if _region_operation_pending() or (_ship_in_journey(str(vehicle.id))) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成原船旅程或岸上維修；失能待命時僅准原舵手接替")
+	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty() or not _ship_capable(person): return Runtime.fail("BUSY")
+	var path := ship_deck_path(identity, target)
+	if path.is_empty(): return Runtime.fail("UNREACHABLE", "甲板範圍或原人占位阻擋")
+	return Runtime.ok("", {"person": person, "vehicle": vehicle, "path": path})
+
+func commit_ship_walk(job: Dictionary) -> Dictionary:
+	var person := ship_person(int(job.executor_id))
+	var vehicle := ship_for_person(int(job.executor_id))
+	if person.is_empty() or vehicle.is_empty(): return Runtime.fail("STALE")
+	if float(person.hp) <= 0.0:
+		var local := ship_local_position(int(person.id))
+		person.row.ship_death_local = [local.x, local.y]
+		return Runtime.ok("原人物死亡結算")
+	var point: Vector2 = job.path.back()
+	if not vehicle.move.is_empty() or not _deck_point_free(vehicle, point, int(person.id)): return Runtime.fail("STALE")
+	person.row.ship_deck_position = [point.x, point.y]
+	if int(vehicle.operator_id) == int(person.id) and not point.is_equal_approx(Ship.local_position(str(vehicle.ship_type), 0)): vehicle.operator_id = 0
+	vehicle.revision = int(vehicle.revision) + 1
+	person.owner.ship_embarkation_changed(int(person.id))
+	return Runtime.ok("原人物已走到甲板位置")
+
+func boarding_link_query(vehicle_id: String) -> Dictionary:
+	return Boarding.query(lab.terrain.site, vehicle_id, lab.terrain)
+
+func boarding_save_guard() -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	var checked: Dictionary = Boarding.save_guard(lab.terrain.site, lab.terrain)
+	if not checked.ok: return checked
+	# Live Army rows precede Controller snapshot replacement.
+	for team: TerrainArmy in lab.combat_armies:
+		for row: Dictionary in team.combat_units:
+			checked = Boarding.position_guard(row)
+			if not checked.ok: return checked
+	# Crowd rows are the CrowdPersonOwner records (crowd passengers are not in the grid armies above).
+	for owner: Variant in _crowd_person_owners():
+		for index: int in owner.records:
+			checked = Boarding.position_guard(owner.records[index])
+			if not checked.ok: return checked
+	return controller.person_actions.boarding_save_guard()
+
+## B2S3 read-only begin gate for a player-side boarding link. Only a living person
+## embarked on the source hull, authorised as the controlled person, may start it.
+func boarding_begin_query(identity: int, self_id: String, peer_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var source: Dictionary = records().get(self_id, {})
+	var target: Dictionary = records().get(peer_id, {})
+	var person: Dictionary = ship_person(identity)
+	if person.is_empty() or self_id == peer_id or not ship_afloat(source) or not ship_afloat(target): return Runtime.fail("NO_TARGET")
+	if str(person.row.get("embarked_vehicle_id", "")) != self_id or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET", "Only a living person aboard the source hull may start")
+	if not _ship_capable(person, true): return Runtime.fail("BUSY", "Original boarding executor must be able to act")
+	if _region_operation_pending() or _ship_in_journey(self_id) or _ship_in_journey(peer_id): return Runtime.fail("BUSY", "先完成兩船原旅程")
+	if not source.get("naval", {}).get("repair", {}).is_empty() or not target.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成岸上維修")
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	if bool(lab.terrain.site.get("paused", false)) or not source.move.is_empty() or not target.move.is_empty() or not ship_job(self_id).is_empty() or not ship_job(peer_id).is_empty(): return Runtime.fail("BUSY")
+	if source.get("naval", {}).has("boarding_link") or target.get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "已有接舷紀錄")
+	var active: Dictionary = boarding_link_query(self_id)
+	if not active.ok or active.linked: return Runtime.fail("BUSY", "接舷紀錄不可用")
+	if not _hulls_adjacent(source, target): return Runtime.fail("UNREACHABLE", "本人兩船須已在合法接舷邊")
+	return Runtime.ok("", {"person": person, "source": source, "target": target})
+
+func _hulls_adjacent(source: Dictionary, target: Dictionary) -> bool:
+	return not _boarding_cells(source, target).is_empty()
+
+## First own/peer cell pair that is 4-adjacent, in footprint order (deterministic).
+func _boarding_cells(source: Dictionary, target: Dictionary) -> Dictionary:
+	var own: Array[Vector2i] = Ship.footprint(str(source.ship_type), lab.terrain.cell_from_index(int(source.cell)), Vector2i(int(source.facing[0]), int(source.facing[1])))
+	var other: Array[Vector2i] = Ship.footprint(str(target.ship_type), lab.terrain.cell_from_index(int(target.cell)), Vector2i(int(target.facing[0]), int(target.facing[1])))
+	for a: Vector2i in own:
+		for b: Vector2i in other:
+			if absi(a.x - b.x) + absi(a.y - b.y) == 1: return {"a": a, "b": b}
+	return {}
+
+## B2S4 atomic commit: both naval records become v2 linked, or nothing is written.
+## Epoch 1 is safe here: boarding_begin_query refuses any existing boarding_link.
+## B2b (plan lines 33, 60, 99): the link epoch advances on every connect and is kept on each hull's
+## naval record as link_epoch, so it survives unlink. Replays never reach this (job is erased on commit).
+func _next_link_epoch_b3(source: Dictionary, target: Dictionary) -> int:
+	return maxi(int(source.get("naval", {}).get("link_epoch", 0)), int(target.get("naval", {}).get("link_epoch", 0))) + 1
+
+## Q1 A: a hull with an original link record is fixed to its place (no walk, action, journey, repair).
+func link_fixed_refusal(vehicle: Dictionary) -> Dictionary:
+	if vehicle.get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "接舷連結中船隻固定；先解除連結")
+	return Runtime.ok()
+
+## Clears both ends in one write: the link record is removed and the naval record returns to v1.
+## link_epoch stays, so the next connect advances it.
+func _clear_link_b3(from_id: String, to_id: String) -> Dictionary:
+	var live: Dictionary = records()
+	var prepared: Dictionary = {}
+	for identity: String in [from_id, to_id]:
+		var naval: Dictionary = live[identity].naval.duplicate(true)
+		naval.erase("boarding_link")
+		naval["version"] = 1
+		prepared[identity] = naval
+	for identity: String in [from_id, to_id]:
+		live[identity].naval = prepared[identity]
+	return Runtime.ok("接舷連結已解除；兩船原紀錄同時清除")
+
+## Q2 A request: stop new entries. With no crosser the clear is immediate; with a crosser the link
+## goes closing and the clear follows when that crossing ends (see _write_link_b3).
+func request_boarding_unlink(identity: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var person: Dictionary = ship_person(identity)
+	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET")
+	var from_id: String = str(person.row.get("embarked_vehicle_id", ""))
+	var source: Dictionary = records().get(from_id, {})
+	var link: Variant = source.get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.fail("NO_TARGET", "沒有接舷連結")
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var to_id: String = str(link.peer.vehicle_id)
+	if int(link.crosser_id) == 0: return _clear_link_b3(from_id, to_id)
+	var closed: Dictionary = close_link_for_cross({"vehicle_id": from_id, "secondary_vehicle_id": to_id})
+	if not closed.ok: return closed
+	return Runtime.ok("接舷連結已進入收束；既有通道完成後解除", {"pending": true})
+
+func commit_boarding_link(job: Dictionary) -> Dictionary:
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	var target: Dictionary = records().get(str(job.peer_vehicle_id), {})
+	if not is_ship(source) or not is_ship(target): return Runtime.fail("NO_TARGET")
+	var cells: Dictionary = _boarding_cells(source, target)
+	if cells.is_empty(): return Runtime.fail("UNREACHABLE", "兩船已不在接舷邊")
+	var source_anchor: Vector2i = lab.terrain.cell_from_index(int(source.cell))
+	var target_anchor: Vector2i = lab.terrain.cell_from_index(int(target.cell))
+	var source_facing: Vector2i = Vector2i(int(source.facing[0]), int(source.facing[1]))
+	var target_facing: Vector2i = Vector2i(int(target.facing[0]), int(target.facing[1]))
+	var source_local: Vector2 = Ship.local_from_world(source_anchor, source_facing, Vector2(cells.a))
+	var target_local: Vector2 = Ship.local_from_world(target_anchor, target_facing, Vector2(cells.b))
+	var state: Dictionary = {"id": str(lab.terrain.site.id), "vehicles": records()}
+	var link_id: String = "boarding_%s_%s" % [str(source.id), str(target.id)]
+	var epoch: int = _next_link_epoch_b3(source, target)
+	var made: Dictionary = Boarding.make_pair(state, str(source.id), str(target.id), link_id, epoch,
+		source_anchor, target_anchor, [source_local.x, source_local.y], [target_local.x, target_local.y])
+	if not made.ok: return made # make_pair works on a copy, so nothing changed.
+	var live: Dictionary = records()
+	for identity: String in [str(source.id), str(target.id)]:
+		live[identity].naval = made.state.vehicles[identity].naval.duplicate(true)
+		live[identity].naval["link_epoch"] = epoch
+	return Runtime.ok("接舷已建立；兩船原紀錄同時寫入", {"link_id": link_id, "epoch": epoch})
+
+func ship_cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	return _cross_query(identity, target_id, berth, requester_id, test_dispatch, false)
+
+## link_path is true only for the B3S3 link-gated begin. Unlinked pairs take the same checks as before.
+func _cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool, link_path: bool) -> Dictionary:
+	var source := ship_for_person(identity)
+	var target: Dictionary = records().get(target_id, {})
+	var person := ship_person(identity)
+	if not ship_afloat(source) or not ship_afloat(target) or str(source.id) == target_id or person.is_empty(): return Runtime.fail("NO_TARGET")
+	# B3S2: a linked pair crosses only through the link-gated path; unlinked pairs are unchanged.
+	var linked: bool = _linked_pair(source, target)
+	if linked and not link_path: return Runtime.fail("BUSY", "接舷對只能經原接舷通道換船")
+	if link_path and not linked: return Runtime.fail("NO_TARGET", "兩船之間沒有原接舷紀錄")
+	if _region_operation_pending() or _ship_in_journey(str(source.id)) or _ship_in_journey(target_id) or not source.get("naval", {}).get("repair", {}).is_empty() or not target.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成兩船原旅程或岸上維修")
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	if bool(lab.terrain.site.get("paused", false)) or not source.move.is_empty() or not target.move.is_empty() or not ship_job(str(source.id)).is_empty() or not ship_job(target_id).is_empty() or not _ship_capable(person): return Runtime.fail("BUSY")
+	if link_path: return _link_cross_route(identity, source, target, berth, person)
+	if berth < 0:
+		for index in range(int(Ship.definition(str(target.ship_type)).max_people)):
+			if _ship_berth_free(target, index): berth = index; break
+	if not _ship_berth_free(target, berth): return Runtime.fail("NO_SPACE")
+	var destination := Ship.local_position(str(target.ship_type), berth)
+	var first := ship_person_ground(identity) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	var second := ship_local_ground(target, destination) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	if first.distance_to(second) > 1.05: return Runtime.fail("UNREACHABLE", "本人與目的甲板須已在兩船合法接舷邊")
+	if not _deck_point_free(target, destination, 0): return Runtime.fail("NO_SPACE")
+	var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+	if ship_load(target_id) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+	return Runtime.ok("", {"person": person, "vehicle": source, "target": target, "berth_id": berth, "path": [first, second]})
+
+## B3R3: the link-gated route, one path in cell coordinates. Leg 1 is the existing deck walk
+## (ship_deck_path, ship-local points, the same planner ship_walk uses) from the person's current deck
+## point to the source edge cell that touches the target. Leg 2 is the cross to the nearest free target
+## berth (reserved in the job by berth_id; commit re-checks it). Refusals reuse UNREACHABLE/NO_SPACE/CAPACITY.
+func _link_cross_route(identity: int, source: Dictionary, target: Dictionary, berth: int, person: Dictionary) -> Dictionary:
+	var here := ship_person_ground(identity) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	var touches := _touch_cells(source, target, here)
+	if touches.is_empty(): return Runtime.fail("UNREACHABLE", "兩船沒有相鄰甲板邊")
+	var source_anchor: Vector2i = lab.terrain.cell_from_index(int(source.cell))
+	var source_facing := Vector2i(int(source.facing[0]), int(source.facing[1]))
+	for touch: Vector2i in touches:
+		var goal: Vector2 = Ship.local_from_world(source_anchor, source_facing, Vector2(touch))
+		var walk: Array[Vector2] = ship_deck_path(identity, goal)
+		if walk.is_empty(): continue
+		var route: Array = []
+		for local_point: Vector2 in walk:
+			route.append(ship_local_ground(source, local_point) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5)
+		var edge: Vector2 = route.back()
+		var chosen: int = berth if berth >= 0 else _nearest_free_berth(target, edge)
+		if chosen < 0 or not _ship_berth_free(target, chosen): return Runtime.fail("NO_SPACE")
+		var destination := Ship.local_position(str(target.ship_type), chosen)
+		var second := ship_local_ground(target, destination) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+		if edge.distance_to(second) > 1.05: return Runtime.fail("UNREACHABLE", "接舷邊與目的甲板不在合法接舷距離內")
+		if not _deck_point_free(target, destination, 0): return Runtime.fail("NO_SPACE")
+		var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+		if ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+		route.append(second)
+		return Runtime.ok("", {"person": person, "vehicle": source, "target": target, "berth_id": chosen, "path": route})
+	return Runtime.fail("UNREACHABLE", "甲板上沒有通往接舷邊的合法路徑")
+
+## Free berth of the target nearest to a cell-coordinate point; -1 when none is free.
+# Frozen frame belongs to the original paid job, never a new support surface.
+func _boarding_exit_frame(vehicle: Dictionary) -> Dictionary:
+	return {"cell": vehicle.get("cell"), "facing": vehicle.get("facing", []).duplicate(), "ship_type": vehicle.get("ship_type")}
+
+func _boarding_exit_supported(job: Dictionary, identity: String, point: Vector2) -> bool:
+	var hull: Dictionary = records().get(identity, {})
+	if not ship_afloat(hull) or not hull.get("move", {}).is_empty(): return false
+	if _boarding_exit_frame(hull) != job.get("boarding_frames", {}).get(identity, {}): return false
+	var local: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+	return Ship.deck_contains(str(hull.ship_type), local)
+
+func _boarding_exit_clear(job: Dictionary) -> void:
+	for identity: String in job.get("boarding_frames", {}):
+		var hull: Dictionary = records().get(identity, {})
+		var link: Variant = hull.get("naval", {}).get("boarding_link")
+		if not link is Dictionary or int(link.get("crosser_id", 0)) != int(job.executor_id): continue
+		hull.naval.erase("boarding_link")
+		hull.naval.version = 1
+
+## Keeps the original job and person at its paid point until a real supported exit commits.
+func prepare_boarding_exit(job: Dictionary) -> Dictionary:
+	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE", "Original crossing owner changed; job retained")
+	var person: Dictionary = ship_person(int(job.executor_id))
+	if person.is_empty(): return Runtime.fail("STALE", "Original person unavailable; crossing retained")
+	var point: Vector2 = _ship_job_point(job)
+	if float(person.hp) <= 0.0:
+		var source_dead: Dictionary = records().get(str(job.vehicle_id), {})
+		var target_dead: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+		if bool(job.get("link_exit", false)) or not ship_afloat(source_dead) or not ship_afloat(target_dead) or _boarding_exit_frame(source_dead) != job.get("boarding_frames", {}).get(str(job.vehicle_id), {}) or _boarding_exit_frame(target_dead) != job.get("boarding_frames", {}).get(str(job.secondary_vehicle_id), {}):
+			person.row.ship_death_world = [point.x, point.y]
+		return Runtime.ok()
+	if float(person.owner.combat_hot_get(int(person.unit), &"ko", 0.0)) > 0.0: job["exit_ko"] = true
+	if bool(job.get("exit_ko", false)) and person.owner.patient_has_rescuer(int(person.unit)): job["exit_rescue_seen"] = true
+	if person.owner.combat_can_act(int(person.unit)): job["exit_ko"] = false
+	if bool(job.get("link_evacuation", false)):
+		if not person.owner.combat_can_act(int(person.unit)):
+			person.row.ship_death_world = [point.x, point.y]
+			_kill_ship_person(person)
+		return Runtime.ok()
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	var target: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+	var valid_pair: bool = not bool(job.get("link_exit", false)) and ship_afloat(source) and ship_afloat(target)
+	if valid_pair:
+		var queried: Dictionary = boarding_link_query(str(job.vehicle_id))
+		valid_pair = queried.ok and bool(queried.get("linked", false)) and int(source.revision) == int(job.ship_revision) and int(target.revision) == int(job.target_revision)
+	if valid_pair: return Runtime.ok()
+	# A logical link cannot stand in for a sunk, moved or deleted physical surface.
+	var supported: Array[String] = []
+	for identity: String in job.get("boarding_frames", {}):
+		if _boarding_exit_supported(job, identity, point): supported.append(identity)
+	_boarding_exit_clear(job)
+	if supported.is_empty():
+		if person.owner.combat_can_act(int(person.unit)) and not bool(job.get("exit_ko", false)):
+			var evacuation: Array[Vector2] = _ship_evacuation_path_from(point, str(job.vehicle_id))
+			if evacuation.size() >= 2:
+				var distance: float = 0.0
+				for index: int in range(1, evacuation.size()): distance += evacuation[index - 1].distance_to(evacuation[index])
+				job["kind"] = "ship_evac"
+				job["path"] = evacuation
+				job["elapsed"] = 0.0
+				job["speed"] = minf(float(job.speed), 0.5)
+				job["duration"] = maxf(0.000001, distance / float(job.speed))
+				job["link_exit"] = true
+				job["link_evacuation"] = true
+				job["exit_blocked"] = false
+				return Runtime.ok()
+		person.row.ship_death_world = [point.x, point.y]
+		_kill_ship_person(person)
+		return Runtime.ok()
+	if bool(job.get("link_exit", false)) and not bool(job.get("exit_blocked", false)) and str(job.secondary_vehicle_id) in supported and int(target.get("revision", -1)) == int(job.target_revision): return Runtime.ok()
+	for identity: String in supported:
+		var hull: Dictionary = records()[identity]
+		var start: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+		var berth: int = _nearest_free_berth(hull, point)
+		if berth < 0: continue
+		var destination: Vector2 = Ship.local_position(str(hull.ship_type), berth)
+		var local_path: Array[Vector2] = _ship_deck_path_on(hull, int(person.id), start, destination)
+		if local_path.is_empty(): continue
+		var amount: float = Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+		if identity != str(person.row.get("embarked_vehicle_id", "")) and ship_load(identity) + amount > float(capacity_of(hull)): continue
+		var path: Array = []
+		var distance: float = 0.0
+		for local: Vector2 in local_path: path.append(ship_local_ground(hull, local) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5)
+		# A zero-length exit still commits at the next original settlement, never a synthetic step.
+		if path.size() == 1: path.append(path[0])
+		for index: int in range(1, path.size()): distance += path[index - 1].distance_to(path[index])
+		job["path"] = path
+		job["elapsed"] = 0.0
+		job["duration"] = maxf(0.000001, distance / float(job.speed))
+		job["secondary_vehicle_id"] = identity
+		job["target_revision"] = int(hull.revision)
+		job["berth_id"] = berth
+		job["link_exit"] = true
+		job["exit_blocked"] = false
+		return Runtime.ok()
+	# Supported but occupied: retain this exact point and original busy job, including KO.
+	job["path"] = [point, point]
+	job["elapsed"] = 0.0
+	job["duration"] = 0.000001
+	job["link_exit"] = true
+	job["exit_blocked"] = true
+	return Runtime.fail("BUSY", "Original supported exit has no free deck path or berth")
+
+func commit_boarding_exit(job: Dictionary) -> Dictionary:
+	var person: Dictionary = ship_person(int(job.executor_id))
+	var target: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+	var point: Vector2 = _ship_job_point(job)
+	if not person.is_empty() and not person.owner.combat_can_act(int(person.unit)): return Runtime.fail("BUSY", "Original person cannot walk out while KO")
+	if person.is_empty() or not _boarding_exit_supported(job, str(job.secondary_vehicle_id), point) or int(target.revision) != int(job.target_revision) or not _ship_berth_free(target, int(job.berth_id), int(person.id)): return Runtime.fail("STALE")
+	var amount: float = Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+	if str(person.row.get("embarked_vehicle_id", "")) != str(target.id) and ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	person.row.embarked_vehicle_id = str(target.id)
+	person.row.berth_id = int(job.berth_id)
+	person.row.erase("ship_deck_position")
+	if int(person.owner.team_id) != int(target.team_id): person.row.ship_guest = true
+	else: person.row.erase("ship_guest")
+	if not source.is_empty() and int(source.operator_id) == int(person.id): source["operator_id"] = 0
+	target["revision"] = int(target.revision) + 1
+	person.owner.ship_embarkation_changed(int(person.id))
+	job["link_released"] = true
+	var walked: Dictionary = Runtime.ok("原人沿仍有支撐的付時甲板路徑走出")
+	walked["link_released"] = true
+	return walked
+
+func _nearest_free_berth(target: Dictionary, point: Vector2) -> int:
+	var chosen: int = -1
+	var nearest: float = INF
+	for index in range(int(Ship.definition(str(target.ship_type)).max_people)):
+		if not _ship_berth_free(target, index): continue
+		var candidate := ship_local_ground(target, Ship.local_position(str(target.ship_type), index)) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+		if point.distance_to(candidate) < nearest:
+			nearest = point.distance_to(candidate)
+			chosen = index
+	return chosen
+
+## Source-footprint cells 4-adjacent to the target footprint, nearest to here first.
+func _touch_cells(source: Dictionary, target: Dictionary, here: Vector2) -> Array[Vector2i]:
+	var own: Array[Vector2i] = Ship.footprint(str(source.ship_type), lab.terrain.cell_from_index(int(source.cell)), Vector2i(int(source.facing[0]), int(source.facing[1])))
+	var other: Array[Vector2i] = Ship.footprint(str(target.ship_type), lab.terrain.cell_from_index(int(target.cell)), Vector2i(int(target.facing[0]), int(target.facing[1])))
+	var touches: Array[Vector2i] = []
+	for cell: Vector2i in own:
+		for peer: Vector2i in other:
+			if absi(cell.x - peer.x) + absi(cell.y - peer.y) == 1 and not touches.has(cell): touches.append(cell)
+	touches.sort_custom(func(first: Vector2i, second: Vector2i) -> bool: return here.distance_to(Vector2(first)) < here.distance_to(Vector2(second)))
+	return touches
+
+## True when either hull's original naval record names the other as its link peer.
+static func _linked_pair(source: Dictionary, target: Dictionary) -> bool:
+	var own: Variant = source.get("naval", {}).get("boarding_link")
+	if own is Dictionary and str(own.get("peer", {}).get("vehicle_id", "")) == str(target.get("id", "")): return true
+	var other: Variant = target.get("naval", {}).get("boarding_link")
+	return other is Dictionary and str(other.get("peer", {}).get("vehicle_id", "")) == str(source.get("id", ""))
+
+## B3S3: link-gated query (same checks as ship_cross_query, linked pair required).
+func ship_cross_link_query(identity: int, target_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	return _cross_query(identity, target_id, -1, requester_id, test_dispatch, true)
+
+## Enters the crosser on both link ends in one copy; writes only if the crossing ledger accepts.
+func enter_link_crosser(from_id: String, to_id: String, person_id: int) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var state: Dictionary = {"id": str(site.id), "vehicles": records(), "actors": site.get("actors", {}), "armies": site.get("armies", [])}
+	var entered: Dictionary = Boarding.crossing_begin(state, from_id, to_id, person_id)
+	if not entered.ok: return entered
+	var live: Dictionary = records()
+	for identity: String in [from_id, to_id]:
+		live[identity].naval = entered.state.vehicles[identity].naval.duplicate(true)
+	return Runtime.ok("", {"crosser_id": person_id})
+
+## B3S4: the original ledger state for crossing functions (copied by the callee, never returned live).
+func _boarding_link_state_b3() -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	return {"id": str(site.id), "vehicles": records(), "actors": site.get("actors", {}), "armies": site.get("armies", [])}
+
+## Writes only the naval records of the two ends, from an accepted ledger copy.
+## Writes both ends from an accepted copy. Q2 A: when the link is closing at the crossing's exit,
+## the same write clears it (boarding_link removed, naval back to v1, link_epoch kept).
+func _write_link_b3(accepted: Dictionary, from_id: String, to_id: String, clear_when_closing: bool = true) -> void:
+	var live: Dictionary = records()
+	var link: Variant = accepted.state.vehicles[from_id].naval.get("boarding_link")
+	var clear: bool = clear_when_closing and link is Dictionary and str(link.state) == "closing"
+	for identity: String in [from_id, to_id]:
+		var naval: Dictionary = accepted.state.vehicles[identity].naval.duplicate(true)
+		if clear:
+			naval.erase("boarding_link")
+			naval["version"] = 1
+		live[identity].naval = naval
+
+## B3S4 atomic completion. The ledger exit is computed on a copy first; the body move
+## (commit_ship_cross) refuses before any write; the ledger is written only after the body moved.
+func commit_link_crossing(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var ended: Dictionary = Boarding.crossing_end(_boarding_link_state_b3(), from_id, int(job.executor_id))
+	if not ended.ok: return ended
+	var moved: Dictionary = commit_ship_cross(job)
+	if not moved.ok: return moved
+	_write_link_b3(ended, from_id, to_id)
+	job["link_released"] = true
+	moved["link_released"] = true
+	return moved
+
+## B3S5: releases the crosser of a link-gated crossing. The person stays where the body is (source hull).
+## Q2 A / plan line 73: the point reached on the path is the person's real row point.
+func settle_link_position(job: Dictionary) -> void:
+	var person: Dictionary = ship_person(int(job.executor_id))
+	if person.is_empty(): return
+	var point: Vector2 = _ship_job_point(job)
+	# Completed walk + cross leg: the path end is the target berth. The person was not moved (the commit
+	# refused), so the real point is the walk leg's last point, the edge the crossing starts from.
+	if float(job.elapsed) >= float(job.duration) and job.path.size() >= 2: point = job.path[job.path.size() - 2]
+	if not point.is_finite(): return
+	var hull: Dictionary = records().get(str(job.vehicle_id), {})
+	var local: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+	person.row.ship_deck_position = [local.x, local.y]
+
+## Q2 A: closes entries for a link with a crossing in progress; the clear happens when the crossing ends.
+func close_link_for_cross(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var link: Variant = records().get(from_id, {}).get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.fail("NO_TARGET", "沒有接舷連結")
+	if str(link.state) == "closing": return Runtime.ok("接舷連結已在收束")
+	var closed: Dictionary = Boarding.set_state(_boarding_link_state_b3(), from_id, "closing")
+	if not closed.ok: return closed
+	_write_link_b3(closed, from_id, to_id, false)
+	return Runtime.ok("接舷連結已進入收束")
+
+func release_link_crosser(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var person_id: int = int(job.executor_id)
+	var link: Variant = records().get(from_id, {}).get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.ok("接舷連結已於沉沒時清除")
+	if int(link.get("crosser_id", -1)) != person_id: return Runtime.fail("BUSY", "釋放者不是通道中的人物")
+	var state: Dictionary = _boarding_link_state_b3()
+	var ended: Dictionary
+	if ship_afloat(records().get(from_id, {})) and ship_afloat(records().get(to_id, {})):
+		var current: Dictionary = Boarding.query(state, from_id)
+		if not current.ok: return current
+		ended = Boarding.crossing_end(state, from_id, person_id)
+	else:
+		ended = _clear_copy_b3(state, from_id, to_id)
+	if not ended.ok: return ended
+	_write_link_b3(ended, from_id, to_id)
+	return Runtime.ok("接舷通道已釋放")
+
+## A sunk hull cannot hold an active link (query needs both hulls afloat), so the link becomes
+## invalid: terminal, no entry, no re-link. Crosser cleared. Nothing else is written.
+func _clear_copy_b3(state: Dictionary, from_id: String, to_id: String) -> Dictionary:
+	var copy: Dictionary = state.duplicate(true)
+	for identity: String in [from_id, to_id]:
+		copy.vehicles[identity].naval.erase("boarding_link")
+		copy.vehicles[identity].naval.version = 1
+	return Runtime.ok("", {"state": copy})
+
+func commit_ship_cross(job: Dictionary) -> Dictionary:
+	var person := ship_person(int(job.executor_id))
+	var source := ship_for_person(int(job.executor_id))
+	var target: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+	if person.is_empty() or not is_ship(source) or not ship_afloat(target) or float(person.hp) <= 0.0 or not source.move.is_empty() or not target.move.is_empty() or int(source.revision) != int(job.ship_revision) or int(target.revision) != int(job.target_revision) or not _ship_berth_free(target, int(job.berth_id), int(person.id)): return Runtime.fail("STALE")
+	var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+	if ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+	# G1 S2: a crowd crosser changes vehicle natively first; a refusal leaves the rows on the source hull.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_retarget_native(int(person.unit), int(target.id)): return Runtime.fail("STALE", "原生群眾未接受轉船")
+	person.row.embarked_vehicle_id = str(target.id)
+	person.row.berth_id = int(job.berth_id)
+	person.row.erase("ship_deck_position")
+	if int(person.owner.team_id) != int(target.team_id): person.row.ship_guest = true
+	else: person.row.erase("ship_guest")
+	if int(source.operator_id) == int(person.id): source.operator_id = 0
+	source.revision = int(source.revision) + 1
+	target["revision"] = int(target.revision) + 1
+	person.owner.ship_embarkation_changed(int(person.id))
+	return Runtime.ok("同一原人物已沿接舷邊轉入另一船")
+
+func ship_evacuation_path(identity: int) -> Array[Vector2]:
+	var path: Array[Vector2] = []
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty(): return path
+	var first := ship_person_ground(identity) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	return _ship_evacuation_path_from(first, str(vehicle.id))
+
+func _ship_evacuation_path_from(first: Vector2, original_vehicle_id: String) -> Array[Vector2]:
+	var path: Array[Vector2] = []
+	var source := Vector2i(first.round())
+	var queue: Array[Vector2i] = [source]
+	var previous := {source: source}
+	var found := TerrainArmy.INVALID_CELL
+	var head := 0
+	while head < queue.size():
+		var cell: Vector2i = queue[head]
+		head += 1
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cell + direction
+			if not lab.terrain.contains(next) or previous.has(next): continue
+			if lab.terrain.is_walkable(next) and not blocks_cell(next) and not _people_block(next) and absi(lab.terrain.effective_height(next) - lab.terrain.effective_height(cell)) <= 1:
+				previous[next] = cell
+				found = next
+				break
+			if not lab.terrain.can_water_step(cell, next): continue
+			var blocked := false
+			for other: Dictionary in records().values():
+				if str(other.id) != original_vehicle_id and _claims(other).has(next): blocked = true; break
+			if blocked: continue
+			previous[next] = cell
+			queue.append(next)
+		if found != TerrainArmy.INVALID_CELL: break
+	if found == TerrainArmy.INVALID_CELL: return path
+	var cursor := found
+	while cursor != source:
+		path.push_front(Vector2(cursor))
+		cursor = previous[cursor]
+	path.push_front(first)
+	return path
+
+## B3R6: a sinking hull clears its link on both ends in one write. An open crossing then finds no link
+## and releases nothing more (release_link_crosser treats a cleared link as released).
+func _clear_wrecked_link_b3(vehicle: Dictionary) -> void:
+	var link: Variant = vehicle.get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return
+	var from_id: String = str(vehicle.id)
+	var to_id: String = str(link.get("peer", {}).get("vehicle_id", ""))
+	if not records().has(to_id): return
+	var cleared: Dictionary = _clear_copy_b3(_boarding_link_state_b3(), from_id, to_id)
+	_write_link_b3(cleared, from_id, to_id, false)
+
+func _settle_ship_wreck(vehicle: Dictionary) -> void:
+	if str(vehicle.get("naval", {}).get("state", "")) == "afloat": return
+	var repair_result: Dictionary = Runtime.settle_ship_repair_damage(lab.terrain, str(vehicle.id))
+	if not repair_result.ok:
+		controller.show_result(repair_result)
+		return
+	vehicle["operator_id"] = 0
+	vehicle["command"] = {}
+	vehicle["stop_pending"] = false
+	vehicle.naval.state = "wrecked"
+	_clear_wrecked_link_b3(vehicle)
+	if not ship_job(str(vehicle.id)).is_empty(): return
+	for person: Dictionary in ship_people(vehicle):
+		if not person.owner.combat_can_act(int(person.unit)):
+			_kill_ship_person(person)
+			continue
+		var path := ship_evacuation_path(int(person.id))
+		if path.is_empty():
+			_kill_ship_person(person)
+			continue
+		controller.person_actions.begin_ship_evacuation(int(person.id), path)
+		break
+
+func commit_ship_evacuation(job: Dictionary) -> Dictionary:
+	var person := ship_person(int(job.executor_id))
+	var vehicle := ship_for_person(int(job.executor_id))
+	if person.is_empty() or vehicle.is_empty() and not bool(job.get("link_evacuation", false)): return Runtime.fail("STALE")
+	if float(person.hp) <= 0.0: return Runtime.ok("死亡由原入口將物資留在殘骸")
+	var destination := Vector2i((job.path.back() as Vector2).round())
+	if not person.owner.combat_can_act(int(person.unit)) or not lab.terrain.is_walkable(destination) or _ship_landing_blocked(destination):
+		_kill_ship_person(person)
+		return Runtime.ok("未能合法撤岸，依原死亡入口結算")
+	# G1 S2: crowd landing is native and refused without changes; the same death entry then settles it.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_land_native(int(person.unit), destination):
+		_kill_ship_person(person)
+		return Runtime.ok("未能合法撤岸，依原死亡入口結算")
+	person.row.erase("embarked_vehicle_id")
+	person.row.erase("berth_id")
+	person.row.erase("ship_deck_position")
+	person.row.erase("ship_guest")
+	person.owner.ship_disembarked(int(person.unit), destination)
+	if not vehicle.is_empty(): vehicle.revision = int(vehicle.revision) + 1
+	return Runtime.ok("原人物已沿實際水域路徑撤到合法岸格")
+
+func _kill_ship_person(person: Dictionary) -> void:
+	person.owner.apply_unit_contact(int(person.unit), {"environmental": true, "shield": false,
+		"result": {"hp": float(person.hp) + 1.0, "stun": 0.0, "guard_break": false}})
+
+func ship_people(vehicle: Dictionary, alive_only: bool = true) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for team: TerrainArmy in lab.combat_armies:
+		for index in range(team.combat_units.size()):
+			var row: Dictionary = team.combat_units[index]
+			if str(row.get("embarked_vehicle_id", "")) != str(vehicle.id) or _crowd_owner_of(team.combat_identity(index)) != null: continue # crowd passengers: _crowd_ship_people
+			var person := ship_person(team.combat_identity(index))
+			# A dormant roster (combat disabled, e.g. a crowd Site's source army during a bind) has no ship person to read
+			# (found 2026-11-08: open_fixed_world -> update_ui -> _journey_stranded read hp on an empty person).
+			if person.is_empty(): continue
+			if not alive_only or float(person.hp) > 0.0: result.append(person)
+	result.append_array(_crowd_ship_people(vehicle, alive_only))
+	return result
+
+func ship_job(vehicle_id: String) -> Dictionary:
+	for job: Dictionary in controller.person_actions._jobs.values():
+		if str(job.get("kind", "")).begins_with("ship_") and vehicle_id in [str(job.get("vehicle_id", "")), str(job.get("secondary_vehicle_id", ""))]: return job
+	return {}
+
+func ship_local_position(identity: int) -> Vector2:
+	var person := ship_person(identity)
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty(): return Ship.INVALID_LOCAL
+	if person.row.has("ship_death_local"):
+		var value: Array = person.row.ship_death_local
+		return Vector2(float(value[0]), float(value[1]))
+	var job: Dictionary = controller.person_actions.job_for(identity)
+	if str(job.get("kind", "")) in ["ship_helm", "ship_walk"] and int(job.get("executor_id", 0)) == identity:
+		var remaining := minf(float(job.elapsed), float(job.duration)) * float(job.speed)
+		var path: Array = job.path
+		for index in range(1, path.size()):
+			var distance: float = path[index - 1].distance_to(path[index])
+			if remaining <= distance: return path[index - 1].lerp(path[index], remaining / maxf(distance, 0.000001))
+			remaining -= distance
+		return path.back()
+	if person.row.has("ship_deck_position"):
+		var value: Array = person.row.ship_deck_position
+		return Vector2(float(value[0]), float(value[1]))
+	return Ship.local_position(str(vehicle.ship_type), int(person.row.get("berth_id", -1)))
+
+func ship_render_pose(vehicle: Dictionary) -> Dictionary:
+	if has_region_ship_projection(str(vehicle.get("id", ""))): return region_ship_projection(vehicle)
+	return original_ship_pose(lab.terrain, vehicle)
+
+func ship_local_ground(vehicle: Dictionary, local: Vector2) -> Vector2:
+	var pose := ship_render_pose(vehicle)
+	var direction: Vector2 = pose.direction
+	return (Vector2(pose.anchor) + Vector2(-direction.y, direction.x) * local.x + direction * local.y + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+
+func ship_person_ground(identity: int) -> Vector2:
+	var original: Dictionary = ship_person(identity)
+	if not original.is_empty() and original.row.has("ship_death_world"):
+		return (Vector2(float(original.row.ship_death_world[0]), float(original.row.ship_death_world[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var transit: Dictionary = controller.person_actions.job_for(identity)
+	if bool(transit.get("link_exit", false)):
+		return (_ship_job_point(transit) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)): return Vector2(-1.0, -1.0)
+	var job: Dictionary = controller.person_actions.job_for(identity)
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
+		return (_ship_job_point(job) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	return ship_local_ground(vehicle, ship_local_position(identity))
+
+func ship_person_cell(identity: int) -> Vector2i:
+	var point := ship_person_ground(identity)
+	var boat := ship_for_person(identity)
+	if (point.x < 0.0 or point.y < 0.0) and not has_region_ship_projection(str(boat.get("id", ""))): return TerrainArmy.INVALID_CELL
+	return Vector2i((point / TerrainRenderer.CELL_PIXELS).floor())
+
+func ship_loot_ground(container: Dictionary) -> Vector2:
+	if container.has("world_point"):
+		if not Runtime.valid_ship_loot_location(lab.terrain, {"ship_world_version": container.get("ship_world_version"), "world_point": container.world_point}): return Vector2(-1, -1)
+		return (Vector2(float(container.world_point[0]), float(container.world_point[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	if container.has("channel_point"):
+		return (Vector2(float(container.channel_point[0]), float(container.channel_point[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var vehicle: Dictionary = records().get(str(container.get("vehicle_id", "")), {})
+	var local: Array = container.get("local_position", [])
+	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
+	return ship_local_ground(vehicle, Vector2(float(local[0]), float(local[1])))
+
+func ship_load(vehicle_id: String) -> float:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if not is_ship(vehicle): return 0.0
+	var load_amount := Runtime.carried_load(lab.terrain.site, vehicle.cargo, vehicle.holder) + float(vehicle.holder.equipped.size())
+	for person: Dictionary in ship_people(vehicle, false):
+		load_amount += Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+	for container: Dictionary in lab.terrain.site.get("ground_loot", {}).values():
+		if str(container.get("vehicle_id", "")) == vehicle_id:
+			load_amount += Runtime.carried_load(lab.terrain.site, container.cargo, container) + float(container.equipped.size())
+	for entry: Dictionary in lab.terrain.site.get("team_supply", {}).values():
+		var stock: Dictionary = entry.get("locations", {}).get("vehicle:" + vehicle_id, {})
+		load_amount += float(Runtime.inventory_size(stock.get("inventory", {}))) + float(stock.get("open_rations", 0.0))
+	return load_amount
+
+func _ship_capable(person: Dictionary, ignore_job: bool = false) -> bool:
+	if person.is_empty() or not person.owner.combat_can_act(int(person.unit)) or bool(person.captive) or bool(person.moving): return false
+	var owner: Variant = person.owner # TerrainArmy or CrowdPersonOwner (G1 S2)
+	var index := int(person.unit)
+	if str(owner.combat_hot_get(index, &"pose")) != "idle" or bool(owner.combat_hot_get(index, &"attack")) or float(owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or owner._unit_rescues.has(index) or owner.patient_has_rescuer(index): return false
+	var identity := int(person.id)
+	return person.row.get("work_task", {}).is_empty() and (ignore_job or not controller.person_actions.is_busy(identity)) and not controller.person_actions.is_guarding(identity) and not controller.work_team.is_assigned(identity) and not controller._is_delivering_person(identity)
+
+func ship_crew_count(vehicle: Dictionary) -> int:
+	var count := 0
+	for person: Dictionary in ship_people(vehicle):
+		if int(person.owner.team_id) == int(vehicle.team_id) and int(person.row.berth_id) in Ship.crew_berths(str(vehicle.ship_type)) and ship_local_position(int(person.id)).is_equal_approx(Ship.local_position(str(vehicle.ship_type), int(person.row.berth_id))) and _ship_capable(person): count += 1
+	return count
+
+func ship_driver_ready(vehicle: Dictionary) -> bool:
+	var person := ship_person(int(vehicle.operator_id))
+	return ship_afloat(vehicle) and not person.is_empty() and int(person.owner.team_id) == int(vehicle.team_id) and str(person.row.get("embarked_vehicle_id", "")) == str(vehicle.id) and int(person.row.get("berth_id", -1)) == 0 and ship_local_position(int(person.id)).is_equal_approx(Ship.local_position(str(vehicle.ship_type), 0)) and _ship_capable(person)
+
+func ship_person_crew_work(identity: int) -> bool:
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty() or vehicle.move.is_empty() and (not _ship_in_journey(str(vehicle.id)) or controller.ship_journey_waiting_for_crew(str(vehicle.id))): return false
+	var person := ship_person(identity)
+	return int(person.owner.team_id) == int(vehicle.team_id) and int(person.row.berth_id) in Ship.crew_berths(str(vehicle.ship_type)) and ship_local_position(identity).is_equal_approx(Ship.local_position(str(vehicle.ship_type), int(person.row.berth_id))) and _ship_capable(person)
+
+func team_has_embarked(team_id: int) -> bool:
+	for team: TerrainArmy in lab.combat_armies:
+		if team.team_id != team_id: continue
+		for row: Dictionary in team.combat_units:
+			if not str(row.get("embarked_vehicle_id", "")).is_empty(): return true
+	for owner: Variant in _crowd_person_owners():
+		if int(owner.team_id) != team_id: continue
+		for index: int in owner.records:
+			if not str(owner.records[index].get("embarked_vehicle_id", "")).is_empty(): return true
+	return false
+
+func team_has_ship_activity(team_id: int) -> bool:
+	if team_has_embarked(team_id): return true
+	for job: Dictionary in controller.person_actions._jobs.values():
+		if str(job.get("kind", "")).begins_with("ship_"):
+			var person := ship_person(int(job.executor_id))
+			if not person.is_empty() and int(person.owner.team_id) == team_id: return true
+	return false
+
+func ships_stopped_for_team(team_id: int) -> bool:
+	for vehicle: Dictionary in records().values():
+		if is_ship(vehicle) and int(vehicle.team_id) == team_id and (_ship_in_journey(str(vehicle.id)) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty()): return false
+	return true
+
+func stop_team_ships(team_id: int) -> void:
+	for vehicle: Dictionary in records().values():
+		if is_ship(vehicle) and int(vehicle.team_id) == team_id:
+			vehicle.command = {}
+			vehicle.stop_pending = not vehicle.move.is_empty()
+
+func can_membership_change(identity: int) -> Dictionary:
+	var vehicle := ship_for_person(identity)
+	if not vehicle.is_empty() and (_ship_in_journey(str(vehicle.id)) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty()): return Runtime.fail("BUSY", "先停止船步與船內作業再正式入退隊")
+	return Runtime.ok()
+
+func on_membership_changed(_identity: int) -> void:
+	pass # Original row and supply own this change; its berth and holder stay put.
+
+func ship_sweep(vehicle: Dictionary, destination: Vector2i, facing: Vector2i) -> Array[Vector2i]:
+	return Ship.swept_footprint(str(vehicle.ship_type), lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), destination, facing)
+
+func _ship_fits(vehicle: Dictionary, cells: Array[Vector2i]) -> bool:
+	if cells.is_empty() or not lab.terrain.can_place_water_vehicle(cells): return false
+	for cell: Vector2i in cells:
+		if _ship_landing_blocked(cell): return false
+		for other: Dictionary in records().values():
+			if str(other.get("id", "")) != str(vehicle.get("id", "")) and _claims(other).has(cell): return false
+	return true
+
+func deploy_ship(team: Variant, ship_type: String, anchor: Vector2i, facing: Vector2i, test_dispatch: bool = false) -> Dictionary:
+	if _ship_journey_active(): return Runtime.fail("BUSY", "原船隊旅程期間來源水域與下水位置凍結")
+	if not test_dispatch: return Runtime.fail("TEST_ONLY", "測試船須由明示測試入口建立；正式造船另接原生產")
+	if team == null or not team.has_army() or not Ship.is_kind(ship_type) or not Ship.valid_facing(facing): return Runtime.fail("INVALID")
+	var next := int(lab.terrain.site.get("next_vehicle", 1))
+	if next < 1 or next >= 2147483647 or records().has(str(next)): return Runtime.fail("NO_IDS")
+	var vehicle := {"id": str(next), "kind": "ship", "ship_version": 1, "ship_type": ship_type, "definition_version": Ship.VERSION,
+		"team_id": team.team_id, "operator_id": 0, "cell": lab.terrain.index(anchor), "facing": [facing.x, facing.y],
+		"cargo": {}, "holder": Runtime.new_item_state("vehicle:" + str(next)), "move": {}, "stop_pending": false, "revision": 1, "command": {}}
+	if not _ship_fits(vehicle, Ship.footprint(ship_type, anchor, facing)): return Runtime.fail("NO_SPACE", "船體整個範圍須在明示可航水域且無人物或載具")
+	records()[vehicle.id] = vehicle
+	lab.terrain.site["next_vehicle"] = next + 1
+	return Runtime.ok("明示測試船已建立；未生成額外人物或物資", {"vehicle_id": str(vehicle.id)})
+
+func ship_contacts(vehicle: Dictionary) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if not is_ship(vehicle) or _region_operation_pending() or _ship_in_journey(str(vehicle.id)) or not vehicle.move.is_empty(): return result
+	var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+	var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+	for cell: Vector2i in Ship.boarding_cells(str(vehicle.ship_type), anchor, facing):
+		if not lab.terrain.is_walkable(cell): continue
+		var blocked := false
+		for other: Dictionary in records().values():
+			# The exclusive job may hold this boat's own destination shore cell.
+			# Other boats and land vehicles keep their complete claims.
+			if str(other.id) != str(vehicle.id) and _claims(other).has(cell): blocked = true; break
+		if blocked: continue
+		if absi(lab.terrain.effective_height(cell) - lab.terrain.effective_height(anchor)) > 1: continue
+		result.append(cell)
+	return result
+
+func ship_supply_contact(vehicle: Dictionary, shore: Vector2i) -> bool:
+	return ship_job(str(vehicle.get("id", ""))).is_empty() and ship_contacts(vehicle).has(shore)
+
+func _ship_berth_free(vehicle: Dictionary, berth: int, ignore_id: int = 0) -> bool:
+	if not Ship.local_position(str(vehicle.ship_type), berth).is_finite(): return false
+	for person: Dictionary in ship_people(vehicle):
+		if int(person.id) != ignore_id and int(person.row.berth_id) == berth: return false
+	var job := ship_job(str(vehicle.id))
+	return job.is_empty() or int(job.executor_id) == ignore_id or int(job.get("berth_id", -1)) != berth
+
+func ship_action_query(kind: String, person_id: int, vehicle_id: String, berth: int = -1, shore: Vector2i = TerrainArmy.INVALID_CELL, requester_id: int = 0, test_dispatch: bool = false, existing_job: Dictionary = {}, retreat: bool = false) -> Dictionary:
+	var person := ship_person(person_id)
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if not is_ship(vehicle) or person.is_empty(): return Runtime.fail("NO_TARGET", "船與原 Army 人物不存在")
+	if kind != "ship_disembark" and not ship_afloat(vehicle): return Runtime.fail("NO_TARGET", "沉船不能登船或承職")
+	# G1 S2: as on the grid, the first ship version carries no Actor (player/NPC); a crowd Actor is a native soldier too.
+	if kind != "ship_disembark" and lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site._actor(person_id) != null: return Runtime.fail("NO_AUTHORITY", "首版 Actor 不支持乘船")
+	var fixed: Dictionary = link_fixed_refusal(vehicle)
+	if not fixed.ok: return fixed
+	if _region_operation_pending() or (_ship_in_journey(vehicle_id) and not (kind == "ship_helm" and controller.ship_journey_waiting_for_crew(vehicle_id))) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成原船旅程或岸上維修；失能待命時僅准原舵手接替")
+	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty(): return Runtime.fail("BUSY", "船必須停穩")
+	if int(vehicle.team_id) != int(person.owner.team_id) and not (kind == "ship_disembark" and person.row.get("ship_guest", false) == true): return Runtime.fail("NO_AUTHORITY", "登船／操舵限原同隊；接舷原人可合法離船")
+	var arrived_unload: bool = kind == "ship_disembark" and not test_dispatch and controller.region_slot != null and controller.region_slot._region_entered_npc_ship_unload_authorized(lab, person.owner, requester_id, vehicle, existing_job)
+	if not _authorized(person.owner, requester_id, person_id, test_dispatch) and not arrived_unload and not (retreat and person.owner.is_sustain_routed() and (test_dispatch or requester_id == lab.controlled_person_id())): return Runtime.fail("NO_AUTHORITY")
+	if not _ship_capable(person, not existing_job.is_empty()) or is_siege(_operated(person_id)) or str(_operated(person_id).get("kind", "")) in ["cart", "wagon"]: return Runtime.fail("BUSY")
+	var active := ship_job(vehicle_id)
+	if not active.is_empty() and not is_same(active, existing_job): return Runtime.fail("BUSY", "此船有未完登離船或駕駛接替作業")
+	if not existing_job.is_empty() and (int(vehicle.revision) != int(existing_job.ship_revision) or not is_same(existing_job.terrain, lab.terrain) or not is_same(existing_job.site_state, lab.terrain.site)): return Runtime.fail("STALE")
+	var routed: bool = person.owner.is_sustain_routed()
+	if kind == "ship_board":
+		if routed or not person.owner.is_member(int(person.unit)) or is_embarked(person_id) or person.owner.combat_order != TerrainArmy.CombatOrder.HOLD or person.owner.tactical_ai_enabled: return Runtime.fail("BUSY", "先以原 HOLD 停隊及關閉 AI，再登船")
+		if not ship_contacts(vehicle).has(person.cell): return Runtime.fail("UNREACHABLE", "本人須走到停船的合法岸上接觸點")
+		if berth < 0:
+			for index in range(int(Ship.definition(str(vehicle.ship_type)).max_people)):
+				if _ship_berth_free(vehicle, index, person_id): berth = index; break
+		if not _ship_berth_free(vehicle, berth, person_id): return Runtime.fail("NO_SPACE", "席位已滿或被預約")
+		var added := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+		if ship_load(vehicle_id) + added > float(capacity_of(vehicle)) + 0.000001: return Runtime.fail("CAPACITY", "行囊、實裝及開封口糧超過全船物品容量")
+		var supply: Dictionary = controller.prepare_ship_supply(person.owner, person.cell, true, existing_job)
+		if not supply.ok: return supply
+		shore = person.cell
+	elif kind == "ship_disembark":
+		if str(person.row.get("embarked_vehicle_id", "")) != vehicle_id: return Runtime.fail("NO_TARGET")
+		if routed and not retreat: return Runtime.fail("ROUTED", "潰退時須選撤退離船")
+		if shore == TerrainArmy.INVALID_CELL:
+			for cell: Vector2i in ship_contacts(vehicle):
+				if not _ship_landing_blocked(cell): shore = cell; break
+		if not ship_contacts(vehicle).has(shore) or _ship_landing_blocked(shore): return Runtime.fail("NO_SPACE", "沒有合法空岸格")
+		berth = int(person.row.berth_id)
+	elif kind == "ship_helm":
+		if routed and not retreat: return Runtime.fail("ROUTED", "潰退時須以原撤退目的接替駕駛")
+		if str(person.row.get("embarked_vehicle_id", "")) != vehicle_id or int(vehicle.operator_id) != 0 or not _ship_berth_free(vehicle, 0, person_id): return Runtime.fail("BUSY", "本船駕駛席須無活人、無當值操作人")
+		berth = 0
+	else: return Runtime.fail("INVALID")
+	return Runtime.ok("", {"person": person, "vehicle": vehicle, "berth_id": berth, "shore": shore, "routed": routed})
+
+func commit_ship_person(job: Dictionary) -> Dictionary:
+	var check := ship_action_query(str(job.kind), int(job.executor_id), str(job.vehicle_id), int(job.berth_id), job.shore, int(job.requester_id), bool(job.test_dispatch), job, bool(job.retreat))
+	if not check.ok: return check
+	var person: Dictionary = check.person
+	var vehicle: Dictionary = check.vehicle
+	var team: Variant = person.owner # TerrainArmy or CrowdPersonOwner (G1 S2)
+	var index := int(person.unit)
+	var audio_source_data: TerrainData = lab.terrain
+	var audio_identity := int(person.id)
+	var audio_kind := StringName(str(job.kind))
+	if str(job.kind) == "ship_board":
+		var prepared: Dictionary = controller.prepare_ship_supply(team, person.cell, false, job)
+		if not prepared.ok: return prepared
+		# G1 S2: the native aboard state is taken before any GD row is written; a refusal leaves the person on land.
+		if team is CrowdPersonOwner and not team.ship_ensure_aboard(index, int(vehicle.id)): return Runtime.fail("BUSY", "原生群眾未接受登船；原人物留在岸上")
+		person.row.embarked_vehicle_id = str(vehicle.id)
+		person.row.berth_id = int(job.berth_id)
+		team.ship_boarded(index)
+		# A crowd boarder stands on its deck from the commit on (2026-11-08), not at the contact until the next deck sync.
+		if team is CrowdPersonOwner: _crowd_place_on_deck(person)
+	elif str(job.kind) == "ship_disembark":
+		# G1 S2: the native landing is taken first; a refusal leaves the GD rows aboard.
+		if team is CrowdPersonOwner and not team.ship_land_native(index, job.shore): return Runtime.fail("NO_SPACE", "原生群眾未接受落岸；原人物留在船上")
+		person.row.erase("embarked_vehicle_id")
+		person.row.erase("berth_id")
+		person.row.erase("ship_deck_position")
+		person.row.erase("ship_guest")
+		if int(vehicle.operator_id) == int(person.id): vehicle["operator_id"] = 0
+		team.ship_disembarked(index, job.shore)
+	else: return Runtime.fail("INVALID")
+	vehicle["revision"] = int(vehicle.revision) + 1
+	lab._audio_ship_person_completed(audio_source_data, audio_kind, audio_identity, team.combat_ground(index))
+	return Runtime.ok("已沿原人物完成登離船；人物及物品未複製", {"person_id": int(person.id)})
+
+func commit_ship_helm(job: Dictionary) -> Dictionary:
+	var person := ship_person(int(job.executor_id))
+	var vehicle: Dictionary = records().get(str(job.vehicle_id), {})
+	if person.is_empty() or not is_ship(vehicle) or str(person.row.get("embarked_vehicle_id", "")) != str(vehicle.id): return Runtime.fail("STALE")
+	if float(person.hp) <= 0.0:
+		var local := ship_local_position(int(person.id))
+		person.row.ship_death_local = [local.x, local.y]
+		return Runtime.ok("死亡由原入口在當下船內位置結算")
+	# Cancel/KO does not undo an already committed walk. The original person
+	# lands at the reserved berth even when they cannot accept the duty.
+	if not vehicle.move.is_empty() or not _ship_berth_free(vehicle, 0, int(person.id)): return Runtime.fail("STALE", "已承諾的駕駛通路被破壞")
+	# G1 S2: the operator is aboard natively too; boards only if not already aboard on this vehicle.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_ensure_aboard(int(person.unit), int(vehicle.id)): return Runtime.fail("STALE", "原生群眾未能保持船上狀態")
+	person.row.berth_id = 0
+	person.row.erase("ship_deck_position")
+	if person.owner is CrowdPersonOwner: _crowd_place_on_deck(person) # The helm berth from the commit on, as boarding.
+	var authorized := _authorized(person.owner, int(job.requester_id), int(person.id), bool(job.test_dispatch))
+	if bool(job.get("retreat", false)):
+		authorized = person.owner.is_sustain_routed() and (bool(job.test_dispatch) or int(job.requester_id) == lab.controlled_person_id())
+	elif person.owner.is_sustain_routed(): authorized = false
+	vehicle["operator_id"] = int(person.id) if authorized and not bool(job.get("cancelled", false)) and int(vehicle.revision) == int(job.ship_revision) and _ship_capable(person, true) else 0
+	vehicle["revision"] = int(vehicle.revision) + 1
+	return Runtime.ok("已實際到駕駛席；可行動且意圖有效才承職", {"operator_id": int(vehicle.operator_id)})
+
+func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_id: int, test_dispatch: bool = false, retreat: bool = false) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var team: Variant = _siege_team(vehicle) if is_ship(vehicle) else null
+	if team == null: return Runtime.fail("NO_TARGET")
+	if not _authorized(team, requester_id, int(vehicle.operator_id), test_dispatch) and not (retreat and team.is_sustain_routed() and (test_dispatch or requester_id == lab.controlled_person_id())): return Runtime.fail("NO_AUTHORITY")
+	if _ship_journey_active(): return Runtime.fail("BUSY", "旅程期間來源水域凍結；原旅程請由同一旅程取消返航")
+	if action == "stop":
+		vehicle["command"] = {}
+		vehicle["stop_pending"] = not vehicle.move.is_empty()
+		return Runtime.ok("已承諾船步完成後停止")
+	var b2_link_guard: Dictionary = boarding_link_query(str(vehicle.id))
+	if not b2_link_guard.ok: return b2_link_guard
+	if b2_link_guard.linked: return Runtime.fail("BUSY", "Original linked hull must remain fixed")
+	if not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "原船體維修中")
+	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty() or not ship_job(vehicle_id).is_empty() or not ship_driver_ready(vehicle): return Runtime.fail("BUSY", "船須停穩且當值舵手可行動")
+	if team.is_sustain_routed() and not retreat: return Runtime.fail("ROUTED", "潰退船只接受撤退靠岸")
+	if retreat and (not team.is_sustain_routed() or action != "dock"): return Runtime.fail("INVALID")
+	if ship_crew_count(vehicle) < int(Ship.definition(str(vehicle.ship_type)).min_crew): return Runtime.fail("NO_CREW", "未達船型最低原人物船員")
+	if action in ["turn_left", "turn_right", "reverse", "forward"]:
+		var direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+		var facing := Vector2i(direction.y, -direction.x) if action == "turn_left" else (Vector2i(-direction.y, direction.x) if action == "turn_right" else direction)
+		var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+		return _commit_ship_step(vehicle, anchor if action.begins_with("turn") else anchor + direction * (-1 if action == "reverse" else 1), facing, "turn" if action.begins_with("turn") else action)
+	if action not in ["sail", "dock"] or not lab.terrain.can_navigate_water(target): return Runtime.fail("INVALID")
+	if action == "dock":
+		var candidate := vehicle.duplicate(true)
+		candidate["cell"] = lab.terrain.index(target)
+		if ship_contacts(candidate).is_empty(): return Runtime.fail("UNREACHABLE", "目的須有合法岸上登離船接觸點")
+		if retreat and not controller.ship_retreat_shore_safe(team, ship_contacts(candidate)): return Runtime.fail("UNSAFE", "撤退靠岸須符合原安全判斷")
+	vehicle["command"] = {"goal": lab.terrain.index(target), "retreat": retreat, "docking": action == "dock"}
+	vehicle["stop_pending"] = false
+	return Runtime.ok("船按原水域查詢逐步取得整船預約")
+
+func _commit_ship_step(vehicle: Dictionary, destination: Vector2i, facing: Vector2i, action: String, docking: bool = false) -> Dictionary:
+	var b2_link_guard: Dictionary = boarding_link_query(str(vehicle.id))
+	if not b2_link_guard.ok: return b2_link_guard
+	if b2_link_guard.linked: return Runtime.fail("BUSY", "Original linked hull must remain fixed")
+	if _ship_journey_active() or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY")
+	if not ship_driver_ready(vehicle) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty(): return Runtime.fail("BUSY")
+	# The first step away from either original shore contact uses the same
+	# manoeuvring cap as the final docking step, for manual and routed orders.
+	if action != "turn" and not ship_contacts(vehicle).is_empty(): docking = true
+	var sweep := ship_sweep(vehicle, destination, facing)
+	if not _ship_fits(vehicle, sweep): return Runtime.fail("NO_SPACE", "整個船體及掃掠範圍不合法，未提交船步")
+	var crew := ship_crew_count(vehicle)
+	var speed := Ship.speed(str(vehicle.ship_type), ship_people(vehicle).size(), ship_load(str(vehicle.id)), crew, docking, action == "reverse")
+	if speed <= 0.0: return Runtime.fail("NO_CREW", "船員或容量不符合船型限制")
+	var duration := Ship.turn_seconds(str(vehicle.ship_type), crew) if action == "turn" else 1.0 / speed
+	var indices: Array[int] = []
+	for cell: Vector2i in sweep: indices.append(lab.terrain.index(cell))
+	vehicle["move"] = {"from_cell": int(vehicle.cell), "from_facing": vehicle.facing.duplicate(), "cell": lab.terrain.index(destination), "facing": [facing.x, facing.y], "elapsed": 0.0, "duration": duration, "sweep": indices, "action": "dock" if docking else action}
+	vehicle["stop_pending"] = false
+	return Runtime.ok("已原子預約整船一步", {"seconds": duration})
+
+func update_ships(delta: float) -> void:
+	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
+	for vehicle: Dictionary in records().values():
+		if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)): continue
+		lab._audio_vehicle_observed(lab.terrain, vehicle)
+		if not ship_afloat(vehicle) and vehicle.move.is_empty():
+			_settle_ship_wreck(vehicle)
+			continue
+		var team: Variant = _siege_team(vehicle)
+		var driver_ready := ship_driver_ready(vehicle)
+		var crew_is_ready := ship_crew_count(vehicle) >= int(Ship.definition(str(vehicle.ship_type)).min_crew)
+		if not driver_ready or not crew_is_ready or team != null and team.is_sustain_routed() and not bool(vehicle.command.get("retreat", false)):
+			vehicle.command = {}
+			vehicle.stop_pending = not vehicle.move.is_empty()
+			if vehicle.move.is_empty() and not driver_ready: vehicle.operator_id = 0
+		if vehicle.move.is_empty() and vehicle.command.is_empty() and driver_ready and crew_is_ready \
+				and team != null and not team.is_sustain_routed() and lab._region_owner_interval_active and controller.region_slot != null:
+			var ai_started := Time.get_ticks_usec() if lab.combat_profile_enabled else 0 # Optional counters only.
+			var selected: Dictionary = controller.region_slot._region_npc_live_ship_action(lab, vehicle)
+			lab._combat_profile_stage("ships_npc_action", ai_started)
+			if not selected.ok:
+				controller.latch_original_step_fault(selected)
+				return
+			if selected.get("eligible", false):
+				var reserved := _commit_ship_step(vehicle, selected.destination, selected.facing, str(selected.action), bool(selected.docking))
+				if reserved.ok: ship_step_refusals.erase(str(vehicle.id))
+				else: ship_step_refusals[str(vehicle.id)] = {"code": str(reserved.get("code", "")), "action": str(selected.action), "action_index": int(selected.get("action_index", -1)),
+					"destination": selected.destination, "facing": selected.facing, "cell": int(vehicle.cell)}
+				if not reserved.ok and str(reserved.get("code", "")) not in ["NO_SPACE", "BUSY", "NO_CREW"]:
+					controller.latch_original_step_fault(reserved)
+					return
+		if not vehicle.move.is_empty():
+			vehicle.move.elapsed = minf(float(vehicle.move.duration), float(vehicle.move.elapsed) + delta)
+			if float(vehicle.move.elapsed) + 0.00000001 < float(vehicle.move.duration): continue
+			vehicle.cell = int(vehicle.move.cell)
+			vehicle.facing = vehicle.move.facing
+			vehicle.move = {}
+			vehicle.revision = int(vehicle.revision) + 1
+			if bool(vehicle.stop_pending):
+				vehicle.command = {}
+				if not ship_driver_ready(vehicle): vehicle.operator_id = 0
+				vehicle.stop_pending = false
+			continue
+		if vehicle.command.is_empty() or not ship_job(str(vehicle.id)).is_empty(): continue
+		var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+		var goal: Vector2i = lab.terrain.cell_from_index(int(vehicle.command.goal))
+		if anchor == goal: vehicle.command = {}; continue
+		var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+		var path_started := Time.get_ticks_usec() if lab.combat_profile_enabled else 0 # Optional counters only.
+		var path: Array[Vector2i] = lab.terrain.path_water_between(anchor, goal, func(cell: Vector2i) -> bool: return not _ship_fits(vehicle, Ship.footprint(str(vehicle.ship_type), cell, facing)))
+		lab._combat_profile_stage("ships_water_path", path_started)
+		if path.is_empty(): continue
+		var direction := path[0] - anchor
+		if direction != facing and direction != -facing:
+			_commit_ship_step(vehicle, anchor, direction, "turn")
+		else:
+			_commit_ship_step(vehicle, path[0], facing, "reverse" if direction == -facing else "forward", bool(vehicle.command.docking) and (path.size() == 1 or not ship_contacts(vehicle).is_empty()))
+
+## Freeze only the original dead body before its paid path job can be erased as stale.
+func freeze_ship_job_death(job: Dictionary) -> void:
+	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site): return
+	if str(job.get("kind", "")) not in ["ship_cross", "ship_evac"]: return
+	# An ordinary job whose source hull still exists keeps the original death closure (hull-relative clamp).
+	if not records().get(str(job.get("vehicle_id", "")), {}).is_empty(): return
+	var original: Dictionary = ship_person(int(job.executor_id))
+	if original.is_empty() or float(original.hp) > 0.0: return
+	var point: Vector2 = _ship_job_point(job)
+	if Runtime.valid_ship_world_point(lab.terrain, [point.x, point.y]): original.row.ship_death_world = [point.x, point.y]
+
+func ship_death_location(identity: int) -> Dictionary:
+	var original: Dictionary = ship_person(identity)
+	if not original.is_empty() and original.row.has("ship_death_world"):
+		return {"ship_world_version": 1, "world_point": original.row.ship_death_world.duplicate()}
+	var transit: Dictionary = controller.person_actions.job_for(identity)
+	if str(transit.get("kind", "")) in ["ship_cross", "ship_evac"]:
+		var actual: Vector2 = _ship_job_point(transit)
+		# Exact point: a link exit, a link crossing whose pair is no longer afloat, or an ordinary job whose
+		# source hull was deleted. Present ordinary hulls (afloat or wrecked) keep the original clamp below.
+		if bool(transit.get("link_exit", false)) or bool(transit.get("link_crossing", false)) and (not ship_afloat(records().get(str(transit.get("vehicle_id", "")), {})) or not ship_afloat(records().get(str(transit.get("secondary_vehicle_id", "")), {}))) or records().get(str(transit.get("vehicle_id", "")), {}).is_empty():
+			return {"ship_world_version": 1, "world_point": [actual.x, actual.y]}
+	if not original.is_empty() and original.row.has("ship_death_channel"):
+		var frozen: Dictionary = original.row.ship_death_channel
+		if not Runtime.valid_ship_loot_location(lab.terrain, frozen): return {"ship_world_version": 1, "world_point": frozen.channel_point.duplicate()}
+	var vehicle := ship_for_person(identity)
+	if vehicle.is_empty(): return {}
+	var person := ship_person(identity)
+	if not person.is_empty() and person.row.has("ship_death_channel"): return (person.row.ship_death_channel as Dictionary).duplicate(true)
+	var job: Dictionary = controller.person_actions.job_for(identity)
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and bool(job.get("link_crossing", false)):
+		# B4S2 (plan line 86): a link-gated channel death records the real point and the peer hull; the
+		# source-hull clamp never applies. A point outside the pair's reach is not a location at all.
+		var point: Vector2 = _ship_job_point(job)
+		var peer: Dictionary = records().get(str(job.get("secondary_vehicle_id", "")), {})
+		if peer.is_empty() or not Ship.channel_point_near_pair(str(vehicle.ship_type), lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), str(peer.ship_type), lab.terrain.cell_from_index(int(peer.cell)), Vector2i(int(peer.facing[0]), int(peer.facing[1])), point): return {}
+		return {"vehicle_id": str(vehicle.id), "peer_vehicle_id": str(peer.id), "channel_point": [point.x, point.y]}
+	var local := ship_local_position(identity)
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
+		# Original ordinary cross/evac death: the hull-relative point, clamped to the source deck (HEAD behaviour).
+		local = Ship.local_from_world(lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), _ship_job_point(job))
+		var spec := Ship.definition(str(vehicle.ship_type))
+		local = local.clamp(Vector2.ONE * -0.25, Vector2(float(spec.width) - 0.75, float(spec.length) - 0.75))
+	return {"vehicle_id": str(vehicle.id), "local_position": [local.x, local.y]}
+
+func ship_death_settled(identity: int) -> void:
+	var person := ship_person(identity)
+	if person.is_empty(): return
+	var frozen: Dictionary = ship_death_location(identity)
+	if frozen.has("world_point"): person.row.ship_death_world = frozen.world_point.duplicate()
+	var vehicle := ship_for_person(identity)
+	person.row.erase("embarked_vehicle_id")
+	person.row.erase("berth_id")
+	person.row.erase("ship_death_local")
+	person.row.erase("ship_death_channel")
+	person.row.erase("ship_deck_position")
+	person.row.erase("ship_guest")
+	person.row.ship_death_settled = true
+	if not vehicle.is_empty() and int(vehicle.operator_id) == identity:
+		vehicle.command = {}
+		vehicle.stop_pending = not vehicle.move.is_empty()
+		if vehicle.move.is_empty(): vehicle.operator_id = 0
+	person.owner.ship_embarkation_changed(identity)
+
+func ship_holder_vehicle(holder: Dictionary) -> String:
+	if holder.has("vehicle_id"): return str(holder.vehicle_id)
+	var identity := str(holder.get("holder", ""))
+	if identity.begins_with("vehicle:"):
+		var vehicle_id := identity.trim_prefix("vehicle:")
+		return vehicle_id if is_ship(records().get(vehicle_id, {})) else ""
+	if identity.begins_with("person:"):
+		return str(ship_for_person(int(identity.trim_prefix("person:"))).get("id", ""))
+	if identity.begins_with("ground:"):
+		return str(lab.terrain.site.get("ground_loot", {}).get(identity.trim_prefix("ground:"), {}).get("vehicle_id", ""))
+	return ""
+
+func ship_transfer_guard(source: Dictionary, destination: Dictionary, resources: Dictionary, item_ids: Array, open_amount: float = 0.0) -> Dictionary:
+	var source_ship := ship_holder_vehicle(source)
+	var target_ship := ship_holder_vehicle(destination)
+	if _region_operation_pending() or _ship_in_journey(source_ship) or _ship_in_journey(target_ship): return Runtime.fail("BUSY", "原船旅程或補算途中不可裝卸")
+	if str(source.get("holder", "")) == "vehicle:" + source_ship and not source_ship.is_empty():
+		var original: Dictionary = records().get(source_ship, {})
+		var retained: Dictionary = original.get("cargo", {}).duplicate()
+		if not Runtime._resource_stack(resources) or not Runtime.can_pay(retained, resources): return Runtime.fail("EMPTY")
+		Runtime.add_items(retained, resources, -1)
+		if not Runtime.can_pay(retained, Runtime.reserved_ship_repair_resources(original)): return Runtime.fail("BUSY", "原船艙須保留未施作的修理材料")
+	if target_ship.is_empty() or source_ship == target_ship: return Runtime.ok()
+	var vehicle: Dictionary = records().get(target_ship, {})
+	var added := float(Runtime.inventory_size(resources) + item_ids.size()) + open_amount
+	if not vehicle.move.is_empty() or not ship_job(target_ship).is_empty(): return Runtime.fail("BUSY")
+	return Runtime.fail("CAPACITY", "交易後超過全船物品上限") if ship_load(target_ship) + added > float(capacity_of(vehicle)) + 0.000001 else Runtime.ok()
+
+func clear_ship_remains_reference(identity: String) -> void:
+	for team: TerrainArmy in lab.combat_armies:
+		for row: Dictionary in team.combat_units:
+			if str(row.get("remains_id", "")) == identity: row.remains_id = ""
+	for owner: Variant in _crowd_person_owners():
+		for index: int in owner.combat_units.keys():
+			if str(owner._cold_get(index, "remains_id", "")) == identity: owner._cold_set(index, "remains_id", "")
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if str(actor.get("remains_id")) == identity: actor.set("remains_id", "")
+
+func _ship_stock(identity: String) -> Dictionary:
+	if identity == "depot": return _stock(identity)
+	if identity.begins_with("person:"):
+		var raw := identity.trim_prefix("person:")
+		if not raw.is_valid_int() or str(int(raw)) != raw: return {}
+		var person := ship_person(int(raw))
+		if person.is_empty(): return {}
+		return {"holder": person.holder, "cargo": person.cargo, "capacity": Runtime.CARRY_CAPACITY,
+			"cell": ship_person_cell(int(raw)) if is_embarked(int(raw)) else person.cell,
+			"team_id": int(person.owner.team_id), "person_id": int(raw)}
+	var vehicle: Dictionary = records().get(identity, {})
+	if not is_ship(vehicle) or _region_operation_pending() or _ship_in_journey(str(vehicle.id)) or not vehicle.move.is_empty() or not ship_job(identity).is_empty(): return {}
+	return {"holder": vehicle.holder, "cargo": vehicle.cargo, "cell": lab.terrain.cell_from_index(int(vehicle.cell)),
+		"capacity": capacity_of(vehicle), "team_id": int(vehicle.team_id), "vehicle_id": identity}
+
+func _transfer_ship(source_id: String, destination_id: String, resources: Dictionary, item_ids: Array, source_version: int, destination_version: int, requester_id: int, test_dispatch: bool) -> Dictionary:
+	if bool(lab.terrain.site.get("paused", false)): return Runtime.fail("BUSY")
+	var source := _ship_stock(source_id)
+	var target := _ship_stock(destination_id)
+	if source.is_empty() or target.is_empty(): return Runtime.fail("NO_TARGET")
+	var source_ship := ship_holder_vehicle(source.holder)
+	var target_ship := ship_holder_vehicle(target.holder)
+	if not source_ship.is_empty() and not target_ship.is_empty() and source_ship != target_ship: return Runtime.fail("UNSUPPORTED", "首版不開放跨船轉物")
+	var executor_id := int(source.get("person_id", target.get("person_id", requester_id)))
+	var person := ship_person(executor_id)
+	if not _ship_capable(person): return Runtime.fail("BUSY", "裝卸本人須清醒停步且無其他職務")
+	if not _authorized(person.owner, requester_id, executor_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	for stock: Dictionary in [source, target]:
+		if int(stock.get("person_id", 0)) == executor_id: continue
+		var vehicle: Dictionary = records().get(str(stock.get("vehicle_id", "")), {})
+		if is_ship(vehicle):
+			if int(vehicle.team_id) != int(person.owner.team_id): return Runtime.fail("NO_AUTHORITY")
+			if not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty(): return Runtime.fail("BUSY")
+			if str(person.row.get("embarked_vehicle_id", "")) == str(vehicle.id): continue
+			if not ship_supply_contact(vehicle, person.cell): return Runtime.fail("UNREACHABLE", "本人須在原船合法岸上接觸點")
+		else:
+			if is_embarked(executor_id): return Runtime.fail("UNREACHABLE", "從本船卸至岸上庫存須由岸上本人實際接觸兩端")
+			if absi(stock.cell.x - person.cell.x) + absi(stock.cell.y - person.cell.y) != 1 or not lab.terrain.can_step(person.cell, stock.cell): return Runtime.fail("UNREACHABLE")
+	var guard := ship_transfer_guard(source.holder, target.holder, resources, item_ids)
+	if not guard.ok: return guard
+	var audio_data: TerrainData = lab.terrain
+	var audio_ground: Vector2 = ship_person_ground(executor_id)
+	var original_transfer := func() -> Dictionary:
+		return Runtime.transfer_items(audio_data, source.holder, source.cargo, target.holder, target.cargo, resources, item_ids, source_version, destination_version, int(target.capacity))
+	if lab.has_method("_audio_p3_transfer"):
+		return lab.call("_audio_p3_transfer", original_transfer, executor_id, audio_ground, resources, item_ids)
+	return original_transfer.call()
+
+func _native_siege() -> bool:
+	return lab.crowd_site != null and lab.crowd_site.active
+
+# Crowd roster owners while the native crowd is active; empty on the grid, so grid callers are unchanged.
+func _crowd_person_owners() -> Array:
+	var result: Array = []
+	if not _native_siege(): return result
+	for owner: Variant in lab.crowd_site.person_owners():
+		if owner is CrowdPersonOwner: result.append(owner)
+	return result
+
+# G4 logistics convoys: one native Convoy per cart or wagon whose operator is a
+# CrowdPersonOwner. The native anchor is the vehicle cell centre. The operator stands at
+# anchor + rotate(CONVOY_RIDER, facing), which equals operator_cell() for both kinds.
+const CONVOY_RIDER := {"cart": Vector2i(-1, 0), "wagon": Vector2i(2, 0)}
+var _convoy_checked: Dictionary = {} # Vehicle id -> true once its native anchor matched the record. Never saved.
+var _convoy_sent: Dictionary = {} # Vehicle id -> last goal (x, y, facing) accepted natively. Never saved.
+var _convoy_goal_orders: Dictionary = {} # Vehicle id -> explicit {point, facing} until complete. Never saved.
+var _convoy_refused: Dictionary = {} # Vehicle id -> input signature of the last refused creation. Never saved.
+var _convoy_adopted: Dictionary = {} # Vehicle id -> true while a goal restored from a save runs to completion. Never saved.
+
+static func is_convoy(vehicle: Variant) -> bool:
+	return vehicle is Dictionary and str(vehicle.get("kind", "")) in ["cart", "wagon"]
+
+func convoy_native_supported() -> bool:
+	return lab.crowd_site != null and lab.crowd_site.convoy_native_supported()
+
+func _convoy_owner(vehicle: Dictionary) -> Variant:
+	if not is_convoy(vehicle) or int(vehicle.get("operator_id", 0)) <= 0: return null
+	var person := _operator(int(vehicle.operator_id))
+	return person.owner if not person.is_empty() and person.owner is CrowdPersonOwner else null
+
+static func _convoy_angle(facing: Array) -> float:
+	return atan2(float(facing[1]), float(facing[0]))
+
+static func _rotate_offset(offset: Vector2i, angle: float) -> Vector2:
+	var c: float = cos(angle)
+	var s: float = sin(angle)
+	return Vector2(float(offset.x) * c - float(offset.y) * s, float(offset.x) * s + float(offset.y) * c)
+
+func convoy_state(vehicle: Dictionary) -> Dictionary:
+	var id := int(vehicle.get("convoy_id", 0))
+	if id <= 0 or not convoy_native_supported(): return {}
+	var values: PackedFloat64Array = lab.crowd_site.crowd.convoy_state(id)
+	if values.size() != 7: return {} # x, y, facing, moving, complete, stalled, reason (native ConvoyReason)
+	return {"x": values[0], "y": values[1], "facing": values[2], "moving": values[3] > 0.5, "complete": values[4] > 0.5, "stalled": values[5] > 0.5, "reason": int(values[6])}
+
+func _convoy_create(vehicle: Dictionary) -> Dictionary:
+	var owner: Variant = _convoy_owner(vehicle)
+	if owner == null or not convoy_native_supported(): return Runtime.fail("BUSY", "後勤車隊原生記錄尚未就緒")
+	var crowd: Variant = lab.crowd_site.crowd
+	var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	var id := int(crowd.add_convoy(float(anchor.x) + 0.5, float(anchor.y) + 0.5, _convoy_angle(vehicle.facing)))
+	if id <= 0: return Runtime.fail("BUSY", "原生車隊記錄建立失敗")
+	var soldier := int(owner.index_for_identity(int(vehicle.operator_id)))
+	var body := PackedInt32Array()
+	for cell: Vector2i in footprint(lab.terrain, vehicle): body.append(int(lab.terrain.index(cell)))
+	if soldier < 0 or not bool(crowd.convoy_set_crew(id, soldier, rider.x, rider.y, true)) or not bool(crowd.convoy_set_body(id, body)):
+		crowd.convoy_remove(id)
+		return Runtime.fail("BUSY", "原生車隊乘員或車體未接受；原人物保留一般行為")
+	vehicle["convoy_id"] = id
+	_convoy_checked[str(vehicle.get("id", ""))] = true
+	# G4 OPUS: the vehicle joins its operator's formation layout. The native slot layout then owns its goal; GD sends none.
+	# Attaching is passive (the vehicle holds where it stands until the formation is ordered). A refusal leaves it detached.
+	if not bool(crowd.convoy_attach_formation(id, int(owner.formation_index))):
+		push_warning("G4DIAG convoy %s not attached to formation %d" % [str(vehicle.get("id", "")), int(owner.formation_index)])
+	return Runtime.ok("後勤車隊已建立")
+
+func _convoy_release(vehicle: Dictionary) -> void:
+	var key := str(vehicle.get("id", ""))
+	var id := int(vehicle.get("convoy_id", 0))
+	if id > 0 and convoy_native_supported(): lab.crowd_site.crowd.convoy_remove(id)
+	vehicle.erase("convoy_id")
+	# The body cells belong to the removed convoy; kept, they would stand for the vehicle's footprint wherever it goes next
+	# (2026-11-19: a cart that crossed to another Site still reported its old Site's cells and no convoy could be made).
+	vehicle.erase("convoy_body")
+	_convoy_checked.erase(key)
+	_convoy_sent.erase(key)
+	_convoy_goal_orders.erase(key)
+	_convoy_refused.erase(key)
+	_convoy_adopted.erase(key)
+
+# True while the native convoy follows its formation's vehicle slot (G4 OPUS). An explicit order detaches it natively.
+func convoy_attached(vehicle: Dictionary) -> bool:
+	var id := int(vehicle.get("convoy_id", 0))
+	return id > 0 and convoy_native_supported() and int(lab.crowd_site.crowd.convoy_formation(id)) >= 0
+
+func _convoy_order(vehicle: Dictionary, _owner: Variant, pose: Dictionary) -> void:
+	var key := str(vehicle.get("id", ""))
+	# An attached convoy takes its goal from the native formation layout; GD sends nothing for it.
+	if convoy_attached(vehicle):
+		_convoy_goal_orders.erase(key)
+		_convoy_adopted.erase(key)
+		_convoy_sent.erase(key)
+		return
+	# An explicit order stays active from the moment it is sent until the native convoy reports it complete. A reading
+	# taken before the order reached the native convoy cannot end it.
+	if _convoy_goal_orders.has(key) and bool(_convoy_goal_orders[key].sent) and bool(pose.complete): _convoy_goal_orders.erase(key)
+	if _convoy_goal_orders.has(key):
+		var explicit: Dictionary = _convoy_goal_orders[key]
+		_convoy_send(vehicle, explicit.point, float(explicit.facing))
+		return
+	# S5: a goal restored from a save runs to completion. A hold sent now would replace it with the current pose.
+	if _convoy_adopted.has(key):
+		if not bool(pose.complete): return
+		_convoy_adopted.erase(key)
+	# Detached (after an explicit vehicle order) and no order: hold at the current pose until the operator is reassigned.
+	_convoy_send(vehicle, Vector2(float(pose.x), float(pose.y)), float(pose.facing))
+
+# The only path that changes the native goal. Equal targets are not resent; a refused target is reported once.
+func _convoy_send(vehicle: Dictionary, point: Vector2, facing: float) -> void:
+	var key := str(vehicle.get("id", ""))
+	var target := Vector3(point.x, point.y, facing)
+	if _convoy_sent.get(key, Vector3(INF, INF, INF)) == target: return
+	var accepted: bool = bool(lab.crowd_site.crowd.convoy_order_goal(int(vehicle.convoy_id), point.x, point.y, facing))
+	if not accepted: push_warning("G4DIAG convoy goal refused by native: %s target=(%.2f, %.2f) facing=%.3f" % [key, point.x, point.y, facing])
+	_convoy_sent[key] = target
+
+# Native facing is continuous. The record keeps the nearest grid direction, never a diagonal.
+static func cardinal_facing(angle: float) -> Array:
+	var quarter := posmod(roundi(angle / (PI * 0.5)), 4)
+	var table: Array = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+	return table[quarter].duplicate()
+
+# The native body cells for a convoy record (empty when no convoy). Read-only: the native body is authoritative.
+func _native_body_cells(vehicle: Dictionary) -> Array:
+	var id := int(vehicle.get("convoy_id", 0))
+	if id <= 0 or not convoy_native_supported(): return []
+	var values: PackedInt32Array = lab.crowd_site.crowd.convoy_body(id)
+	return Array(values)
+
+# Public: re-read every convoy record from its native convoy (anchor, facing, body). Called after the native step.
+func sync_convoy_records() -> void:
+	_sync_convoys()
+
+## Crowd riders stepping off a parked wagon: identity -> the legal cell beside it. Their one-step hold ends on arrival and
+## they return to ordinary behaviour (transient command state, not saved; a load finds them standing wherever they are).
+var _crowd_dismount_steps := {}
+
+func _finish_crowd_dismount_steps() -> void:
+	for identity: Variant in _crowd_dismount_steps.keys():
+		var person := _operator(int(identity))
+		if person.is_empty() or not person.owner is CrowdPersonOwner:
+			_crowd_dismount_steps.erase(identity)
+			continue
+		if person.cell == _crowd_dismount_steps[identity] and not person.owner.is_walking(int(person.unit)):
+			person.owner.siege_cancel_step(int(person.unit))
+			_crowd_dismount_steps.erase(identity)
+
+func _sync_convoys() -> void:
+	if not _crowd_dismount_steps.is_empty(): _finish_crowd_dismount_steps()
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle): continue
+		var owner: Variant = _convoy_owner(vehicle)
+		if owner == null:
+			if int(vehicle.get("convoy_id", 0)) > 0: _convoy_release(vehicle)
+			continue
+		var key := str(vehicle.get("id", ""))
+		if int(vehicle.get("convoy_id", 0)) <= 0:
+			# A refused creation is latched on its inputs: retry only when the cell, facing or operator changes.
+			var signature := str([vehicle.get("cell", -1), vehicle.get("facing", []), vehicle.get("operator_id", 0)])
+			if convoy_native_supported() and _convoy_refused.get(key, "") != signature:
+				if _convoy_create(vehicle).ok: _convoy_refused.erase(key)
+				else:
+					_convoy_refused[key] = signature
+					push_warning("G4DIAG convoy create refused by native (add_convoy, set_crew or set_body): " + key)
+			continue
+		var pose := convoy_state(vehicle)
+		if not _convoy_checked.has(key):
+			# Loaded records: the native blob restored the convoy; the record must name the same anchor cell.
+			var loaded_anchor: Vector2i = Vector2i(floori(float(pose.get("x", -1.0))), floori(float(pose.get("y", -1.0))))
+			var loaded_ok: bool = not pose.is_empty() and lab.terrain.contains(loaded_anchor) and int(lab.terrain.index(loaded_anchor)) == int(vehicle.cell)
+			if not loaded_ok:
+				# Refused, not adopted: the record keeps its cell and the native convoy is left as the load gate found it.
+				lab.crowd_site.last_event_error = Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊記錄與原生錨點不符：" + key)
+				continue
+			_convoy_checked[key] = true
+		if pose.is_empty(): continue
+		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
+		vehicle["cell"] = int(lab.terrain.index(anchor))
+		vehicle["facing"] = cardinal_facing(float(pose.facing))
+		vehicle["convoy_body"] = _native_body_cells(vehicle)
+		vehicle["move"] = {}
+		_convoy_order(vehicle, owner, pose)
+
+# Test and team order entry: cell is the operator's goal cell, facing is a unit grid direction.
+func order_convoy_goal(vehicle_id: String, cell: Vector2i, facing: Vector2i, requester_id: int = 0, test_dispatch: bool = false) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var owner: Variant = _convoy_owner(vehicle)
+	if owner == null or int(vehicle.get("convoy_id", 0)) <= 0: return Runtime.fail("NO_TARGET", "此車沒有原生後勤車隊記錄")
+	if not _authorized(owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	return _order_convoy_goal(vehicle, cell, facing)
+
+## An NPC Region route's own driver drives its convoy to its unloading contact (N08 last mile on a crowd Site), as the grid
+## route orders the driver's team; the region route admitted that driver and wagon, so no player command authority applies.
+func region_route_convoy_goal(vehicle_id: String, driver_id: int, cell: Vector2i, facing: Vector2i) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	if _convoy_owner(vehicle) == null or int(vehicle.get("convoy_id", 0)) <= 0 or int(vehicle.get("operator_id", 0)) != driver_id: return Runtime.fail("NO_TARGET")
+	return _order_convoy_goal(vehicle, cell, facing)
+
+func _order_convoy_goal(vehicle: Dictionary, cell: Vector2i, facing: Vector2i) -> Dictionary:
+	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	var angle := _convoy_angle([facing.x, facing.y])
+	var order := {"point": Vector2(cell) + Vector2.ONE * 0.5 - _rotate_offset(rider, angle), "facing": angle, "sent": false}
+	_convoy_adopted.erase(str(vehicle.get("id", ""))) # an explicit order replaces any goal restored from a save
+	_convoy_goal_orders[str(vehicle.get("id", ""))] = order
+	_convoy_send(vehicle, order.point, angle) # the native goal changes now, not at the next step
+	order["sent"] = true
+	return Runtime.ok("後勤車隊目標已下達")
+
+func convoy_save_guard() -> Dictionary:
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var pose := convoy_state(vehicle)
+		if pose.is_empty() or _convoy_owner(vehicle) == null: return Runtime.fail("BUSY", "後勤車隊原生記錄與原人物尚未同步")
+		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
+		if not lab.terrain.contains(anchor) or int(lab.terrain.index(anchor)) != int(vehicle.cell): return Runtime.fail("BUSY", "後勤車隊錨點尚未收束至車格")
+	return Runtime.ok()
+
+# S5 load gate, pure (changes nothing): every record with convoy_id must name a native convoy whose anchor cell is the
+# record cell and whose only crew member is the record's operator. Called by CrowdSite.prepare_load before install.
+static func convoy_record_check(data: TerrainData, crowd: Variant) -> Dictionary:
+	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var key := str(vehicle.get("id", ""))
+		if crowd == null or not crowd.has_method("convoy_state") or not crowd.has_method("convoy_crew") or not crowd.has_method("soldier_index"):
+			return Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
+		var values: PackedFloat64Array = crowd.convoy_state(int(vehicle.convoy_id))
+		if values.size() != 7: return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊記錄缺少原生車隊：" + key)
+		var anchor := Vector2i(floori(values[0]), floori(values[1]))
+		if not data.contains(anchor) or int(data.index(anchor)) != int(vehicle.get("cell", -1)):
+			return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊錨點與車格不符：" + key)
+		var operator_id := int(vehicle.get("operator_id", 0))
+		var crew: PackedFloat64Array = crowd.convoy_crew(int(vehicle.convoy_id))
+		var operator_soldier: int = int(crowd.soldier_index(operator_id)) if operator_id > 0 else -1
+		if operator_soldier < 0 or crew.size() != 1 or int(crew[0]) != operator_soldier:
+			return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊乘員與原操作者不符：" + key)
+	return Runtime.ok()
+
+# S5 bind: called once the loaded Site is the live Site (SiteController.load_from). The latches belong to the previous
+# Site and are cleared. A restored convoy that is not yet complete keeps its native goal until it completes.
+func bind_loaded_convoys() -> void:
+	_convoy_checked.clear()
+	_convoy_sent.clear()
+	_convoy_goal_orders.clear()
+	_convoy_refused.clear()
+	_convoy_adopted.clear()
+	if not convoy_native_supported(): return
+	var verdict := convoy_record_check(lab.terrain, lab.crowd_site.crowd)
+	if not verdict.ok:
+		lab.crowd_site.last_event_error = verdict
+		return
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var key := str(vehicle.get("id", ""))
+		_convoy_checked[key] = true
+		var pose := convoy_state(vehicle)
+		# reason 1 is CONVOY_NO_GOAL (ConvoyReason in crowd_core.hpp): only a convoy that has a goal is adopted.
+		if not pose.is_empty() and not bool(pose.complete) and int(pose.reason) != 1: _convoy_adopted[key] = true
+
+func _siege_plan_envelope(vehicle: Dictionary, plan: Dictionary) -> Dictionary:
+	var team: Variant = _siege_team(vehicle)
+	if team is CrowdPersonOwner:
+		plan["compound_id"] = "native-siege:%s:%d" % [str(vehicle.id), int(lab.crowd_site._steps)]
+		return plan
+	plan["compound_id"] = "siege:%s:%d" % [str(vehicle.id), int(team._coordinator.current_logic_tick)]
+	plan["formation_id"] = team.get_formation_id()
+	plan["formation_serial"] = int(team.formation_persistent_serial)
+	return plan
+
+func _native_siege_route(vehicle: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	# Reuse the existing whole-engine step validator at each ordinary grid edge.
+	# This short synchronous search owns neither positions nor reservations.
+	var result: Array[Vector2i] = []
+	var previous := {start: start}
+	var pending: Array[Vector2i] = [start]
+	var head := 0
+	while head < pending.size() and head < 256:
+		var current: Vector2i = pending[head]
+		head += 1
+		if current == goal: break
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := current + direction
+			if previous.has(next) or _siege_route_step(vehicle, current, next).has("invalid"): continue
+			previous[next] = current
+			pending.append(next)
+	if not previous.has(goal): return result
+	var cursor := goal
+	while cursor != start:
+		result.append(cursor)
+		cursor = previous[cursor]
+	result.append(start)
+	result.reverse()
+	return result
+
+func prepare_native_siege_compounds() -> void:
+	if not _native_siege() or not lab.crowd_site.siege_native_supported(): return
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle) or float(vehicle.hp) <= 0.0 or not vehicle.move.is_empty(): continue
+		var plan := {}
+		if str(vehicle.action.get("stage", "")) == "approach":
+			plan = _siege_turn_plan(vehicle)
+		elif str(vehicle.command.get("type", "")) == "move" and vehicle.action.is_empty() and crew_ready(vehicle):
+			var pair: Array = vehicle.command.target.cell
+			var goal := Vector2i(int(pair[0]), int(pair[1]))
+			var source: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+			if source == goal:
+				vehicle.command = {"type": "stop", "reason": "arrived"}
+				vehicle.phase = "ready"
+				continue
+			var route := _native_siege_route(vehicle, source, goal)
+			if route.size() >= 2: plan = _siege_move_plan(vehicle, route[1])
+		if plan.is_empty(): continue
+		var occupancy := {}
+		for movement: Dictionary in plan.participants:
+			occupancy[lab.terrain.cell_from_index(int(movement.from))] = int(movement.person_id)
+		if can_commit_siege_compound(plan, occupancy, {}): begin_siege_compound(plan)
+
+func _begin_native_siege_compound(vehicle: Dictionary, plan: Dictionary) -> void:
+	var token: int = lab.crowd_site.siege_begin_group(plan)
+	if token <= 0: return # The native whole-group preflight changed no person or claim.
+	if str(plan.mode) == "rotate":
+		vehicle.action.stage = "rotate"
+		vehicle.action.elapsed = 0.0
+		vehicle.action.sweep = plan.sweep.duplicate()
+		vehicle.action.source_heights = plan.source_heights.duplicate()
+		vehicle.action.compound_id = str(plan.compound_id)
+		vehicle.action.native_token = token
+		return
+	vehicle["move"] = plan.duplicate(true)
+	vehicle.move.native_token = token
+	vehicle["phase"] = "moving"
+
+func finish_native_siege_compounds() -> void:
+	if not _native_siege(): return
+	for vehicle: Dictionary in records().values():
+		if not is_siege(vehicle): continue
+		var rotating := str(vehicle.action.get("stage", "")) == "rotate" and int(vehicle.action.get("native_token", 0)) > 0
+		var job: Dictionary = vehicle.action if rotating else vehicle.move
+		var token := int(job.get("native_token", 0))
+		if token <= 0: continue
+		var state: Dictionary = lab.crowd_site.siege_group_state(token)
+		if state.is_empty():
+			lab.crowd_site.last_event_error = Runtime.fail("STALE", "原攻城複合步不存在；保留原交易等待診斷")
+			continue
+		if rotating: job["elapsed"] = float(state.elapsed) # Read-only projection of the native clock.
+		if not bool(state.complete): continue
+		if bool(state.aborted):
+			if not lab.crowd_site.siege_settle_group(token): continue
+			if not rotating:
+				cancel_siege_compound(str(vehicle.move.compound_id))
+				continue
+			var drop := 0
+			for value: String in job.source_heights:
+				drop = maxi(drop, int(job.source_heights[value]) - lab.terrain.effective_height(lab.terrain.cell_from_index(int(value))))
+			vehicle.action = {}
+			if drop > 0: Runtime.damage_siege_vehicle(lab.terrain, str(vehicle.id), float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp) * 0.25 * drop)
+			_queue_crew_release(vehicle, vehicle.crew_slots.values(), "terrain_changed")
+			_settle_crew_release(vehicle)
+			vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "disabled"
+			continue
+		if rotating:
+			vehicle.facing = job.facing.duplicate()
+			if not lab.crowd_site.siege_settle_group(token): continue
+			vehicle.action = {} if str(vehicle.command.get("type", "")) in ["stop", "release"] or float(vehicle.hp) <= 0.0 else {"stage": "return", "elapsed": 0.0}
+			_settle_crew_release(vehicle)
+			if vehicle.action.is_empty(): vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else "idle"
+		else:
+			var identity := str(vehicle.move.compound_id)
+			commit_siege_compound_pose(identity)
+			if not lab.crowd_site.siege_settle_group(token): continue
+			finish_siege_compound(identity)
+
+func cancel_native_siege_step(vehicle: Dictionary) -> void:
+	if not _native_siege(): return
+	var token := int(vehicle.move.get("native_token", vehicle.action.get("native_token", 0)))
+	if token > 0: lab.crowd_site.siege_cancel_group(token)
+	for identity: int in vehicle.crew_slots.values():
+		var person := _operator(identity)
+		if not person.is_empty() and person.owner is CrowdPersonOwner: person.owner.siege_cancel_step(int(person.unit))
+
+static func _region_original_ship_drive(data: TerrainData) -> bool:
+	return data != null and data.has_meta(&"region_party_world_frame") and data.has_meta(&"region_party_geometry_proof")
+
+static func _region_ship_direction(value: Variant) -> bool:
+	return _region_ship_vector(value) and Ship.valid_facing(Vector2i(int(value[0]), int(value[1]))) \
+		and float(value[0]) == float(int(value[0])) and float(value[1]) == float(int(value[1]))
+
+static func _region_ship_frames(data: TerrainData) -> Dictionary:
+	if data == null: return {}
+	if data.has_meta(&"region_party_world_frame"):
+		var frame: Variant = data.get_meta(&"region_party_world_frame")
+		var result := {}
+		if not frame is Dictionary or not frame.get("vehicles") is Dictionary: return result
+		for identity: String in frame.vehicles:
+			var vehicle: Variant = data.site.get("vehicles", {}).get(identity)
+			if not vehicle is Dictionary or not is_ship(vehicle): continue
+			var entry: Variant = frame.vehicles[identity]
+			if not entry is Dictionary or not entry.get("pose") is Dictionary or not entry.pose.has("world_anchor"): continue
+			result[identity] = entry.pose
+		return result
+	return data.get_meta(&"region_party_hull_poses", {})
+
+static func _region_ship_geometry_origin(data: TerrainData) -> Dictionary:
+	var frame: Variant = data.get_meta(&"region_party_world_frame", {})
+	if not frame is Dictionary: return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	if frame.has("world_origin"):
+		var proof: Variant = data.get_meta(&"region_party_geometry_proof", {})
+		var sources: Variant = data.get_meta(&"region_party_geometry_sources", [])
+		if not _region_ship_vector(frame.world_origin) or not _region_ship_vector(frame.get("size")) \
+				or not proof is Dictionary or proof.size() != 4 or proof.get("version") != 1 \
+				or proof.get("world_origin") != frame.world_origin or proof.get("size") != frame.size \
+				or not proof.get("sources") is Array or not sources is Array or sources.size() != proof.sources.size() \
+				or sources.is_empty() or sources.size() > 4 or Vector2i(int(frame.size[0]), int(frame.size[1])) != data.size:
+			return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+		for value: Variant in frame.world_origin + frame.size:
+			if float(value) != floorf(float(value)): return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+		if int(frame.size[0]) not in [100, 200] or int(frame.size[1]) not in [100, 200]: return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+		var route: Script = load("res://scripts/region_lab/region_route.gd")
+		var seen := {}
+		for index: int in sources.size():
+			var source: Variant = sources[index]
+			var canonical: Variant = proof.sources[index]
+			if not source is Dictionary or not canonical is Dictionary or canonical.size() != 6 \
+					or not source.get("data") is TerrainData or source.data.size != Vector2i(100, 100) \
+					or not _region_ship_vector(source.get("site")) or not _region_ship_vector(source.get("offset")) \
+					or not source.get("revision") is String or not source.get("visited") is bool \
+					or canonical.get("site") != source.site or canonical.get("offset") != source.offset \
+					or canonical.get("revision") != source.revision or canonical.get("visited") != source.visited \
+					or not source.get("navigation_hash") is String or str(source.navigation_hash).length() != 64 \
+					or canonical.get("navigation_hash") != source.navigation_hash \
+					or canonical.get("proof") != source.get("proof", {}): return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+			if route.party_frame_navigation_hash(source.data) != source.navigation_hash: return Runtime.fail("STALE_REGION_HULL_GEOMETRY")
+			for component: Variant in source.site + source.offset:
+				if float(component) != floorf(float(component)): return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+			var site := Vector2i(int(source.site[0]), int(source.site[1]))
+			var offset := Vector2i(int(source.offset[0]), int(source.offset[1]))
+			if seen.has(site) or offset != Vector2i(site.x * 100 - int(frame.world_origin[0]), -site.y * 100 - int(frame.world_origin[1])) \
+					or offset.x < 0 or offset.y < 0 or offset.x + 100 > data.size.x or offset.y + 100 > data.size.y:
+				return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+			seen[site] = true
+		if sources.size() != (data.size.x / 100) * (data.size.y / 100): return Runtime.fail("INVALID_REGION_HULL_GEOMETRY")
+		return Runtime.ok("", {"origin": Vector2(float(frame.world_origin[0]), float(frame.world_origin[1]))})
+	var source: Variant = data.get_meta(&"region_party_physical_source")
+	if not source is TerrainData: return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	var site: Variant = source.parameters.get("fixed_base", {}).get("site")
+	if not _region_ship_vector(site): return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	return Runtime.ok("", {"origin": Vector2(float(site[0]) * 100.0, -float(site[1]) * 100.0)})
+
+static func _region_ship_vector(value: Variant) -> bool:
+	return value is Array and value.size() == 2 and (value[0] is int or value[0] is float) and (value[1] is int or value[1] is float) \
+		and is_finite(float(value[0])) and is_finite(float(value[1]))
+
+static func _region_validate_original_ship_frame(data: TerrainData, poses: Dictionary) -> Dictionary:
+	var geometry := _region_ship_geometry_origin(data)
+	if not geometry.ok: return geometry
+	var owner: Variant = data.get_meta(&"region_party_owner", {})
+	var source: Variant = data.get_meta(&"region_party_physical_source") if data.has_meta(&"region_party_physical_source") else null
+	var identities: Variant = data.site.get("travel_identity", {})
+	if not owner is Dictionary or str(owner.get("token", "")).is_empty() or str(data.site.get("id", "")) != "travel:" + str(owner.token) \
+			or not source is TerrainData or str(source.site.get("id", "")) != str(owner.get("physical_source", "")):
+		return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	var travel: Script = load("res://scripts/region_lab/region_travel.gd")
+	if not travel.validate_identity(identities): return Runtime.fail("INVALID_REGION_HULL_IDENTITY")
+	var ships := {}
+	for identity: String in data.site.get("vehicles", {}):
+		var boat: Dictionary = data.site.vehicles[identity]
+		if not is_ship(boat): continue
+		if str(boat.get("id", "")) != identity or not identities.refs.vehicle.has(identity) or not poses.has(identity):
+			return Runtime.fail("INVALID_REGION_HULL_IDENTITY")
+		ships[identity] = true
+		var pose: Variant = poses[identity]
+		if not pose is Dictionary or not _region_ship_vector(pose.get("world_anchor")) or not _region_ship_direction(pose.get("facing")) or not pose.get("moving") is bool:
+			return Runtime.fail("INVALID_REGION_HULL_FRAME")
+		var original := original_ship_pose(data, boat)
+		var actual := Vector2(float(pose.world_anchor[0]), float(pose.world_anchor[1]))
+		if not actual.is_equal_approx(geometry.origin + original.anchor) or pose.facing != boat.facing or bool(pose.moving) != bool(original.moving):
+			return Runtime.fail("STALE_REGION_HULL_FRAME")
+		var direction := Vector2(float(pose.facing[0]), float(pose.facing[1]))
+		if pose.has("direction"):
+			if not _region_ship_vector(pose.direction): return Runtime.fail("INVALID_REGION_HULL_FRAME")
+			direction = Vector2(float(pose.direction[0]), float(pose.direction[1]))
+		elif pose.get("action", "") == "turn":
+			if not _region_ship_direction(pose.get("from_facing")) or not _region_ship_direction(pose.get("to_facing")) \
+					or not (pose.get("weight") is int or pose.get("weight") is float): return Runtime.fail("INVALID_REGION_HULL_FRAME")
+			var ending := Vector2(float(pose.to_facing[0]), float(pose.to_facing[1]))
+			direction = direction.rotated(direction.angle_to(ending) * float(pose.weight))
+		if not direction.is_equal_approx(original.direction): return Runtime.fail("STALE_REGION_HULL_FRAME")
+	if ships.size() != poses.size(): return Runtime.fail("INVALID_REGION_HULL_CLOSURE")
+	return Runtime.ok()
+
+func has_region_ship_projection(identity: String) -> bool:
+	return lab != null and lab.terrain != null and not _region_original_ship_drive(lab.terrain) and _region_ship_frames(lab.terrain).has(identity)
+
+static func original_ship_pose(data: TerrainData, vehicle: Dictionary) -> Dictionary:
+	var anchor := Vector2(data.cell_from_index(int(vehicle.cell)))
+	var facing := Vector2(float(vehicle.facing[0]), float(vehicle.facing[1]))
+	var progress := 0.0
+	var move: Dictionary = vehicle.get("move", {})
+	if not move.is_empty():
+		progress = clampf(float(move.elapsed) / float(move.duration), 0.0, 1.0)
+		anchor = anchor.lerp(Vector2(data.cell_from_index(int(move.cell))), progress)
+		var next := Vector2(float(move.facing[0]), float(move.facing[1]))
+		facing = facing.rotated(facing.angle_to(next) * progress)
+	return {"anchor": anchor, "direction": facing, "progress": progress, "moving": not move.is_empty()}
+
+func region_ship_claims(vehicle: Dictionary) -> Dictionary:
+	var pose := region_ship_projection(vehicle)
+	if pose.is_empty(): return {}
+	var point: Vector2 = pose.anchor
+	var first := Vector2i(floori(point.x), floori(point.y))
+	var last := Vector2i(ceili(point.x), ceili(point.y))
+	var frame: Dictionary = pose.frame
+	var direction := Vector2i(int(frame.facing[0]), int(frame.facing[1]))
+	var ending := direction
+	if frame.get("action", "") == "turn": ending = Vector2i(int(frame.to_facing[0]), int(frame.to_facing[1])); last = first
+	var result := {}
+	# Preserve the complete halo footprint. Terrain.contains belongs to the
+	# caller's navigation domain; clipping here would erase the straddled hull.
+	for cell: Vector2i in Ship.swept_footprint(str(vehicle.ship_type), first, direction, last, ending): result[cell] = true
+	return result
+
+func region_ship_person_position(identity: int) -> Dictionary:
+	var vehicle := ship_for_person(identity)
+	var pose := region_ship_projection(vehicle)
+	if pose.is_empty(): return {}
+	var local := ship_local_position(identity)
+	var direction: Vector2 = pose.direction
+	var point: Vector2 = pose.world_anchor + Vector2(-direction.y, direction.x) * local.x + direction * local.y
+	return {"person_ref": lab.terrain.site.travel_identity.refs.person[str(identity)], "vehicle_ref": pose.vehicle_ref,
+		"world_position": point, "local_position": local, "cursor": lab.terrain.get_meta(&"region_party_sea_cursor").duplicate(true)}
+
+func region_ship_projection(vehicle: Dictionary) -> Dictionary:
+	if lab != null and _region_original_ship_drive(lab.terrain) and is_ship(vehicle):
+		var geometry := _region_ship_geometry_origin(lab.terrain)
+		if not geometry.ok: return {}
+		var original := original_ship_pose(lab.terrain, vehicle)
+		return original.merged({"world_anchor": geometry.origin + original.anchor, "frame": {},
+			"vehicle_ref": lab.terrain.site.travel_identity.refs.vehicle[str(vehicle.id)]}, true)
+	if not has_region_ship_projection(str(vehicle.get("id", ""))): return {}
+	var geometry := _region_ship_geometry_origin(lab.terrain)
+	if not geometry.ok: return {}
+	var frame: Dictionary = _region_ship_frames(lab.terrain)[str(vehicle.id)]
+	var world := Vector2(float(frame.world_anchor[0]), float(frame.world_anchor[1]))
+	var origin: Vector2 = geometry.origin
+	var direction := Vector2(float(frame.facing[0]), float(frame.facing[1]))
+	if frame.has("action"):
+		var from := Vector2(float(frame.from_facing[0]), float(frame.from_facing[1]))
+		var to := Vector2(float(frame.to_facing[0]), float(frame.to_facing[1]))
+		direction = from.rotated(from.angle_to(to) * float(frame.weight))
+	return {"anchor": world - origin, "direction": direction, "progress": float(frame.get("weight", 0.0)),
+		"moving": bool(frame.moving), "world_anchor": world, "frame": frame,
+		"vehicle_ref": lab.terrain.site.travel_identity.refs.vehicle[str(vehicle.id)]}
+
+static func validate_region_ship_projection(data: TerrainData) -> Dictionary:
+	if data == null or not data.has_meta(&"region_party_hull_poses") and not data.has_meta(&"region_party_world_frame"): return Runtime.ok()
+	var poses: Variant = _region_ship_frames(data)
+	if poses.is_empty():
+		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+			if is_ship(vehicle): return Runtime.fail("INVALID_REGION_HULL_CLOSURE")
+		return Runtime.ok()
+	if _region_original_ship_drive(data): return _region_validate_original_ship_frame(data, poses)
+	var geometry := _region_ship_geometry_origin(data)
+	if not geometry.ok: return geometry
+	var owner: Variant = data.get_meta(&"region_party_owner", {})
+	var source: Variant = data.get_meta(&"region_party_physical_source") if data.has_meta(&"region_party_physical_source") else null
+	var cursor: Variant = data.get_meta(&"region_party_sea_cursor", {})
+	var identities: Variant = data.site.get("travel_identity", {})
+	if not owner is Dictionary or str(owner.get("token", "")).is_empty() or str(data.site.get("id", "")) != "travel:" + str(owner.token) \
+		or not source is TerrainData or str(source.site.get("id", "")) != str(owner.get("physical_source", "")) \
+		or not cursor is Dictionary or int(cursor.get("version", 0)) != 1 or str(cursor.get("plan_id", "")).is_empty() \
+		or not poses is Dictionary or poses.is_empty() or not identities is Dictionary:
+		return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	var travel: Script = load("res://scripts/region_lab/region_travel.gd")
+	if not travel.validate_identity(identities): return Runtime.fail("INVALID_REGION_HULL_IDENTITY")
+	var physical: Variant = source.parameters.get("fixed_base", {}).get("site", [])
+	if not physical is Array or physical.size() != 2 or not _region_ship_vector(physical) \
+		or float(physical[0]) != floorf(float(physical[0])) or float(physical[1]) != floorf(float(physical[1])):
+		return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	for field: String in ["elapsed", "duration"]:
+		if not (cursor.get(field) is int or cursor.get(field) is float) or not is_finite(float(cursor[field])) or float(cursor[field]) < 0.0: return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	if not (cursor.get("action_index") is int or cursor.get("action_index") is float) or not is_finite(float(cursor.action_index)) \
+		or float(cursor.action_index) != floorf(float(cursor.action_index)) or int(cursor.action_index) < 0 \
+		or float(cursor.elapsed) > float(cursor.duration) or float(cursor.duration) == 0.0 and float(cursor.elapsed) != 0.0:
+		return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	var ships := {}
+	var active := 0
+	for identity: String in data.site.get("vehicles", {}):
+		var vehicle: Variant = data.site.vehicles[identity]
+		if not vehicle is Dictionary: return Runtime.fail("INVALID_REGION_HULL_CLOSURE")
+		if not is_ship(vehicle): continue
+		if str(vehicle.get("id", "")) != identity or not identities.refs.get("vehicle", {}).has(identity) or not poses.has(identity):
+			return Runtime.fail("INVALID_REGION_HULL_IDENTITY")
+		ships[identity] = true
+		var pose: Variant = poses[identity]
+		if not pose is Dictionary or not _region_ship_vector(pose.get("world_anchor")) or not _region_ship_direction(pose.get("facing")) or not pose.get("moving") is bool:
+			return Runtime.fail("INVALID_REGION_HULL_FRAME")
+		if pose.has("action"):
+			active += 1
+			if pose.get("action") not in ["forward", "reverse", "dock", "turn"] or not _region_ship_vector(pose.get("from")) or not _region_ship_vector(pose.get("to")) \
+				or not _region_ship_direction(pose.get("from_facing")) or not _region_ship_direction(pose.get("to_facing")) \
+				or not (pose.get("weight") is int or pose.get("weight") is float) or not is_finite(float(pose.weight)) or float(pose.weight) < 0.0 or float(pose.weight) > 1.0 \
+				or float(pose.get("elapsed_action_seconds", -1.0)) != float(cursor.elapsed) or float(pose.get("duration_action_seconds", -1.0)) != float(cursor.duration):
+				return Runtime.fail("INVALID_REGION_HULL_FRAME")
+			var expected_weight := float(cursor.elapsed) / float(cursor.duration) if float(cursor.duration) > 0.0 else 0.0
+			if float(pose.weight) != expected_weight or pose.facing != pose.from_facing or bool(pose.moving) != (float(cursor.elapsed) > 0.0):
+				return Runtime.fail("INVALID_REGION_HULL_FRAME")
+			var start := Vector2(float(pose.from[0]), float(pose.from[1]))
+			var ending := Vector2(float(pose.to[0]), float(pose.to[1]))
+			var actual := Vector2(float(pose.world_anchor[0]), float(pose.world_anchor[1]))
+			if not actual.is_equal_approx(start.lerp(ending, float(pose.weight))): return Runtime.fail("INVALID_REGION_HULL_FRAME")
+	if ships.size() != poses.size() or active > 1: return Runtime.fail("INVALID_REGION_HULL_CLOSURE")
+	return Runtime.ok()
+
+
+func prepare_transfer(source_id: String, destination_id: String, resources: Dictionary, item_ids: Array, source_version: int, destination_version: int, requester_id: int, test_dispatch: bool = false, nation_route_permit: Dictionary = {}) -> Dictionary:
+	var involves_ship := is_ship(records().get(source_id, {})) or is_ship(records().get(destination_id, {}))
+	for key: String in [source_id, destination_id]:
+		if key.begins_with("person:") and key.trim_prefix("person:").is_valid_int(): involves_ship = involves_ship or is_embarked(int(key.trim_prefix("person:")))
+	if involves_ship: return Runtime.fail("UNSUPPORTED", "船内装卸继续沿原入口；本prepared接口只处理原陆地工坊供料")
+	if bool(lab.terrain.site.paused): return Runtime.fail("BUSY")
+	if not nation_route_permit.is_empty():
+		if controller.region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+		var admitted: Dictionary = controller.region_slot.validate_nation_route_transfer_permit(self, nation_route_permit, source_id, destination_id, resources, item_ids, requester_id)
+		if not admitted.ok: return admitted
+	elif not test_dispatch and requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
+	for identity: String in [source_id, destination_id]:
+		if identity.begins_with("person:") and identity.trim_prefix("person:").is_valid_int():
+			# Nekki 2026-10-31 (peacetime systems under crowd): a crowd person loads and unloads in peace; refused only in combat.
+			var guard: Dictionary = controller.person_actions.crowd_peace_guard([int(identity.trim_prefix("person:"))])
+			if not guard.ok: return guard
+	var involves_feature := source_id.begins_with("feature:") or destination_id.begins_with("feature:")
+	# Trade plan §4.1: a family estate warehouse is loaded and unloaded only by family members (the requester and the
+	# executor alike).
+	for identity: String in [source_id, destination_id]:
+		if identity.begins_with("feature:"):
+			var estate_key := identity.trim_prefix("feature:")
+			var estate_executor := int(source_id.trim_prefix("person:")) if source_id.begins_with("person:") else (int(destination_id.trim_prefix("person:")) if destination_id.begins_with("person:") else requester_id)
+			if not Stockpiles.estate_access(lab.terrain, estate_key, requester_id) or not Stockpiles.estate_access(lab.terrain, estate_key, estate_executor):
+				return Runtime.fail("NO_AUTHORITY", "家產倉庫只有族人能存取")
+	var source := _stock(source_id, involves_feature)
+	var destination := _stock(destination_id, involves_feature)
+	if source.is_empty() or destination.is_empty(): return Runtime.fail("NO_TARGET")
+	var siege_destination: Dictionary = records().get(destination_id, {})
+	if is_siege(siege_destination):
+		var ammunition := str(Runtime.SIEGE_DEFINITIONS[str(siege_destination.kind)].ammo)
+		if ammunition.is_empty() or not item_ids.is_empty() or resources.keys().any(func(key: Variant) -> bool: return not Runtime.siege_ammo_valid(str(siege_destination.kind), str(key))): return Runtime.fail("INVALID", "器具彈艙只接收定義中的實物彈藥")
+	if source.has("person_id") and destination.has("person_id"): return Runtime.fail("INVALID", "此入口只處理後勤本人與營地／車輛裝卸")
+	var executor_id := int(source.get("person_id", destination.get("person_id", requester_id)))
+	if involves_feature:
+		var native_guard: Dictionary = controller.person_actions.crowd_peace_guard([executor_id])
+		if not native_guard.ok: return native_guard
+	var person: Dictionary = controller.person_actions._person(executor_id)
+	if source.has("person_id") or destination.has("person_id"):
+		if person.is_empty(): return Runtime.fail("NO_AUTHORITY")
+		# A crowd team's member is authorized as a grid row is (2026-11-11): the controlled requester is the carrier itself or
+		# the team's present commander. _stock already limits which crowd persons are cargo endpoints at all.
+		if person.owner is TerrainArmy or person.owner is CrowdPersonOwner and person.owner.has_army():
+			if not _nation_route_transfer_authorized(person.owner, requester_id, executor_id, test_dispatch, nation_route_permit): return Runtime.fail("NO_AUTHORITY")
+		elif not involves_feature or requester_id != executor_id or requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
+	var operated := _operated(executor_id)
+	if is_siege(operated) and str(operated.id) not in [source_id, destination_id]: return Runtime.fail("NO_AUTHORITY", "crew 只可裝卸本人正在操作的重弩彈艙")
+	var ready: bool = not person.is_empty() and controller._delivery_person_ready(person)
+	if not operated.is_empty() and str(operated.id) in [source_id, destination_id]:
+		var original := _operator(executor_id)
+		ready = _available(original) and operated.move.is_empty() and not bool(person.moving) and str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "idle" and not bool(person.owner.combat_hot_get(int(person.unit), &"attack")) and float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) <= 0.0
+	if not ready: return Runtime.fail("BUSY", "本人須清醒停止且無其他職務，才可裝卸")
+	if int(source.team_id) == 0 and int(destination.team_id) == 0 and requester_id != lab.controlled_person_id(): return Runtime.fail("NO_AUTHORITY")
+	if bool(destination.get("withdraw_only", false)): return Runtime.fail("BUSY", "毀損設施只能取回原存貨，修復後才可進料")
+	for stock: Dictionary in [source, destination]:
+		if stock.has("feature_id") and (int(stock.faction) < 0 or int(stock.faction) != int(person.faction)): return Runtime.fail("NO_AUTHORITY", "只有設施管理方原人物可裝卸")
+		var offset: Vector2i = stock.cell - person.cell
+		var own_cargo := int(stock.get("person_id", 0)) == executor_id
+		var aboard_own: bool = not operated.is_empty() and str(operated.kind) == "wagon" and str(stock.get("vehicle_id", "")) == str(operated.id) and person.cell == operator_cell(operated)
+		var engine: Dictionary = records().get(str(stock.get("vehicle_id", "")), {})
+		var engine_contact := is_siege(engine) and touches_vehicle(person.cell, engine)
+		var facility_door: bool = stock.has("feature_id") and person.cell == stock.cell and lab.terrain.is_walkable(person.cell)
+		if not own_cargo and not aboard_own and not engine_contact and not facility_door and (absi(offset.x) + absi(offset.y) != 1 or not lab.terrain.can_step(person.cell, stock.cell)): return Runtime.fail("UNREACHABLE", "本人須實際相鄰庫存；騎乘人僅可從馬格裝卸本車，不能遠距搬運")
+		if int(stock.team_id) > 0:
+			# S5: the holder is the crowd owner while the crowd is active; grid armies never hold a crowd team's cargo.
+			var holder_team: Variant = _team_owner(int(stock.team_id))
+			# A crowd person's own cargo: its owner holds it even when that owner is an Actor-only team with no roster rows
+			# (the controlled head's one-person team; found 2026-11-11, N11 crowd port).
+			if holder_team == null and own_cargo and _native_siege(): holder_team = lab.crowd_site.person_owner(executor_id)
+			var holder_operator := executor_id if own_cargo or not operated.is_empty() and int(operated.team_id) == int(stock.team_id) else 0
+			if holder_team == null or not _nation_route_transfer_authorized(holder_team, requester_id, holder_operator, test_dispatch, nation_route_permit):
+				return Runtime.fail("NO_AUTHORITY", "車載庫存由原隊合格指揮者調度")
+	return Runtime.prepare_item_transfer(lab.terrain, source.holder, source.cargo, destination.holder, destination.cargo, resources, item_ids, source_version, destination_version, int(destination.capacity))
+
+func _nation_route_transfer_authorized(team: Variant, requester_id: int, operator_id: int,
+		test_dispatch: bool, permit: Dictionary) -> bool:
+	if permit.is_empty(): return _authorized(team, requester_id, operator_id, test_dispatch)
+	return is_same(team, permit.get("team_ref")) and requester_id == int(permit.get("driver_id", -1)) \
+		and operator_id in [0, requester_id] and int(team.team_id) == int(permit.get("team_id", -1))
+
+func prepare_nation_route_transfer(permit: Dictionary) -> Dictionary:
+	if controller.region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+	var source_id := str(permit.get("source_holder", ""))
+	var destination_id := str(permit.get("destination_holder", ""))
+	var source := _stock(source_id, true)
+	var destination := _stock(destination_id, true)
+	if source.is_empty() or destination.is_empty(): return Runtime.fail("NO_TARGET")
+	return prepare_transfer(source_id, destination_id, {"grain": 4}, [], int(source.holder.version),
+		int(destination.holder.version), int(permit.get("driver_id", -1)), false, permit)
+
+
+## Read the original mechanic's remaining ACTION time. Ranged elapsed stores
+## crew work; RAM, rotation and tower elapsed store physical ACTION seconds.
+## Unknown/untimed stages remain with their original body/compound endpoints.
+
+func region_siege_action_remaining(vehicle: Dictionary) -> float:
+	if not is_siege(vehicle): return INF
+	var action: Dictionary = vehicle.get("action", {})
+	var stage := str(action.get("stage", ""))
+	var elapsed := float(action.get("elapsed", 0.0))
+	if not is_finite(elapsed) or elapsed < 0.0: return INF
+	if stage == "rotate":
+		return maxf(0.0, float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_seconds) - elapsed)
+	if stage in ["tower_deploy", "tower_retract"] and str(vehicle.kind) == "siege_tower":
+		return maxf(0.0, (15.0 if stage == "tower_deploy" else 10.0) - elapsed)
+	var rule := SiteCombatRules.siege_attack(str(vehicle.kind))
+	if not rule.has(stage): return INF
+	if str(vehicle.kind) == "ram" and stage in ["preparing", "collision", "recovering"]:
+		var multiplier := float(action.get("multiplier", 0.0))
+		if not is_finite(multiplier) or multiplier <= 0.0: return INF
+		return maxf(0.0, float(rule[stage]) / multiplier - elapsed)
+	if stage in ["loading", "aiming", "recovering"] and str(rule.get("projectile", "")) in ["bolt", "stone"]:
+		# Loading/aiming read current original crew on their next tick. An already
+		# paid recovery retains the original saved multiplier, including crew loss.
+		var multiplier := float(action.get("multiplier", 0.0)) if stage == "recovering" else crew_multiplier(vehicle)
+		if not is_finite(multiplier) or multiplier <= 0.0: return INF
+		return maxf(0.0, (float(rule[stage]) - elapsed) / multiplier)
+	return INF

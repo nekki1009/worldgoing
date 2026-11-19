@@ -25,7 +25,8 @@ enum LocalRouteStatus {
 
 enum CombatDestinationRole {
 	PLATFORM,
-	APPROACH_QUEUE
+	APPROACH_QUEUE,
+	SUPPRESS_WORK
 }
 
 enum TacticalSlotRole {
@@ -114,6 +115,7 @@ class MoveProposal:
 	var formation_persistent_serial: int = 0
 	var status: MoveProposalStatus = MoveProposalStatus.PENDING
 	var dependency_proposal_id: int = -1
+	var compound_id: String = "" # Tick-local grouping only; original people keep physical state.
 
 	func _init(p_formation_id: int = 0, p_member_id: int = 0, p_from: Vector2i = Vector2i(-1, -1), p_to: Vector2i = Vector2i(-1, -1)) -> void:
 		formation_id = p_formation_id

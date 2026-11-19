@@ -29,7 +29,8 @@ func run() -> void:
 	reordered.parts = _reverse_dictionary(baseline.parts)
 	assert(reordered == baseline and reordered.keys() != baseline.keys())
 	var timing := _validation_checks(source, baseline) if validation_mode else _key_checks(source, baseline, reordered)
-	var validated_key_timing: Array[Dictionary] = _validated_key_checks(source, baseline) if validated_key_mode else []
+	var validated_key_timing: Array[Dictionary] = [] # Typed per branch, not an untyped ternary literal.
+	if validated_key_mode: validated_key_timing = _validated_key_checks(source, baseline)
 	var initial_morphs := _morphs(source.editor)
 	var requests: Array = [
 		[&"idle", 0.019, Vector2i.RIGHT, Vector2.ZERO, 0.0, baseline],

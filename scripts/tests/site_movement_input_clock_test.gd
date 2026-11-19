@@ -20,7 +20,7 @@ func _fresh(row: bool, clock_hz: int = 30) -> void:
 	if is_instance_valid(lab):
 		lab.queue_free()
 		await process_frame
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate()
+	lab = (load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene).instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -34,7 +34,8 @@ func _fresh(row: bool, clock_hz: int = 30) -> void:
 	lab.terrain.static_blocked.fill(0)
 	lab.terrain.ramp_edges.fill(0)
 	assert(lab.character.place(Vector2i(20, 20), true))
-	assert(lab.npc.place(Vector2i(85, 85), true))
+	if is_instance_valid(lab.npc):
+		assert(lab.npc.place(Vector2i(85, 85), true))
 	if row:
 		assert(lab.character.place(Vector2i(80, 80), true))
 		lab.army.roster_size = 2

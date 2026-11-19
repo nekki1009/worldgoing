@@ -43,6 +43,9 @@ var _cancelled := false
 var _attempt := ""
 var _absent_nodes: Array[Node3D] = []
 var _errors: CaptureErrors
+var _frame_policy_active := false
+var _frame_policy_vsync := DisplayServer.VSYNC_ENABLED
+var _frame_policy_max_fps := 0
 
 func capture(plan: Dictionary, output: String, sources: Dictionary, dye_sources: Dictionary) -> bool:
 	if busy or (_active != null and _active.get_ref() != null):
@@ -73,16 +76,23 @@ func capture(plan: Dictionary, output: String, sources: Dictionary, dye_sources:
 	RenderingServer.frame_post_draw.connect(_on_draw)
 	_errors = CaptureErrors.new()
 	OS.add_logger(_errors)
+	_frame_policy_vsync = DisplayServer.window_get_vsync_mode()
+	_frame_policy_max_fps = Engine.max_fps
+	_frame_policy_active = true
+	# Use the original CLI baker policy only while this admitted job owns capture.
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
 	# Private copies prevent a UI request from mutating the plan across an await.
 	var success := await _capture(plan.duplicate(true), output, sources.duplicate(true), dye_sources.duplicate(true))
 	_cleanup_editor()
 	_stop_error_observer()
+	_restore_frame_policy()
 	success = success and error.is_empty()
 	if _tree.process_frame.is_connected(_on_frame): _tree.process_frame.disconnect(_on_frame)
 	if RenderingServer.frame_post_draw.is_connected(_on_draw): RenderingServer.frame_post_draw.disconnect(_on_draw)
 	if not success:
 		if error.is_empty(): error = "Capture cancelled or incomplete"
-		push_warning("Equipment atlas capture: " + error)
+		if error != "Capture host cancelled or removed": push_warning("Equipment atlas capture: " + error)
 	if not _attempt.is_empty():
 		_write_json(_attempt + "/result.json", {"complete": success, "error": error, "captured_frames": captured_frames, "total_frames": total_frames})
 	_attempt = ""
@@ -100,6 +110,13 @@ func _exit_tree() -> void:
 	cancel()
 	_cleanup_editor()
 	_stop_error_observer()
+	_restore_frame_policy()
+
+func _restore_frame_policy() -> void:
+	if not _frame_policy_active: return
+	_frame_policy_active = false
+	DisplayServer.window_set_vsync_mode(_frame_policy_vsync)
+	Engine.max_fps = _frame_policy_max_fps
 
 func _check_engine_error() -> bool:
 	if _errors != null:
@@ -381,11 +398,38 @@ func _capture_mask(plan: Dictionary, frames: Array[Dictionary], size: Vector2i) 
 				for surface in range(item.materials.size()): item.mesh.set_surface_override_material(surface, item.materials[surface])
 				item.mesh.material_overlay = item.overlay
 		environment.adjustment_enabled = true
-		var packed := DyeBaker._pack_mask(groups, neutral)
+		var packed := _pack_dye_mask(groups, neutral)
 		result.blit_rect(packed, Rect2i(Vector2i.ZERO, crop_size), Vector2i(int(frame.rect.x), int(frame.rect.y)))
 		captured_frames += 1
 		if not _alive(): return null
 	return result
+
+static func _pack_dye_mask(groups: Array[Image], neutral: Image) -> Image:
+	# Same ordered argmax as the original DyeBaker, without one Array per pixel.
+	for pixels: Image in groups: pixels.convert(Image.FORMAT_RGBA8)
+	neutral.convert(Image.FORMAT_RGBA8)
+	var a := groups[0].get_data()
+	var b := groups[1].get_data()
+	var n := neutral.get_data()
+	var packed := PackedByteArray()
+	packed.resize(neutral.get_width() * neutral.get_height() * 3)
+	for index in range(neutral.get_width() * neutral.get_height()):
+		var offset := index * 4
+		var winner := 0
+		var weight := int(a[offset])
+		var candidate := int(a[offset + 1])
+		if candidate > weight: weight = candidate; winner = 1
+		candidate = int(a[offset + 2])
+		if candidate > weight: weight = candidate; winner = 2
+		candidate = int(b[offset])
+		if candidate > weight: weight = candidate; winner = 3
+		candidate = int(b[offset + 1])
+		if candidate > weight: weight = candidate; winner = 4
+		if weight < 8 or n[offset + 3] < 8: continue
+		packed[index * 3] = winner + 1
+		packed[index * 3 + 1] = maxi(n[offset], maxi(n[offset + 1], n[offset + 2]))
+		packed[index * 3 + 2] = weight
+	return Image.create_from_data(neutral.get_width(), neutral.get_height(), false, Image.FORMAT_RGB8, packed)
 
 func _reject(reason: String) -> bool:
 	if error.is_empty(): error = reason

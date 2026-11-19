@@ -6,9 +6,9 @@ extends RefCounted
 ## Prepare -> Propose -> Resolve -> Commit -> Finalize.
 
 const Types = preload("res://scripts/terrain_lab/combat_movement_types.gd")
-const SiteRouteBudget = preload("res://scripts/terrain_lab/site_route_budget.gd")
-const SiteMovementReservationGrid = preload("res://scripts/terrain_lab/site_movement_reservation_grid.gd")
-const SiteDeploymentReservationRegistry = preload("res://scripts/terrain_lab/site_deployment_reservation_registry.gd")
+const RouteBudgetScript = preload("res://scripts/terrain_lab/site_route_budget.gd")
+const MovementReservationGridScript = preload("res://scripts/terrain_lab/site_movement_reservation_grid.gd")
+const DeploymentReservationRegistryScript = preload("res://scripts/terrain_lab/site_deployment_reservation_registry.gd")
 
 const MAX_EGRESS_FIELD_EXPANSIONS := 4096
 const MAX_SITE_PLANNING_EXPANSIONS_PER_TICK := 8192
@@ -33,11 +33,24 @@ var _occupancy_rebuild_pending: bool = false
 var _inflight_batches: Array[Array] = [] # Owner and member ID only; cells/progress remain in TerrainArmy.
 var current_logic_tick: int = 0
 var idle_tick_skip_enabled := true
+var shared_blocker_index_enabled := true # A/B: original per-team blocker readers remain the fallback.
+var shared_blocker_index_attempts := 0
+var shared_blocker_index_builds := 0
+var shared_blocker_index_copied_maps := 0
+var profile_enabled := false # Optional diagnostics only; never a movement budget.
+var profile_usec: Dictionary = {}
+
+func _profile_stage(stage: String, started: int) -> int:
+	if not profile_enabled:
+		return 0
+	var now := Time.get_ticks_usec()
+	profile_usec[stage] = int(profile_usec.get(stage, 0)) + now - started
+	return now
 
 func _init() -> void:
-	route_budget = SiteRouteBudget.new()
-	movement_reservation_grid = SiteMovementReservationGrid.new()
-	deployment_registry = SiteDeploymentReservationRegistry.new()
+	route_budget = RouteBudgetScript.new()
+	movement_reservation_grid = MovementReservationGridScript.new()
+	deployment_registry = DeploymentReservationRegistryScript.new()
 
 func reset_for_site_replacement() -> void:
 	# Registered Army nodes survive TerrainLab.set_site; their old cells and
@@ -49,8 +62,8 @@ func reset_for_site_replacement() -> void:
 	_egress_search_states.clear()
 	_egress_retry_queue.clear()
 	_occupancy_rebuild_pending = true
-	movement_reservation_grid = SiteMovementReservationGrid.new()
-	deployment_registry = SiteDeploymentReservationRegistry.new()
+	movement_reservation_grid = MovementReservationGridScript.new()
+	deployment_registry = DeploymentReservationRegistryScript.new()
 
 func register_formation(formation: Object) -> int:
 	if formation == null or not is_instance_valid(formation):
@@ -131,6 +144,101 @@ func request_occupancy_rebuild() -> void:
 func is_occupancy_rebuild_pending() -> bool:
 	return _occupancy_rebuild_pending
 
+## Local rollback for a synchronous same-Site handoff. Formation body state and
+## deployment leases are captured by their existing owners separately.
+func capture_handoff_state() -> Dictionary:
+	return {"active_formations": _active_formations.duplicate(),
+		"registered_formations": _registered_formations.duplicate(), "formation_by_id": _formation_by_id.duplicate(),
+		"next_formation_runtime_id": _next_formation_runtime_id,
+		"member_lookup": _member_lookup.duplicate(true), "current_occupancy": _current_occupancy.duplicate(),
+		"retained_occupancy": _retained_occupancy.duplicate(), "inflight_batches": _inflight_batches.duplicate(),
+		"egress_search_states": _egress_search_states.duplicate(), "egress_retry_queue": _egress_retry_queue.duplicate(),
+		"occupancy_rebuild_pending": _occupancy_rebuild_pending,
+		"grid_committed_occupancy": movement_reservation_grid.committed_occupancy.duplicate()}
+
+func validate_handoff_formations(returning_formations: Array) -> Dictionary:
+	# A physical batch may cross formation boundaries. The ordinary per-team
+	# restorer removes whole groups, so never split a foreign in-flight batch.
+	for group: Array in _inflight_batches:
+		var returning := false
+		var foreign := false
+		for entry: Dictionary in group:
+			if returning_formations.has(entry.formation): returning = true
+			else: foreign = true
+		if returning and foreign:
+			return {"ok": false, "reason": "RETURN_BATCH_CONFLICT"}
+	return {"ok": true}
+
+func restore_handoff_state(snapshot: Dictionary) -> void:
+	# No tick/proposal processing occurs between capture and rollback. Keep the
+	# same Grid and registry, including every foreign proposal, batch and lease.
+	for formation: Variant in _active_formations:
+		if not is_instance_valid(formation) or snapshot.active_formations.has(formation): continue
+		if formation.has_method("set_coordinator"): formation.set_coordinator(null)
+		if formation.has_method("set_formation_id"): formation.set_formation_id(0)
+	_active_formations.assign(snapshot.active_formations)
+	_registered_formations.clear()
+	_registered_formations.merge(snapshot.registered_formations)
+	_formation_by_id.clear()
+	_formation_by_id.merge(snapshot.formation_by_id)
+	_next_formation_runtime_id = int(snapshot.next_formation_runtime_id)
+	for formation: Variant in _active_formations:
+		register_formation(formation)
+	_member_lookup.clear()
+	_member_lookup.merge(snapshot.member_lookup.duplicate(true))
+	_current_occupancy.clear()
+	_current_occupancy.merge(snapshot.current_occupancy)
+	_retained_occupancy.clear()
+	_retained_occupancy.merge(snapshot.retained_occupancy)
+	_inflight_batches.assign(snapshot.inflight_batches)
+	_egress_search_states.clear()
+	_egress_search_states.merge(snapshot.egress_search_states)
+	_egress_retry_queue.assign(snapshot.egress_retry_queue)
+	_occupancy_rebuild_pending = bool(snapshot.occupancy_rebuild_pending)
+	movement_reservation_grid.committed_occupancy.clear()
+	movement_reservation_grid.committed_occupancy.merge(snapshot.grid_committed_occupancy)
+
+func resolve_occupancy_rebuild_checked() -> Dictionary:
+	# Validate in locals first. The legacy barrier reports duplicates only after
+	# clearing live occupancy; a handoff must be able to reject without doing so.
+	var members: Dictionary = {}
+	var cells: Dictionary = {}
+	for formation: Variant in _active_formations:
+		if not is_instance_valid(formation) or not formation.has_method("get_active_members_occupancy"): continue
+		var occupancy: Dictionary = formation.get_active_members_occupancy()
+		for mid: int in occupancy:
+			var cell: Vector2i = occupancy[mid]
+			if members.has(mid):
+				return {"ok": false, "reason": "DUPLICATE_MEMBER", "member_id": mid}
+			if cells.has(cell):
+				return {"ok": false, "reason": "CELL_CONFLICT", "cell": cell, "member_ids": [cells[cell], mid]}
+			members[mid] = {"formation": formation, "cell": cell}
+			cells[cell] = mid
+	var retained: Dictionary = {}
+	var retained_ids: Dictionary = {}
+	for cell: Vector2i in _retained_occupancy:
+		var mid: int = int(_retained_occupancy[cell])
+		if members.has(mid): continue # Rejoined members release their old retained cell.
+		if retained_ids.has(mid):
+			return {"ok": false, "reason": "DUPLICATE_MEMBER", "member_id": mid}
+		if cells.has(cell):
+			return {"ok": false, "reason": "CELL_CONFLICT", "cell": cell, "member_ids": [cells[cell], mid]}
+		retained[cell] = mid
+		retained_ids[mid] = true
+		cells[cell] = mid
+	var all_cells: Dictionary = {}
+	for cell: Vector2i in cells:
+		all_cells[cells[cell]] = cell
+	_member_lookup.clear()
+	_member_lookup.merge(members)
+	_current_occupancy.clear()
+	_current_occupancy.merge(cells)
+	_retained_occupancy.clear()
+	_retained_occupancy.merge(retained)
+	movement_reservation_grid.rebuild_occupancy_from_authoritative(all_cells)
+	_occupancy_rebuild_pending = false
+	return {"ok": true}
+
 func get_egress_search_state(formation_id: int) -> Types.EgressSearchState:
 	return _egress_search_states.get(formation_id, null)
 
@@ -168,25 +276,48 @@ func step_egress_planning(max_expansions: int = MAX_SITE_PLANNING_EXPANSIONS_PER
 			expansions_budget -= used
 			processed_count += 1
 
-func combat_logic_tick_if_needed(delta: float) -> void:
+func combat_logic_tick_if_needed(delta: float, external_blocked_cells: Dictionary = {}) -> void:
+	for transport: Object in _siege_transports():
+		if transport.has_pending_siege_compounds():
+			combat_logic_tick(delta, external_blocked_cells)
+			return
 	# The live battle may have thousands of soldiers but no formation MOVE.
 	# Rebuild occupancy on the first active tick, after all idle movement has settled.
 	if not idle_tick_skip_enabled or _occupancy_rebuild_pending or not _egress_retry_queue.is_empty():
-		combat_logic_tick(delta)
+		combat_logic_tick(delta, external_blocked_cells)
 		return
 	for formation in _active_formations:
+		if is_instance_valid(formation) and (formation.has_pending_suppress_approach() or formation.has_pending_fire_navigation()):
+			combat_logic_tick(delta, external_blocked_cells)
+			return
 		if not is_instance_valid(formation) or not formation.has_method("get_active_move_plan") or not formation.has_method("get_active_deployment_plan"):
-			combat_logic_tick(delta)
+			combat_logic_tick(delta, external_blocked_cells)
 			return
 		if formation.get_active_move_plan() != null or formation.get_active_deployment_plan() != null \
 			or (formation.has_method("has_pending_retreat_pair") and formation.has_pending_retreat_pair()):
-			combat_logic_tick(delta)
+			combat_logic_tick(delta, external_blocked_cells)
 			return
 	current_logic_tick += 1
 
-func combat_logic_tick(delta: float) -> void:
+func _siege_transports() -> Array[Object]:
+	var result: Array[Object] = []
+	for formation: Object in _active_formations:
+		if is_instance_valid(formation) and "vehicle_transport" in formation and formation.vehicle_transport != null and not result.has(formation.vehicle_transport):
+			result.append(formation.vehicle_transport)
+	return result
+
+## Option C gate: an empty or combat-disabled grid team (the Lab's default army) holds no simulation to refuse.
+func _has_member_formation() -> bool:
+	for formation: Object in _active_formations:
+		if is_instance_valid(formation) and formation is TerrainArmy and formation.combat_enabled and not formation.combat_units.is_empty(): return true
+	return false
+
+func combat_logic_tick(delta: float, external_blocked_cells: Dictionary = {}) -> void:
+	if (_has_member_formation() or not _inflight_batches.is_empty() or not _egress_retry_queue.is_empty()) and TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.combat_logic_tick", _gate_context()): return
+	var stage_started := Time.get_ticks_usec() if profile_enabled else 0
 	if _occupancy_rebuild_pending:
 		_resolve_occupancy_rebuild_barrier()
+		stage_started = _profile_stage("barrier", stage_started)
 
 	# 1. Prune invalid/freed formations
 	var valid_formations: Array = []
@@ -194,12 +325,15 @@ func combat_logic_tick(delta: float) -> void:
 		if is_instance_valid(f):
 			valid_formations.append(f)
 	_active_formations = valid_formations
+	stage_started = _profile_stage("setup", stage_started)
 
 	# 2. Rebuild current occupancy snapshot
 	_rebuild_occupancy()
+	stage_started = _profile_stage("occupancy", stage_started)
 
 	# Step egress planning for any retry requests
 	step_egress_planning(MAX_SITE_PLANNING_EXPANSIONS_PER_TICK)
+	stage_started = _profile_stage("egress", stage_started)
 
 	# 3. Begin tick for budget, reservation grid, and registry
 	route_budget.begin_tick(_active_formations)
@@ -211,37 +345,118 @@ func combat_logic_tick(delta: float) -> void:
 		if formation.has_method("get_active_movement_claims"):
 			for cell in formation.get_active_movement_claims():
 				claims[cell] = true
+	for cell in external_blocked_cells:
+		claims[cell] = true
 	movement_reservation_grid.begin_tick(_current_occupancy, terrain, claims)
 	deployment_registry.begin_tick(delta)
 
 	current_logic_tick += 1
+	stage_started = _profile_stage("begin", stage_started)
 
 	# Stage 1: Prepare
 	for formation in _active_formations:
+		if formation.has_method("begin_combat_movement_read_scope"):
+			formation.begin_combat_movement_read_scope()
+	var blocker_started := Time.get_ticks_usec() if profile_enabled else 0
+	_publish_shared_blocker_index()
+	if profile_enabled:
+		_profile_stage("shared_blocker_index", blocker_started)
+	for formation in _active_formations:
 		if formation.has_method("prepare_combat_movement_tick"):
 			formation.prepare_combat_movement_tick(delta, route_budget, deployment_registry)
+	stage_started = _profile_stage("prepare", stage_started)
 
 	# Stage 2: Propose
 	_propose_head_on_side_pocket_yield()
 	for formation in _active_formations:
 		if formation.has_method("propose_combat_moves"):
 			formation.propose_combat_moves(movement_reservation_grid)
+	for transport: Object in _siege_transports():
+		transport.propose_siege_compounds(movement_reservation_grid)
+	stage_started = _profile_stage("propose", stage_started)
+	# Resolve/Commit may change the original claims. The shared view ends before
+	# that boundary even though the member-roster read scope lasts through Finalize.
+	for formation in _active_formations:
+		if formation.has_method("clear_shared_movement_blockers"):
+			formation.clear_shared_movement_blockers()
 
 	# Stage 3: Resolve (authoritative conflict arbitration)
 	movement_reservation_grid.resolve_all()
+	stage_started = _profile_stage("resolve", stage_started)
 
 	# Stage 4: Commit (atomic cell commitment)
 	movement_reservation_grid.commit_all(_member_lookup, current_logic_tick)
 	_register_started_batches()
+	stage_started = _profile_stage("commit_register", stage_started)
 
 	# Stage 5: Finalize
 	for formation in _active_formations:
 		if formation.has_method("finalize_combat_movement_tick"):
 			formation.finalize_combat_movement_tick(delta, movement_reservation_grid, deployment_registry)
+	for formation in _active_formations:
+		if formation.has_method("end_combat_movement_read_scope"):
+			formation.end_combat_movement_read_scope()
+	stage_started = _profile_stage("finalize", stage_started)
 
 	# Check barrier at tick boundary after Finalize
 	if _occupancy_rebuild_pending:
 		_resolve_occupancy_rebuild_barrier()
+		_profile_stage("barrier", stage_started)
+
+func _publish_shared_blocker_index() -> void:
+	# The original Grid/Army maps remain authoritative. This is a disposable
+	# read-only view for the synchronous Prepare -> Propose window only.
+	shared_blocker_index_attempts += 1
+	if not shared_blocker_index_enabled or _active_formations.size() < 3:
+		return
+	var lab: TerrainLab = null
+	var terrain: TerrainData = null
+	var teams: Array[TerrainArmy] = []
+	for formation: Variant in _active_formations:
+		if not formation is TerrainArmy or formation.get_script() != TerrainArmy:
+			return
+		var team: TerrainArmy = formation
+		if team.get_coordinator() != self or team.data == null or team.data.get_script() != TerrainData \
+			or not team._common_route_pure_readers() \
+			or team.vehicle_transport != null and not team.vehicle_transport.records().is_empty():
+			return
+		var blocker: Callable = team.external_blocker
+		var owner: Object = blocker.get_object() if blocker.is_valid() else null
+		if not owner is TerrainLab or owner.get_script() != TerrainLab \
+			or blocker.get_method() != &"_armies_block_cell" or blocker.get_bound_arguments() != [team]:
+			return
+		if lab == null:
+			lab = owner as TerrainLab
+			terrain = team.data
+		elif owner != lab or team.data != terrain:
+			return
+		teams.append(team)
+	if lab == null or lab.terrain != terrain or lab.combat_armies.size() != teams.size():
+		return
+	for index in range(teams.size()):
+		if lab.combat_armies[index] != teams[index]:
+			return
+	var counts: Dictionary = {}
+	var owned: Array[Dictionary] = []
+	for team: TerrainArmy in teams:
+		var own: Dictionary = {}
+		for cell: Vector2i in team._cell_owners:
+			own[cell] = true
+		for cell: Vector2i in team._reserved_cells:
+			own[cell] = true
+		owned.append(own)
+		for cell: Vector2i in own:
+			counts[cell] = int(counts.get(cell, 0)) + 1
+	for index in range(teams.size()):
+		if teams[index].get_active_move_plan() == null and teams[index].get_active_deployment_plan() == null:
+			continue # Planless teams keep the original exact external-blocker reader.
+		var others: Dictionary = counts.duplicate()
+		for cell: Vector2i in owned[index]:
+			if int(counts[cell]) == 1:
+				others.erase(cell)
+		teams[index].set_shared_movement_blockers(others, current_logic_tick)
+		shared_blocker_index_copied_maps += 1
+	shared_blocker_index_builds += 1
 
 func _propose_head_on_side_pocket_yield() -> void:
 	# One-person formations can deadlock head-on in a one-cell corridor. Offer
@@ -281,6 +496,12 @@ func _register_started_batches() -> void:
 	for p in movement_reservation_grid.get_proposals():
 		if p.status != Types.MoveProposalStatus.ACCEPTED:
 			continue
+		if not p.compound_id.is_empty():
+			var key: String = "compound:" + p.compound_id
+			if not groups.has(key): groups[key] = []
+			var owner: Object = movement_reservation_grid.compound_proposals[p.compound_id].owner
+			groups[key].append({"formation": _member_lookup[p.member_id].formation, "member_id": p.member_id, "compound_id": p.compound_id, "compound_owner": owner})
+			continue
 		var root = p
 		if movement_reservation_grid.is_same_formation_pair_swap(p):
 			# A reciprocal pair has no empty-tail root. Give both participants the
@@ -305,9 +526,21 @@ func _register_started_batches() -> void:
 func complete_committed_moves() -> void:
 	if _inflight_batches.is_empty():
 		return
+	if TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.complete_committed_moves", _gate_context()): return
 	var pending: Array[Array] = []
 	for group: Array in _inflight_batches:
+		var compound_id := str(group[0].get("compound_id", "")) if not group.is_empty() else ""
+		var compound_owner: Object = group[0].get("compound_owner") if not compound_id.is_empty() else null
+		var frozen := false
+		for entry: Dictionary in group:
+			if is_instance_valid(entry.formation) and not entry.formation.combat_enabled:
+				frozen = true
+				break
+		if frozen:
+			pending.append(group)
+			continue
 		var terrain_invalid := false
+		if compound_owner != null: terrain_invalid = compound_owner.siege_compound_terrain_invalid(compound_id)
 		for entry: Dictionary in group:
 			var formation = entry.formation
 			if is_instance_valid(formation) and formation.committed_move_terrain_invalid(entry.member_id):
@@ -318,13 +551,18 @@ func complete_committed_moves() -> void:
 			for entry: Dictionary in group:
 				var formation = entry.formation
 				if is_instance_valid(formation):
+					var preserve_main: bool = not formation.committed_move_can_change_main_order(entry.member_id)
 					formation.cancel_committed_move_to_source(entry.member_id)
-					affected_formations[formation] = true
-			for formation in affected_formations.keys():
-				formation.hold_after_invalid_committed_batch()
+					affected_formations[formation] = bool(affected_formations.get(formation, false)) or not preserve_main
+			if compound_owner != null:
+				compound_owner.cancel_siege_compound(compound_id)
+			else:
+				for formation in affected_formations.keys():
+					if bool(affected_formations[formation]): formation.hold_after_invalid_committed_batch()
 			_occupancy_rebuild_pending = true
 			continue
 		var ready := true
+		if compound_owner != null: ready = compound_owner.can_finish_siege_compound(compound_id)
 		var source_owners: Dictionary = {}
 		for entry: Dictionary in group:
 			var formation = entry.formation
@@ -353,8 +591,10 @@ func complete_committed_moves() -> void:
 			var formation = entry.formation
 			var index: int = formation.index_for_identity(entry.member_id)
 			formation._cell_owners.erase(formation.cells[index])
+		if compound_owner != null: compound_owner.commit_siege_compound_pose(compound_id)
 		for entry: Dictionary in group:
 			entry.formation.finish_committed_move(entry.member_id)
+		if compound_owner != null: compound_owner.finish_siege_compound(compound_id)
 		_occupancy_rebuild_pending = true
 	_inflight_batches = pending
 	if _occupancy_rebuild_pending:
@@ -404,9 +644,12 @@ func _rebuild_occupancy() -> void:
 	_current_occupancy.clear()
 	_member_lookup.clear()
 	var active_ids: Dictionary = {}
+	var formation_occupancies: Dictionary = {}
 	for formation in _active_formations:
 		if formation != null and is_instance_valid(formation) and formation.has_method("get_active_members_occupancy"):
-			for mid in formation.get_active_members_occupancy().keys():
+			var occ: Dictionary = formation.get_active_members_occupancy()
+			formation_occupancies[formation] = occ
+			for mid in occ.keys():
 				active_ids[mid] = true
 	for cell in _retained_occupancy.keys():
 		if active_ids.has(_retained_occupancy[cell]):
@@ -423,7 +666,7 @@ func _rebuild_occupancy() -> void:
 		if formation == null or not is_instance_valid(formation):
 			continue
 		if formation.has_method("get_active_members_occupancy"):
-			var occ: Dictionary = formation.get_active_members_occupancy()
+			var occ: Dictionary = formation_occupancies[formation]
 			for mid in occ.keys():
 				var cell: Vector2i = occ[mid]
 				if seen_cells.has(cell):
@@ -432,3 +675,10 @@ func _rebuild_occupancy() -> void:
 				seen_cells[cell] = mid
 				_current_occupancy[cell] = mid
 				_member_lookup[mid] = { "formation": formation, "cell": cell }
+
+
+## Any registered formation node, so the grid gate can tell a road-map live party Lab (Region keeps the grid).
+func _gate_context() -> Node:
+	for formation: Variant in _active_formations:
+		if formation is Node and is_instance_valid(formation): return formation
+	return null

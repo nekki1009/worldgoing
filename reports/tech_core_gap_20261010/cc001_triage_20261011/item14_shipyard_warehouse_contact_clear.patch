@@ -1,0 +1,24 @@
+--- a/scripts/tests/site_technology_shipyard_physical_test.gd
++++ b/scripts/tests/site_technology_shipyard_physical_test.gd
+@@ -230,4 +230,21 @@
+ 	var destination := Stocks.storage(data, str(fixture.yard))
+ 	var vehicles = lab.site_controller.vehicles
++	# The warehouse host scan ignores fixture army positions, so a member can stand on
++	# its entrance; step him to a free cell so the real carrier reaches the contact.
++	var contact_cell: Vector2i = data.cell_from_index(int(data.site.features[fixture.warehouse].entrance))
++	var fixture_team: TerrainArmy = fixture.team
++	for unit_index: int in fixture_team.cells.size():
++		if fixture_team.cells[unit_index] != contact_cell: continue
++		var moved := false
++		for radius: int in range(1, 6):
++			for offset: Vector2i in [Vector2i(radius, 0), Vector2i(-radius, 0), Vector2i(0, radius), Vector2i(0, -radius)]:
++				var spot: Vector2i = contact_cell + offset
++				if data.contains(spot) and data.is_walkable(spot) and data.feature_at[data.index(spot)] == 0 and not fixture_team.cells.has(spot) and spot != lab.character.terrain_cell:
++					fixture_team._cell_owners.erase(contact_cell)
++					fixture_team.cells[unit_index] = spot
++					fixture_team._cell_owners[spot] = unit_index
++					moved = true
++					break
++			if moved: break
+ 	_check(lab.character.place(data.cell_from_index(int(data.site.features[fixture.warehouse].entrance)), true), "Actual carrier reaches original Warehouse contact")
+ 	_check(vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.warehouse), cost, [], int(actor.holder.version), int(source.holder.version), int(fixture.control)).ok, "True original Actor deposits its starting materials once into the real source holder")

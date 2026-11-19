@@ -38,6 +38,7 @@ func _work(lab: TerrainLab, seconds: float, commit: bool = true) -> void:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	for owner: Node in [lab, lab.character, lab.npc, lab.site_controller, lab.army, lab.opposing_army]:
@@ -154,9 +155,10 @@ func _run() -> void:
 	# Shared non-player 80/50 pauses this SAME job, without transfers or rest work.
 	var carrier: Dictionary = first.combat_units[1]
 	var shared := PersonFatigue.pool(carrier)
-	assert(is_same(shared, first.team_fatigue) and int(shared.count) == 3)
-	assert(PersonFatigue.pool(first_row).is_empty(), "The controlled captain keeps personal fatigue")
-	for index: int in [2, 3]:
+	# Every living formal member shares the team pool, the controlled captain included (人馬共用).
+	assert(is_same(shared, first.team_fatigue) and int(shared.count) == 4)
+	assert(is_same(PersonFatigue.pool(first_row), shared), "The controlled captain shares the team fatigue pool")
+	for index: int in [1, 2, 3]:
 		assert(is_same(shared, PersonFatigue.pool(first.combat_units[index])))
 	_near(PersonFatigue.effort_rate(carrier), PersonFatigue.WORK_RATE / float(shared.count), "One carrier contributes work divided by actual shared membership")
 	PersonFatigue.write(carrier, "fatigue", 79.999)
@@ -251,7 +253,9 @@ func _run() -> void:
 	assert(loaded.ok, str(loaded))
 	assert(loaded.data.site.armies[0].units[1].logistics)
 	assert(loaded.data.site.ground_loot == data.site.ground_loot)
-	print("SITE_FOOD_DELIVERY_PASS: actual camp/team/person/ground stocks + opened pools, 30 cap, original contact-before-commit, cancellation/source ownership, dedicated 3/6 role, original 80/50, routed later/last carrier drops and full Store roundtrip; not GPU/FPS")
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.free()
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
+	print("SITE_FOOD_DELIVERY_PASS: actual camp/team/person/ground stocks + opened pools, 30 cap, original contact-before-commit, cancellation/source ownership, dedicated 3/6 role, original 80/50, routed later/last carrier drops and full Store roundtrip; not GPU/FPS")
 	quit(0)

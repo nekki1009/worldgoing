@@ -3,6 +3,15 @@ extends "res://scripts/tests/site_work_team_clock_test.gd"
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const OPEN_SAVE := "res://.godot-temp/site_resources_contract/opened_loot.json"
 
+func _press(controller: SiteController, button_name: String) -> void:
+	# Formal commands now belong to their original movable tool windows.
+	var button := controller.lab.get_node("SiteUI").find_child(button_name, true, false) as Button
+	if button == null and is_instance_valid(controller.combat_window):
+		controller._open_combat_window()
+		button = controller.combat_window.find_child(button_name, true, false) as Button
+	assert(button != null, "Actual controller button missing: " + button_name)
+	button.pressed.emit()
+
 func _ground_cell(lab: TerrainLab, identity: int) -> Vector2i:
 	var person := lab.controlled_target() if identity == lab.controlled_person_id() else lab._combat_target(identity)
 	for direction: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
@@ -25,7 +34,8 @@ func _open_loot(lab: TerrainLab, container_id: String) -> AcceptDialog:
 	var controller: SiteController = lab.site_controller
 	controller.select_cell(lab.terrain.cell_from_index(int(lab.terrain.site.ground_loot[container_id].cell)))
 	_press(controller, "InspectLoot")
-	var dialog := lab.get_node("SiteUI/PersonInventoryDialog") as AcceptDialog
+	var dialog := controller._ui_dialogs.get("inventory", {}).get("dialog") as AcceptDialog
+	assert(is_instance_valid(dialog), "Actual inventory dialog must be registered by the original controller")
 	var choice := dialog.find_child("LootSource", true, false) as OptionButton
 	var found := false
 	for index: int in range(choice.item_count):
@@ -45,11 +55,24 @@ func _begin_ui(lab: TerrainLab, container_id: String, accepted: bool = true) -> 
 	assert(lab.site_controller.person_actions.is_busy(lab.controlled_person_id()) == accepted, lab.site_controller.message.text)
 	dialog.free()
 
+func _clock_step(lab: TerrainLab) -> void:
+	# Current exchange rules retain inputs below 30 Hz; one original action step
+	# must run before checking context invalidation or the next real meal.
+	var before := Runtime.now(lab.terrain)
+	lab._process(TerrainLab.EXCHANGE_ACTION_STEP)
+	print("OPENED_LOOT_CLOCK_STEP game_seconds=", (Runtime.now(lab.terrain) - before) * 60.0,
+		" retained_action_seconds=", lab._action_time_remainder)
+
 func _finish_clock(lab: TerrainLab) -> void:
 	var job: Dictionary = lab.site_controller.person_actions.job_for(lab.controlled_person_id())
 	assert(not job.is_empty() and float(lab.terrain.site.combat_left) == 0.0)
 	var seconds := float(job.duration) - float(job.elapsed)
-	lab._process(seconds / 60.0)
+	var game_step := Runtime.game_seconds(TerrainLab.EXCHANGE_ACTION_STEP, 0.0) * lab.simulation_speed
+	# Work productivity may finish after the nominal duration; stop at the first
+	# completed original step, with a small explicit bound rather than a clock skip.
+	for _step in range(maxi(2, ceili(seconds / game_step) * 2 + 1)):
+		if not lab.site_controller.person_actions.is_busy(lab.controlled_person_id()): break
+		_clock_step(lab)
 	assert(not lab.site_controller.person_actions.is_busy(lab.controlled_person_id()), lab.site_controller.message.text)
 
 func _assert_existing_meals(before: Dictionary, after: Dictionary) -> void:
@@ -81,8 +104,14 @@ func _assert_existing_meals(before: Dictionary, after: Dictionary) -> void:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit original NPC fixture; formal startup has no worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
+	# The existing JoinPlayerArmy fixture button is in the optional original test UI.
+	if not is_instance_valid(lab.site_test_window):
+		lab.site_test_window = preload("res://scripts/terrain_lab/site_test_window.gd").new()
+		lab.add_child(lab.site_test_window)
+		lab.site_test_window.call("setup", lab)
 	lab.set_process(false)
 	lab.character.set_process(false)
 	lab.npc.set_process(false)
@@ -138,23 +167,37 @@ func _run() -> void:
 		else:
 			data.site.ground_loot[key] = container.duplicate(true)
 			container = data.site.ground_loot[key]
-		lab._process(0.25 / 60.0)
+		_clock_step(lab)
+		print("OPENED_LOOT_CONTEXT reason=", reason, " busy=", controller.person_actions.is_busy(player_id), " result=", controller.message.text)
 		assert(not controller.person_actions.is_busy(player_id) and float(container.open_rations) == 0.375)
 		assert(controller._personal_opened_food(player_id).is_empty(), "Rejected pickup cannot create a private pool")
 	_begin_ui(lab, key)
 	var before_version := int(holder.version)
+	var pickup_window_start := Runtime.now(data) * 60.0
 	_finish_clock(lab)
 	var pool := controller._personal_opened_food(player_id)
-	assert(float(pool.open_rations) == 0.375 and Sustain._ids(pool) == [player_id])
+	# The new private cohort starts due (meal_until == at); the original sustain may pay that meal
+	# in the same quantum. Then exactly one meal for the remaining period, paid inside this window.
+	var cohort: Dictionary = pool.cohorts[0] if pool.get("cohorts", []).size() == 1 else {}
+	var paid := 0.375 - float(pool.open_rations)
+	var pickup_meal_end := float(cohort.get("meal_until", 0.0))
+	var unpaid: bool = paid == 0.0 and float(cohort.get("coverage", -1.0)) == 0.0
+	var paid_once: bool = float(cohort.get("coverage", 0.0)) == 1.0 and pickup_meal_end > pickup_window_start \
+		and paid >= (pickup_meal_end - Runtime.now(data) * 60.0) / Sustain.DAY - 0.000000001 and paid <= (pickup_meal_end - pickup_window_start) / Sustain.DAY + 0.000000001
+	assert((unpaid or paid_once) and Sustain._ids(pool) == [player_id], str(pool))
+	var picked_rations := float(pool.open_rations)
 	_near(float(pool.at), Runtime.now(data) * 60.0, "new private owner starts at current common clock")
 	assert(not data.site.ground_loot.has(key) and float(container.open_rations) == 0.0)
-	assert(int(holder.version) == before_version + 1 and is_same(cargo, data.site.manual.cargo) and is_same(holder, lab.character.item_state))
-	assert(cargo == {"stone": 19} and Runtime.carried_load(data.site, cargo, holder) == 19.375)
+	# A meal paid at pickup is a second original holder revision (as for the orphan pickup below).
+	assert(int(holder.version) == before_version + (2 if paid_once else 1) and is_same(cargo, data.site.manual.cargo) and is_same(holder, lab.character.item_state))
+	assert(cargo == {"stone": 19} and Runtime.carried_load(data.site, cargo, holder) == 19.0 + picked_rations)
 	assert(controller.person_actions.settle_after_contacts().is_empty() and not Runtime.clear_empty_ground_loot(data, key).ok)
 	# Fractions count against the same 20-item carrying bound before any job.
-	var full_key := _drop(lab, player_id, 0.75)
+	# Same overflow margin as an unpaid pickup: 0.125 over the bound.
+	var full_amount := 0.75 + (0.375 - picked_rations)
+	var full_key := _drop(lab, player_id, full_amount)
 	_begin_ui(lab, full_key, false)
-	assert(controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message) and float(data.site.ground_loot[full_key].open_rations) == 0.75, controller.message.text)
+	assert(controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message) and float(data.site.ground_loot[full_key].open_rations) == full_amount, controller.message.text)
 	controller.save_path = OPEN_SAVE
 	controller.save_current()
 	controller._auto_save_blocked = true
@@ -167,10 +210,10 @@ func _run() -> void:
 	cargo = data.site.manual.cargo
 	holder = lab.character.item_state
 	pool = controller._personal_opened_food(player_id)
-	assert(float(pool.open_rations) == 0.375 and cargo == {"stone": 19})
-	assert(float(data.site.ground_loot[full_key].open_rations) == 0.75 and lab.controlled_person_id() == player_id)
-	# The actual next small step pays the first meal once, without whole grain.
-	lab._process(1.0 / 60.0)
+	assert(float(pool.open_rations) == picked_rations and cargo == {"stone": 19})
+	assert(float(data.site.ground_loot[full_key].open_rations) == full_amount and lab.controlled_person_id() == player_id)
+	# The first meal is paid exactly once (at pickup or on this next small step), without whole grain.
+	_clock_step(lab)
 	assert(float(pool.open_rations) > 0.125 and float(pool.open_rations) < 0.126 and cargo == {"stone": 19})
 	var meal_before: Dictionary = pool.duplicate(true)
 	var opened_before := float(pool.open_rations)
@@ -192,20 +235,57 @@ func _run() -> void:
 	data.site.person_supply[str(row_id)] = orphan
 	var row_cargo: Dictionary = row.cargo
 	key = _drop(lab, row_id, 0.375)
+	var pickup_source: Dictionary = data.site.ground_loot[key]
+	var pickup_holder: Dictionary = row.item_state
+	var pickup_version: int = int(pickup_holder.version)
+	var pickup_receipt: Dictionary = {}
+	var original_changed: Callable = controller.person_actions.equipment_changed
+	assert(original_changed.is_valid())
+	# Observe the original no-fail tail; preserve its real equipment notification.
+	controller.person_actions.equipment_changed = func(identity: int) -> void:
+		original_changed.call(identity)
+		if identity != row_id: return
+		var received: Dictionary = controller._personal_opened_food(row_id)
+		pickup_receipt["count"] = int(pickup_receipt.get("count", 0)) + 1
+		pickup_receipt.merge({"at": Runtime.now(data) * 60.0, "open_rations": float(received.open_rations),
+			"same": is_same(orphan, received), "cohorts": received.cohorts.duplicate(true),
+			"holder_same": is_same(pickup_holder, row.item_state), "holder_version": int(row.item_state.version),
+			"source_remaining": float(pickup_source.open_rations), "source_cleared": not data.site.ground_loot.has(key)})
 	_begin_ui(lab, key)
 	_finish_clock(lab)
-	assert(is_same(orphan, controller._personal_opened_food(row_id)) and float(orphan.open_rations) == 0.375)
+	controller.person_actions.equipment_changed = original_changed
+	assert(pickup_receipt.get("count", 0) == 1 and pickup_receipt.same and pickup_receipt.holder_same)
+	assert(float(pickup_receipt.open_rations) == 0.375 and int(pickup_receipt.holder_version) == pickup_version + 1)
+	assert(float(pickup_receipt.source_remaining) == 0.0 and pickup_receipt.source_cleared)
+	assert(pickup_receipt.cohorts.size() == 1 and pickup_receipt.cohorts[0] is Dictionary)
+	var received_cohort: Dictionary = pickup_receipt.cohorts[0]
+	assert(received_cohort.ids == [row_id] and float(received_cohort.coverage) == 0.0)
+	_near(float(received_cohort.meal_until), float(pickup_receipt.at), "new cohort becomes due at the exact original pickup point")
+	var meal_end: float = (floorf(float(pickup_receipt.at) / Sustain.MEAL) + 1.0) * Sustain.MEAL
+	var paid_meal: float = (meal_end - float(pickup_receipt.at)) / Sustain.DAY
+	assert(float(orphan.at) + Sustain.EPS >= float(pickup_receipt.at) and float(orphan.at) < meal_end)
+	assert(is_same(orphan, controller._personal_opened_food(row_id)) and is_same(pickup_holder, row.item_state))
+	assert(orphan.cohorts.size() == 1 and orphan.cohorts[0].ids == [row_id])
+	_near(float(orphan.open_rations) + paid_meal, 0.375, "exact pickup stock equals remainder plus the due meal paid by the original clock")
+	_near(float(orphan.cohorts[0].coverage), 1.0, "the original due resupply pays this independent cohort in full")
+	_near(float(orphan.cohorts[0].meal_until), meal_end, "original next-meal deadline")
+	assert(int(pickup_holder.version) == pickup_version + 2)
 	assert(Sustain._ids(orphan) == [row_id] and not team.is_member(index) and is_same(row_cargo, row.cargo) and row_cargo.is_empty())
 	_near(float(orphan.at), Runtime.now(data) * 60.0, "empty old private pool aligns only before attaching its original person")
-	lab._process(1.0 / 60.0)
+	meal_before = orphan.duplicate(true)
+	_clock_step(lab)
 	assert(float(orphan.open_rations) > 0.125 and float(orphan.open_rations) < 0.126)
+	_near(float(orphan.open_rations) + paid_meal, 0.375, "the first meal is paid exactly once across the next original step")
+	_assert_existing_meals(meal_before, orphan)
+	assert(int(pickup_holder.version) == pickup_version + 2)
+	assert(controller.person_actions.settle_after_contacts().is_empty() and not data.site.ground_loot.has(key))
 	key = _drop(lab, row_id, 0.25)
 	_begin_ui(lab, key)
 	data.site.person_supply[str(row_id)] = orphan.duplicate(true)
 	var replacement: Dictionary = data.site.person_supply[str(row_id)]
 	opened_before = float(replacement.open_rations)
 	meal_before = replacement.duplicate(true)
-	lab._process(0.25 / 60.0)
+	_clock_step(lab)
 	assert(not controller.person_actions.is_busy(row_id) and float(data.site.ground_loot[key].open_rations) == 0.25)
 	assert(float(replacement.open_rations) == opened_before)
 	_assert_existing_meals(meal_before, replacement)
@@ -267,7 +347,8 @@ func _run() -> void:
 	var record_count: int = data.site.item_records.size()
 	team.apply_unit_contact(fallen_index, {"result": {"hp": 100.0, "stun": 0.0, "guard_break": false}, "shield": false})
 	assert(float(fallen.hp) == 0.0 and not bool(fallen.get("loot_settled", false)))
-	lab._process(float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"]) + 0.01)
+	var death_seconds := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"]) + 0.01
+	lab._process(ceilf(death_seconds / TerrainLab.EXCHANGE_ACTION_STEP) * TerrainLab.EXCHANGE_ACTION_STEP)
 	assert(bool(fallen.loot_settled) and data.site.ground_loot.size() == ground_count + 1)
 	var remains: Dictionary = data.site.ground_loot[str(fallen.remains_id)]
 	assert(float(remains.open_rations) == 0.375 and float(private_stock.open_rations) == 0.0)
@@ -280,7 +361,7 @@ func _run() -> void:
 	key = _drop(lab, lab.npc.person_id, 0.375)
 	_begin_ui(lab, key)
 	lab.npc.apply_contact({"result": {"hp": 1.0, "stun": 0.0, "guard_break": false}, "shield": false})
-	lab._process(0.001)
+	_clock_step(lab)
 	assert(not controller.person_actions.is_busy(lab.npc.person_id))
 	assert(controller._personal_opened_food(lab.npc.person_id).is_empty() and float(data.site.ground_loot[key].open_rations) == 0.375)
 	assert(not data.site.manual.cargo.has("grain") and not row_cargo.has("grain") and not data.site.worker.cargo.has("grain"))
