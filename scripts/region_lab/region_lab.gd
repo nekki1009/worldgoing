@@ -373,6 +373,12 @@ func select_site(site: Vector2i) -> Dictionary:
 		str(selection.get("site_id", site)), str(selection.get("region", "—")), CLASS_NAMES[class_id],
 		state_label, "海面" if class_id == 1 else ("有" if bool(selection.get("has_elevation", false)) else "尚缺"),
 		_quality_description(int(selection.get("source_quality_code", -1)))]
+	# 貿易 T4 TR-42: on a journey the map says what the player knows of this Site's market, or 未知.
+	var journey_slot: Variant = _travel.get("slot") if _travel != null else null
+	if journey_slot != null and journey_slot.has_method("region_player_known_markets"):
+		_details.text += "
+" + str((load("res://scripts/region_lab/region_market_observation.gd") as Script).call("line_for",
+			journey_slot.region_player_known_markets(), str(selection.get("site_id", ""))))
 	_open_button.disabled = site_visible or not bool(selection.get("ok", false)) or not bool(selection.get("has_terrain", false)) or class_id == 0
 	_new_world_button.disabled = not bool(selection.get("ok", false)) or not bool(selection.get("has_terrain", false)) or class_id not in [2, 4]
 	_update_selected_preview()

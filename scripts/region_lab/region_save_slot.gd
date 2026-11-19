@@ -10190,6 +10190,13 @@ func region_player_known_intel() -> Dictionary:
 	if current.is_empty(): return {}
 	return RegionAI.view(region_registry(), int(current.identity), float(control.logical_game_seconds), str(current.scope), current.reference)
 
+## 貿易 T4 TR-42: the markets the player knows of, unexpired: {site id: {value, game_time, expires_at}}.
+func region_player_known_markets() -> Dictionary:
+	var current := _region_player_intel_identity()
+	if current.is_empty(): return {}
+	return (load("res://scripts/region_lab/region_market_observation.gd") as Script).call("known", region_registry(), int(current.identity),
+		float(control.logical_game_seconds), str(current.scope), current.reference)
+
 
 
 ## Read the same current original owner as ordinary control/family continuity.

@@ -8,7 +8,9 @@ extends "res://scripts/tests/site_market_t3_test.gd"
 ##   is about "market:<site>", not about the market feature (it never shadows a visible-feature receipt);
 ## - an unchanged market seen again adds nothing; changed listings add a newer receipt that is what he knows;
 ## - three game days later the listings he knows have expired and are not taken as current;
-## - a Site whose market is not complete records nothing.
+## - a Site whose market is not complete records nothing;
+## - T4 TR-42: his map line shows the listing and when it was seen; a Site never seen, or an expired listing, reads 未知;
+##   the travel panel's intel line names the Site's market.
 ## Output: SITE_MARKET_OBSERVATION_T3_PASS on success; push_error + quit(1) on failure.
 
 const Observation = preload("res://scripts/region_lab/region_market_observation.gd")
@@ -99,9 +101,20 @@ func _run() -> void:
 	if not _check(relisted.ok and second.ok and int(second.observed) == 1 and int(known[scope].value.rows[0].daily) == 2 and is_equal_approx(float(known[scope].game_time), 2000.0),
 		"changed listings add a newer receipt that is what he knows", [second, known]): return
 
+	# T4 TR-42: what his map says, with the observation time; a Site never seen reads 未知.
+	var line := Observation.line_for(known, scope)
+	if not _check(line.begins_with("市集掛牌：付 食鹽 1 得 糧食 2（每日 2 份）（觀察於 ") and Observation.line_for(known, "never:seen:site") == "市集掛牌：未知",
+		"the map line shows the known listing and when it was seen; an unseen Site is 未知", line): return
+	var newest: Dictionary = {}
+	for value: Variant in slot.registry.observations.values():
+		if str(value.get("observation_kind", "")) == Observation.KIND and (newest.is_empty() or float(value.game_time) > float(newest.game_time)): newest = value
+	var label := RegionAI.known_intel_label(newest)
+	if not _check(label == "Site %s 市集：付 食鹽 1 得 糧食 2（每日 2 份）" % scope, "the travel panel's intel line names the Site's market and its listing", label): return
+
 	# TR-34: expired listings are not current.
 	var later := 2000.0 + Observation.LISTING_SECONDS + 1.0
 	if not _check(Observation.known(slot.registry, npc, later, scope, reference).is_empty(), "three game days later the listings he knows have expired"): return
+	if not _check(Observation.line_for(Observation.known(slot.registry, npc, later, scope, reference), scope) == "市集掛牌：未知", "an expired listing reads 未知 on his map, not as current"): return
 
 	print("SITE_MARKET_OBSERVATION_T3_PASS checks=", observation_checks, "; unbuilt nothing, recorded once by stable ref, market object, unchanged nothing, newer on change, expiry")
 	_finish_workflow_body()

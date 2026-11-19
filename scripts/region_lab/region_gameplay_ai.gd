@@ -330,6 +330,8 @@ static func known_intel_label(receipt: Dictionary) -> String:
 	if value.get("people") is Array: label += "：%d 名當時可見人物" % value.people.size()
 	elif receipt.get("observation_kind") == "officer_visible_feature":
 		label += "：%s，當時陣營 %d" % [str(value.get("kind", "")), int(value.get("owner_faction", 0))]
+	elif receipt.get("observation_kind") == "market_listings": # 貿易 T4 TR-42
+		label = "Site %s 市集：%s" % [str(receipt.get("object_scope", "")), str((load("res://scripts/region_lab/region_market_observation.gd") as Script).call("summary", value))]
 	return label
 
 

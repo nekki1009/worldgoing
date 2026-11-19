@@ -10,6 +10,7 @@ const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
 const Strength = preload("res://scripts/region_lab/region_site_strength.gd")
 const Market = preload("res://scripts/terrain_lab/site_market.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
 const KIND := "market_listings"
 const LISTING_SECONDS := 3.0 * 86400.0
@@ -63,3 +64,18 @@ static func known(registry: Dictionary, person: int, now: float, scope: String =
 		if receipt.get("observation_kind") != KIND: continue
 		result[str(receipt.get("object_scope", ""))] = {"value": receipt.value, "game_time": float(receipt.game_time), "expires_at": float(receipt.expires_at)}
 	return result
+
+## 貿易 T4 TR-42: what the player's map says of a Site's market. `known` is RegionMarketObservation.known for the player;
+## a Site he has no unexpired receipt for is "未知" (never a guess, never someone else's knowledge).
+static func line_for(known: Dictionary, site_id: String) -> String:
+	if not known.has(site_id): return "市集掛牌：未知"
+	var entry: Dictionary = known[site_id]
+	return "市集掛牌：%s（觀察於 %s）" % [summary(entry.get("value", {})), Calendar.clock_text(float(floori(float(entry.game_time) / 60.0)))]
+
+## The listings as people read them: "付 鹽 1 得 糧食 2（每日 3 份）；…", "沒有掛牌", with "（暫停）" when closed.
+static func summary(value: Dictionary) -> String:
+	var parts: Array = []
+	for row: Variant in value.get("rows", []):
+		if row is Dictionary: parts.append("付 %s 得 %s（每日 %d 份）" % [Market.stack_text(row.get("want", {})), Market.stack_text(row.get("give", {})), int(row.get("daily", 0))])
+	var text := "沒有掛牌" if parts.is_empty() else "；".join(parts)
+	return text + ("" if bool(value.get("open", true)) else "（暫停）")
