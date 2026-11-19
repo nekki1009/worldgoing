@@ -90,6 +90,18 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 		if person.is_empty() or float(person.hp) <= 0.0 or not Housing.schedule_authority(lab, person): continue
 		var place := place_at(minute_of_day(minute), diligence_of(person))
 		if (shelter or alarm) and place in ["work", "out"]: place = "home"
+		# 平民 C1c: inside the house (native absent "at home") he stays in for home phases and while sheltering; he comes
+		# out at his door when the timetable sends him out, or when his house can no longer lodge him.
+		var crowd_site: Variant = lab.crowd_site if lab.get("crowd_site") != null and bool(lab.crowd_site.active) else null
+		if crowd_site != null and crowd_site.is_at_home(identity):
+			if place == "home" and house_lodges(lab, identity, person):
+				result.home = int(result.home) + 1
+				continue
+			if not crowd_site.home_leave(identity):
+				result.refused = int(result.refused) + 1
+				continue
+			person = actions._person(identity, false)
+			result["left_home"] = int(result.get("left_home", 0)) + 1
 		if place == "work":
 			if work_team.is_assigned(identity):
 				result.working = int(result.working) + 1
@@ -105,12 +117,21 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 			continue # the housing return starts at the next check, after the work step settles
 		if Housing._attends(lab, identity):
 			result.home = int(result.home) + 1
+			if crowd_site != null and crowd_site.home_enter(identity): result["entered"] = int(result.get("entered", 0)) + 1
 			continue
 		if actions.is_busy(identity) or bool(person.moving): continue
 		var begun: Dictionary = actions.begin_housing_return(identity, Housing.SCHEDULE_REQUESTER, alarm)
 		if begun.ok: result.started = int(result.started) + 1
 		else: result.refused = int(result.refused) + 1
 	return result
+
+## 平民 C1c: the house a resident is registered to can still lodge him (complete, usable, still his faction's).
+static func house_lodges(lab: Variant, identity: int, person: Dictionary) -> bool:
+	var registered := Housing.relation(lab, identity)
+	if registered.is_empty(): return false
+	var layout: Dictionary = Housing.Runtime.house_layout(lab.terrain, str(registered.house_id))
+	var feature: Dictionary = lab.terrain.site.features.get(str(registered.house_id), {})
+	return layout.ok and bool(layout.complete) and Housing.Runtime.feature_usable(feature, "lodging") and int(feature.get("owner_faction", -1)) == int(person.faction)
 
 # --- 平民 C3a: danger (reports/civilian-site-behavior-plan.md §4.5) -------------------------------------------------
 ## Residents stay home ALARM_HOLD_MINUTES after the danger has passed.

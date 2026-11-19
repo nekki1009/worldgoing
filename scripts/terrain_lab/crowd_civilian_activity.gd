@@ -116,7 +116,7 @@ func _decide(site: Variant) -> void:
 		if identity == controlled: continue
 		var index := int(site._index_by_id.get(identity, -1))
 		if index < 0 or index >= site._kit_ids.size() or not _tracks.has(int(site._kit_ids[index])): continue
-		if int(crowd.get_military_role(index)) != CIVILIAN_ROLE or not bool(crowd.get_soldier_presence(index)): continue
+		if int(crowd.get_military_role(index)) != CIVILIAN_ROLE or site._absent_kind(index) != 0: continue # inside a house, garrisoned, away: no activity
 		var person: Dictionary = controller.person_actions._person(identity, false)
 		if person.is_empty() or float(person.get("hp", 0.0)) <= 0.0: continue
 		var phase := Schedule.phase_at(Schedule.minute_of_day(minute), Schedule.diligence_of(person))

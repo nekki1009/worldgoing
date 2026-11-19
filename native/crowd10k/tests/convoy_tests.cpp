@@ -1201,7 +1201,7 @@ static void absent_refusals() {
 	test_case = "absent refusals: bad kind or soldier, knocked out, captive, aboard, released, already absent; each changes nothing";
 	World w(1); setup(w);
 	REQUIRE(!w.site_person_absent(-1, 1) && !w.site_person_absent(99, 1));
-	REQUIRE(!w.site_person_absent(2, 0) && !w.site_person_absent(2, 5));
+	REQUIRE(!w.site_person_absent(2, 0) && !w.site_person_absent(2, 6)); // kinds 1-5 (5 = at home, 平民 C1c)
 	w.ko[2] = 30.0;
 	REQUIRE(!w.site_person_absent(2, 1)); // knocked out
 	w.ko[2] = 0.0;
@@ -1222,6 +1222,13 @@ static void absent_refusals() {
 	REQUIRE(v.site_person_absent(2, 4));
 	REQUIRE(!v.site_person_absent(2, 1)); // already absent
 	REQUIRE(v.absent[2] == 1 && v.absent_kind[2] == 4 && v.slot[2] == -1);
+	{ // 平民 C1c: at home (kind 5) is an ordinary absence: kept on the roster, saved, validated, and returns like the rest.
+		World h(1); setup(h);
+		REQUIRE(h.site_person_absent(2, 5));
+		REQUIRE(h.absent[2] == 1 && h.absent_kind[2] == 5 && h.slot[2] == -1 && !h.alive(2) && h.validate());
+		REQUIRE(!h.site_person_absent(2, 4)); // already absent
+		REQUIRE(h.site_person_return(2, h.form[2], h.px[2], h.py[2]) && !h.is_absent(2) && h.absent_kind[2] == 0 && h.validate());
+	}
 	REQUIRE(v.formations[0].roster == roster && v.formations[0].fatigue_count == fatigue);
 	REQUIRE(v.validate());
 }

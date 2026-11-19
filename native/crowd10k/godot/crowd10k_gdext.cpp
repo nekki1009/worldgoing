@@ -1276,7 +1276,7 @@ void m_site_person_aboard(CALL_ARGS) {
 // G5 S1 absent / return / move_member. Refusals return false and change nothing. site_person_absent_state: [absent, kind].
 void m_site_person_absent(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, kind;
-	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],kind) && i>=0 && i<w.soldier_count() && kind>=1 && kind<=4 && w.site_person_absent((int)i,(int)kind));
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],kind) && i>=0 && i<w.soldier_count() && kind>=1 && kind<=5 && w.site_person_absent((int)i,(int)kind));
 }
 void m_site_person_return(CALL_ARGS) {
 	SELF; NEED(4); WORLD; int64_t i, formation; double x = 0, y = 0;

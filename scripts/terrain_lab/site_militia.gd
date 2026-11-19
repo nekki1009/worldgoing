@@ -62,6 +62,8 @@ static func draft(lab: Variant, requester_id: int) -> Dictionary:
 		var walking: Dictionary = actions._jobs.get(str(identity), {}) # the live job (job_for returns a copy)
 		if str(walking.get("kind", "")) == "housing_return" and not bool(walking.get("cancelled", false)): actions._cancel_housing_job(walking, "徵召鄉勇")
 		if lab.site_controller.work_team.is_assigned(identity): lab.site_controller.work_team.cancel(identity)
+		# 平民 C1c: a resident inside his house comes out at his door to be drafted.
+		if lab.get("crowd_site") != null and bool(lab.crowd_site.active) and lab.crowd_site.is_at_home(identity) and not lab.crowd_site.home_leave(identity): continue
 		var done := _set_role(lab, identity, "soldier")
 		if not done.ok: continue
 		drafted.append(identity)

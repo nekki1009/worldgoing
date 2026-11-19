@@ -738,8 +738,10 @@ void World::reassign_formation(int i, int to) {
 	n.command_dirty = true;
 }
 
+// Kinds: 1 detached, 2 left the Site, 3 (reserved by the host), 4 garrison, 5 at home inside a house (平民 C1c; the host
+// still counts the person on its roster; not drawn, no collision, never a target).
 bool World::site_person_absent(int i, int kind) {
-	if (work_point_active_ || work_point_finish_ready_ || kind < 1 || kind > 4 || i < 0 || i >= soldier_count()) return false;
+	if (work_point_active_ || work_point_finish_ready_ || kind < 1 || kind > 5 || i < 0 || i >= soldier_count()) return false;
 	if (is_absent(i) || is_aboard(i) || is_surrendered(i) || !site_person_exit_ready(i)) return false;
 	Formation &f = formations[form[i]];
 	absent[i] = 1; absent_kind[i] = (uint8_t)kind;

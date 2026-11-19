@@ -3136,6 +3136,27 @@ func native_return(identities: Array, formation: int) -> Dictionary:
 	return SiteRuntime.ok()
 
 
+# 平民 C1c (reports/c1c-in-home-plan.md): a resident inside his house is natively absent with kind 5. He stays on the
+# roster (member, not present), is not drawn, never collides and is never a target; he leaves at his door cell.
+const ABSENT_AT_HOME := 5
+
+func is_at_home(identity: int) -> bool:
+	var index := int(_index_by_id.get(identity, -1))
+	return index >= 0 and crowd != null and _absent_kind(index) == ABSENT_AT_HOME
+
+## Enters only an on-field, exit-ready, non-controlled crowd person; a refusal changes nothing.
+func home_enter(identity: int) -> bool:
+	var index := int(_index_by_id.get(identity, -1))
+	if index < 0 or crowd == null or identity == int(lab.controlled_person_id()) or _actors.has(identity) or not _owner_by_id.has(identity): return false
+	if _absent_kind(index) != 0 or not bool(_owner_by_id[identity].site_exit_ready(index)): return false
+	return native_set_absent(index, ABSENT_AT_HOME)
+
+## Leaves at the person's own (door) cell, or the nearest free walkable cell of his formation.
+func home_leave(identity: int) -> bool:
+	if not is_at_home(identity) or not _owner_by_id.has(identity): return false
+	return native_return_nearest(int(_index_by_id[identity]), int(_owner_by_id[identity].formation_index))
+
+
 # G5 S2: one person's absence through the native op. Refusals change nothing and return false.
 func native_set_absent(index: int, kind: int) -> bool:
 	if index < 0 or crowd == null: return false

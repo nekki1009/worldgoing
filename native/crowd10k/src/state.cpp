@@ -470,7 +470,7 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (size_t i = 0; i < n; ++i) CHECK_VALID(hp[i] <= 0 || membership[i] || released[i] || absent[i]);
 	// G5 S1: an absent soldier is in no member list and holds no slot; a present one has no absent kind
 	for (size_t i = 0; i < n; ++i) {
-		if (absent[i]) CHECK_VALID(absent_kind[i] >= 1 && absent_kind[i] <= 4 && !membership[i] && slot[i] < 0 && !aboard[i] && !released[i] && !captive[i] && convoy_of[i] == 0 && hp[i] > 0);
+		if (absent[i]) CHECK_VALID(absent_kind[i] >= 1 && absent_kind[i] <= 5 && !membership[i] && slot[i] < 0 && !aboard[i] && !released[i] && !captive[i] && convoy_of[i] == 0 && hp[i] > 0);
 		else CHECK_VALID(absent_kind[i] == 0);
 	}
 	for (size_t i = 0; i < n; ++i) CHECK_VALID(!released[i] || (!membership[i] && !captive[i]));
