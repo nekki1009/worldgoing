@@ -5,7 +5,8 @@ extends "res://scripts/tests/site_market_t3_test.gd"
 ## NPC is moved to faction 2. Checks:
 ## - with no trade treaty, a face-to-face trade between the player (faction 1) and the NPC (faction 2) pays 20%;
 ## - with a 10% trade treaty it pays 10% (the lower of the two rates); the treasury gets exactly that, in kind;
-## - once the treaty's term has passed, 20% again.
+## - once the treaty's term has passed, 20% again;
+## - a treaty rate above the base (30%) never raises it: still 20%.
 ## Output: SITE_TRADE_TREATY_LIVE_T6_PASS on success; push_error + quit(1) on failure.
 
 var treaty_checks := 0
@@ -121,9 +122,20 @@ func _run() -> void:
 	slot.control["logical_game_seconds"] = t + 31.0 * 86400.0
 	var expired_trade: Array = trade_once.call("expired")
 	if not _check(expired_trade[0] and expired_trade[1] == 3 and expired_trade[2] == 2, "after the treaty's term the trade pays 20% again", expired_trade): return
+	# A treaty only lowers the tax: a 30% treaty above the 20% base still pays 20%.
+	var t2 := t + 31.0 * 86400.0
+	var high: Dictionary = RegionDiplomacy.propose(reg, f1, f2, "trade", 30, {"type": "person", "namespace": "treaty_live", "lineage": 1}, 0.0, t2, 30)
+	if not _check(high.ok, "a 30% trade treaty is proposed after the first one ended", high): return
+	reg = RegionDiplomacy.settle(high.registry, t2).registry
+	reg = RegionDiplomacy.reply(reg, int(high.proposal_id), true, {"type": "person", "namespace": "treaty_live", "lineage": 2}, 0.0, t2).registry
+	reg = RegionDiplomacy.settle(reg, t2).registry
+	slot.control["faction_registry"] = reg
+	if not _check(int(RegionDiplomacy.trade_treaty_between(reg, f1, f2, t2).get("tax_percent", -1)) == 30, "the 30% trade treaty stands"): return
+	var high_trade: Array = trade_once.call("high")
+	if not _check(high_trade[0] and high_trade[1] == 3 and high_trade[2] == 2, "a 30% treaty above the 20% base still pays 20% (a treaty only lowers)", high_trade): return
 
 	controller.region_slot = null
-	print("SITE_TRADE_TREATY_LIVE_T6_PASS checks=", treaty_checks, "; base 20%, treaty 10% (the lower), expired back to 20%")
+	print("SITE_TRADE_TREATY_LIVE_T6_PASS checks=", treaty_checks, "; base 20%, treaty 10% (the lower), expired back to 20%, a 30% treaty still 20%")
 	_finish_workflow_body()
 	for _frame: int in range(3): await process_frame
 	lab.free()
