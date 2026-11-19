@@ -62,6 +62,37 @@ void World::contact_pose(int i, int movement, int &slot, double &age) const {
 	else if (movement == 1) slot = V_WALK;
 }
 
+
+void World::render_clear_activity() {
+	for (auto &p : pres) p.activity.valid = false;
+}
+
+bool World::render_set_activity(const std::vector<int32_t> &indices, const std::vector<int32_t> &tracks,
+		const std::vector<float> &ages, const std::vector<uint8_t> &valid) {
+	const size_t count = indices.size(), n = (size_t)soldier_count();
+	if (count > n || tracks.size() != count * 4 || ages.size() != count || valid.size() != count) return false;
+	if (count == 0) { render_clear_activity(); return true; }
+	std::vector<RenderActivity> next(n);
+	for (size_t row = 0; row < count; ++row) {
+		const int i = indices[row];
+		if (i < 0 || (size_t)i >= n || (row && indices[row-1] >= i) || valid[row] > 1 ||
+			!std::isfinite(ages[row]) || ages[row] < 0) return false;
+		if (valid[row] && (military_role[i] != 2 || host_ctl[i] || mounted[i] || released[i] || absent[i] ||
+			kit[i] < 0 || (size_t)kit[i] >= render_kits.size())) return false;
+		RenderActivity &a = next[(size_t)i];
+		for (size_t d = 0; d < 4; ++d) {
+			const int tr = tracks[row*4+d];
+			if (valid[row] ? (tr < 0 || (size_t)tr >= render_tracks.size()) : (tr != -1 || ages[row] != 0)) return false;
+			a.track[d] = tr;
+		}
+		a.age = ages[row]; a.person = person_id[i]; a.kit = kit[i]; a.valid = valid[row] != 0;
+	}
+	// Publish only after every row is admitted. The host supplies tracks from the admitted kit's page.
+	if (pres.size() != n) pres.assign(n, Presentation{});
+	for (size_t i = 0; i < n; ++i) pres[i].activity = next[i];
+	return true;
+}
+
 int World::pack_rows(std::vector<float> &out, std::vector<int32_t> &spans, std::vector<float> &bounds, float cell_pixels) {
 	const int n = soldier_count();
 	// key: row 16 | part 4 | band 4 | page 8 | in-row ground y 16 | index 16. group = key >> 32.
@@ -85,10 +116,10 @@ int World::pack_rows(std::vector<float> &out, std::vector<int32_t> &spans, std::
 	static thread_local std::vector<float> auto_actors;
 	auto_actors.clear();
 	for (int i = 0; i < n; ++i) {
-		if (released[i] || absent[i]) continue; // departed with a travelling person, or off the field (G5 S1): not drawn
+		if (released[i] || absent[i]) { pres[(size_t)i].activity.valid = false; continue; } // No stale activity on return.
 		int k = kit[i];
 		const bool has_kit = k >= 0 && k < (int)render_kits.size();
-		if (!has_kit && !host_ctl[i]) continue; // a host soldier without a kit is drawn by the host (soldier_view)
+		if (!has_kit && !host_ctl[i]) { pres[(size_t)i].activity.valid = false; continue; } // Original host presenter.
 		VisualSlot slot = V_IDLE;
 		float age = (float)(time + (double)(i % 97) * 0.37); // desynchronised loops
 		const double since = time - vis_t0[i];
@@ -136,6 +167,13 @@ int World::pack_rows(std::vector<float> &out, std::vector<int32_t> &spans, std::
 		}
 		const RenderKit &K = render_kits[k];
 		int tr = K.track[slot][d];
+		RenderActivity &activity = P.activity;
+		if (activity.valid && (military_role[i] != 2 || host_ctl[i] || mounted[i] ||
+			activity.person != person_id[i] || activity.kit != k)) activity.valid = false;
+		// Original reactions, KO, rescue and running always win; activity has no simulation clock.
+		if (activity.valid && (slot == V_IDLE || slot == V_WALK)) {
+			tr = activity.track[d]; age = activity.age;
+		}
 		if (tr < 0 && slot == V_RUN) tr = K.track[V_WALK][d];
 		if (tr < 0) tr = K.track[V_IDLE][d];
 		if (tr < 0) continue;

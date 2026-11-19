@@ -366,5 +366,20 @@
   "mode": "headless",
   "timeout": 180,
   "note": "trade T3 slice 4 observations"
+ },
+ {
+  "script": "res://scripts/tests/site_civilian_atlas_admission_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "cc198_new_01",
+   "--ca01-out",
+   "res://output/ca01_new_01",
+   "--ca01-reference",
+   "res://output/ca01_original_reference/result.json"
+  ],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "CIV-A0 CA-01 native presentation override (Codex CC-198)"
  }
 ]

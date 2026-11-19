@@ -843,7 +843,12 @@ public:
 	// second; drawn raw that reads as twitching. Per soldier the drawn ground position follows the simulated
 	// one through a low-pass (short while travelling, long and with a dead zone while standing), and the
 	// idle / walk / run choice and the 4-way direction change only with hysteresis and a minimum hold.
-	struct Presentation { float x = 0, y = 0, speed = 0, dir_hold = 0, move_hold = 0, age = 0; uint8_t dir = 2, move = 0, ok = 0, slot = 0, shown_dir = 2; };
+	// Civilian activity is derived presentation only, in the existing load-cleared filter storage.
+	struct RenderActivity { int track[4] = {-1,-1,-1,-1}; float age = 0; int64_t person = 0; int kit = -1; bool valid = false; };
+	struct Presentation { float x = 0, y = 0, speed = 0, dir_hold = 0, move_hold = 0, age = 0; uint8_t dir = 2, move = 0, ok = 0, slot = 0, shown_dir = 2; RenderActivity activity; };
+	bool render_set_activity(const std::vector<int32_t> &indices, const std::vector<int32_t> &tracks,
+		const std::vector<float> &ages, const std::vector<uint8_t> &valid);
+	void render_clear_activity();
 	std::vector<Presentation> pres;
 	double pres_time = -1.0;
 	float render_frame_dt = -1.f; // host frame seconds for the next pack_rows; < 0: use the simulated-time delta

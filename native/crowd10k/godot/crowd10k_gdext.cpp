@@ -365,7 +365,7 @@ void m_load_with_siege_navigation(CALL_ARGS) {
 	ret_bool(r, self->w->load(blob, cells, people));
 }
 
-void m_render_clear(CALL_ARGS) { SELF; NEED(0); WORLD; w.render_tracks.clear(); w.render_kits.clear(); ret_bool(r, true); }
+void m_render_clear(CALL_ARGS) { SELF; NEED(0); WORLD; w.render_clear_activity(); w.render_tracks.clear(); w.render_kits.clear(); ret_bool(r, true); }
 // render_add_track(sequence, duration, loop, times: PackedFloat32Array, anchors_xy: PackedFloat32Array, map: PackedFloat32Array, map_step) -> int
 void m_render_add_track(CALL_ARGS) {
 	SELF; NEED(7); WORLD;
@@ -407,7 +407,23 @@ void m_render_set_kits(CALL_ARGS) {
 	void *k = arg_packed(a[0], INTS);
 	if (!k || packed_size(size_ints, k) != w.soldier_count()) { ret_bool(r, false); return; }
 	for (int i = 0; i < w.soldier_count(); ++i) w.kit[i] = (int16_t)std::clamp(*ints_read(k, i), -1, 32767);
+	w.render_clear_activity(); // Kit/body/page transitions require a fresh owner-derived snapshot.
 	ret_bool(r, true);
+}
+// Atomic full activity snapshot. Empty arrays clear; rows sorted by soldier index, four tracks up/right/down/left.
+void m_render_set_activity(CALL_ARGS) {
+	SELF; NEED(4); WORLD;
+	void *ids=arg_packed(a[0],INTS), *tracks=arg_packed(a[1],INTS), *ages=arg_packed(a[2],FLOATS), *valid=arg_packed(a[3],BYTES);
+	if (!ids || !tracks || !ages || !valid) { ret_bool(r,false); return; }
+	const int64_t row_count=packed_size(size_ints,ids);
+	if (row_count<0 || row_count>w.soldier_count() || packed_size(size_ints,tracks)!=row_count*4 ||
+		packed_size(size_floats,ages)!=row_count || packed_size(size_bytes,valid)!=row_count) { ret_bool(r,false); return; }
+	std::vector<int32_t> ii, tt; std::vector<float> aa; std::vector<uint8_t> vv;
+	if (row_count) {
+		ii.assign(ints_read(ids,0),ints_read(ids,0)+row_count); tt.assign(ints_read(tracks,0),ints_read(tracks,0)+row_count*4);
+		aa.assign(floats_read(ages,0),floats_read(ages,0)+row_count); vv.assign(bytes_read(valid,0),bytes_read(valid,0)+row_count);
+	}
+	ret_bool(r,w.render_set_activity(ii,tt,aa,vv));
 }
 // render_set_windows(PackedFloat32Array V_COUNT action seconds per visual slot)
 void m_render_set_windows(CALL_ARGS) {
@@ -1665,6 +1681,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	                                                    {FLOATS, "anchors_xy"}, {FLOATS, "time_map"}, {FLOAT, "map_step"}}, INT);
 	add_method("render_add_kit", m_render_add_kit, {{INT, "page"}, {INT, "palette"}, {FLOAT, "scale"}, {INTS, "tracks"}}, INT);
 	add_method("render_set_kits", m_render_set_kits, {{INTS, "kits"}}, BOOL);
+	add_method("render_set_activity", m_render_set_activity, {{INTS,"indices"},{INTS,"tracks"},{FLOATS,"ages"},{BYTES,"valid"}}, BOOL);
 	add_method("render_set_windows", m_render_set_windows, {{FLOATS, "windows"}}, BOOL);
 	add_method("pack_rows", m_pack_rows, {{FLOAT, "cell_pixels"}}, FLOATS);
 	add_method("row_spans", m_row_spans, {}, INTS);
