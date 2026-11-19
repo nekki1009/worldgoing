@@ -1,7 +1,19 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-20 07:25（台北）
+更新：2026-11-20 08:10（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 交接給下一個指揮中心（11/20 08:10 台北，本串 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb 脈絡過長）
+
+**Nekki 最新指示**（11/19 23:31Z）：「先做道具圖，再技能系統」。11/19 23:12Z 允許 push，已推到 claude/project-thread-qsrymf（15d3644；之後 fc9523e 等未推送）。
+**並行的效能串**（協調者 11/19 23:26Z 開）：改 region_save_slot.gd（船決策）、site_vehicle_transport.gd update_ships、two_npc_sea 測試檔——本串不碰；效能串正式計時時協調者會通知暫停 D 上 Godot。
+
+1. **道具圖（進行中，卡在 Codex）**
+   - Codex CC-20261120-206 已排（inbox/CC-20261120-206.md、output/civilian_props_20261120/art_requests.json）：木箱、水桶各正面＋側面 4 張＋props.json（grip_px、real_width_m）到 assets/characters/terrain_lab_army/civilian/props/。
+   - 卡點：電腦上 Codex 背景服務沒在跑（queue --resume 回「沒有本機 daemon」）；已請 Nekki 打開 Codex。回執 receipts/CC-20261120-206.json。
+   - 圖到後：①`python -I output/project_command_center/evidence/CIV_PROPS_20261120/apply_props_wiring.py`（把 civilian_props.gd〔fc9523e〕接進 civilian_atlas_capture.gd 的 _make_editor／_seek，並把道具檔加進平民指紋 EXTRA_SOURCES）；②先用 scripts/tools/run_civilian_work_preview.gd（visual）看效果；③`publish_civilian_atlas.gd -- --all-recipes`（visual，約 250 s）重烘；④CA-03（`site_civilian_atlas_admission_test.gd -- --ca03`）、平民畫面、CA-01（新輸出資料夾）、群眾家族（CIVA3_FAM.json，CA-01 換新資料夾）；⑤提交。接線一套上，現有平民頁就失去准入，所以①～③要連著做，並避開效能串計時。
+2. **技能系統 K0（下一個主線）**：規格 reports/skill-system-plan.md V0.7 §8。內容：人物 `skills` 稀疏欄位（0–100000 千分位）走和性格同一條路（person_personality.gd 的封包出現在 15 個檔約 33 處：Actor／terrain_test_character、Army 列／terrain_army、Crowd 冷資料、site_store 驗證、region_peerage、main_menu 等）；根骨／悟性由世界種子＋人物編號推出不存檔（同 TC7 年齡），出生者才存；人物頁「技能」分頁（資質、八行技能、武力、學業、統率、工法）。上線當下行為不變（缺資料＝50）。建議做法：新增 person_skills.gd 仿 person_personality.gd（版本、valid、neutral、稀疏寫回），逐一接到性格出現的每一處，加存讀與跨 Site／旅行保留測試。
+3. **其他**：效能熱點與修法建議見下方「效能熱點」條；船決策交給效能串。K1 起需要 365 日長測調平衡（規格 §5.2）。
 
 ## 現況與待辦（11/20 01:10 台北，取代下方各段的舊「下一步」）
 - **新規則（Nekki 11/19 15:01Z）**：Codex 只負責生成圖片／改圖。程式、Blender、烘焙流程、測試與驗收一律由 Claude 做。
