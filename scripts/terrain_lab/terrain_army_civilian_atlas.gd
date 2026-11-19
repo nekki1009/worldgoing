@@ -84,14 +84,13 @@ const EXTRA_SOURCES := [
 	"res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader",
 	"res://scripts/terrain_lab/terrain_army_civilian_atlas.gd",
 	"res://scripts/terrain_lab/civilian_atlas_clips.gd",
+	"res://scripts/terrain_lab/civilian_work_clips.gd",
 	"res://scripts/terrain_lab/civilian_atlas_capture.gd",
 	"res://scripts/terrain_lab/terrain_army_atlas_capture.gd",
-	"res://scripts/terrain_lab/terrain_army_equipment_atlas.gd",
-	"res://scripts/terrain_lab/terrain_army_batch_view.gd",
-	"res://scripts/terrain_lab/crowd_site.gd",
-	"res://scripts/tools/publish_civilian_atlas.gd",
-	"res://native/crowd10k/src/crowd_core.hpp", "res://native/crowd10k/src/render.cpp",
-	"res://native/crowd10k/godot/crowd10k_gdext.cpp"]
+	"res://scripts/tools/publish_civilian_atlas.gd"]
+# CIV-A3: only sources that decide the captured pixels and their manifest. The readers and the crowd renderer
+# (terrain_army_equipment_atlas.gd, batch view, crowd_site.gd, native crowd sources) left this list, so routine crowd
+# work no longer un-admits the civilian pages; a reader change that alters the page contract must bump PROFILE.
 
 static func geometry(appearance: Dictionary) -> Dictionary:
 	var result := HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance)
@@ -105,7 +104,7 @@ static func plan(appearance: Dictionary) -> Dictionary:
 		if clean == geometry(row.appearance): found = true
 	if not found: return {}
 	return {"ok":true,"key":JSON.stringify(clean,"",true).sha256_text(),"appearance":clean,
-		"clips":JSON.parse_string(JSON.stringify(Clips.CLIPS)),"directions":Clips.DIRECTIONS.duplicate(true),"recipe_total":256,
+		"clips":JSON.parse_string(JSON.stringify(Clips.ALL)),"directions":Clips.DIRECTIONS.duplicate(true),"recipe_total":frames(),
 		"source_manifest_md5":FileAccess.get_md5("res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json")}
 
 static func fingerprints() -> Dictionary:

@@ -71,6 +71,10 @@ static func build(player: AnimationPlayer, skeleton: Skeleton3D, skeleton_path: 
 		if id == "civilian_carry":
 			_copy_scaled(player.get_animation(&"walk"), animation, animation.length)
 			_override(animation, skeleton, skeleton_path, locals, globals, [[0.0, HOLD, Vector3.ZERO]], false)
+			# The capture spreads n samples over [0, length] inclusive. Ending the clip one sample short of the
+			# cycle makes the 8 samples cover the 1.0 s walk once, with no repeated first pose.
+			var samples := 8
+			animation.length = float(DURATIONS[id]) * float(samples - 1) / float(samples)
 		else:
 			_copy_pose(idle, animation, 0.0)
 			_override(animation, skeleton, skeleton_path, locals, globals, keys(id), true)

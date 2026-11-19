@@ -49,7 +49,7 @@ func _run() -> void:
   dye = _relocate(dye,stage,target)
   dye["source_manifest_md5"] = FileAccess.get_md5(directory + "/manifest.json")
   if not _write(directory + "/dye.json",dye): quit(1); return
- if not _write(stage + "/catalog.json",{"profile":Profile.PROFILE,"phase":1,"source_id":source_id,"recipes":rows,"omitted":["civilian_carry","civilian_lift","civilian_sit","civilian_fetch_water"]}): quit(1); return
+ if not _write(stage + "/catalog.json",{"profile":Profile.PROFILE,"phase":2,"source_id":source_id,"recipes":rows,"omitted":[]}): quit(1); return
  DirAccess.make_dir_recursive_absolute(Profile.ROOT)
  if DirAccess.rename_absolute(stage,target) != OK: quit(1); return
  print("CIV_PUBLISH_PASS ",target)

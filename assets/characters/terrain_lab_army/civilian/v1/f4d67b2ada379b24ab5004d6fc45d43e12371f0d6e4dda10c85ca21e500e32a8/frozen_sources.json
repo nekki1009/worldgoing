@@ -1,0 +1,37 @@
+{
+  "dye_sources": {
+    "res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "8c98639fca305d617cc7132cb232094d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "b541208a463cff72fbe4db5c36f58d89",
+    "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
+    "res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "5866bf990d5460168dd724907d252d40",
+    "res://scripts/tools/bake_terrain_army_dyes.gd": "67299dae3fce3fe7c0965047174ae368",
+    "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
+    "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
+    "res://scripts/ui/equipment_dye.gd": "8d63fdfb5a491c9979621020f1e2e36d",
+    "res://scripts/ui/human_character_3d_editor.gd": "91e3e7d561818bc000b71ed7b18d10ba",
+    "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
+  },
+  "source_id": "f4d67b2ada379b24ab5004d6fc45d43e12371f0d6e4dda10c85ca21e500e32a8",
+  "sources": {
+    "res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "8c98639fca305d617cc7132cb232094d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "b541208a463cff72fbe4db5c36f58d89",
+    "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json": "5ef732f3042d6507d09ead20538ff6dc",
+    "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
+    "res://scripts/terrain_lab/civilian_atlas_capture.gd": "9b72fba33b7b8499c73a3611ed8b427d",
+    "res://scripts/terrain_lab/civilian_atlas_clips.gd": "d35a7d9b86553ffbeb8f4377753c0e88",
+    "res://scripts/terrain_lab/civilian_work_clips.gd": "94273376af001aafb7c0966c653ee04e",
+    "res://scripts/terrain_lab/terrain_army_atlas_capture.gd": "18eb740a94823e55d553f2199cc08e56",
+    "res://scripts/terrain_lab/terrain_army_civilian_atlas.gd": "c23eb52a1a37b526c65b39ab93c62844",
+    "res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "5866bf990d5460168dd724907d252d40",
+    "res://scripts/tools/bake_terrain_army_dyes.gd": "67299dae3fce3fe7c0965047174ae368",
+    "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
+    "res://scripts/tools/publish_civilian_atlas.gd": "52c311762b27ee2cc2b8c78b500db85e",
+    "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
+    "res://scripts/ui/character_render_contract.gd": "35d152c9ea5137d74c9d7861ac15b2dd",
+    "res://scripts/ui/equipment_dye.gd": "8d63fdfb5a491c9979621020f1e2e36d",
+    "res://scripts/ui/human_character_3d_editor.gd": "91e3e7d561818bc000b71ed7b18d10ba",
+    "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
+  }
+}

@@ -32,12 +32,12 @@ func _run() -> void:
   var recipe := Atlas.civilian_recipe(appearance)
   need(not recipe.is_empty(),row.id + " exact recipe")
   if recipe.is_empty(): continue
-  need(recipe.sequences.size() == 32,row.id + " 8x4 sequences")
+  need(recipe.sequences.size() == 48,row.id + " 12x4 sequences (CIV-A3 work clips included)")
   var directory := Profile.ROOT + "/" + source_id + "/" + str(Profile.plan(appearance).key)
   var path := directory + "/manifest.json"
   var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
-  need(manifest.frames.size() == 256,row.id + " 256 frames")
-  for clip: Dictionary in Profile.Clips.CLIPS:
+  need(manifest.frames.size() == Profile.frames() and Profile.frames() == 416,row.id + " 416 frames")
+  for clip: Dictionary in Profile.Clips.ALL:
    for direction: String in Profile.DIRECTIONS:
     var sequence: Array = recipe.sequences[clip.id + "|" + direction]
     need(sequence.size() == int(clip.samples),row.id + " sample count " + clip.id + direction)
@@ -47,7 +47,7 @@ func _run() -> void:
   var other := appearance.duplicate(true)
   other.parts.hair = "none"
   need(not Atlas.supports(other),row.id + " unbaked hair rejected")
-  need(Atlas.frame(appearance,"civilian_carry","down",0.0).is_empty(),row.id + " unsupported work rejected")
+  need(Atlas.frame(appearance,"attack_unarmed","down",0.0).is_empty(),row.id + " unsupported clip rejected")
   for field: String in ["color","mask"]:
    var dye: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(directory + "/dye.json"))
    var image_path: String = manifest.pages[0].path if field == "color" else dye.mask_path
