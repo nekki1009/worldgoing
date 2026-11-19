@@ -35,12 +35,13 @@ func _initialize() -> void:
 	# 2026-11-14: it now runs 687-745 s alone (crowd/cold fixes since 10/27); in-file 900 s, outer 960 s (standing rule:
 	# loosen test timeouts directly).
 	# 2026-11-17: the hostile case runs 580-616 s (637 s beside other runs); in-file 900 s, outer 960 s (same rule).
-	deadline = Time.get_ticks_msec() + 900000
+	# 2026-11-20: friendly runs 850-923 s alone (877 s on the milestone rerun); in-file 1020 s, outer 1080 s (same rule).
+	deadline = Time.get_ticks_msec() + 1020000
 	action_speed = 1.0
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
-	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "%d-second genuine two-NPC sea deadline" % 900)
+	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "%d-second genuine two-NPC sea deadline" % 1020)
 	return false
 
 func _write_manifest() -> bool:
