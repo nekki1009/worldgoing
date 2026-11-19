@@ -518,5 +518,12 @@
   "mode": "headless",
   "timeout": 180,
   "note": "trade T6 S6 live trades pay the settlement trade tax"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_treaty_t6_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 120,
+  "note": "trade T6 S7 trade treaty"
  }
 ]

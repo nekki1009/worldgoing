@@ -231,7 +231,8 @@ func _npc_terms(npc: Dictionary) -> Dictionary:
 	var axes: Dictionary = PersonPersonality.read(npc.body.get("personality") if npc.body is Dictionary else npc.body.get("personality"))
 	return {"stock": npc.cargo, "targets": {"food": float(FOOD_TARGET_DAYS)}, "thrift": float(axes.get("thrift", 50))}
 
-func _legal(player: int, npc_holder: String, player_holder: String = "") -> Callable:
+func _legal(player: int, npc_holder: String, player_holder: String = "", npc: int = -1) -> Callable:
+	var parties: Array = [player, npc] if npc > 0 else []
 	var data: TerrainData = _lab().terrain
 	var a_ref := _holder_ref(player_holder) if not player_holder.is_empty() else _ref(player)
 	var b_ref := _holder_ref(npc_holder)
@@ -240,18 +241,22 @@ func _legal(player: int, npc_holder: String, player_holder: String = "") -> Call
 	# receive = what the NPC receives (the player gives), give = what the NPC gives.
 	return func(receive: Dictionary, give: Dictionary) -> bool:
 		if not source.is_empty() and not Settlement.trade_quota_refusal(data, source, give.resources).is_empty(): return false
-		return bool(exchange(a_ref, b_ref, receive, give, true).ok)
+		return bool(exchange(a_ref, b_ref, receive, give, true, "", parties).ok)
 
 ## 貿易 T6 S6 (TR-62, Q13 A): every trade at a settlement with a trade tax pays it in kind, in the same commit, to the
 ## nation's bound treasury (SiteRuntime.commit_taxed_candidate: each side's received resource stacks, floor(received x
 ## percent / 100) per resource, with per-side receipts; equipment untaxed). With no tax the original two-holder exchange
 ## stands unchanged; a positive rate with no collector refuses the trade (NO_COLLECTOR) before anything moves. `job_key`
 ## names the receipts (a retried commit replays them); a preview moves nothing.
-func exchange(a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives: Dictionary, preview: bool, job_key: String = "") -> Dictionary:
+func exchange(a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives: Dictionary, preview: bool, job_key: String = "", parties: Array = []) -> Dictionary:
 	var data: TerrainData = _lab().terrain
 	var terms: Dictionary = Runtime.trade_tax_terms(data)
 	if not terms.ok: return terms
-	if int(terms.percent) <= 0: return Runtime.exchange_items(data, a_ref, b_ref, a_gives, b_gives, preview)
+	var percent := treaty_percent(int(terms.percent), parties)
+	if percent <= 0: return Runtime.exchange_items(data, a_ref, b_ref, a_gives, b_gives, preview)
+	terms = terms.duplicate()
+	terms["base"] = int(terms.percent)
+	terms["percent"] = percent
 	var refs: Array = [a_ref, b_ref]
 	var collector := str(terms.collector)
 	if collector != str(a_ref.holder) and collector != str(b_ref.holder): refs.append(_holder_ref(collector))
@@ -262,6 +267,20 @@ func exchange(a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives
 		transfers.append({"from": str(leg[0].holder), "to": str(leg[1].holder), "resources": goods.get("resources", {}).duplicate(), "item_ids": goods.get("item_ids", []).duplicate()})
 	var trade_id := ("trade_" + job_key.replace(":", "_")) if not preview else "preview"
 	return Runtime.commit_taxed_candidate(data, refs, transfers, trade_id.substr(0, 64), terms, preview)
+
+## 貿易 T6 S7 (TR-61, Q12 A): a trade treaty only lowers the tax. When one of the two representatives (`parties`) belongs
+## to the settlement's faction and the other to a faction with an active trade treaty with it, the rate is the lower of
+## the settlement's own rate and the treaty's; otherwise the settlement's own rate.
+func treaty_percent(base_percent: int, parties: Array) -> int:
+	if base_percent <= 0 or parties.size() != 2 or controller.region_slot == null: return base_percent
+	var owner := int(Settlement.record(_lab().terrain).get("owner_faction", -1))
+	var factions: Array = []
+	for identity: Variant in parties: factions.append(int(_person(int(identity)).get("faction", -1)))
+	if factions.count(owner) != 1: return base_percent
+	var other := int(factions[0]) if int(factions[1]) == owner else int(factions[1])
+	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {})
+	var treaty: Dictionary = RegionDiplomacy.trade_treaty_between(registry, owner, other, float(controller.region_slot.control.logical_game_seconds))
+	return base_percent if treaty.is_empty() else mini(base_percent, int(treaty.get("tax_percent", base_percent)))
 
 func _drop_offers_of(identities: Array) -> void:
 	var trade := state()
@@ -315,7 +334,7 @@ func take_listing(player: int, npc: int, row_id: String, lots: int, player_holde
 	var quota := Settlement.trade_quota_refusal(data, str(lot.key), lot.give.resources)
 	if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
 	var own_ref := _holder_ref(str(pair.own.holder))
-	var preview: Dictionary = exchange(own_ref, _holder_ref(holder), lot.want, lot.give, true)
+	var preview: Dictionary = exchange(own_ref, _holder_ref(holder), lot.want, lot.give, true, "", [player, npc])
 	if not preview.ok: return preview
 	_drop_offers_of([player, npc])
 	var trade := state()
@@ -341,7 +360,7 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 		var quota := Settlement.trade_quota_refusal(_lab().terrain, npc_holder.trim_prefix("feature:"), npc_gives.resources)
 		if not quota.is_empty(): return Runtime.fail("QUOTA", quota)
 	var own_ref := _holder_ref(str(pair.own.holder))
-	var preview: Dictionary = exchange(own_ref, _holder_ref(holder), player_gives, npc_gives, true)
+	var preview: Dictionary = exchange(own_ref, _holder_ref(holder), player_gives, npc_gives, true, "", [player, npc])
 	if not preview.ok: return preview
 	var used := holder_concessions(holder, _holder_id(player))
 	var terms := _npc_terms(pair.b)
@@ -355,7 +374,7 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 			terms["targets"] = {"food": float(int(family_party(npc_holder.trim_prefix("feature:")).get("members", 1)) * SETTLEMENT_FOOD_DAYS)}
 		else:
 			terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
-	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.own.cargo, _legal(player, holder, player_holder),
+	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.own.cargo, _legal(player, holder, player_holder, npc),
 		float(terms.thrift), used, _lab().terrain.site)
 	if not answer.ok: return answer
 	var decision := str(answer.decision)
@@ -395,7 +414,7 @@ func accept(offer_id: String) -> Dictionary:
 	if _holder_version(str(offer.a.holder)) != int(offer.a.expected_version) or _holder_version(b_holder) != int(offer.b.expected_version):
 		trade.offers.erase(offer_id)
 		return Runtime.fail("STALE", "持物已改變，請重新報價")
-	var preview: Dictionary = exchange(offer.a, offer.b, offer.a_gives, offer.b_gives, true)
+	var preview: Dictionary = exchange(offer.a, offer.b, offer.a_gives, offer.b_gives, true, "", [player, npc])
 	if not preview.ok: return preview
 	offer["accepted_a"] = true
 	var units := Trade.job_unit_count(offer.a_gives) + Trade.job_unit_count(offer.b_gives)
@@ -469,7 +488,7 @@ func advance() -> Array[Dictionary]:
 			if not quota.is_empty():
 				results.append(_end(str(key), Runtime.fail("QUOTA", "交易中止：%s；未轉移任何物品" % quota)))
 				continue
-		var committed: Dictionary = exchange(offer.a, offer.b, offer.a_gives, offer.b_gives, false, str(key))
+		var committed: Dictionary = exchange(offer.a, offer.b, offer.a_gives, offer.b_gives, false, str(key), [int(offer.a_representative), int(offer.b_representative)])
 		if committed.ok and not source.is_empty(): Settlement.record_trade_payout(_lab().terrain, source, offer.b_gives.resources)
 		if committed.ok: Market.commit(_lab().terrain, str(job.offer_id)) # a listed delivery counts its lots for the day
 		results.append(_end(str(key), Runtime.ok("交易完成") if committed.ok else committed))

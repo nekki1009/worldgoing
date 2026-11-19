@@ -15048,10 +15048,12 @@ static func publish_taxed_candidate(prepared: Dictionary) -> Dictionary:
 	if not stable.ok: return stable
 	var data: TerrainData = prepared.terrain
 	var terms: Dictionary = prepared.terms
-	if _settlement_percent(data) != int(terms.percent): return fail("STALE_SOURCE", "聚落貿易稅率已改變")
+	# T6 S7: a trade treaty may lower the rate for its partner (terms.percent); the settlement's own rate is terms.base.
+	var base_percent := int(terms.get("base", terms.percent))
+	if _settlement_percent(data) != base_percent: return fail("STALE_SOURCE", "聚落貿易稅率已改變")
 	if bool(terms.derived):
 		var now: Dictionary = trade_tax_terms(data)
-		if not now.ok or int(now.percent) != int(terms.percent) or str(now.collector) != str(terms.collector): return fail("STALE_SOURCE", "收稅國庫已改變")
+		if not now.ok or int(now.percent) != base_percent or str(now.collector) != str(terms.collector): return fail("STALE_SOURCE", "收稅國庫已改變")
 	var store: Dictionary = _trade_receipt_store(data)
 	for entry: Dictionary in prepared.receipts:
 		if store.has(str(entry.key)): return fail("STALE_SOURCE", "收據已存在")

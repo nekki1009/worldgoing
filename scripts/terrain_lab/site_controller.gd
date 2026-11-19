@@ -658,6 +658,8 @@ func _build_ui() -> void:
 	_button(launcher.column, "對該勢力宣戰", "DeclareWar", func() -> void: show_result(declare_war_on(int(dip_target.text))))
 	_button(launcher.column, "提出停戰（15 日）", "ProposeTruce", func() -> void: show_result(propose_diplomacy(int(dip_target.text), "truce", 15)))
 	_button(launcher.column, "提出講和", "ProposePeace", func() -> void: show_result(propose_diplomacy(int(dip_target.text), "peace")))
+	# 貿易 T6 TR-60: a trade treaty on a peace base (90 days, a 5% rate for each other's traders: 施工初值).
+	_button(launcher.column, "提出通商（90 日，協定稅 5%）", "ProposeTrade", func() -> void: show_result(propose_diplomacy(int(dip_target.text), "trade", 90, 5)))
 	_button(launcher.column, "接受最早的來信", "AcceptLetter", func() -> void: show_result(answer_oldest_letter(true)))
 	_button(launcher.column, "拒絕最早的來信", "RejectLetter", func() -> void: show_result(answer_oldest_letter(false)))
 	_button(launcher.column, "外交現況", "DiplomacyStatus", func() -> void: show_result(diplomacy_status()))
@@ -10746,14 +10748,15 @@ func breach_grievance(faction: int, breach_id: int) -> int:
 			if SiteSocial.record(person.body, ref, "breach", 5, "breach:%d:%d" % [breach_id, int(member)], minute): count += 1
 	return count
 
-## §11.4: the head sends a truce (days) or peace letter to another faction's head.
-func propose_diplomacy(target: int, kind: String, days: int = 15) -> Dictionary:
+## §11.4: the head sends a truce (days) or peace letter to another faction's head; 貿易 T6: or a trade treaty (days, its
+## tax rate for each other's traders).
+func propose_diplomacy(target: int, kind: String, days: int = 15, tax_percent: int = 0) -> Dictionary:
 	var mine := diplomacy_head_faction()
 	if mine < 0: return Runtime.fail("NOT_HEAD", "只有勢力首長本人能提出外交")
 	var distance := diplomacy_distance_m(mine, target)
 	if distance < 0.0: return Runtime.fail("LOCATION_UNAVAILABLE", "找不到對方首長所在位置，無法送信")
 	var now := float(region_slot.control.logical_game_seconds)
-	var result: Dictionary = RegionDiplomacy.propose(region_slot.control.faction_registry, mine, target, kind, days, region_slot.peerage_person_ref(int(lab.controlled_person_id())), distance, now)
+	var result: Dictionary = RegionDiplomacy.propose(region_slot.control.faction_registry, mine, target, kind, days, region_slot.peerage_person_ref(int(lab.controlled_person_id())), distance, now, tax_percent)
 	return _commit_diplomacy(result, "信已送出") if result.ok else result
 
 ## §11.4: the head answers a delivered letter.
@@ -10789,6 +10792,8 @@ func diplomacy_status() -> Dictionary:
 		var treaty: Dictionary = RegionDiplomacy.treaty_between(registry, mine, id, now)
 		var relation := "敵對"
 		if not treaty.is_empty(): relation = "講和" if treaty.kind == "peace" else "停戰剩 %.1f 日" % ((float(treaty.ends_at) - now) / RegionDiplomacyAI.DAY)
+		var trading: Dictionary = RegionDiplomacy.trade_treaty_between(registry, mine, id, now)
+		if not trading.is_empty(): relation += "；通商稅 %d%%，剩 %.1f 日" % [int(trading.tax_percent), (float(trading.ends_at) - now) / RegionDiplomacyAI.DAY]
 		lines.append("%d %s：%s" % [id, str(registry.entries[key].name), relation])
 	for proposal: Dictionary in RegionDiplomacy.table(registry).proposals.values():
 		if proposal.status in RegionDiplomacy.TERMINAL or (int(proposal.from) != mine and int(proposal.to) != mine): continue
@@ -11051,7 +11056,8 @@ func npc_diplomacy_day() -> Dictionary:
 		var them := int(proposal.from)
 		var mind := _head_mind(registry, me)
 		var known := strength.has(me) and strength.has(them)
-		var accept := RegionDiplomacyAI.accept_peace(registry, me, them, mind.ambition, mind.mercy, int(strength.get(me, 0)), int(strength.get(them, 0)), known, now)
+		var accept: bool = RegionDiplomacy.npc_accepts_trade(registry, me, them, int(proposal.get("tax_percent", 0)), now) if str(proposal.kind) == "trade" \
+			else RegionDiplomacyAI.accept_peace(registry, me, them, mind.ambition, mind.mercy, int(strength.get(me, 0)), int(strength.get(them, 0)), known, now)
 		var distance := diplomacy_distance_m(me, them)
 		if distance < 0.0: continue
 		var answered: Dictionary = RegionDiplomacy.reply(registry, int(pid), accept, RegionPeerage.head_of(registry, me).get("person_ref"), distance, now)
