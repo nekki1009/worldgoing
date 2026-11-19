@@ -14857,6 +14857,7 @@ static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array,
 			var levied: Dictionary = {}
 			for key: Variant in before.keys():
 				var resource: String = str(key)
+				if resource == "coin": continue # Q13 A: coin (a payment leg, T6 S5) is never taxed in kind
 				var tax: int = int(before[resource]) * percent / 100
 				if tax > 0:
 					levied[resource] = tax
@@ -15006,32 +15007,32 @@ static func exchange_taxed_candidate(data: TerrainData, refs: Array, transfers: 
 	return commit_taxed_candidate(data, refs, transfers, trade_id, terms, preview)
 
 ## Terms are passed in by the caller (exchange_taxed_candidate derives them); publish re-checks the rate and, for derived terms, the collector.
-static func commit_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary, preview: bool = false) -> Dictionary:
+static func commit_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary, preview: bool = false, coin_transfers: Array = []) -> Dictionary:
 	if data == null or not _trade_id_valid(trade_id): return fail("INVALID", "貿易編號不合法")
 	# T6 S5C: one trade_id names one kind of receipt; an id used by a leg receipt (trade_leg_receipts) is refused.
 	var leg_store: Variant = data.site.get("trade_leg_receipts", {})
 	if leg_store is Dictionary:
 		for leg_key: Variant in leg_store.keys():
 			if str(leg_key).begins_with(trade_id + ":"): return fail("INVALID", "貿易編號已用於付款收據")
-	var request: String = JSON.stringify(transfers)
+	var request: String = JSON.stringify(transfers) if coin_transfers.is_empty() else JSON.stringify([transfers, coin_transfers])
 	var existing: Dictionary = _trade_receipts_for(data, trade_id)
 	if not existing.is_empty():
 		for key: Variant in existing.keys():
 			if str(existing[key].get("request", "")) != request: return fail("INVALID", "收據鍵已用於不同交易")
 		return ok("重複提交：沿用原收據，未再收稅", {"replayed": true, "receipt_keys": existing.keys()})
-	var prepared: Dictionary = prepare_taxed_candidate(data, refs, transfers, trade_id, terms)
+	var prepared: Dictionary = prepare_taxed_candidate(data, refs, transfers, trade_id, terms, coin_transfers)
 	if not prepared.ok: return prepared
 	return ok() if preview else publish_taxed_candidate(prepared)
 
-static func prepare_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary) -> Dictionary:
+static func prepare_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary, coin_transfers: Array = []) -> Dictionary:
 	if not _trade_id_valid(trade_id) or not terms.get("percent") is int or not terms.get("collector") is String or not terms.get("derived") is bool:
 		return fail("INVALID")
 	var percent: int = int(terms.percent)
 	var collector_id: String = str(terms.collector)
 	if percent < 0 or percent > TRADE_TAX_MAX_PERCENT or (percent > 0) != (not collector_id.is_empty()): return fail("INVALID", "收稅持有人與稅率不一致")
-	var prepared: Dictionary = _prepare_candidate(data, refs, transfers, collector_id, percent)
+	var prepared: Dictionary = _prepare_candidate(data, refs, transfers, collector_id, percent, coin_transfers)
 	if not prepared.ok: return prepared
-	var request: String = JSON.stringify(transfers)
+	var request: String = JSON.stringify(transfers) if coin_transfers.is_empty() else JSON.stringify([transfers, coin_transfers])
 	var receipts: Array = []
 	if percent > 0:
 		for record: Dictionary in prepared.plan:

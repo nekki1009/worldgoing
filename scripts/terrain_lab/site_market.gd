@@ -100,8 +100,8 @@ static func _int(value: Variant, lower: int, upper: int) -> bool:
 static func valid_stack(stack: Variant) -> bool:
 	if not stack is Dictionary or stack.is_empty() or stack.size() > MAX_KINDS: return false
 	for resource: Variant in stack:
-		# coin is the unit of account, never a T0 exchange good (SiteRuntime._trade_goods_valid): listings barter.
-		if not resource is String or resource == "coin" or not Runtime.Env.ITEM_NAMES.has(resource) or not _int(stack[resource], 1, MAX_UNITS): return false
+		# 貿易 T6 S8 (TR-63): coin may be listed; it moves as an untaxed payment leg (a listing needs no valuation).
+		if not resource is String or not Runtime.Env.ITEM_NAMES.has(resource) or not _int(stack[resource], 1, MAX_UNITS): return false
 	return true
 
 static func _clean(stack: Dictionary) -> Dictionary:
@@ -117,7 +117,7 @@ static func _times(stack: Dictionary, lots: int) -> Dictionary:
 ## Why a row as set ({give, want, daily}) is refused ("" when it is legal).
 static func _row_refusal(row: Variant, cap: int) -> String:
 	if not row is Dictionary: return "掛牌格式"
-	if not valid_stack(row.get("give")) or not valid_stack(row.get("want")): return "每份兩邊各 1–%d 種已知物資（不含通用幣：掛牌是以物易物）、各 1–%d 個" % [MAX_KINDS, MAX_UNITS]
+	if not valid_stack(row.get("give")) or not valid_stack(row.get("want")): return "每份兩邊各 1–%d 種已知物資、各 1–%d 個" % [MAX_KINDS, MAX_UNITS]
 	for resource: Variant in row.give:
 		if row.want.has(resource): return "同一物資不能同時付出與收取"
 	if not _int(row.get("daily"), 1, cap): return "每日份數須 1–%d" % cap

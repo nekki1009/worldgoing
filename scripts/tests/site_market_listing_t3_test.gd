@@ -4,7 +4,7 @@ extends "res://scripts/tests/site_market_t3_test.gd"
 ## source (grain: 4 per trade, 100 in total); the listing pays 2 grain for 1 salt, 3 lots a day.
 ## Checks:
 ## - setting listings: refused while the market is not bound (NOT_BOUND), past the market's daily lots (10 at grade 1),
-##   with one resource on both sides, or with coin (the unit of account, never a trade good: listings barter); the 市正 (here the head acting) sets them; once the NPC is head, the player cannot;
+##   with one resource on both sides; the 市正 (here the head acting) sets them; once the NPC is head, the player cannot;
 ## - TR-30: the player, face to face with the NPC 市正 standing at the market, takes 2 lots with no bargaining: the
 ##   delivery runs and commits once (2 salt to the market, 4 grain to the player, both versions raised once), 2 of the
 ##   day's 3 lots used; 3 lots in one take pass the binding's per-trade limit (QUOTA); 2 more pass the day's lots
@@ -80,8 +80,7 @@ func _run() -> void:
 	if not _check(bound.ok, "the head binds the market stock", bound): return
 	var too_many := Market.set_listings(lab, player, [{"give": {"grain": 2}, "want": {"salt": 1}, "daily": 6}, {"give": {"grain": 1}, "want": {"wood": 1}, "daily": 5}])
 	var both_sides := Market.set_listings(lab, player, [{"give": {"grain": 2}, "want": {"grain": 1, "salt": 1}, "daily": 1}])
-	var coined := Market.set_listings(lab, player, [{"give": {"grain": 1}, "want": {"coin": 1}, "daily": 1}])
-	if not _check(str(too_many.get("code", "")) == "INVALID" and str(both_sides.get("code", "")) == "INVALID" and str(coined.get("code", "")) == "INVALID" and not data.site.settlement.has("market_listings"), "past the market's 10 daily lots, one resource on both sides, or coin (not a trade good) is refused", [too_many, both_sides, coined]): return
+	if not _check(str(too_many.get("code", "")) == "INVALID" and str(both_sides.get("code", "")) == "INVALID" and not data.site.settlement.has("market_listings"), "past the market's 10 daily lots, or one resource on both sides, is refused", [too_many, both_sides]): return
 	var parsed := Market.parse_rows("grain:2>salt:1|3")
 	var listed := Market.set_listings(lab, player, parsed.get("rows", []))
 	if not _check(parsed.ok and listed.ok and Market.rows_text(Market.listings(data)) == "grain:2>salt:1|3", "the head acting as 市正 sets the listing from its text", listed): return

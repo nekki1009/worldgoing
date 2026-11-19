@@ -253,20 +253,31 @@ func exchange(a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives
 	var terms: Dictionary = Runtime.trade_tax_terms(data)
 	if not terms.ok: return terms
 	var percent := treaty_percent(int(terms.percent), parties)
-	if percent <= 0: return Runtime.exchange_items(data, a_ref, b_ref, a_gives, b_gives, preview)
+	# 貿易 T6 S8 (TR-63): coin is never a goods leg; each side's coin moves as an untaxed payment leg of the same commit,
+	# paid only from coin its holder carries.
+	var coin_legs: Array = []
+	for leg: Array in [[a_ref, b_ref, a_gives], [b_ref, a_ref, b_gives]]:
+		var paid := int(leg[2].get("resources", {}).get("coin", 0))
+		if paid > 0: coin_legs.append({"from": str(leg[0].holder), "to": str(leg[1].holder), "resources": {"coin": paid}, "item_ids": []})
+	if percent <= 0 and coin_legs.is_empty(): return Runtime.exchange_items(data, a_ref, b_ref, a_gives, b_gives, preview)
 	terms = terms.duplicate()
 	terms["base"] = int(terms.percent)
 	terms["percent"] = percent
+	if percent <= 0:
+		terms["collector"] = "" # untaxed: coin legs only (no collector, nothing to re-check but the settlement's rate)
+		terms["derived"] = false
 	var refs: Array = [a_ref, b_ref]
 	var collector := str(terms.collector)
-	if collector != str(a_ref.holder) and collector != str(b_ref.holder): refs.append(_holder_ref(collector))
+	if not collector.is_empty() and collector != str(a_ref.holder) and collector != str(b_ref.holder): refs.append(_holder_ref(collector))
 	var transfers: Array = []
 	for leg: Array in [[a_ref, b_ref, a_gives], [b_ref, a_ref, b_gives]]:
 		var goods: Dictionary = leg[2]
-		if goods.get("resources", {}).is_empty() and goods.get("item_ids", []).is_empty(): continue
-		transfers.append({"from": str(leg[0].holder), "to": str(leg[1].holder), "resources": goods.get("resources", {}).duplicate(), "item_ids": goods.get("item_ids", []).duplicate()})
+		var resources: Dictionary = goods.get("resources", {}).duplicate()
+		resources.erase("coin")
+		if resources.is_empty() and goods.get("item_ids", []).is_empty(): continue
+		transfers.append({"from": str(leg[0].holder), "to": str(leg[1].holder), "resources": resources, "item_ids": goods.get("item_ids", []).duplicate()})
 	var trade_id := ("trade_" + job_key.replace(":", "_")) if not preview else "preview"
-	return Runtime.commit_taxed_candidate(data, refs, transfers, trade_id.substr(0, 64), terms, preview)
+	return Runtime.commit_taxed_candidate(data, refs, transfers, trade_id.substr(0, 64), terms, preview, coin_legs)
 
 ## 貿易 T6 S7 (TR-61, Q12 A): a trade treaty only lowers the tax. When one of the two representatives (`parties`) belongs
 ## to the settlement's faction and the other to a faction with an active trade treaty with it, the rate is the lower of

@@ -7,7 +7,9 @@ extends "res://scripts/tests/site_market_t3_test.gd"
 ##   treasury 1 grain and 1 salt (floor(10 x 10 / 100) of each side's received stack); every holder's version rises once;
 ##   two per-side receipts are written under the trade's id;
 ## - with the treasury unbound a positive rate refuses the take (NO_COLLECTOR) and nothing moves;
-## - at rate 0 the original two-holder exchange stands: no receipt, the treasury untouched.
+## - at rate 0 the original two-holder exchange stands: no receipt, the treasury untouched;
+## - TR-63: a listing paid in coin: the coin is an untaxed payment leg of the same commit (the grain still pays its tax);
+##   coin not carried fails.
 ## Output: SITE_TRADE_TAX_LIVE_T6_PASS on success; push_error + quit(1) on failure.
 
 var tax_checks := 0
@@ -118,6 +120,25 @@ func _run() -> void:
 	results = controller._trade().advance()
 	if not _check(results.size() == 1 and results[0].ok and int(data.site.manual.cargo.get("grain", 0)) == 19 and JSON.stringify(treasury.cargo, "", true) == treasury_before
 		and data.site.get("trade_tax_receipts", {}).size() == 2, "at rate 0 the full 10 grain arrive, no tax, no new receipt", [data.site.manual.cargo, treasury.cargo]): return
+
+	# T6 S8 (TR-63): a listing sells grain for coin; the coin is an untaxed payment leg, the grain still pays its tax.
+	var back: Dictionary = Settlement.set_trade_tax_percent(data, npc, 10)
+	var relisted := Market.set_listings(lab, npc, [{"give": {"grain": 10}, "want": {"coin": 12}, "daily": 2}], true)
+	if not _check(back.ok and relisted.ok, "the 市正 lists 10 grain for 12 coin at a 10% tax", [back, relisted]): return
+	data.site.manual.cargo.clear()
+	data.site.manual.cargo["coin"] = 15
+	var market_coin := int(stock.cargo.get("coin", 0))
+	var treasury_coin := int(treasury.cargo.get("coin", 0))
+	var treasury_grain := int(treasury.cargo.get("grain", 0))
+	var coin_take: Dictionary = controller.market_take("1", 1)
+	if not _check(coin_take.ok, "a lot is paid in coin", coin_take): return
+	lab.fire_action_cursor += 31.0
+	results = controller._trade().advance()
+	if not _check(results.size() == 1 and results[0].ok and int(data.site.manual.cargo.get("coin", 0)) == 3 and int(stock.cargo.get("coin", 0)) == market_coin + 12
+		and int(data.site.manual.cargo.get("grain", 0)) == 9 and int(treasury.cargo.get("grain", 0)) == treasury_grain + 1 and int(treasury.cargo.get("coin", 0)) == treasury_coin,
+		"the coin moved untaxed as a payment leg; the grain paid its tax", [results, data.site.manual.cargo, stock.cargo, treasury.cargo]): return
+	var broke: Dictionary = controller.market_take("1", 1)
+	if not _check(not broke.ok, "coin the player does not carry cannot pay", broke): return
 
 	print("SITE_TRADE_TAX_LIVE_T6_PASS checks=", tax_checks, "; taxed take in kind to the treasury with receipts, no collector refused, rate 0 untaxed")
 	_finish_workflow_body()
