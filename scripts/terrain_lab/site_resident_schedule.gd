@@ -94,7 +94,10 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 		# out at his door when the timetable sends him out, or when his house can no longer lodge him.
 		var crowd_site: Variant = lab.crowd_site if lab.get("crowd_site") != null and bool(lab.crowd_site.active) else null
 		if crowd_site != null and crowd_site.is_at_home(identity):
-			if place == "home" and house_lodges(lab, identity, person):
+			var lodges := house_lodges(lab, identity, person)
+			var at_centre: Variant = centre_cell(lab, person)
+			# Sheltering at the settlement centre (no usable house) lasts while the alarm or the storm does.
+			if (place == "home" and lodges) or ((alarm or shelter) and not lodges and at_centre != null and person.cell == at_centre):
 				result.home = int(result.home) + 1
 				continue
 			if not crowd_site.home_leave(identity):
@@ -120,10 +123,31 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 			if crowd_site != null and crowd_site.home_enter(identity): result["entered"] = int(result.get("entered", 0)) + 1
 			continue
 		if actions.is_busy(identity) or bool(person.moving): continue
+		# 平民 C1c / C3a: no house that can lodge him (burned, overrun, none) while the alarm or the storm is on: he
+		# shelters at the settlement centre, walking to its entrance and going inside there.
+		if (alarm or shelter) and crowd_site != null and not house_lodges(lab, identity, person):
+			var centre: Variant = centre_cell(lab, person)
+			if centre != null:
+				if person.cell == centre:
+					if crowd_site.home_enter(identity): result["sheltered"] = int(result.get("sheltered", 0)) + 1
+					continue
+				if bool(actions.begin_cart_walk(identity, centre, Housing.SCHEDULE_REQUESTER).get("ok", false)):
+					result.started = int(result.started) + 1
+					continue
 		var begun: Dictionary = actions.begin_housing_return(identity, Housing.SCHEDULE_REQUESTER, alarm)
 		if begun.ok: result.started = int(result.started) + 1
 		else: result.refused = int(result.refused) + 1
 	return result
+
+## 平民 C1c: the settlement centre's entrance cell, when the centre stands complete and the settlement is the
+## resident's faction's; null otherwise.
+static func centre_cell(lab: Variant, person: Dictionary) -> Variant:
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	if settlement.is_empty() or int(settlement.get("owner_faction", -1)) != int(person.get("faction", -2)): return null
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(str(settlement.get("center_id", "")), {})
+	if feature.is_empty() or str(feature.get("stage", "")) != "complete" or not feature.has("entrance"): return null
+	var cell: Vector2i = lab.terrain.cell_from_index(int(feature.entrance))
+	return cell if lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) else null
 
 ## 平民 C1c: the house a resident is registered to can still lodge him (complete, usable, still his faction's).
 static func house_lodges(lab: Variant, identity: int, person: Dictionary) -> bool:
