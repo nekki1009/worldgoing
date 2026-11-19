@@ -1,13 +1,13 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-20 02:20（台北）
+更新：2026-11-20 02:45（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
 ## 現況與待辦（11/20 01:10 台北，取代下方各段的舊「下一步」）
 - **新規則（Nekki 11/19 15:01Z）**：Codex 只負責生成圖片／改圖。程式、Blender、烘焙流程、測試與驗收一律由 Claude 做。
 - CIV-A1／A1F／A2＋全部士兵重烘已在 D 套用並提交 23f8e6a（士兵 104→104、群眾 74→74；匯入、准入、士兵畫面、CA-03、平民畫面全 PASS；群眾家族 37/38，CA-01 舊 A0 斷言更新後 PASS）。
 - CIV-A3 完成三步（全部本機提交未推送）：動作與預覽 8908107（Nekki「可以，先用」）；平民頁加四段工作動作、每款 416 張、平民指紋縮小 5b71314（CA-03／平民畫面／CA-01 PASS、群眾家族 38/38）；群眾接線 bb690f9（crowd_civilian_activity.gd 依作息經原生活動覆寫播坐下／打水／抬起／搬運，不改原生；平民畫面測試真 CrowdSite PASS、群眾家族 38/38）。剩：補一支作息切換的整合測試（目前只在民兵群眾測試間接跑到）。
-- 平民 C1c 屋內「在家」完成 ff8aadf：原生 absent 第 5 種（DLL a1a3ccd0…，舊 7610cf4b… 備份 evidence/C1C_HOME_20261120），作息進屋／出屋、鄉勇徵召先出屋；新測試 site_resident_home_crowd_test，回歸 C1C_FAM 48/48。剩：住宅被燒／攻破時屋內的人改到中心避難（沒有走到中心的動作，未做）。
+- 平民 C1c 屋內「在家」完成 ff8aadf：原生 absent 第 5 種（DLL a1a3ccd0…，舊 7610cf4b… 備份 evidence/C1C_HOME_20261120），作息進屋／出屋、鄉勇徵召先出屋；新測試 site_resident_home_crowd_test，回歸 C1C_FAM 48/48。中心避難也已完成（警報或暴風雨時無可住房者走到聚落中心入口進去；回歸 C1C2_FAM 49/49）。
 - 平民圖集指紋已縮小（5b71314）：改 crowd_site.gd、讀取器、batch_view、原生群眾原始碼不再讓平民失去准入。注意 terrain_army_equipment_atlas.gd 仍是女兵遠程頁的指紋，不要隨手改。
 - 貿易 T6 全部提交（774face..08dcbfd）；工匠分組四支測試修好 cbd7462；技能系統規格 V0.7 定案 c4758a9（K0–K5 等 Nekki 說要做再排）。
 - 下方舊段落提到「T6 有明示阻擋」「CIV-A1 等 Nekki 說恢復」「派 CIV-A3 給 Codex」等皆已過時。
