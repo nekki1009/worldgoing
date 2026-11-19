@@ -120,22 +120,31 @@ func _decide(site: Variant) -> void:
 		var person: Dictionary = controller.person_actions._person(identity, false)
 		if person.is_empty() or float(person.get("hp", 0.0)) <= 0.0: continue
 		var phase := Schedule.phase_at(Schedule.minute_of_day(minute), Schedule.diligence_of(person))
-		var clip := ""
-		if phase in ["meal", "evening"] and Housing._attends(lab, identity): clip = "civilian_sit"
-		elif phase == "wake": clip = "civilian_fetch_water"
-		elif phase == "work" and controller.work_team.is_assigned(identity):
+		var at_home: bool = phase in ["meal", "evening"] and Housing._attends(lab, identity)
+		var working: bool = phase == "work" and controller.work_team.is_assigned(identity)
+		var moving := false
+		if working:
 			var state: PackedFloat64Array = crowd.get_soldier_state(index)
-			var moving := state.size() > 23 and Vector2(state[22], state[23]).length() > MOVING_SPEED
-			clip = "civilian_carry" if moving else "civilian_lift"
+			moving = state.size() > 23 and Vector2(state[22], state[23]).length() > MOVING_SPEED
+		var clip := choose(phase, at_home, working, moving)
 		if clip.is_empty(): continue
 		var previous: Dictionary = _choice.get(identity, {})
 		next[identity] = previous if previous.get("clip", "") == clip else {"clip": clip, "since": _clock}
 	_choice = next
 
+## The table in the header, as a pure rule (tested by crowd_civilian_activity_test.gd).
+static func choose(phase: String, at_home: bool, working: bool, moving: bool) -> String:
+	if phase in ["meal", "evening"] and at_home: return "civilian_sit"
+	if phase == "wake": return "civilian_fetch_water"
+	if phase == "work" and working: return "civilian_carry" if moving else "civilian_lift"
+	return ""
+
 func _age(choice: Dictionary, identity: int) -> float:
-	var elapsed := maxf(0.0, _clock - float(choice.since))
-	var offset := float(identity % 97) * 0.37 # neighbours do not move in step
-	match str(choice.clip):
+	return age_of(str(choice.clip), maxf(0.0, _clock - float(choice.since)), float(identity % 97) * 0.37)
+
+## Source time of `clip` after `elapsed` seconds; `offset` keeps neighbours out of step (not used by sit).
+static func age_of(clip: String, elapsed: float, offset: float) -> float:
+	match clip:
 		"civilian_sit": return minf(elapsed, float(Work.DURATIONS.civilian_sit))
 		"civilian_fetch_water": return minf(fmod(elapsed + offset, FETCH_CYCLE), float(Work.DURATIONS.civilian_fetch_water))
 		"civilian_carry": return fmod(elapsed + offset, float(Work.DURATIONS.civilian_carry))
