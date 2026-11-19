@@ -192,6 +192,10 @@ static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) 
 	if candidate.has("technology_operations"): fields.append("technology_operations")
 	var candidate_version := int(candidate.get("version", 0))
 	if candidate_version == VERSION_LATEST and candidate.has("succession"): fields.append("succession")
+	# The optional trade sections (T2 trade_sources, T3 market_listings) stay as they are; the full Settlement.validate
+	# checks them at save. Before 2026-11-19 a bound trade source made the head unable to set the tax rate or the nation.
+	for optional: String in ["trade_sources", "market_listings"]:
+		if candidate.has(optional): fields.append(optional)
 	if (candidate_version != VERSION_MAX and candidate_version != VERSION_LATEST) or not Technology.keys(candidate, fields): return false
 	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
 		and Technology.valid_scope_record(candidate.technology, "settlement") and str(candidate.technology.holder_site_id) == str(state.get("id", ""))

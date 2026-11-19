@@ -511,5 +511,12 @@
   "mode": "headless",
   "timeout": 480,
   "note": "trade T4 TR-40 wagon carries salt across Sites and trades from its hold"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_live_t6_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T6 S6 live trades pay the settlement trade tax"
  }
 ]
