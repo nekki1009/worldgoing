@@ -1735,6 +1735,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		return SiteRuntime.fail("PAUSED_WORLD", "原世界暫停；保留補算欠秒")
 	var fire_step_guard := _fire_step_guard()
 	if not fire_step_guard.ok: return fire_step_guard
+	var pre_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a simulation clock.
 	# A native crowd replay never consumes its own region point mid-interval; the slot consumes it after the commit.
 	# A completed point the slot did not reach (the live step stopped at REGION_EVENT_PENDING and the world events were
 	# consumed by the zero-time caller, so _finish_original_cold_region_points never ran) is finished here as the slot
@@ -1759,7 +1760,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		if not due.ok: return due
 		if not bool(due.get("complete", false)) and not bool(due.get("restricted_settlement", false)): return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
 		if terrain == null or terrain != _region_bound_data or get_tree().paused or bool(terrain.site.get("paused", false)): return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
+	pre_prof = _combat_profile_stage("pre_points_events", pre_prof)
 	if not replaying and _region_point_pending.is_empty() and site_controller.region_slot != null: _region_run_due_daily_hooks()
+	pre_prof = _combat_profile_stage("pre_daily_hooks", pre_prof)
 	var native_begin: Dictionary = {}
 	var original_site := terrain
 	var permit := {}
@@ -1796,7 +1799,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if fire_active_at_start: pre_step_combat_left = maxf(pre_step_combat_left, SiteRuntime.COMBAT_GRACE)
 	if region_callers:
 		region_request_slot = site_controller.region_slot
+		pre_prof = _combat_profile_stage("pre_misc", pre_prof)
 		var joint := _prepare_region_main_interval(elapsed, pre_step_combat_left)
+		pre_prof = _combat_profile_stage("pre_main_interval", pre_prof)
 		if not joint.get("ok", false): return joint
 		if joint.get("pending", false):
 			var due: Dictionary = site_controller.region_slot.consume_due_region_events()
@@ -1936,8 +1941,10 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	_fatigue_work_seconds.clear()
 	fault = site_controller.original_step_fault_guard()
 	if not fault.ok: return site_controller.latch_original_step_fault(fault)
+	var rec_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a simulation clock.
 	if region_callers:
 		var advanced: Dictionary = site_controller.region_slot.advance_prepared_region_formula_progress(region_gameplay_prepared)
+		rec_prof = _combat_profile_stage("rec_formula_progress", rec_prof)
 		if not advanced.get("ok", false): return site_controller.latch_original_step_fault(advanced)
 	# _advance_combat already settled fatigue, food, contacts, remains, orders
 	# and family. Its AFTER-step family pause cannot erase elapsed game time.
@@ -1961,9 +1968,11 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			fire_clock_step["fire_active"] = _fire_activity() or (indexed_fire_grace or fire_active_at_start) \
 				and float(terrain.site.get("combat_left", 0.0)) > 0.0
 		recorded = site_controller.record_completed_region_step(elapsed, completed_game_seconds, permit, fire_clock_step)
+	rec_prof = _combat_profile_stage("rec_record_step", rec_prof)
 	if recorded.get("ok", false) and region_callers:
 		var accepted: Dictionary = site_controller.region_slot.commit_region_gameplay_progress(region_gameplay_prepared)
 		if not accepted.get("ok", false): recorded = site_controller.latch_original_step_fault(accepted)
+	rec_prof = _combat_profile_stage("rec_commit_progress", rec_prof)
 	if not bool(recorded.get("ok", false)): site_controller.latch_original_step_fault(recorded)
 	if bool(recorded.get("ok", false)) and not _region_point_pending.is_empty():
 		_region_point_pending.interval_complete = true
@@ -9635,6 +9644,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 	var requested_maximum: float = maximum
 	var requested_action_begin: float = float(slot.control.fire_clock.action_seconds)
 	var party_host := terrain.has_meta(&"region_party_owner")
+	var pmi: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a simulation clock.
 	if travelling:
 		if not str(slot.control.active_site_id).is_empty(): return SiteRuntime.fail("INVALID_TRAVEL_HOST")
 		if party_host:
@@ -9678,12 +9688,14 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			if not coordinate.ok: return coordinate
 			slot._fire_cold_candidates[owner] = {"data": original.terrain, "coordinate": coordinate.site,
 				"target": float(slot.control.logical_game_seconds), "sequence": int(slot.control.fire_clock.sequence), "epoch": str(slot.control.fire_clock.epoch)}
+	pmi = _combat_profile_stage("pmi_bind_originals", pmi)
 	var permit: Dictionary = {}
 	if not travelling:
 		permit = slot.begin_active_step(terrain.site)
 		if not permit.get("unpaused", false): return {"ok": permit.get("ok", true), "pending": true, "source": permit}
 	# Restore every real NPC party before selecting an ACTION prefix. Travel's
 	# pure upkeep is the GAME consumer; these originals own get-up/down timers.
+	pmi = _combat_profile_stage("pmi_begin_active", pmi)
 	var native_frames := {} # token -> a travelling party's native contact frame Lab (Nekki 2026-11-10 A)
 	for token: String in slot.region_registry().parties:
 		if str(slot.region_registry().parties[token].get("phase", "")) != "travelling": continue
@@ -9693,6 +9705,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if not party_original.ok: return party_original
 		maximum = minf(maximum, party_original.lab._region_party_original_action_limit(maximum))
 		if party_original.lab.crowd_site != null and party_original.lab.crowd_site.active: native_frames[token] = party_original.lab
+	pmi = _combat_profile_stage("pmi_party_owners", pmi)
 	if maximum <= ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_ZERO_ENDPOINT_REQUIRED")
 	var action_begin := float(slot.control.fire_clock.action_seconds)
 	for original: TerrainLab in originals:
@@ -9708,12 +9721,16 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if frame_demand <= 0.0: continue
 		var frame_demanded := slot.set_region_tactical_demand("travel:" + token, action_begin + frame_demand)
 		if not frame_demanded.ok: return frame_demanded
+	pmi = _combat_profile_stage("pmi_demand", pmi)
 	var tactical := slot.GameplayClock.tactical_seconds(slot.region_registry(), action_begin, maximum, minf(maximum, local_tactical))
 	var forecast := RegionSaveSlot.preview_fire_interval(slot.control.fire_clock, float(slot.control.logical_game_seconds), maximum, simulation_speed, tactical)
 	if not forecast.ok: return forecast
+	pmi = _combat_profile_stage("pmi_forecast", pmi)
 	var queued := slot.queue_region_gameplay_endpoints(float(forecast.game_end), forecast)
+	pmi = _combat_profile_stage("pmi_queue_endpoints", pmi)
 	if not queued.ok: return queued
 	var interval: Dictionary = slot.preview_region_interval(maximum, simulation_speed, tactical)
+	pmi = _combat_profile_stage("pmi_preview_interval", pmi)
 	if not interval.get("ok", false) or interval.get("pending", false): return interval
 	var accepted_action := float(interval.action_end) - float(interval.action_begin)
 	# Lab-side GAME width uses the same exact formula the interval guard checks
@@ -9734,6 +9751,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			if not due_capture.ok: return due_capture
 			return {"ok": true, "pending": true, "status": "REGION_EVENT_PENDING"}
 		limited = minf(limited, slot.GameplayClock.action_for_game(capture_game, simulation_speed, float(interval.tactical_seconds)))
+	pmi = _combat_profile_stage("pmi_guards_capture", pmi)
 	# prepare_region_gameplay_interval requires each travelling NPC party's own
 	# route preview to end exactly at the interval end. A seam crossing or upkeep
 	# stop inside this interval (an off-grid departure puts it there) clips it here.
@@ -9743,6 +9761,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if not stop.ok: return _region_preflight_failure(originals, stop)
 		if float(stop.at) < float(interval.game_end) - 0.0000001:
 			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
+	pmi = _combat_profile_stage("pmi_npc_preview", pmi)
 	for original: TerrainLab in originals:
 		# A native crowd original prepares its own work inside its native begin window (as the live crowd does), never here.
 		# The live crowd Site's begin window still clips the joint interval (2026-11-08): it is previewed here and only
@@ -9758,6 +9777,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)
 		limited = minf(limited, float(work.action_seconds))
+	pmi = _combat_profile_stage("pmi_work", pmi)
 	if limited <= ACTION_TIME_EPSILON: return _region_preflight_failure(originals, SiteRuntime.fail("REGION_ZERO_ENDPOINT_REQUIRED"))
 	if limited < accepted_action - ACTION_TIME_EPSILON:
 		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
@@ -9768,7 +9788,9 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			if original.crowd_site != null and original.crowd_site.active: continue
 			var retimed: Dictionary = original._retime_shared_work_step(accepted_action, accepted_game)
 			if not retimed.get("ok", false): return _region_preflight_failure(originals, retimed)
+	pmi = _combat_profile_stage("pmi_retime", pmi)
 	var prepared: Dictionary = slot.prepare_region_gameplay_interval(interval)
+	pmi = _combat_profile_stage("pmi_prepare_gameplay", pmi)
 	if not prepared.get("ok", false): return _region_preflight_failure(originals, prepared)
 	# Prove the full request by exact accepted endpoints, not a tail tolerance.
 	var whole_action_request: bool = maximum == requested_maximum and action_begin == requested_action_begin \
@@ -11171,8 +11193,20 @@ var _region_party_token := ""
 
 var _region_party_input_hash := ""
 
+# party_id -> [Variant bytes, digest] of the last fingerprinted party. The digest is a pure function of the bytes, so a
+# party whose bytes equal the remembered bytes has the remembered digest; any byte change computes it again. The merged
+# two-fleet party is ~340 KB and its runtime proof runs several times per step (2026-11-20: 86 s of melee_or_meal).
+static var _region_party_hash_memo: Dictionary = {}
+
 static func _region_party_hash(party: Dictionary) -> String:
-	return Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text()
+	var bytes: PackedByteArray = var_to_bytes(party)
+	var key := str(party.get("party_id", ""))
+	var known: Variant = _region_party_hash_memo.get(key)
+	if known is Array and known[0] == bytes: return known[1]
+	var digest := Marshalls.raw_to_base64(bytes).sha256_text()
+	if _region_party_hash_memo.size() >= 16 and not _region_party_hash_memo.has(key): _region_party_hash_memo.clear()
+	_region_party_hash_memo[key] = [bytes, digest]
+	return digest
 
 
 func prepare_region_party_original_owner(token: String, party: Dictionary, slot: RegionSaveSlot = null) -> Dictionary:
@@ -11355,11 +11389,15 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 	if slot == null or absf(float(before.upkeep.at) - float(interval.game_begin)) > 0.00000001 \
 			or absf(float(after.upkeep.at) - float(interval.game_end)) > 0.00000001:
 		return SiteRuntime.fail("CLOCK_CONTRACT")
+	var gpp: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a simulation clock.
 	var restored := prepare_region_party_original_owner(token, before, slot)
+	gpp = _combat_profile_stage("gpp_restore_owner", gpp)
 	if not restored.ok: return restored
 	var original: TerrainLab = restored.lab
 	if str(before.upkeep.get("live", {}).get("upkeep", "")) == "liveBody":
-		return _region_advance_original_party_body(original, before, interval)
+		var live_body := _region_advance_original_party_body(original, before, interval)
+		_combat_profile_stage("gpp_live_body", gpp)
+		return live_body
 	var elapsed := float(interval.action_end) - float(interval.action_begin)
 	if elapsed <= 0.0 or original._region_party_original_action_limit(elapsed) < elapsed - ACTION_TIME_EPSILON:
 		return SiteRuntime.fail("REGION_UNCLIPPED_ENDPOINT")
@@ -11380,13 +11418,16 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 	if not original.site_controller.has_method("advance_person_death_timers"):
 		return SiteRuntime.fail("MISSING_REGION_DEATH_PROGRESS")
 	original.site_controller.advance_person_death_timers(elapsed)
+	gpp = _combat_profile_stage("gpp_bodies", gpp)
 	var upkeep: Dictionary = _region_publish_original_party_upkeep(original, after)
+	gpp = _combat_profile_stage("gpp_upkeep", gpp)
 	if not upkeep.ok: return upkeep
 	var captured: Dictionary
 	if str(before.upkeep.get("live", {}).get("upkeep", "")) == "mapBody":
 		if original._region_map_motion_proposal.is_empty(): return SiteRuntime.fail("MISSING_REGION_MAP_MOTION")
 		captured = original.publish_region_party_map_motion(after, original._region_map_motion_proposal, float(interval.game_end), float(interval.action_end))
 	else: captured = _region_capture_original_party(original, after, slot, float(interval.game_end), float(interval.action_end))
+	gpp = _combat_profile_stage("gpp_capture", gpp)
 	if not captured.ok: return captured
 	# All original body timers and accepted upkeep have consumed this interval.
 	# This records their completed ACTION point, without publishing world time.
@@ -11401,6 +11442,7 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 	var meta: Dictionary = original.terrain.get_meta(&"region_party_owner", {})
 	meta["party_hash"] = original._region_party_input_hash
 	original.terrain.set_meta(&"region_party_owner", meta)
+	_combat_profile_stage("gpp_result_hash", gpp)
 	return {"ok": true, "party": result, "complete": true, "token": token,
 		"game_seconds": float(interval.game_end), "action_seconds": float(interval.action_end)}
 
@@ -13270,8 +13312,10 @@ func _region_advance_original_party_body(original: TerrainLab, before: Dictionar
 			if absf(float(original._region_point_pending.fire_action_end) - float(interval.action_end)) > PHASE_BOUNDARY_TOLERANCE:
 				return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "native frame point end %.12f, interval end %.12f" % [float(original._region_point_pending.fire_action_end), float(interval.action_end)])
 			original._region_point_pending.fire_action_end = float(interval.action_end)
+	var lcap: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a simulation clock.
 	var captured: Dictionary = _region_capture_original_party(original, before, site_controller.region_slot,
 		float(interval.game_end), float(interval.action_end))
+	_combat_profile_stage("gpp_live_capture", lcap)
 	if not captured.ok: return captured
 	return {"ok": true, "party": captured.party, "complete": true, "token": str(before.party_id),
 		"game_seconds": float(interval.game_end), "action_seconds": float(interval.action_end)}

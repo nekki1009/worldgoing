@@ -2133,6 +2133,9 @@ func _prepare_region_route_context(active_data: TerrainData, party: Dictionary, 
 	if not Thread.is_main_thread(): return fail("REGION_ROUTE_THREAD", "原導航快照須在主執行緒準備")
 	var snapshots := {}
 	var revision := str(_marker.get("generation", 0)) + ":" + str(region_registry().revision)
+	# The active Site's live key, when the loop below already derived it. Nothing in the loop changes the active data, so
+	# the same key results; only the hash of the whole live Site is not repeated (2026-11-20: ~5 s of two_npc_sea).
+	var active_key := ""
 	for key: String in _marker.get("sites", {}):
 		var pair := key.split(":")
 		if pair.size() != 2: return fail("SAVE_VERSION", "原 Site 索引非法")
@@ -2165,6 +2168,7 @@ func _prepare_region_route_context(active_data: TerrainData, party: Dictionary, 
 					original = loaded.data
 		if original != null:
 			if cache_key.is_empty(): cache_key = _live_route_key(original)
+			if active_data != null and is_same(original, active_data) and cache_key.begins_with("live|"): active_key = cache_key
 			var detached := _route_context_detached(original, cache_key, use_cache)
 			if use_cache and cache_key.begins_with("file|"): _route_context_file_navigation[cache_key] = original.navigation_revision
 			snapshots[coordinate] = detached
@@ -2175,7 +2179,7 @@ func _prepare_region_route_context(active_data: TerrainData, party: Dictionary, 
 	if active_data != null:
 		var coordinate := _coordinate(active_data)
 		if not coordinate.ok: return coordinate
-		snapshots[coordinate.site] = _route_context_detached(active_data, _live_route_key(active_data), use_cache)
+		snapshots[coordinate.site] = _route_context_detached(active_data, active_key if not active_key.is_empty() else _live_route_key(active_data), use_cache)
 		revision += ":active:" + str(active_data.navigation_revision)
 	_region_route_snapshot = snapshots
 	_region_route_snapshot_revision = revision
@@ -4549,20 +4553,36 @@ func _region_queue_npc_siege_contact(token: String, to: float, interval: Diction
 		if not queued_siege.ok: return queued_siege
 	return {"ok": true, "contact": true, "id": contact_id}
 
+## Optional per-stage counters (evidence only, never a simulation clock): a test sets profile_enabled and reads
+## profile_usec. two_npc_sea prints them with `-- --step-profile` (FLEET_SLOT_PROFILE).
+var profile_enabled := false
+var profile_usec: Dictionary = {}
+func _profile_stage(stage: String, started: int) -> int:
+	if not profile_enabled: return 0
+	var now := Time.get_ticks_usec()
+	profile_usec[stage] = int(profile_usec.get(stage, 0)) + now - started
+	return now
+
 func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictionary = {}) -> Dictionary:
+	var qe: int = Time.get_ticks_usec() if profile_enabled else 0 # Optional counters only.
 	var retried := _region_retry_blocked_npc_land_entries()
+	qe = _profile_stage("qe_retry_blocked", qe)
 	if not retried.ok: return retried
 	var registry := region_registry()
 	var tokens: Array = registry.parties.keys()
 	tokens.sort()
 	for token: String in tokens:
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
+		qe = _profile_stage("qe_misc", qe)
 		var forecast := _preview_npc_party_to(token, unclipped_game_end, interval)
+		qe = _profile_stage("qe_preview", qe)
 		if not forecast.ok: return forecast
 		var siege := _region_queue_npc_siege_contact(token, unclipped_game_end, interval)
+		qe = _profile_stage("qe_npc_siege", qe)
 		if not siege.ok: return siege
 		# Bandit B4c: a band that was paid does not stop the same party again while the pass lasts.
 		var contact: Dictionary = {"ok": true, "contact": false} if _region_toll_passed(token) else _region_first_player_route_contact(token, unclipped_game_end, interval)
+		qe = _profile_stage("qe_player_route_contact", qe)
 		if not contact.ok: return contact
 		if bool(contact.get("contact", false)):
 			var contact_identity := "npc:%s:player-contact:%s:%d" % [token, str(contact.site_id), int(contact.component)]
@@ -4582,6 +4602,7 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 			var queued := queue_region_event(_region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
 				{"token": token, "site": forecast.position.site.duplicate(), "component": int(forecast.position.component)}, player_present)
 			if not queued.ok: return queued
+	qe = _profile_stage("qe_party_events", qe)
 	for first_index: int in tokens.size():
 		for second_index: int in range(first_index + 1, tokens.size()):
 			var first_token := str(tokens[first_index])
@@ -4595,7 +4616,9 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 			var queued_pair := queue_region_event(contact_id, "reinforcement", float(control.logical_game_seconds), "travel:" + second_token,
 				{"token": first_token, "contact_receipt": receipt})
 			if not queued_pair.ok: return queued_pair
+	qe = _profile_stage("qe_sea_pairs", qe)
 	var siege_contact: Dictionary = _region_first_player_siege_contact(unclipped_game_end, interval)
+	qe = _profile_stage("qe_player_siege", qe)
 	if not siege_contact.ok: return siege_contact
 	if siege_contact.get("contact", false):
 		var contact_event: Dictionary
@@ -4656,9 +4679,12 @@ func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
 	var battles := {}
 	var cold_labs := {}
 	var permits := {}
+	var pg: int = Time.get_ticks_usec() if profile_enabled else 0 # Optional counters only.
 	for token: String in registry.parties:
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
+		pg = _profile_stage("pg_misc", pg)
 		var preview := _preview_npc_party_to(token, float(interval.game_end), interval)
+		pg = _profile_stage("pg_preview", pg)
 		if not preview.ok: return preview
 		if absf(float(preview.at) - float(interval.game_end)) > 0.0000001: return {"ok": false, "code": "EVENT_CLIP_REQUIRED", "next_event": preview.at}
 		var owner := "travel:" + token
@@ -4671,14 +4697,18 @@ func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
 		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
 		var host: Object = region_original_party_progress.get_object()
 		if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+		pg = _profile_stage("pg_permit", pg)
 		var restored: Dictionary = host.prepare_region_party_original_owner(token, preview.source_party, self)
+		pg = _profile_stage("pg_owner", pg)
 		if not restored.ok: return restored
 		restored.lab.simulation_speed = float(interval.scale)
 		var original_guard: Dictionary = restored.lab._region_original_interval_guard(interval)
+		pg = _profile_stage("pg_guard", pg)
 		if not original_guard.ok: return original_guard
 		if restored.lab._region_party_original_action_limit(float(interval.action_end) - float(interval.action_begin)) < float(interval.action_end) - float(interval.action_begin) - 0.000000001: return fail("EVENT_CLIP_REQUIRED")
 		preview.original_lab = restored.lab
 		parties[token] = preview
+	pg = _profile_stage("pg_party_tail", pg)
 	for id: String in registry.battles:
 		var battle: Dictionary = registry.battles[id]
 		if str(battle.get("phase", "")) == "finished" or str(battle.get("mode", "")) != "formula_active": continue
@@ -6004,12 +6034,24 @@ func answer_region_toll(event_id: String, pay: bool) -> Dictionary:
 
 var region_contact_active_data: Callable
 
+# "<body instance>|<site>|<mode>" -> {data, projected}. The route bodies a contact check reads (the cached route-context
+# snapshots and RegionRoute's fixed-geography memo bodies) are shared read-only, so the labels of one body are a pure
+# function of that same instance. They were re-derived (a full navigation-layer byte signature for the sea memo) for the
+# same body twice per party on every step (2026-11-20: ~26 s of two_npc_sea). Holding the body keeps its id unique.
+const REGION_CONTACT_LABEL_MEMO_LIMIT := 16
+var _region_contact_label_memo: Dictionary = {}
+
 func _region_contact_navigation(site: Vector2i, context: Dictionary, mode: String, cache: Dictionary) -> Dictionary:
 	var key := "%d:%d:%s" % [site.x, site.y, mode]
 	if cache.has(key): return cache[key]
 	var effective := RegionRoute.effective_terrain(source, site, context)
 	if not effective.ok: return effective
 	var data: TerrainData = effective.data
+	var memo_key := "%d|%s" % [data.get_instance_id(), key] if data != null else ""
+	var known: Dictionary = _region_contact_label_memo.get(memo_key, {})
+	if data != null and is_same(known.get("data"), data):
+		cache[key] = known.projected
+		return known.projected
 	var projected: Dictionary
 	if mode == "land":
 		projected = RegionRoute.table_from_terrain(data, RegionRoute._cover(source, site), true)
@@ -6020,6 +6062,9 @@ func _region_contact_navigation(site: Vector2i, context: Dictionary, mode: Strin
 	if not projected.ok: return projected
 	projected.data = data
 	cache[key] = projected
+	if data != null:
+		if _region_contact_label_memo.size() >= REGION_CONTACT_LABEL_MEMO_LIMIT: _region_contact_label_memo.clear()
+		_region_contact_label_memo[memo_key] = {"data": data, "projected": projected}
 	return projected
 
 
@@ -7289,6 +7334,20 @@ func _region_life_party_document(token: String, relative: String, sha: String) -
 		return fail("INVALID_REGION_LIFE_SOURCE")
 	return {"ok": true, "party": body, "payload": payload}
 
+# token -> {folder, path, sha256, pin, result}: one decoded and validated life party document. Documents are write-once
+# under unique names and verified by SHA-256 when read, so the same folder, path, SHA-256 and pin always decode to the
+# same values. The result is shared: a caller only reads it (the per-step live NPC ship decision, 2026-11-20).
+var _region_life_document_cache: Dictionary = {}
+
+func _region_life_party_document_shared(token: String, relative: String, sha: String) -> Dictionary:
+	var cached: Dictionary = _region_life_document_cache.get(token, {})
+	if str(cached.get("folder", "")) == folder and str(cached.get("path", "")) == relative and str(cached.get("sha256", "")) == sha \
+			and _same_pin(cached.get("pin"), pin):
+		return cached.result
+	var document := _region_life_party_document(token, relative, sha)
+	if document.ok: _region_life_document_cache[token] = {"folder": folder, "path": relative, "sha256": sha, "pin": pin.duplicate(true), "result": document}
+	return document
+
 static func _region_life_reference_id(identity: Dictionary, reference: Dictionary) -> int:
 	if not RegionTravel.validate_identity(identity) or reference.size() != 3 \
 			or reference.get("type") != "person" or not reference.get("namespace") is String \
@@ -7863,7 +7922,7 @@ func region_original_party_runtime_proof(token: String, party: Dictionary) -> Di
 		actual = _region_npc_party_runtime[token]
 	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
 	var original: TerrainLab = originals.get(token)
-	var fingerprint := Marshalls.raw_to_base64(var_to_bytes(actual)).sha256_text()
+	var fingerprint := TerrainLab._region_party_hash(actual)
 	if not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
 			or original.terrain == null or original._region_bound_data != original.terrain \
 			or original._region_party_token != token or original._region_party_input_hash != fingerprint \
@@ -12240,7 +12299,7 @@ func _region_npc_live_ship_action(original: TerrainLab, vehicle: Dictionary) -> 
 		if request.get("transfer_token") != source_token or str(request.get("nation_id", "")).is_empty(): continue
 		var source_party: Dictionary = proved.selected_party
 		if source_token != token:
-			var document := _region_life_party_document(source_token, str(reference.party_path), str(reference.party_sha256))
+			var document := _region_life_party_document_shared(source_token, str(reference.party_path), str(reference.party_sha256))
 			if not document.ok: return document
 			source_party = document.party
 		var source_team := str(int(request.get("team_id", -1)))

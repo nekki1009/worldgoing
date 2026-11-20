@@ -21,6 +21,7 @@ var fleet_max_attempts := 48000
 ## The shared step each _fleet_step requests. ACTION_STEP everywhere except the
 ## friendly case's coarse approach to its meal boundary (_fleet_coarse_to_meal).
 var fleet_step_request: float = TerrainLab.ACTION_STEP
+var fleet_step_profile: bool = "--step-profile" in OS.get_cmdline_user_args() # Evidence only.
 ## Fine-cadence game seconds kept before the next meal boundary. It is larger than
 ## one coarse step (EXCHANGE_ACTION_STEP x 60 x 4 = 8 game s), so no coarse step crosses it.
 const FLEET_FINE_MEAL_MARGIN := 16.0
@@ -336,14 +337,29 @@ func _food_results() -> bool:
 		fleet_food.append(outcome.duplicate(true))
 	return _check(slot.take_original_food_results().is_empty(), "per-call accepted food observations drain once and do not replay")
 
+var fleet_test_usec: Dictionary = {} # Evidence only.
+func _fleet_test_stage(stage: String, started: int) -> int:
+	var now := Time.get_ticks_usec()
+	fleet_test_usec[stage] = int(fleet_test_usec.get(stage, 0)) + now - started
+	return now
+
 func _fleet_step() -> bool:
+	var tt := Time.get_ticks_usec()
+	if fleet_step_profile:
+		for owner_lab: Variant in slot.get_meta(&"region_party_owner_labs", {}).values():
+			if is_instance_valid(owner_lab) and owner_lab is TerrainLab: owner_lab.combat_profile_enabled = true
+		if lab is TerrainLab: lab.combat_profile_enabled = true
+		if slot != null: slot.profile_enabled = true
 	if not _food_results(): return false
 	# Observe before the accepted caller, including exchanges during contact readiness.
 	var body_before: Dictionary = _melee_bodies()
 	var exchange_begin: int = fleet_exchanges.size()
 	var paid_begin: float = action_paid
 	var sequence_begin: int = int(slot.control.fire_clock.sequence)
+	tt = _fleet_test_stage("test_pre_observe", tt)
 	var stepped: Dictionary = lab._advance_original_shared_step(fleet_step_request)
+	tt = _fleet_test_stage("test_advance", tt)
+	fleet_test_usec["test_steps"] = int(fleet_test_usec.get("test_steps", 0)) + 1
 	if not _check(stepped.ok, "original main caller accepts the actual common interval or due-zero endpoint", stepped): return false
 	if stepped.get("completed", false):
 		if not _check(float(stepped.action_seconds) > 0.0 and float(stepped.action_seconds) <= fleet_step_request + EPS and float(stepped.game_seconds) > 0.0, "genuine original accepted interval pays both clocks once", stepped): return false
@@ -358,7 +374,9 @@ func _fleet_step() -> bool:
 				"sequence_begin": sequence_begin, "sequence_end": int(slot.control.fire_clock.sequence),
 				"endpoint_consumed": is_instance_valid(fleet_live_lab) and fleet_live_lab._region_point_pending.is_empty()}
 	if not _fleet_reservation_observation(bool(stepped.get("completed", false))): return false
-	return _check(lab.controlled_person_id() == fleet_main_actor and not lab.controlled_target().is_empty(), "actual main human control remains at its original Site Actor") and _food_results()
+	var post_ok := _check(lab.controlled_person_id() == fleet_main_actor and not lab.controlled_target().is_empty(), "actual main human control remains at its original Site Actor") and _food_results()
+	_fleet_test_stage("test_post_observe", tt)
+	return post_ok
 
 func _fleet_until(predicate: Callable, label: String) -> bool:
 	for attempt: int in range(fleet_max_attempts):
@@ -973,19 +991,37 @@ func _fleet_phase(label: String) -> void:
 	print("FLEET_PHASE ", label, " ms=", fleet_phase_marks[-1][1], " paid=", action_paid)
 	# Evidence only (-- --step-profile): TerrainLab's optional per-stage step counters for the phase that just ended,
 	# then cleared and (re)enabled on the live Site, which can be a new Lab after a reopen. Never a simulation clock.
-	if "--step-profile" in OS.get_cmdline_user_args():
+	if fleet_step_profile:
 		var labs: Array = []
 		if current_scene is TerrainLab: labs.append(current_scene)
+		if lab is TerrainLab and not labs.has(lab): labs.append(lab)
 		if fleet_live_lab is TerrainLab and not labs.has(fleet_live_lab): labs.append(fleet_live_lab)
+		if slot != null:
+			for owner_lab: Variant in slot.get_meta(&"region_party_owner_labs", {}).values():
+				if is_instance_valid(owner_lab) and owner_lab is TerrainLab and not labs.has(owner_lab): labs.append(owner_lab)
 		for lab_node: Variant in labs:
 			if not is_instance_valid(lab_node): continue
 			var stages: Dictionary = lab_node.combat_profile_usec
 			var rows: Array = []
-			for stage: Variant in stages: rows.append([str(stage), int(int(stages[stage]) / 1000)])
+			for stage: Variant in stages:
+				var raw := int(stages[stage])
+				rows.append([str(stage), raw if str(stage).begins_with("proof_party_bytes") or str(stage).ends_with("_calls") or str(stage).ends_with("_scanned") else int(raw / 1000)])
 			rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
-			print("FLEET_STEP_PROFILE ", label, " ", JSON.stringify(rows))
+			var site_id: String = str(lab_node.terrain.site.get("id", "")) if lab_node.terrain != null else "?"
+			print("FLEET_STEP_PROFILE ", label, " ", site_id, " main=", lab_node == lab, " live=", lab_node == fleet_live_lab, " ", JSON.stringify(rows))
 			lab_node.combat_profile_usec = {}
 			lab_node.combat_profile_enabled = true
+		if slot != null:
+			var slot_rows: Array = []
+			for stage: Variant in slot.profile_usec: slot_rows.append([str(stage), int(int(slot.profile_usec[stage]) / 1000)])
+			slot_rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
+			print("FLEET_SLOT_PROFILE ", label, " ", JSON.stringify(slot_rows))
+			slot.profile_usec = {}
+			slot.profile_enabled = true
+		var test_rows: Array = []
+		for stage: Variant in fleet_test_usec: test_rows.append([str(stage), int(fleet_test_usec[stage]) if str(stage) == "test_steps" else int(int(fleet_test_usec[stage]) / 1000)])
+		print("FLEET_TEST_PROFILE ", label, " ", JSON.stringify(test_rows))
+		fleet_test_usec = {}
 
 func _run() -> void:
 	fleet_phase_last = Time.get_ticks_msec()
