@@ -4,7 +4,8 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 ## - the build guard: level 1 refuses, level 2 without art refuses MISSING_ART, the state academy needs N07;
 ## - learning: missing reads 0, 20 for a 文吏; validates, survives upgraded(), refuses out of range;
 ## - the 學正 duty (vacant, so the head acts) seats a qualified teacher and students and refuses others;
-## - a teacher and students present for 300 effective seconds give each student +1; away, nothing; at the cap, nothing;
+## - a teacher and students present for 300 effective seconds give each student a lesson of study (技能 K4c: the §5.3
+##   curve, thousandths in the skills packet's study); away, nothing; at the cap, nothing;
 ## - each teacher costs 1 grain a game day; with no grain he teaches nothing;
 ## - the school record saves and validates; a teacher listed twice is refused.
 ## Output: SITE_SCHOOL_E1_PASS on success; quit(1) on failure.
@@ -66,7 +67,7 @@ func _run() -> void:
 	var taught := Schools.advance(data, actions, 299.0)
 	if not _ok(taught.is_empty() and int(data.site.inventory.grain) == 4, "a day's grain is paid; 299 seconds is not yet a lesson", taught): return
 	taught = Schools.advance(data, actions, 1.0)
-	if not _ok(taught.get(pupil, -1) == 1 and not taught.has(far) and PersonSocial.learning(team.combat_units[2]) == 1 and PersonSocial.learning(team.combat_units[3]) == 0, "a full lesson: the present student +1, the one away nothing", taught): return
+	if not _ok(taught.has(pupil) and not taught.has(far) and (int(team.combat_units[2].get("skills", {}).get("study", 0)) > 0 or int(team.combat_units[2].get("skills", {}).get("pending", {}).get("learning", 0)) == 300000000) and PersonSocial.learning(team.combat_units[3]) == 0, "a full lesson: the present student studies (技能 K4c curve), the one away nothing", [taught, team.combat_units[2].get("skills")]): return
 	PersonSocial.set_learning(team.combat_units[2], 40)
 	if not _ok(Schools.advance(data, actions, 300.0).is_empty(), "a student at the cap of 40 learns nothing more"): return
 	PersonSocial.set_learning(team.combat_units[2], 10)

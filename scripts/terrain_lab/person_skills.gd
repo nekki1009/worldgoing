@@ -25,7 +25,7 @@ const MARTIAL: Array[String] = ["melee", "archery", "riding"]
 ## K3b: 武力 grows like a line (key "ability", §6) but its value lives in the person's combat_ability.
 const ABILITY := "ability"
 const GROWTH_KEYS: Array[String] = ["farming", "gathering", "building", "craft", "medicine", "melee", "archery", "riding", "ability",
-	"tactics", "leadership", "coach"]
+	"tactics", "leadership", "coach", "learning"]
 ## K4 (§6): the command abilities grow like lines, talent 悟性, no decline; their thousandths live in `command`.
 const COMMAND_KEYS: Array[String] = ["tactics", "leadership", "coach"]
 const TACTICS_PER_BATTLE := YEAR_SECONDS / 10.0 # 10 battles commanded = one round
@@ -94,6 +94,9 @@ static func valid(packet: Variant) -> bool:
 	if packet.has("start"):
 		if not _integer(packet.start, 1, 1): return false
 		extra += 1
+	if packet.has("study"):
+		if not _integer(packet.study, 0, MAX_VALUE): return false
+		extra += 1
 	if packet.has("command"):
 		if not packet.command is Dictionary or packet.command.is_empty(): return false
 		for key: Variant in packet.command:
@@ -142,6 +145,7 @@ static func normalized(packet: Dictionary) -> Dictionary:
 			if packet[field].has(line): values[line] = int(packet[field][line])
 		result[field] = values
 	if packet.has("start"): result["start"] = 1
+	if packet.has("study"): result["study"] = int(packet.study)
 	if packet.get("command") is Dictionary and not packet.command.is_empty():
 		var command := {}
 		for key: String in COMMAND_KEYS:
@@ -272,7 +276,7 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 	var rolls: Dictionary = result.get("rolls", {})
 	var left := {}
 	if pending.has(ABILITY): left[ABILITY] = int(pending[ABILITY]) # 武力 settles in settle_ability()
-	for key: String in COMMAND_KEYS: # the command abilities settle in settle_command()
+	for key: String in COMMAND_KEYS + ["learning"]: # the command abilities settle in settle_command(), 學業 in study()
 		if pending.has(key): left[key] = int(pending[key])
 	for line: String in LINES:
 		if not pending.has(line): continue
@@ -418,6 +422,46 @@ static func settle_command(packet: Dictionary, key: String, current: int, seed_v
 	if milli >= MAX_VALUE: _earn_title(result, key)
 	command[key] = milli
 	result["command"] = command
+	result["pending"] = pending
+	return {"packet": saved(result), "value": milli / SCALE}
+
+## K4c (§5.7): `seconds` of lessons grow 學業 on the §5.3 curve (talent 悟性), never past `cap`. `current` is the
+## whole learning; the packet's `study` keeps the thousandths. Returns {packet, value}.
+static func study(packet: Dictionary, seconds: float, current: int, cap: int, seed_value: int, identity: int) -> Dictionary:
+	var result := normalized(packet) if valid(packet) else {"version": VERSION}
+	var limit := clampi(cap, 0, 100) * SCALE
+	var milli := clampi(int(result.get("study", current * SCALE)), 0, MAX_VALUE)
+	if milli / SCALE != current: milli = clampi(current * SCALE, 0, MAX_VALUE) # an edited value restarts the thousandths
+	if milli >= limit or seconds <= 0.0: return {"packet": saved(result), "value": current}
+	# Study not yet worth one thousandth waits in pending, so short lessons add up.
+	var pending: Dictionary = result.get("pending", {})
+	seconds += float(pending.get("learning", 0)) / MICROS
+	pending.erase("learning")
+	var talent := float(aptitude(result, seed_value, identity).mind)
+	if milli < PLATEAU:
+		var rate := RATE * (0.5 + talent / 100.0)
+		var u := 1.0 / (1.0 / (1.0 - float(milli) / 100000.0) + rate * seconds / 3600.0 / 100.0)
+		var reached := mini(PLATEAU, maxi(milli, floori(100000.0 * (1.0 - u))))
+		seconds = maxf(0.0, seconds - seconds_between(milli, reached, talent))
+		milli = reached
+		if milli < PLATEAU:
+			if floori(seconds * MICROS) > 0: pending["learning"] = floori(seconds * MICROS)
+			seconds = 0.0
+	if milli >= PLATEAU and milli < MAX_VALUE and seconds > 0.0:
+		var toward: Dictionary = result.get("toward", {})
+		var rolls: Dictionary = result.get("rolls", {})
+		var gathered := float(toward.get("learning", 0)) / MICROS + seconds
+		while gathered >= YEAR_SECONDS and milli < MAX_VALUE:
+			var count := int(rolls.get("learning", 0))
+			milli = mini(MAX_VALUE, milli + SCALE * yearly_gain(seed_value, identity, "learning", count, talent))
+			rolls["learning"] = count + 1
+			gathered -= YEAR_SECONDS
+		toward["learning"] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
+		result["toward"] = toward
+		result["rolls"] = rolls
+	milli = mini(milli, limit)
+	if milli >= MAX_VALUE: _earn_title(result, "learning")
+	result["study"] = milli
 	result["pending"] = pending
 	return {"packet": saved(result), "value": milli / SCALE}
 

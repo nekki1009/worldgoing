@@ -15,6 +15,7 @@ extends RefCounted
 ## 鄉試 passes at 60 → 文吏. The roll is fixed by the seed, the person and the day.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K4c: lessons on the §5.3 curve
 
 const VERSION := 1
 const DAY_MINUTES := 1440
@@ -175,10 +176,18 @@ static func advance(data: TerrainData, actions: Variant, seconds: float) -> Dict
 		while float(record.lesson) >= LESSON_SECONDS:
 			record["lesson"] = float(record.lesson) - LESSON_SECONDS
 			for person: Dictionary in students:
-				var learned := mini(int(spec.cap), PersonSocial.learning(person.body) + 1)
+				# 技能 K4c (§5.7): a lesson is LESSON_SECONDS of study on the §5.3 curve (悟性), not a flat +1.
+				var studied: Dictionary = PersonSkills.study(PersonSkills.of(person.body), LESSON_SECONDS, PersonSocial.learning(person.body),
+					int(spec.cap), _skills_seed(actions), int(person.person_id))
+				PersonSkills.write(person.body, studied.packet)
+				var learned := mini(int(spec.cap), int(studied.value))
 				PersonSocial.set_learning(person.body, learned)
 				taught[int(person.person_id)] = learned
 	return taught
+
+static func _skills_seed(actions: Variant) -> int:
+	var controller: Variant = actions.lab.site_controller if actions != null and actions.get("lab") != null else null
+	return int(controller._skills_world_seed()) if controller != null and controller.has_method("_skills_world_seed") else PersonSkills.world_seed("")
 
 static func _present(actions: Variant, identity: int, entrance: Vector2i) -> bool:
 	var person: Dictionary = actions._person(identity, false)
