@@ -25,6 +25,9 @@ signal events_received(events: PackedInt64Array)
 
 const BatchView := preload("res://scripts/terrain_lab/terrain_army_batch_view.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd") # 軍餉與稅收 P5: arrears morale
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K2: a rescue trains medicine.
+## 技能 K2: the native rescue's action seconds (crowd rules RESCUE_SECONDS, POSE_SECONDS.rescue).
+const RESCUE_SECONDS := 4.0
 const SiegeWorkAppend := preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const Atlas := preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
@@ -2410,6 +2413,11 @@ func _battle_event(kind: int, identity: int, other: int) -> void:
 		_faction_of_person(other) if kind == 4 else -1, rank != "" and rank != "none")
 	if kind in [0, 1] and striker > 0 and lab.site_controller.has_method("civilian_harmed"): lab.site_controller.civilian_harmed(kind, identity, striker)
 	if kind == 0 and lab.site_controller.has_method("resident_died"): lab.site_controller.resident_died(identity)
+
+## 技能 K2 (reports/skill-system-plan.md §4, §8): a finished rescue trains the rescuer's medicine by its action time.
+func _credit_rescue(rescuer: int) -> void:
+	var body: Variant = _actors.get(rescuer) if _actors.has(rescuer) else _records.get(rescuer)
+	if body != null: PersonSkills.credit(body, "medicine", RESCUE_SECONDS)
 
 func _battle_tick(combat_left: float) -> void:
 	var now := _battle_now()
@@ -5602,6 +5610,7 @@ func _consume_events_original() -> bool:
 		var other := int(events[offset + 2])
 		event_counts[kind] = int(event_counts.get(kind, 0)) + 1
 		if kind in [0, 1, 4]: _battle_event(kind, identity, other)
+		if kind == 3 and other > 0: _credit_rescue(other) # 技能 K2: the rescuer bandaged and lifted a team-mate
 		if kind in [4, 5]:
 			pending_captivity.append({"kind": kind, "person": identity, "other": other, "ammo_synced": false})
 		elif kind == 0:
