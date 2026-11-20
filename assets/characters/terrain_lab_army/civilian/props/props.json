@@ -1,0 +1,46 @@
+{
+  "box_front": {
+    "size_px": [
+      256,
+      256
+    ],
+    "grip_px": [
+      128,
+      119
+    ],
+    "real_width_m": 0.45
+  },
+  "box_side": {
+    "size_px": [
+      256,
+      256
+    ],
+    "grip_px": [
+      128,
+      120
+    ],
+    "real_width_m": 0.45
+  },
+  "bucket_front": {
+    "size_px": [
+      256,
+      256
+    ],
+    "grip_px": [
+      128,
+      41
+    ],
+    "real_width_m": 0.32
+  },
+  "bucket_side": {
+    "size_px": [
+      256,
+      256
+    ],
+    "grip_px": [
+      128,
+      37
+    ],
+    "real_width_m": 0.32
+  }
+}

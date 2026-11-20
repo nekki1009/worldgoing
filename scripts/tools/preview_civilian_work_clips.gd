@@ -4,6 +4,7 @@ extends "res://scripts/terrain_lab/terrain_army_atlas_capture.gd"
 ## as the atlas capture. Run in visual mode: --script res://scripts/tools/preview_civilian_work_clips.gd
 const Profile = preload("res://scripts/terrain_lab/terrain_army_civilian_atlas.gd")
 const Work = preload("res://scripts/terrain_lab/civilian_work_clips.gd")
+const Props = preload("res://scripts/terrain_lab/civilian_props.gd")
 const OUT := "res://output/civilian_a3_preview"
 const CELL := Vector2i(150, 190)
 
@@ -37,6 +38,9 @@ func preview() -> bool:
 			_editor.animation_option.add_item(id)
 			_editor.animation_option.set_item_metadata(_editor.animation_option.item_count - 1, id)
 			_editor._available_animation_ids[StringName(id)] = true
+		# The Codex props (CC-20261120-206), placed exactly as the civilian capture places them.
+		var props := Props.new()
+		if not props.setup(_editor.preview_world, skeleton, false): return _reject("Civilian props (Codex art) missing or malformed")
 		var columns := 0
 		for id: String in Work.IDS: columns = maxi(columns, int(samples[id]))
 		var sheet := Image.create(CELL.x * columns, CELL.y * Work.IDS.size() * 4, false, Image.FORMAT_RGBA8)
@@ -56,6 +60,7 @@ func preview() -> bool:
 				for index in range(count):
 					var loop: bool = id == "civilian_carry"
 					_seek(length * float(index) / float(count if loop else count - 1))
+					props.place(id, _editor.get_preview_yaw_degrees())
 					if not await _draw(): return false
 					var image := _viewport.get_texture().get_image()
 					var used := image.get_used_rect()

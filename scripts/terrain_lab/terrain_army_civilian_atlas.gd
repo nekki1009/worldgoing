@@ -85,6 +85,10 @@ const EXTRA_SOURCES := [
 	"res://scripts/terrain_lab/terrain_army_civilian_atlas.gd",
 	"res://scripts/terrain_lab/civilian_atlas_clips.gd",
 	"res://scripts/terrain_lab/civilian_work_clips.gd",
+	"res://scripts/terrain_lab/civilian_props.gd",
+	"res://assets/characters/terrain_lab_army/civilian/props/props.json",
+	"res://assets/characters/terrain_lab_army/civilian/props/box_front.png", "res://assets/characters/terrain_lab_army/civilian/props/box_side.png",
+	"res://assets/characters/terrain_lab_army/civilian/props/bucket_front.png", "res://assets/characters/terrain_lab_army/civilian/props/bucket_side.png",
 	"res://scripts/terrain_lab/civilian_atlas_capture.gd",
 	"res://scripts/terrain_lab/terrain_army_atlas_capture.gd",
 	"res://scripts/tools/publish_civilian_atlas.gd"]

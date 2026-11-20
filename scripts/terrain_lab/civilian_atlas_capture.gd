@@ -5,6 +5,8 @@ extends "res://scripts/terrain_lab/terrain_army_atlas_capture.gd"
 const CivilianProfile = preload("res://scripts/terrain_lab/terrain_army_civilian_atlas.gd")
 const CivilianClips = preload("res://scripts/terrain_lab/civilian_atlas_clips.gd")
 const Work = preload("res://scripts/terrain_lab/civilian_work_clips.gd")
+const Props = preload("res://scripts/terrain_lab/civilian_props.gd")
+var _props: RefCounted = null
 
 func _capture(plan: Dictionary, output: String, sources: Dictionary, dye_sources: Dictionary) -> bool:
  if plan != CivilianProfile.plan(plan.appearance): return _reject("Not an exact civilian plan")
@@ -52,4 +54,12 @@ func _make_editor(appearance: Dictionary, masks: bool) -> bool:
   _editor.animation_option.add_item(id)
   _editor.animation_option.set_item_metadata(_editor.animation_option.item_count - 1, id)
   _editor._available_animation_ids[StringName(id)] = true
+ # CIV-A3 props: the box and bucket quads, black in the dye-mask pass (civilian_props.gd).
+ _props = Props.new()
+ if not _props.setup(_editor.preview_world, skeletons[0], masks): return _reject("Civilian props (Codex art) missing or malformed")
  return _alive()
+
+## Every sampled pose (colour and mask pass): the prop follows the hands of the selected clip.
+func _seek(time: float) -> void:
+ super._seek(time)
+ if _props != null: _props.place(str(_editor.selected_animation), _editor.get_preview_yaw_degrees())
