@@ -1,7 +1,14 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-20 08:10（台北）
-CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18 起接手）。前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+更新：2026-11-20 10:20（台北）
+CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-20 10:20（台北）平民道具圖接上、技能系統 K0 完成
+- 已提交（未推送）：bd84886 CIV-A3 道具——Codex CC-20261120-206 的木箱、水桶（正側面＋props.json 握點）接進平民擷取，搬運／抬起兩手抱箱、打水右手提桶；平民頁重烘（publish --all-recipes，visual 294 秒，新命名空間 dd94f4a5…）；預覽工具補上同一套放置（output/civilian_a3_preview）。CA-03 PASS（1960 項）、平民畫面 PASS。編輯器 --import 600 秒逾時（卡在掃描整個專案），道具圖用 Image.load_from_file 讀，不需匯入。
+- 已提交（未推送）：a6b3596 技能系統 K0——person_skills.gd（八行千分位稀疏封包、根骨悟性由世界種子＋人物編號推常態分配 50／15、存「出生者」才存）；與性格同一路徑（Actor、隊伍／群眾名冊列、旅隊內容），驗證放在 valid_state、SiteStore._validate_military、TerrainArmy.valid_combat_state；人物技能頁（人物欄「人物技能頁」、名冊「查看所選隊員技能」）。開局人物（terrain_lab.gd 開局建立、main_menu）延到 K5。新測試 region_person_skills_k0_test（約 50 秒）。上線行為不變。
+- 回歸 PROPS_K0_REG（K0 家族 15＋群眾家族 38〔CA-01 新資料夾〕＋91 短測）115/115：並行 108、7 支執行器與保留規則的資料夾競態單跑全過。
+- 注意：資質依人物編號推導，只有 Region 世界的人物分配器（preserve_person_ids）保證跨 Site 編號不變；測試用的兩個裸 lab 會在抵達時重新編號。
+- 下一步：技能系統 K1（工作熟練倍率與成長、依年齡推初值、名號、師徒同工、戶籍派工、流民、畫面外補算、元旦衰退、365 日長測調平衡）。
 
 ## 交接給下一個指揮中心（11/20 08:10 台北，本串 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb 脈絡過長）
 
