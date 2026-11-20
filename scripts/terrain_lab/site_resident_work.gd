@@ -132,7 +132,9 @@ static func excluded_for(state: Dictionary, identity: int) -> Dictionary:
 ## the camp has room, as long as the camp has a tool. Returns the batches made.
 const WORK_HOURS := 10.0
 ## `factor` (平民 C6): identity → work speed of a member (SiteResidentMood.work_factor); none = everyone at full speed.
-static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null, factor: Callable = Callable()) -> int:
+## `skill` (技能 K1e): (identity, line, seconds) → speed; it credits the member's day on his job's line and returns his
+## speed on it (PersonSkills.work_factor). None = no growth and full speed, the old formula.
+static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null, factor: Callable = Callable(), skill: Callable = Callable()) -> int:
 	var made := 0
 	var stock: Dictionary = state.get("inventory", {})
 	var houses: Array = state.get("households", {}).keys()
@@ -146,7 +148,11 @@ static func daily_production(state: Dictionary, minutes: Dictionary, data: Terra
 		var members: Array = Households.members(state, house_id)
 		if members.is_empty(): continue
 		var workers := 0.0
-		for identity: Variant in members: workers += float(factor.call(int(identity))) if factor.is_valid() else 1.0
+		var line := PersonSkills.line_for_task(state, {"action": "operate", "target": "feature:" + feature_key}) if skill.is_valid() else ""
+		for identity: Variant in members:
+			var speed := float(factor.call(int(identity))) if factor.is_valid() else 1.0
+			if not line.is_empty(): speed *= float(skill.call(int(identity), line, WORK_HOURS * 3600.0))
+			workers += speed
 		var season := Season.farm_factor_of_state(state) if str(feature.get("kind", "")) in Runtime.FARM_KINDS else 1.0 # TC8
 		minutes[house_id] = float(minutes.get(house_id, 0.0)) + workers * WORK_HOURS * 60.0 * season
 		while float(minutes[house_id]) >= float(recipe.cycle):

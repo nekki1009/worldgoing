@@ -4,6 +4,7 @@ extends Node2D
 const SiteHousing = preload("res://scripts/terrain_lab/site_housing.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C6: grievance and slow work offline.
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1e: off-screen days train and speed work.
 const CoarseSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
@@ -12742,7 +12743,7 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 			# 平民 C6: the day's grievance is recorded and settled as on a live day; work speed follows it (G >= 40: 80%).
 			ResidentMood.day(self)
 			CoarseSocial.settle_site(self)
-			ResidentWork.daily_production(terrain.site, _coarse_work_minutes, terrain, _coarse_work_factor)
+			ResidentWork.daily_production(terrain.site, _coarse_work_minutes, terrain, _coarse_work_factor, _coarse_skill_work)
 		_exchange_phase = fposmod(_exchange_phase + action_seconds, EXCHANGE_QUERY_STEP)
 		for actor: TerrainTestCharacter in combat_actors:
 			if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
@@ -12839,6 +12840,13 @@ const COARSE_STEP_SECONDS := 3600.0
 func _coarse_work_factor(identity: int) -> float:
 	var person: Dictionary = site_controller.person_actions._person(identity, false)
 	return ResidentMood.work_factor(self, identity, person.get("body")) if not person.is_empty() else 1.0
+
+## 技能 K1e: a resident's off-screen day on his job's line trains it and goes at his speed on it.
+func _coarse_skill_work(identity: int, line: String, seconds: float) -> float:
+	var person: Dictionary = site_controller.person_actions._person(identity, false)
+	if person.is_empty(): return 1.0
+	PersonSkills.credit(person.get("body"), line, seconds)
+	return PersonSkills.work_factor(person.get("body"), line)
 
 ## Work minutes each household put into its job during the coarse prefix (runtime; ResidentWork.daily_production).
 var _coarse_work_minutes: Dictionary = {}
