@@ -15337,8 +15337,13 @@ func skills_day() -> Dictionary:
 				seeded += 1
 				continue
 		if not raw is Dictionary or not raw.has("pending"): continue
-		PersonSkills.write(body, PersonSkills.settle(PersonSkills.of(body), seed_value, int(body.get("person_id"))))
+		var before: Dictionary = PersonSkills.of(body)
+		var after: Dictionary = PersonSkills.settle(before, seed_value, int(body.get("person_id")))
+		PersonSkills.write(body, after)
 		settled += 1
+		# 技能 K1d (§5.8): each title earned today is worth +5 prestige once.
+		for _title: Variant in range(PersonSkills.titles_of(after).size() - PersonSkills.titles_of(before).size()):
+			adjust_reputation(int(body.get("person_id")), PersonSkills.TITLE_PRESTIGE, 0.0)
 	last_skills_day = {"day": today, "settled": settled, "seeded": seeded}
 	return last_skills_day
 
@@ -15438,6 +15443,10 @@ func vital_new_year(year: int) -> Dictionary:
 		var applied := Vital.new_year(vital, year, seed_value, identity, housed, kod)
 		TerrainTestCharacter.PersonSocial.set_vital(body, applied.vital)
 		result.aged = int(result.aged) + 1
+		# 技能 K1d (§5.4): his lines fall by the drop of his age base (51-65: 2 a year, from 66: 4), never below 0.
+		var drop := Vital.age_base(float(vital.base), int(vital.year) - int(vital.birth_year)) \
+			- Vital.age_base(float(applied.vital.base), int(applied.vital.year) - int(applied.vital.birth_year))
+		if drop > 0.0 and not PersonSkills.of(body).get("lines", {}).is_empty(): PersonSkills.write(body, PersonSkills.age_decline(PersonSkills.of(body), drop))
 		var hp := float(person.hp)
 		if bool(applied.dies):
 			_apply_supply_damage(identity, hp)

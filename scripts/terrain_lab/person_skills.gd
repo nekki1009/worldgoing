@@ -50,6 +50,13 @@ const BUILD_FEATURES: Array[String] = ["shipyard"]
 ## K1c starting values (§5.5): the four work lines start at 30 except the trade's, which is worked from age 15.
 const WORK_LINES: Array[String] = ["farming", "gathering", "building", "craft"]
 const OTHER_START := 30000
+## K1d titles (§5.8): earned when a line reaches 100, kept for life. Keys beyond the eight lines are for K3/K4.
+const TITLE_KEYS: Array[String] = ["farming", "gathering", "building", "craft", "medicine", "melee", "archery", "riding",
+	"ability", "learning", "tactics", "leadership", "coach"]
+const TITLE_NAMES := {"farming": "農神", "gathering": "樵神", "building": "築神", "craft": "匠神", "medicine": "醫神",
+	"melee": "戰神", "archery": "箭神", "riding": "騎神", "ability": "武神", "learning": "文曲", "tactics": "謀神",
+	"leadership": "軍神", "coach": "兵神"}
+const TITLE_PRESTIGE := 5.0
 const START_AGE := 15
 const TRADE_RATE := 0.5
 const SOLDIER_RATE := 0.25
@@ -74,6 +81,13 @@ static func valid(packet: Variant) -> bool:
 			extra += 1
 	if packet.has("start"):
 		if not _integer(packet.start, 1, 1): return false
+		extra += 1
+	if packet.has("titles"):
+		if not packet.titles is Array or packet.titles.is_empty(): return false
+		var seen := {}
+		for key: Variant in packet.titles:
+			if not key is String or not TITLE_KEYS.has(key) or seen.has(key): return false
+			seen[key] = true
 		extra += 1
 	return packet.size() == 1 + extra
 
@@ -111,6 +125,10 @@ static func normalized(packet: Dictionary) -> Dictionary:
 			if packet[field].has(line): values[line] = int(packet[field][line])
 		result[field] = values
 	if packet.has("start"): result["start"] = 1
+	if packet.get("titles") is Array and not packet.titles.is_empty():
+		var titles: Array = []
+		for key: Variant in packet.titles: titles.append(str(key))
+		result["titles"] = titles
 	return result
 
 ## Sparse save form: lines at 50 are dropped; empty when nothing differs from the default and no aptitude is stored.
@@ -238,6 +256,7 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 				rolls[line] = count + 1
 				gathered -= YEAR_SECONDS
 			toward[line] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
+		if milli >= MAX_VALUE: _earn_title(result, line)
 		lines[line] = milli
 	result["lines"] = lines
 	result["pending"] = left
@@ -263,6 +282,26 @@ static func initial(packet: Dictionary, age: int, trades: Array, rate: float, se
 	result["pending"] = pending
 	result["start"] = 1
 	return settle(result, seed_value, identity)
+
+## K1d (§5.8): records the title of `key` once, in the order earned.
+static func _earn_title(result: Dictionary, key: String) -> void:
+	var titles: Array = result.get("titles", [])
+	if titles.has(key): return
+	titles.append(key)
+	result["titles"] = titles
+
+## Titles earned, in order (§5.8: a list shows the first, the skills page all of them).
+static func titles_of(packet: Dictionary) -> Array:
+	return packet.get("titles", []).duplicate() if packet.get("titles") is Array else []
+
+## K1d (§5.4): the New Year decline of `points` (the drop of his age base) on every line he has, never below 0.
+static func age_decline(packet: Dictionary, points: float) -> Dictionary:
+	if not valid(packet): return {}
+	var result := normalized(packet)
+	if points <= 0.0 or not result.get("lines") is Dictionary: return saved(result)
+	var loss := roundi(points * SCALE)
+	for line: String in result.lines.keys(): result.lines[line] = maxi(0, int(result.lines[line]) - loss)
+	return saved(result)
 
 ## Proficiency of `line` in thousandths (50000 when not stored).
 static func level_milli(packet: Dictionary, line: String) -> int:
@@ -336,8 +375,12 @@ static func page(packet: Dictionary, aptitude_values: Dictionary, combat_ability
 	for tech_id: Variant in learned:
 		techniques.append([str(tech_id), str(TECHNOLOGY_LABELS.get(str(tech_id), ""))])
 	if techniques.is_empty(): techniques.append(["工法", "尚未學會"])
-	return [{"title": "資質", "rows": talent}, {"title": "技能", "rows": lines}, {"title": "武力・學業・統率", "rows": abilities},
+	var sections: Array = [{"title": "資質", "rows": talent}, {"title": "技能", "rows": lines}, {"title": "武力・學業・統率", "rows": abilities},
 		{"title": "工法", "rows": techniques}]
+	var titles: Array = []
+	for key: Variant in titles_of(packet): titles.append([str(TITLE_NAMES.get(str(key), "")), str(LINE_LABELS.get(str(key), key)) + " 100"])
+	if not titles.is_empty(): sections.insert(0, {"title": "名號", "rows": titles})
+	return sections
 
 static func _number(value: float) -> String:
 	return str(int(value)) if value == floorf(value) else "%.1f" % value
