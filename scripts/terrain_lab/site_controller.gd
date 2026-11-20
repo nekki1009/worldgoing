@@ -60,6 +60,8 @@ var last_vital_scan: Dictionary = {}
 var sleep_record: Dictionary = {}
 var _sleep_minute := -1
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents' civilian clothes
+const CivilianActivity = preload("res://scripts/terrain_lab/crowd_civilian_activity.gd") # CIV-A4: the native civilian role
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
 var _resident_check := -1
@@ -5218,6 +5220,7 @@ func run_daily_hooks() -> void:
 	BanditDay.day(self)
 	resident_exodus_day()
 	skills_day()
+	civilian_dress_day()
 
 func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
@@ -15456,6 +15459,43 @@ func _skills_bandit(identity: int) -> bool:
 	var owner: Variant = person.get("owner") if not person.is_empty() else null
 	if owner == null or (owner is Object and not is_instance_valid(owner)) or owner.get("faction_id") == null: return false
 	return RegionFactionQuery.is_bandit(region_slot.control.get("faction_registry", {}), int(owner.faction_id))
+
+## CIV-A4 平民裝 (Nekki 2026-11-20 A): once a Site day, every unarmed civilian resident wears his civilian clothes.
+func civilian_dress_day() -> Dictionary:
+	if lab == null or lab.terrain == null or not _crowd_active(): return {}
+	var today := int(Calendar.day_index(float(lab.terrain.site.get("minute", 0))))
+	if int(get_meta(&"dress_day", -2)) == today: return {}
+	set_meta(&"dress_day", today)
+	return dress_residents()
+
+## CIV-A4: dresses every registered resident here who is a living, unarmed civilian on the crowd Site (not the
+## controlled person) in the civilian look of his body, with the straw hat when his household's job is outdoors
+## (CivilianDress.outdoor_line); an old save's residents convert the same way. Through the crowd's own equipment path;
+## a look it refuses is left as it was. {dressed, refused: [ids]}.
+func dress_residents() -> Dictionary:
+	var result := {"dressed": 0, "refused": []}
+	if not _crowd_active(): return result
+	var crowd: Variant = lab.crowd_site
+	var controlled := int(lab.controlled_person_id())
+	for key: Variant in lab.terrain.site.get("housing", {}):
+		var identity := int(key)
+		var index := int(crowd._index_by_id.get(identity, -1))
+		if identity == controlled or index < 0 or not crowd._records.has(identity) or crowd._actors.has(identity): continue
+		var record: Dictionary = crowd._records[identity]
+		if int(crowd.crowd.get_military_role(index)) != CivilianActivity.CIVILIAN_ROLE or float(person_actions._person(identity, false).get("hp", 0.0)) <= 0.0: continue
+		if not record.get("item_state") is Dictionary or not record.item_state.get("equipped", {}).is_empty() or not record.get("appearance") is Dictionary: continue
+		var job := ResidentWork.job_of(lab.terrain.site, identity)
+		var hatted := not job.is_empty() and CivilianDress.outdoor_line(PersonSkills.line_for_task(lab.terrain.site, {"action": "operate", "target": "feature:" + job}))
+		if CivilianDress.is_dressed(record.appearance) and CivilianDress.is_hatted(record.appearance) == hatted: continue
+		var desired := CivilianDress.look(int(record.appearance.get("body", 0)), hatted)
+		var projected: Dictionary = Runtime.equipment_appearance(lab.terrain, record.item_state, desired) if not desired.is_empty() else {}
+		if projected.is_empty() or not crowd.equipment_recipe_guard(identity, projected).ok or not crowd._prepare_contact_appearance(projected, identity):
+			result.refused.append(identity)
+			continue
+		record["appearance"] = desired
+		crowd.equipment_changed(identity)
+		result.dressed = int(result.dressed) + 1
+	return result
 
 ## 技能 K4 (§6): a day as the captain of a crowd team of at least 5 present people is 1/360 of a round of 統御.
 func _skills_leadership_day() -> void:

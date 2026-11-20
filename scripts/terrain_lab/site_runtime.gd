@@ -9,6 +9,7 @@ const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1a: work trains the task's line.
 const TechnologyPolicy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
 const TechnologyCatalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
+const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: a civilian's own clothes
 const COMBAT_GRACE := 10.0
 const CARRY_CAPACITY := 20
 const ITEM_STORAGE_VERSION := 1
@@ -475,6 +476,13 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 		if not dye.is_empty():
 			if not appearance.has("equipment_dyes"): appearance["equipment_dyes"] = {}
 			appearance.equipment_dyes[slot] = dye
+	# CIV-A4 平民裝 (Nekki 2026-11-20 A): an unarmed person whose saved look has the civilian's own clothes keeps them;
+	# any equipped item drops them (the daily dressing puts them back on an unarmed civilian).
+	if holder.equipped.is_empty():
+		var kept := CivilianDress.kept(validated_parts, validated_dyes)
+		if not kept.is_empty():
+			for slot: String in kept.parts: appearance.parts[slot] = kept.parts[slot]
+			if not kept.dyes.is_empty(): appearance["equipment_dyes"] = kept.dyes.duplicate()
 	if appearance.parts == validated_parts and appearance.get("equipment_dyes", {}) == validated_dyes:
 		return appearance
 	return appearance if HumanCharacter3DEditor.valid_appearance(appearance) else {}

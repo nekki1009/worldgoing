@@ -4,6 +4,7 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 ## nothing created (bed shortage, wrong faction), idempotency, and no run on a non-initial state.
 
 const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
+const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd")
 
 func _row(name: String, faction: Variant, house: String) -> Dictionary:
 	return {"name": name, "faction_id": faction, "house": house}
@@ -141,9 +142,13 @@ func _run() -> void:
 		assert(item_ids.is_empty() and equipped.is_empty(), "Resident %d holds no items" % int(unit.person_id))
 		var appearance: Dictionary = unit.get("appearance", {})
 		var parts: Dictionary = appearance.get("parts", {})
+		# CIV-A4 平民裝 (Nekki 2026-11-20 A): born in the civilian look (布衣, 草鞋; the hat comes with an outdoor job),
+		# no item behind it; every other equipment slot stays empty.
+		var dressed: Dictionary = CivilianDress.look(int(appearance.get("body", 0)), false)
 		for slot: Variant in equipment_slots:
-			assert(str(parts.get(str(slot), "")) == "none", "Resident %d shows no %s part" % [int(unit.person_id), str(slot)])
-		assert(not appearance.has("equipment_dyes"), "Resident %d has no equipment dye" % int(unit.person_id))
+			if str(slot) == "mount": continue
+			assert(str(parts.get(str(slot), "")) == str(dressed.parts.get(str(slot), "none")), "Resident %d wears the civilian %s part" % [int(unit.person_id), str(slot)])
+		assert(appearance.get("equipment_dyes", {}) == dressed.get("equipment_dyes", {}), "Resident %d wears the civilian dyes" % int(unit.person_id))
 		var reconciled: Dictionary = Runtime.equipment_appearance(candidate, holder, appearance)
 		assert(not reconciled.is_empty() and reconciled == appearance, "Resident %d appearance equals the item reconcile" % int(unit.person_id))
 

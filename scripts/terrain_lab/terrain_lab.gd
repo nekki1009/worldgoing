@@ -30,6 +30,7 @@ const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
+const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents are born dressed
 const CombatMovementCoordinatorScript = preload("res://scripts/terrain_lab/site_combat_movement_coordinator.gd")
 const FireMovementTypes = preload("res://scripts/terrain_lab/combat_movement_types.gd")
 const TacticalAI = preload("res://scripts/terrain_lab/site_army_ai.gd")
@@ -11864,7 +11865,9 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 		# Unarmed look: the game's own projection of this empty holder (SiteRuntime.equipment_appearance, the
 		# reconcile that site_store.gd _validate_army_assets and terrain_lab.gd _presentation_holder use). Every
 		# equipment slot becomes "none"; body, face and hair stay. Checked like enable_combat's contact preparation.
-		var unarmed: Dictionary = SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)
+		# CIV-A4 平民裝 (Nekki 2026-11-20 A): a resident is born in his civilian clothes (the hat comes with an outdoor job).
+		var dressed: Dictionary = CivilianDress.look(int(body.appearance.get("body", 0)), false)
+		var unarmed: Dictionary = SiteRuntime.equipment_appearance(candidate, body.item_state, dressed if not dressed.is_empty() else body.appearance)
 		if unarmed.is_empty() or not TerrainArmy.prepare_contact_source_for(unarmed):
 			return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("RESIDENT_DEPLOY_FAILED", "居民外觀無法卸裝；未改變"))
 		body["appearance"] = unarmed
