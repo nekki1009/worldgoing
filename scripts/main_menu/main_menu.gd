@@ -930,7 +930,8 @@ func start_new_game() -> void:
 		return
 	var scenario_id := str(_initial_scenario.get_item_metadata(_initial_scenario.selected))
 	var start_faction := start_faction_choice()
-	var start_record := {"free_points": bool(data.get("free_points", false)), "template": str(RegionEntry.draft.get("template_title", ""))}
+	var start_record := {"free_points": bool(data.get("free_points", false)), "template": str(RegionEntry.draft.get("template_title", "")),
+		"scenario": RegionEntry.scenario_record(scenario_id)}
 	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction,
 		RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}, start_record):
 		_message.text = RegionEntry.menu_message
@@ -941,13 +942,13 @@ func start_new_game() -> void:
 
 
 func _build_initial_scenario_choice(parent: Node) -> void:
-	_label(parent, "開局情境", 16)
+	_label(parent, "劇本", 16) # 開局流程規劃 §3: the scenario field; today only the empty scenario
 	_initial_scenario = OptionButton.new()
 	_initial_scenario.name = "InitialArtisanScenario"
 	_initial_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Nekki 2026-11-03: a new game starts with cadres, not artisans. The player captains a neutral team with
 	# TerrainLab.INITIAL_CADRES cadres. The artisan scenarios stay available to tests only, not in the menu.
-	_initial_scenario.add_item("玩家與 %d 名幹部" % TerrainLab.INITIAL_CADRES)
+	_initial_scenario.add_item("空劇本：玩家與 %d 名幹部" % TerrainLab.INITIAL_CADRES)
 	_initial_scenario.set_item_metadata(0, "")
 	parent.add_child(_initial_scenario)
 	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))

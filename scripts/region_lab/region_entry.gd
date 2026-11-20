@@ -69,7 +69,8 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		"slot_id": SLOT, "site": site, "create_new": true, "character": character.duplicate(true),
 		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true),
 		"family": {"surname": str(family.get("surname", "")).strip_edges(), "name": str(family.get("name", "")).strip_edges()},
-		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", ""))}}
+		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", "")),
+			"scenario": scenario_record(initial_scenario_id)}}
 	return true
 
 
@@ -111,7 +112,9 @@ static func record_world(world_id: String, slot_id: String, manifest_path: Strin
 			"name": world_name if not world_name.is_empty() else "台灣 %s" % Time.get_datetime_string_from_unix_time(now, true)}
 	if int(meta.version) == 2: meta["technology_policy"] = policy.policy.duplicate(true)
 	# 開局流程規劃 §2: how the world was started (自由分配, the template), written once.
-	if not start.is_empty() and not meta.has("start"): meta["start"] = {"free_points": bool(start.get("free_points", false)), "template": str(start.get("template", ""))}
+	if not start.is_empty() and not meta.has("start"):
+		meta["start"] = {"free_points": bool(start.get("free_points", false)), "template": str(start.get("template", "")),
+			"scenario": start.get("scenario", scenario_record("")) if start.get("scenario") is Dictionary else scenario_record("")}
 	meta["slot_id"] = slot_id
 	meta["manifest"] = manifest_path
 	meta["saved_unix"] = now
@@ -140,6 +143,11 @@ static func _remove_tree(path: String) -> bool:
 	for child: String in directory.get_directories():
 		if not _remove_tree(path.path_join(child)): return false
 	return DirAccess.remove_absolute(path) == OK
+
+## 開局流程規劃 §3: the scenario a world started from, as world.json keeps it. The empty scenario (the menu's only one
+## today: the player and his cadres) is {id: "empty", version: 1}; a test-only artisan scenario keeps its own id.
+static func scenario_record(initial_scenario_id: String) -> Dictionary:
+	return {"id": "empty" if initial_scenario_id.is_empty() else initial_scenario_id, "version": 1}
 
 static func world_path(world_id: String) -> String:
 	return WORLDS.path_join(world_id).path_join("world.json")

@@ -153,7 +153,8 @@ func _run() -> void:
 	if _files_under("user://sites") > 0: return _fail("placeholder Site was archived or saved under user://sites")
 	var meta := RegionEntry.read_world(world_id)
 	if str(meta.get("name", "")) != "測試世界": return _fail("world meta name " + str(meta))
-	if meta.get("start") != {"free_points": false, "template": ""}: return _fail("world meta start " + str(meta.get("start")))
+	if meta.get("start") != {"free_points": false, "template": "", "scenario": {"id": "empty", "version": 1.0}} and meta.get("start") != {"free_points": false, "template": "", "scenario": {"id": "empty", "version": 1}}:
+		return _fail("world meta start " + str(meta.get("start")))
 	var family: Dictionary = lab.terrain.site.get("family", {})
 	var player := int(lab.controlled_person_id())
 	if int(family.get("version", 0)) < 4 or str(family.get("name", "")) != "林家" or family.get("members", []).size() != 1 or int(family.members[0].person_id) != player 		or FamilyContinuity.family_offices(family, true).get("positions", []).filter(func(seat: Dictionary) -> bool: return bool(seat.get("head", false)) and int(seat.holder) == player).is_empty():
