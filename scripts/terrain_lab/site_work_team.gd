@@ -15,6 +15,13 @@ var vehicle_blocked := Callable() # Optional original vehicle owner, pure occupa
 var _active_ids: Dictionary = {}
 var _retry_left: Dictionary = {}
 var _working: Dictionary = {}
+## 技能 K1d: this step's skill credits [row, line, seconds, target, identity], credited together at the step's end so
+## co-workers on one target can teach each other (師徒同工).
+var _skill_credits: Array = []
+const MENTOR_AT := 60000
+const MENTOR_GAP := 10000
+const MENTOR_LIMIT := 3
+const MENTOR_BOOST := 1.5
 var _manual_hits: Dictionary = {}
 var _routes: Dictionary = {} # Discardable paths for active original IDs only.
 var _prepared_work: Array[Dictionary] = [] # One original shared interval, never saved.
@@ -444,7 +451,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			var skill_line := PersonSkills.line_for_task(lab.terrain.site, task) # 技能 K1a
 			if _native_person(person):
 				var native_minutes := _native_work_minutes(person, manual, minutes, handled)
-				PersonSkills.credit(row, skill_line, native_minutes * 60.0)
+				_skill_credits.append([row, skill_line, native_minutes * 60.0, SiteRuntime.work_claim_key(task), identity])
 				return native_minutes * mood * PersonSkills.work_factor(row, skill_line) # 技能 K1b
 			var work_rate := PersonFatigue.effort_rate(row)
 			var effort := minutes * 60.0 if manual else minf(minutes * 60.0, maxf(0.0, (PersonFatigue.WORK_REST_AT - PersonFatigue.read(row)) / work_rate))
@@ -456,7 +463,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if effort > 0.0:
 				handled[identity] = float(handled.get(identity, 0.0)) + effort
 				_working[identity] = true
-			PersonSkills.credit(row, skill_line, productive)
+			_skill_credits.append([row, skill_line, productive, SiteRuntime.work_claim_key(task), identity])
 			return productive / 60.0 * mood * PersonSkills.work_factor(row, skill_line) # 技能 K1b
 		var work_target := SiteRuntime.work_claim_key(task)
 		if str(task.target).begins_with("vehicle:"):
@@ -507,6 +514,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if bool(job.task.get("named", false)): cancel(int(job.identity))
 	refresh_vehicle_tasks()
 	refresh_ship_tasks()
+	_flush_skill_credits()
 	return {"handled_seconds": handled}
 
 ## Called before ANY original pool effort is written for this shared interval.
@@ -963,7 +971,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			consumed["used"] = true
 			_record_planned_work(entry, interval, handled)
 			var planned_line := PersonSkills.line_for_task(lab.terrain.site, entry.task)
-			PersonSkills.credit(entry.row, planned_line, base) # 技能 K1a
+			_skill_credits.append([entry.row, planned_line, base, SiteRuntime.work_claim_key(entry.task), int(entry.identity)]) # 技能 K1a
 			# Pool fatigue was admitted once by the shared collector; 技能 K1b: the worker's speed on the task's line.
 			return base / 60.0 * PersonSkills.work_factor(entry.row, planned_line)
 		if str(entry.target).begins_with("vehicle:"):
@@ -982,7 +990,41 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 	refresh_vehicle_tasks()
 	refresh_ship_tasks()
 	_consuming_work_plan = {}
+	_flush_skill_credits()
 	return {"handled_seconds": handled}
+
+## 技能 K1a/K1d: credits this step's work. On one target and line, each worker at MENTOR_AT or more teaches up to
+## MENTOR_LIMIT co-workers at least MENTOR_GAP below him (lowest person ids first, best master first); a taught worker's
+## credited seconds count MENTOR_BOOST times. Only growth changes; the work itself is already done.
+func _flush_skill_credits() -> void:
+	if _skill_credits.is_empty(): return
+	var groups := {}
+	for credit: Array in _skill_credits:
+		if str(credit[1]).is_empty() or float(credit[2]) <= 0.0: continue
+		var key := str(credit[3]) + "|" + str(credit[1])
+		var group: Dictionary = groups.get(key, {})
+		var identity := int(credit[4])
+		if group.has(identity): group[identity][2] = float(group[identity][2]) + float(credit[2])
+		else: group[identity] = [credit[0], credit[1], float(credit[2])]
+		groups[key] = group
+	_skill_credits.clear()
+	for key: String in groups:
+		var group: Dictionary = groups[key]
+		var ids: Array = group.keys()
+		ids.sort()
+		var levels := {}
+		for identity: int in ids: levels[identity] = PersonSkills.level_milli(PersonSkills.of(group[identity][0]), str(group[identity][1]))
+		var masters: Array = ids.filter(func(identity: int) -> bool: return int(levels[identity]) >= MENTOR_AT)
+		masters.sort_custom(func(a: int, b: int) -> bool: return int(levels[a]) > int(levels[b]) or int(levels[a]) == int(levels[b]) and a < b)
+		var taught := {}
+		for identity: int in ids:
+			var boost := 1.0
+			for master: int in masters:
+				if master != identity and int(levels[master]) >= int(levels[identity]) + MENTOR_GAP and int(taught.get(master, 0)) < MENTOR_LIMIT:
+					taught[master] = int(taught.get(master, 0)) + 1
+					boost = MENTOR_BOOST
+					break
+			PersonSkills.credit(group[identity][0], str(group[identity][1]), float(group[identity][2]) * boost)
 
 ## Runtime's commit guard borrows this admitted original group, never a timer.
 ## Do not call Runtime.work_preflight here: its consumer can query this method.

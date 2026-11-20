@@ -18,6 +18,7 @@ const WINTER_DAYS := 90
 const FOOD_ITEMS := ["grain", "wild_food", "fish", "meat"]
 const FOOD_KINDS := ["farm"]
 const DUTY := "settlement.registry"
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1d: the most skilled households first.
 
 ## Features of `faction` with an active operate zone, food producers first, then by id.
 static func job_features(state: Dictionary, faction: int) -> Array:
@@ -45,7 +46,9 @@ static func households_of(state: Dictionary, faction: int) -> Array:
 	return result
 
 ## {house_id: feature} for the households of `faction` that need a new job. Existing valid jobs are kept and counted.
-static func plan(state: Dictionary, faction: int, food_first: bool = false) -> Dictionary:
+## 技能 K1d (§7): with `skill` (identity, line -> proficiency), each open place goes to the jobless household with the
+## highest average proficiency in that job's line (ties: lowest house id); without it, house id order as before.
+static func plan(state: Dictionary, faction: int, food_first: bool = false, skill: Callable = Callable()) -> Dictionary:
 	var candidates := job_features(state, faction)
 	var result := {}
 	if candidates.is_empty(): return result
@@ -58,15 +61,35 @@ static func plan(state: Dictionary, faction: int, food_first: bool = false) -> D
 	for house_id: String in houses:
 		var current := str(state.households[house_id].get("job", {}).get("feature", ""))
 		if taken.has(current): taken[current] = int(taken[current]) + 1
+	var open: Array = []
 	for house_id: String in houses:
-		var current := str(state.households[house_id].get("job", {}).get("feature", ""))
-		if taken.has(current): continue
+		if not taken.has(str(state.households[house_id].get("job", {}).get("feature", ""))): open.append(house_id)
+	while not open.is_empty():
 		var best := str(candidates[0])
 		for key: String in candidates:
 			if int(taken[key]) < int(taken[best]): best = key
+		var pick := 0
+		if skill.is_valid():
+			var line := PersonSkills.line_for_task(state, {"action": "operate", "target": "feature:" + best})
+			var top := -1.0
+			for index: int in open.size():
+				var score := _household_skill(state, str(open[index]), line, skill)
+				if score > top:
+					top = score
+					pick = index
+		var house_id: String = open[pick]
+		open.remove_at(pick)
 		taken[best] = int(taken[best]) + 1
 		result[house_id] = best
 	return result
+
+## The average proficiency of a household's members in `line` (0 with no line or no member).
+static func _household_skill(state: Dictionary, house_id: String, line: String, skill: Callable) -> float:
+	var members: Array = Households.members(state, house_id)
+	if line.is_empty() or members.is_empty(): return 0.0
+	var total := 0.0
+	for identity: Variant in members: total += float(skill.call(int(identity), line))
+	return total / float(members.size())
 
 ## TC8: autumn, climate on, and the camp holds less than WINTER_DAYS rations per registered resident.
 static func autumn_store(state: Dictionary) -> bool:

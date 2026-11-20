@@ -15184,7 +15184,8 @@ func plan_household_jobs(requester_id: int, food_first: bool = false) -> Diction
 	var checked := registry_authority(requester_id)
 	if not checked.ok: return checked
 	Households.reconcile(lab.terrain.site)
-	var changed := ResidentWork.apply(lab.terrain.site, ResidentWork.plan(lab.terrain.site, int(checked.faction), food_first))
+	var proficiency := func(identity: int, line: String) -> float: return PersonSkills.level(PersonSkills.of(person_actions._person(identity, false).get("body")), line) # 技能 K1d
+	var changed := ResidentWork.apply(lab.terrain.site, ResidentWork.plan(lab.terrain.site, int(checked.faction), food_first, proficiency))
 	return Runtime.ok("已分派 %d 戶主業" % changed, {"changed": changed})
 
 ## The duty AI plans once a day for a decider who is not the controlled person.
