@@ -10678,6 +10678,13 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
+		# 技能 K3b (§5.3, §6): a battle he fought in counts 70 hours on his martial line and toward his 武力 (officers and
+		# the controlled person only, Q5 A).
+		if found.is_empty() or int(closed.deltas[person].get("battles", 0)) <= 0: continue
+		var role: Variant = found.body.get("military_role")
+		if str(role) == "officer" or int(person) == int(lab.controlled_person_id()):
+			PersonSkills.credit(found.body, PersonSkills.martial_line(found.body), PersonSkills.BATTLE_SECONDS)
+			PersonSkills.credit(found.body, PersonSkills.ABILITY, PersonSkills.BATTLE_SECONDS)
 	if region_slot != null: region_slot.pending_battles.append(closed.battle)
 	return closed
 
@@ -15342,6 +15349,12 @@ func skills_day() -> Dictionary:
 		if not raw is Dictionary or not raw.has("pending"): continue
 		var before: Dictionary = PersonSkills.of(body)
 		var after: Dictionary = PersonSkills.settle(before, seed_value, int(body.get("person_id")))
+		if after.get("pending", {}).has(PersonSkills.ABILITY): # 技能 K3b: 武力 lives in combat_ability
+			var current: Variant = body.get("combat_ability")
+			var grown: Dictionary = PersonSkills.settle_ability(after, float(current) if current is float or current is int else 50.0, seed_value, int(body.get("person_id")))
+			after = grown.packet
+			if body is Dictionary: body["combat_ability"] = float(grown.ability)
+			else: body.set("combat_ability", float(grown.ability))
 		PersonSkills.write(body, after)
 		settled += 1
 		# 技能 K1d (§5.8): each title earned today is worth +5 prestige once.

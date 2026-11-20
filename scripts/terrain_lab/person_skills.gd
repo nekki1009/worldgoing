@@ -22,6 +22,12 @@ const LINES: Array[String] = ["farming", "gathering", "building", "craft", "medi
 const LINE_LABELS := {"farming": "農牧", "gathering": "樵採", "building": "營造", "craft": "工藝", "medicine": "醫護",
 	"melee": "近戰", "archery": "弓弩", "riding": "騎乘"}
 const MARTIAL: Array[String] = ["melee", "archery", "riding"]
+## K3b: 武力 grows like a line (key "ability", §6) but its value lives in the person's combat_ability.
+const ABILITY := "ability"
+const GROWTH_KEYS: Array[String] = ["farming", "gathering", "building", "craft", "medicine", "melee", "archery", "riding", "ability"]
+const ABILITY_PACE := 3.0 # one round of 武力 = 3 full-time years of the same events
+const BATTLE_SECONDS := 70.0 * 3600.0 # §5.3: a battle with real exchange counts 70 hours
+const WeaponMaterials = preload("res://scripts/ui/weapon_materials.gd")
 const LEVEL_GRADES: Array[String] = ["生手", "學徒", "熟手", "老手", "名手"]
 const APTITUDES: Array[String] = ["body", "mind"]
 const APTITUDE_LABELS := {"body": "根骨", "mind": "悟性"}
@@ -94,7 +100,7 @@ static func valid(packet: Variant) -> bool:
 static func _valid_counts(value: Variant, high: int) -> bool:
 	if not value is Dictionary: return false
 	for line: Variant in value:
-		if not line is String or not LINES.has(line) or not _integer(value[line], 0, high): return false
+		if not line is String or not GROWTH_KEYS.has(line) or not _integer(value[line], 0, high): return false
 	return true
 
 static func _valid_lines(lines: Variant) -> bool:
@@ -121,7 +127,7 @@ static func normalized(packet: Dictionary) -> Dictionary:
 	for field: String in ["pending", "toward", "rolls"]:
 		if not packet.get(field) is Dictionary: continue
 		var values := {}
-		for line: String in LINES:
+		for line: String in GROWTH_KEYS:
 			if packet[field].has(line): values[line] = int(packet[field][line])
 		result[field] = values
 	if packet.has("start"): result["start"] = 1
@@ -141,7 +147,7 @@ static func saved(packet: Dictionary) -> Dictionary:
 		if result.lines.is_empty(): result.erase("lines")
 	for field: String in ["pending", "toward", "rolls"]:
 		if not result.has(field): continue
-		for line: String in LINES:
+		for line: String in GROWTH_KEYS:
 			if result[field].has(line) and int(result[field][line]) <= 0: result[field].erase(line)
 		if result[field].is_empty(): result.erase(field)
 	return {} if result.size() == 1 else result
@@ -176,7 +182,7 @@ static func line_for_task(state: Dictionary, task: Dictionary) -> String:
 ## K1a: credits `seconds` of effective work on `line` to the body's pending work, in place (called on hot work paths, so
 ## it never copies the packet). The daily settlement turns pending work into proficiency.
 static func credit(body: Variant, line: String, seconds: float) -> void:
-	if body == null or not LINES.has(line) or not is_finite(seconds) or seconds <= 0.0: return
+	if body == null or not GROWTH_KEYS.has(line) or not is_finite(seconds) or seconds <= 0.0: return
 	var packet: Variant = null
 	if body is Dictionary: packet = body.get("skills")
 	elif body is Object and "skills" in body: packet = body.get("skills")
@@ -249,6 +255,7 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 	var toward: Dictionary = result.get("toward", {})
 	var rolls: Dictionary = result.get("rolls", {})
 	var left := {}
+	if pending.has(ABILITY): left[ABILITY] = int(pending[ABILITY]) # 武力 settles in settle_ability()
 	for line: String in LINES:
 		if not pending.has(line): continue
 		var seconds := float(pending[line]) / MICROS
@@ -274,7 +281,8 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 			toward[line] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
 		if milli >= MAX_VALUE: _earn_title(result, line)
 		lines[line] = milli
-	result["lines"] = lines
+	if lines.is_empty(): result.erase("lines") # only 武力 was pending: no line to store (an empty lines map is invalid)
+	else: result["lines"] = lines
 	result["pending"] = left
 	result["toward"] = toward
 	result["rolls"] = rolls
@@ -318,6 +326,53 @@ static func age_decline(packet: Dictionary, points: float) -> Dictionary:
 	var loss := roundi(points * SCALE)
 	for line: String in result.lines.keys(): result.lines[line] = maxi(0, int(result.lines[line]) - loss)
 	return saved(result)
+
+## K3b (§6): 武力's growth. `ability` is his combat_ability (0..100); the pending "ability" work grows it on the §5.3
+## curve at a third of the pace (aptitude: 根骨), and from 80 one roll per 3 years' worth. Returns {packet, ability}.
+static func settle_ability(packet: Dictionary, ability: float, seed_value: int, identity: int) -> Dictionary:
+	var result := normalized(packet) if valid(packet) else {"version": VERSION}
+	var pending: Dictionary = result.get("pending", {})
+	if not pending.has(ABILITY): return {"packet": saved(result), "ability": ability}
+	var seconds := float(pending[ABILITY]) / MICROS / ABILITY_PACE
+	pending.erase(ABILITY)
+	var talent := float(aptitude(result, seed_value, identity).body)
+	var milli := clampi(roundi(ability * float(SCALE)), 0, MAX_VALUE)
+	var start_milli := milli
+	if milli < PLATEAU:
+		var rate := RATE * (0.5 + talent / 100.0)
+		var u := 1.0 / (1.0 / (1.0 - float(milli) / 100000.0) + rate * seconds / 3600.0 / 100.0)
+		var reached := mini(PLATEAU, maxi(milli, floori(100000.0 * (1.0 - u))))
+		seconds = maxf(0.0, seconds - seconds_between(milli, reached, talent))
+		milli = reached
+		if milli < PLATEAU:
+			if floori(seconds * ABILITY_PACE * MICROS) > 0: pending[ABILITY] = floori(seconds * ABILITY_PACE * MICROS)
+			seconds = 0.0
+	if milli >= PLATEAU and milli < MAX_VALUE and seconds > 0.0:
+		var toward: Dictionary = result.get("toward", {})
+		var rolls: Dictionary = result.get("rolls", {})
+		var gathered := float(toward.get(ABILITY, 0)) / MICROS + seconds
+		while gathered >= YEAR_SECONDS and milli < MAX_VALUE:
+			var count := int(rolls.get(ABILITY, 0))
+			milli = mini(MAX_VALUE, milli + SCALE * yearly_gain(seed_value, identity, ABILITY, count, talent))
+			rolls[ABILITY] = count + 1
+			gathered -= YEAR_SECONDS
+		toward[ABILITY] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
+		result["toward"] = toward
+		result["rolls"] = rolls
+	if milli >= MAX_VALUE: _earn_title(result, ABILITY)
+	result["pending"] = pending
+	# Below 80 the curve only reaches whole thousandths; keep the stored value when it did not move.
+	return {"packet": saved(result), "ability": float(milli) / float(SCALE) if milli != start_milli else ability}
+
+## K3b: the martial line a person fights on: 弓弩 with a bow or crossbow, 騎乘 when mounted, else 近戰.
+static func martial_line(body: Variant) -> String:
+	var appearance: Variant = null
+	if body is Dictionary: appearance = body.get("appearance")
+	elif body is Object: appearance = body.get("_saved_appearance")
+	if not appearance is Dictionary: return "melee"
+	var weapon := str(appearance.get("parts", {}).get("weapon", "none"))
+	if str(WeaponMaterials.family(StringName(weapon))).contains("bow"): return "archery"
+	return "riding" if bool(appearance.get("mounted", false)) else "melee"
 
 ## Proficiency of `line` in thousandths (50000 when not stored).
 static func level_milli(packet: Dictionary, line: String) -> int:
