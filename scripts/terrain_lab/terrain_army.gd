@@ -9478,6 +9478,7 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 	for body: Variant in snapshot.units:
 		if not body is Dictionary or body.get("military_role") not in ["officer", "soldier", "civilian"]: return false
 		if body.has("personality") and not TerrainTestCharacter.PersonPersonality.valid(body.personality): return false
+		if body.has("skills") and not TerrainTestCharacter.PersonSkills.valid(body.skills): return false
 		if body.has("technology") and not TerrainTestCharacter.Technology.valid_person(body.technology): return false
 		if body.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(body.social_state): return false
 		if body.has("fire_body") and not SiteCombatRules.fire_body_saved_valid(body.fire_body): return false

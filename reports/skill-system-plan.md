@@ -1,6 +1,6 @@
 # 技能系統 — 規劃報告 V0.7
 
-日期：2026-11-19　作者：Claude（討論技能系統設計 thread）　狀態：**定案**（Nekki 2026-11-19 20:03（台北）「1A 2A 3B 4跟著老化檢查，衰退幅度與maxhp一樣 5A 6C 7A 8B」；20:39 追加「加資質，影響學習速度」；21:30 資質拆兩項、放慢到名手至少 10 年、稱呼改詞、資質創世界用常態分配、出生靠遺傳；22:58「學業一起放慢。熟練到100時有特殊名稱：匠神跟戰神等等。」；23:13「80以上改成做滿一年增長1-5，資質越高增加5點機率越高；統率三項也要有名號」；23:44「直接改擲五次骰，有可能+0，統率三項也是80後改一樣的方式加」）；只定規則，不動程式。施工由專案指揮中心排程。
+日期：2026-11-19　作者：Claude（討論技能系統設計 thread）　狀態：**定案，V0.7 為最終版**（Nekki 2026-11-20 00:04（台北）「定案」）。決定經過：（Nekki 2026-11-19 20:03（台北）「1A 2A 3B 4跟著老化檢查，衰退幅度與maxhp一樣 5A 6C 7A 8B」；20:39 追加「加資質，影響學習速度」；21:30 資質拆兩項、放慢到名手至少 10 年、稱呼改詞、資質創世界用常態分配、出生靠遺傳；22:58「學業一起放慢。熟練到100時有特殊名稱：匠神跟戰神等等。」；23:13「80以上改成做滿一年增長1-5，資質越高增加5點機率越高；統率三項也要有名號」；23:44「直接改擲五次骰，有可能+0，統率三項也是80後改一樣的方式加」）；只定規則，不動程式。施工由專案指揮中心排程。
 
 依據：`scripts/terrain_lab/terrain_test_character.gd`（人物欄位）、`site_combat_rules.gd`（交鋒、射準公式）、`site_duty_ai.gd`（`DUTY_ABILITY`）、`site_technology.gd`（個人工法）、`person_social.gd`（學業、戰績）、`site_vital.gd`（TC7 年齡與健康）、`person_personality.gd`（性格十軸）、`main_menu.gd`（開局四能力）；`reports/tech-tree-v2-draft.md`、`reports/exam-and-school-plan.md`、`reports/civil-military-office-plan.md`、`reports/civilian-site-behavior-plan.md`、`reports/time-and-climate-plan.md`；開局流程規劃（11/09：能力總點數上限 200＋「自由分配」開關）。程式依 GitHub 分支 `claude/project-thread-qsrymf`（11/17 推送版）查核，11/17 之後未推送的改動未查。
 

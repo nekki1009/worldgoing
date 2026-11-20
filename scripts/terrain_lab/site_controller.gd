@@ -67,6 +67,7 @@ var last_resident_schedule: Dictionary = {}
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const DutyAI = preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const PersonSocialPacket = preload("res://scripts/terrain_lab/person_social.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd")
 const MODES := ["查看", "手動採集", "隊員採集區", "清理區", "勘探區", "建設區", "馬羊捕捉區", "復育原生植被區"]
 const FORMATION_DESCRIPTIONS := {
 	"auto": "依地形站位，可使用進路待命",
@@ -781,6 +782,7 @@ func _build_ui() -> void:
 	_button(column, "國家制度／具名公務", "NationOperations", _open_nation_operations)
 	column = _formal_columns.people
 	_button(column, "查看所選格人物／遺留物", "InspectLoot", _open_person_inventory)
+	_button(column, "人物技能頁（所選格人物；未選為本人）", "PersonSkills", func() -> void: _open_person_skills())
 	_button(column, "攻擊所選目標", "AttackSelectedPerson", lab.attack_selected_soldier)
 	_button(column, "救助所選友方", "RescueSelectedPerson", lab.rescue_selected_soldier)
 	_button(column, "被俘本人：嘗試逃脫", "BeginCaptiveEscape", func() -> void: show_result(person_actions.begin_escape(lab.controlled_person_id())))
@@ -4718,6 +4720,9 @@ func _open_roster(trial: bool = false, host: Window = null) -> void:
 			apply_result.call(Runtime.fail("STALE", "原控制人物／所屬隊伍已變更，請重新開啟名冊"))
 			return false
 		return true
+	_button(column, "查看所選隊員技能", "RosterSkills", func() -> void:
+		var picked: Array[int] = selected_ids.call()
+		_open_person_skills(picked[0] if not picked.is_empty() else -1, dialog))
 	_button(column, "派所選原隊員工作", "AssignRosterWorkers", func() -> void:
 		if current_scope.call():
 			apply_result.call(work_team.assign(team, selected_ids.call(), lab.controlled_person_id())))
@@ -15283,6 +15288,54 @@ func vital_year_tick() -> void:
 	_vital_year = year
 	if first: return # the first look only sets the baseline; New Year runs when the calendar year really turns here
 	last_vital_scan = vital_new_year(year)
+
+## Skills K0 (reports/skill-system-plan.md V0.7 §5.6, §8): the aptitude seed, from the same Region world instance as
+## the TC7 vital seed, so a person's derived 根骨／悟性 is the same in every Site of the world.
+func _skills_world_seed() -> int:
+	var world := str(region_slot.pin.get("world_instance_id", "")) if region_slot != null and region_slot.get("pin") is Dictionary else ""
+	return PersonSkills.world_seed(world)
+
+## The skills page (人物頁「技能」) of a person here: {ok, identity, aptitude, sections} or a failure. Read only.
+func person_skills_page(identity: int) -> Dictionary:
+	var person: Dictionary = person_actions._person(identity, false)
+	if person.is_empty() or person.get("body") == null: return Runtime.fail("NO_TARGET", "找不到這個人物")
+	var body: Variant = person.body
+	var packet: Dictionary = PersonSkills.of(body)
+	var ability: Variant = body.get("combat_ability", 50.0) if body is Dictionary else body.get("combat_ability")
+	var command: Variant = body.get("command_abilities", {}) if body is Dictionary else body.get("command_abilities")
+	var technology: Variant = body.get("technology", {}) if body is Dictionary else body.get("technology")
+	var learned: Array = technology.learned.duplicate() if TerrainTestCharacter.Technology.valid_person(technology) else []
+	var aptitude: Dictionary = PersonSkills.aptitude(packet, _skills_world_seed(), identity)
+	var sections: Array = PersonSkills.page(packet, aptitude, float(ability) if ability is float or ability is int else 50.0,
+		PersonSocialPacket.learning(body), command if command is Dictionary else {}, learned)
+	return {"ok": true, "identity": identity, "aptitude": aptitude, "sections": sections}
+
+func _open_person_skills(identity: int = -1, host: Window = null) -> void:
+	if identity <= 0:
+		var picked: Array[int] = _selected_people()
+		identity = picked[0] if not picked.is_empty() else int(lab.controlled_person_id())
+	var ui_context := str(identity)
+	if _existing_dialog("skills", ui_context, host): return
+	var page := person_skills_page(identity)
+	if not page.ok:
+		show_result(page)
+		return
+	var dialog := AcceptDialog.new()
+	dialog.title = "人物 #%d · 技能" % identity
+	dialog.name = "PersonSkillsDialog"
+	dialog.min_size = Vector2i(420, 560)
+	var column := VBoxContainer.new()
+	dialog.add_child(column)
+	for section: Dictionary in page.sections:
+		_label(column, str(section.title), 18)
+		var grid := GridContainer.new()
+		grid.columns = 2
+		column.add_child(grid)
+		for row: Array in section.rows:
+			_label(grid, str(row[0]), 15)
+			_label(grid, str(row[1]), 15)
+	_label(column, "技能 50＝現行；資質決定之後學得多快（下一期起生效）。", 13)
+	_show_dialog(dialog, "skills", ui_context, host)
 
 func _vital_world_seed() -> int:
 	var world := str(region_slot.pin.get("world_instance_id", "")) if region_slot != null and region_slot.get("pin") is Dictionary else ""

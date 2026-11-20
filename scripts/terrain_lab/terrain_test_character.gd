@@ -128,6 +128,8 @@ var display_name := "" # Set by main-menu character creation; empty shows the pe
 var personality: Dictionary = {} # PersonPersonality packet; empty is neutral.
 var social_state: Dictionary = {} # PersonSocial packet (v2 plan 4.2); empty = never captured.
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
+var skills: Dictionary = {} # PersonSkills packet (技能 K0); empty reads as every line 50.
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd")
 var technology: Dictionary = {} # Original person's learned skills; empty is a legacy/unlearned person.
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
@@ -1921,6 +1923,8 @@ func capture_state(read_only: bool = false) -> Dictionary:
 	if not display_name.is_empty(): state["name"] = display_name
 	var saved_personality := PersonPersonality.saved(personality)
 	if not saved_personality.is_empty(): state["personality"] = saved_personality
+	var saved_skills := PersonSkills.saved(skills)
+	if not saved_skills.is_empty(): state["skills"] = saved_skills
 	if not technology.is_empty(): state["technology"] = technology.duplicate(true)
 	if not social_state.is_empty(): state["social_state"] = social_state.duplicate(true)
 	if not fire_body.is_empty(): state["fire_body"] = SiteCombatRules.fire_body_capture(fire_body)
@@ -1955,6 +1959,8 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 	if state.has("name") and (not state.name is String or str(state.name).strip_edges().is_empty() or str(state.name).length() > MAX_NAME_LENGTH):
 		return false
 	if state.has("personality") and not PersonPersonality.valid(state.personality):
+		return false
+	if state.has("skills") and not PersonSkills.valid(state.skills):
 		return false
 	if state.has("technology") and not Technology.valid_person(state.technology):
 		return false
@@ -2134,6 +2140,7 @@ func restore_state(state: Dictionary) -> void:
 		command_abilities[kind] = int(state.command_abilities[kind])
 	display_name = str(state.get("name", ""))
 	personality = PersonPersonality.normalized(state.personality) if state.has("personality") else {}
+	skills = PersonSkills.normalized(state.skills) if state.has("skills") else {}
 	technology = Technology.normalize_person(state.technology) if state.has("technology") else {}
 	social_state = PersonSocial.normalized(state.social_state) if state.has("social_state") else {}
 	_cancel_rescue()

@@ -1079,6 +1079,8 @@ static func _validate_military(data: TerrainData, state: Dictionary) -> Dictiona
 			return Runtime.fail("CORRUPT_SAVE", "原人物軍官／士兵／平民資格")
 		if actor.has("personality") and not TerrainTestCharacter.PersonPersonality.valid(actor.personality):
 			return Runtime.fail("CORRUPT_SAVE", "原人物性格資料")
+		if actor.has("skills") and not TerrainTestCharacter.PersonSkills.valid(actor.skills):
+			return Runtime.fail("CORRUPT_SAVE", "原人物技能資料")
 		if actor.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(actor.social_state):
 			return Runtime.fail("CORRUPT_SAVE", "原人物社會狀態")
 	var counts := {}
@@ -1094,6 +1096,8 @@ static func _validate_military(data: TerrainData, state: Dictionary) -> Dictiona
 				return Runtime.fail("CORRUPT_SAVE", "原名冊軍官／士兵／平民資格")
 			if row.has("personality") and not TerrainTestCharacter.PersonPersonality.valid(row.personality):
 				return Runtime.fail("CORRUPT_SAVE", "原名冊人物性格資料")
+			if row.has("skills") and not TerrainTestCharacter.PersonSkills.valid(row.skills):
+				return Runtime.fail("CORRUPT_SAVE", "原名冊人物技能資料")
 			# An unadmitted social packet is SAVE_VERSION, the contract of _validate_unadmitted_social_state; a crowd roster
 			# reached this check first and reported CORRUPT_SAVE (found 2026-11-09, region_captivity_payload_admission).
 			if row.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(row.social_state):
