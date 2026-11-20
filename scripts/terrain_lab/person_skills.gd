@@ -47,6 +47,12 @@ const APTITUDE_OF := {"farming": "body", "gathering": "body", "building": "both"
 const FARM_FEATURES: Array[String] = ["farm", "fiber_farm", "fodder_farm", "pasture", "horse_ranch"]
 const CRAFT_FEATURES: Array[String] = ["saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver"]
 const BUILD_FEATURES: Array[String] = ["shipyard"]
+## K1c starting values (§5.5): the four work lines start at 30 except the trade's, which is worked from age 15.
+const WORK_LINES: Array[String] = ["farming", "gathering", "building", "craft"]
+const OTHER_START := 30000
+const START_AGE := 15
+const TRADE_RATE := 0.5
+const SOLDIER_RATE := 0.25
 const COMMAND_LABELS := {"tactics": "戰術", "leadership": "統御", "coach": "教練"}
 const TECHNOLOGY_LABELS := {"F01": "農事記錄", "F02": "適地留種", "F03": "炭化控火", "F04": "冶煉鍛打", "F05": "纖維處理",
 	"F06": "毛紡織造", "F07": "弓作工法", "F08": "弩機裝配", "F09": "丈量放樣", "F10": "木石營造", "F11": "器械木作",
@@ -66,6 +72,9 @@ static func valid(packet: Variant) -> bool:
 		if packet.has(field):
 			if not _valid_counts(packet[field], MAX_ROLLS if field == "rolls" else MAX_MICROS): return false
 			extra += 1
+	if packet.has("start"):
+		if not _integer(packet.start, 1, 1): return false
+		extra += 1
 	return packet.size() == 1 + extra
 
 static func _valid_counts(value: Variant, high: int) -> bool:
@@ -101,6 +110,7 @@ static func normalized(packet: Dictionary) -> Dictionary:
 		for line: String in LINES:
 			if packet[field].has(line): values[line] = int(packet[field][line])
 		result[field] = values
+	if packet.has("start"): result["start"] = 1
 	return result
 
 ## Sparse save form: lines at 50 are dropped; empty when nothing differs from the default and no aptitude is stored.
@@ -234,6 +244,25 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 	result["toward"] = toward
 	result["rolls"] = rolls
 	return saved(result)
+
+## K1c (§5.5): the starting packet of a person met at world creation, aged `age`. The four work lines he has no value
+## for start at 30; each line in `trades` starts at 0 and is worked `rate` of a full-time year every year from 15, run
+## through settle() (curve, aptitude and the yearly rolls from 80). Marks the packet `start` so it is seeded once.
+static func initial(packet: Dictionary, age: int, trades: Array, rate: float, seed_value: int, identity: int) -> Dictionary:
+	var result := normalized(packet) if valid(packet) else {"version": VERSION}
+	var lines: Dictionary = result.get("lines", {})
+	var pending: Dictionary = result.get("pending", {})
+	var worked := roundi(float(maxi(0, age - START_AGE)) * rate * YEAR_SECONDS * MICROS)
+	for line: String in WORK_LINES:
+		if lines.has(line): continue
+		if trades.has(line):
+			lines[line] = 0
+			if worked > 0: pending[line] = mini(MAX_MICROS, int(pending.get(line, 0)) + worked)
+		else: lines[line] = OTHER_START
+	result["lines"] = lines
+	result["pending"] = pending
+	result["start"] = 1
+	return settle(result, seed_value, identity)
 
 ## Proficiency of `line` in thousandths (50000 when not stored).
 static func level_milli(packet: Dictionary, line: String) -> int:

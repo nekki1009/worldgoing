@@ -10475,6 +10475,8 @@ func _settle_boot_request(result: Dictionary) -> void:
 	_boot_request = {}
 	# 時間與氣候 TC3: a world created from the menu has climate on (old saves and tests stay off).
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
+	# 技能 K1c: a world created from the menu seeds its people's starting proficiency by age (old saves stay at 50).
+	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["skills_start"] = true
 	if result.ok and not request.get("character", {}).is_empty():
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
@@ -15323,14 +15325,46 @@ func skills_day() -> Dictionary:
 	if int(get_meta(&"skills_day", -2)) == today: return {}
 	set_meta(&"skills_day", today)
 	var seed_value := _skills_world_seed()
+	var seeding: bool = lab.terrain.site.get("skills_start") == true
 	var settled := 0
+	var seeded := 0
 	for body: Variant in _skills_bodies():
 		var raw: Variant = body.get("skills") if body is Dictionary else body.get("skills")
+		if seeding and not (raw is Dictionary and raw.has("start")):
+			var start := _skills_initial(body, seed_value)
+			if not start.is_empty():
+				PersonSkills.write(body, start)
+				seeded += 1
+				continue
 		if not raw is Dictionary or not raw.has("pending"): continue
 		PersonSkills.write(body, PersonSkills.settle(PersonSkills.of(body), seed_value, int(body.get("person_id"))))
 		settled += 1
-	last_skills_day = {"day": today, "settled": settled}
+	last_skills_day = {"day": today, "settled": settled, "seeded": seeded}
 	return last_skills_day
+
+## 技能 K1c (§5.5): the starting packet of a civilian or soldier met in a world created with skills_start; {} for anyone
+## else (the controlled person and officers keep 50 until the start template, K5). Age from TC7 (his vital record, or
+## the same seeded adult age SiteVital.fresh gives); a civilian's trade is his household job's line, a soldier's
+## building and gathering at a quarter year a year.
+func _skills_initial(body: Variant, seed_value: int) -> Dictionary:
+	var identity := int(body.get("person_id"))
+	if identity <= 0 or identity == int(lab.controlled_person_id()): return {}
+	var role := str(body.get("military_role")) if body.get("military_role") != null else ""
+	if role not in ["civilian", "soldier"]: return {}
+	var year := int(Calendar.date(float(lab.terrain.site.get("minute", 0))).year)
+	var vital: Dictionary = PersonSocialPacket.vital(body)
+	if vital.is_empty(): vital = Vital.fresh(_vital_world_seed(), identity, year)
+	var age := year - int(vital.birth_year)
+	var trades: Array = []
+	var rate := PersonSkills.TRADE_RATE
+	if role == "soldier":
+		trades = ["building", "gathering"]
+		rate = PersonSkills.SOLDIER_RATE
+	else:
+		var job := ResidentWork.job_of(lab.terrain.site, identity)
+		var line := PersonSkills.line_for_task(lab.terrain.site, {"action": "operate", "target": "feature:" + job}) if not job.is_empty() else ""
+		if not line.is_empty(): trades = [line]
+	return PersonSkills.initial(PersonSkills.of(body), age, trades, rate, seed_value, identity)
 
 ## Every person body here once (Actors, grid army rows, crowd roster rows), read straight from its owner.
 func _skills_bodies() -> Array:

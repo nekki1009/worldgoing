@@ -3849,6 +3849,7 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	var fallen_validation: Dictionary = (load("res://scripts/terrain_lab/site_fallen_residents.gd") as Script).call("validate", state) # 平民 C5
 	if not fallen_validation.ok: return fallen_validation
 	if state.has("climate_enabled") and not state.climate_enabled is bool: return Runtime.fail("CORRUPT_SAVE", "氣候開關")
+	if state.has("skills_start") and not state.skills_start is bool: return Runtime.fail("CORRUPT_SAVE", "技能初值開關") # 技能 K1c
 	if not EquipmentOrders.valid_nations(state.get("equipment_nations", {}), state.item_definitions, people, state):
 		return Runtime.fail("CORRUPT_SAVE", "原國別／軍事首長／正式配裝標準")
 	# -1 names no controlled person (an NPC travel frame's view, 2026-11-10); any other value must be a real person.

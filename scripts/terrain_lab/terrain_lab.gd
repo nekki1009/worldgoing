@@ -793,6 +793,8 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# 時間與氣候 TC3: a world's climate stays on for a Site reached from a Site where it is on (a Site that never
 	# recorded the switch inherits it; one that saved it keeps its own).
 	if terrain != null and terrain != value and terrain.site.get("climate_enabled") == true and not value.site.has("climate_enabled"): value.site["climate_enabled"] = true
+	# 技能 K1c: so does the switch that seeds starting proficiency by age.
+	if terrain != null and terrain != value and terrain.site.get("skills_start") == true and not value.site.has("skills_start"): value.site["skills_start"] = true
 	# TC9: the world's switch in the faction registry turns a Site's climate on at bind.
 	var climate_registry: Variant = site_controller.region_slot.control.get("faction_registry", {}) if site_controller != null and site_controller.region_slot != null else {}
 	if climate_registry is Dictionary and climate_registry.get("climate") is Dictionary and climate_registry.climate.get("enabled") == true and not value.site.has("climate_enabled"): value.site["climate_enabled"] = true
