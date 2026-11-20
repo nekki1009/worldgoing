@@ -449,6 +449,12 @@ public:
 	std::vector<int32_t> escort_goal; // One original, adjacent step; -1 waits at the current place.
 	std::vector<uint8_t> escort_mode; // 0 ordinary, 1/2 custody; 3/4 housing; 5/6 siege. Even means finish then cancel.
 	std::vector<int32_t> housing_attendance_cell; // One-step host reference input only; -1 absent, never serialized.
+	// 技能 K3/K2b (reports/skill-system-plan.md V0.7 §5.2; Nekki 2026-11-20 A): the person's effective ability in an
+	// exchange on foot (melee) and mounted (riding), in a shot (ranged), and his rescue speed. Host inputs set from the
+	// person's records (CrowdSite._sync_person_skills); never serialized and not hashed: the Site sets them again after
+	// every load and admission. Defaults: TROOP_COMBAT_ABILITY and 1.
+	std::vector<float> melee_ability, riding_ability, ranged_ability, rescue_rate;
+	bool set_person_skill(int i, float melee, float riding, float ranged, float rescue);
 	std::vector<uint16_t> ammo;
 	std::vector<rules::Equip> equip;
 	std::vector<CommandAbility> ability;

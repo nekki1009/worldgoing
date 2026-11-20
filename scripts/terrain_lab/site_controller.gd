@@ -11471,6 +11471,7 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 		else: state.personality = packet
 	if not TerrainTestCharacter.valid_state(state, lab.terrain): return Runtime.fail("INVALID", "建立的人物資料不合法")
 	actor.restore_state(state)
+	if lab.crowd_site != null and lab.crowd_site.active: lab.crowd_site.mark_person_skills_dirty() # 技能 K3: his 武力 counts
 	# A crowd start Site already admitted this Actor; native owns its abilities and syncs them back each step.
 	if lab.crowd_site != null and lab.crowd_site.active and not actor.command_abilities.is_empty():
 		var index := int(lab.crowd_site.crowd.soldier_index(actor.person_id))
@@ -11521,6 +11522,7 @@ func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	else: record["name"] = person_name
 	record["combat_ability"] = float(ability)
 	record["command_abilities"] = values
+	crowd.mark_person_skills_dirty() # 技能 K3: his 武力 counts in the crowd
 	if packet.is_empty(): record.erase("personality")
 	else: record["personality"] = packet.duplicate(true)
 	crowd.equipment_changed(identity)
@@ -15346,6 +15348,7 @@ func skills_day() -> Dictionary:
 		for _title: Variant in range(PersonSkills.titles_of(after).size() - PersonSkills.titles_of(before).size()):
 			adjust_reputation(int(body.get("person_id")), PersonSkills.TITLE_PRESTIGE, 0.0)
 	last_skills_day = {"day": today, "settled": settled, "seeded": seeded}
+	if (settled > 0 or seeded > 0) and _crowd_active(): lab.crowd_site.mark_person_skills_dirty() # 技能 K3
 	return last_skills_day
 
 ## 技能 K1c (§5.5): the starting packet of a civilian or soldier met in a world created with skills_start; {} for anyone
@@ -15447,7 +15450,9 @@ func vital_new_year(year: int) -> Dictionary:
 		# 技能 K1d (§5.4): his lines fall by the drop of his age base (51-65: 2 a year, from 66: 4), never below 0.
 		var drop := Vital.age_base(float(vital.base), int(vital.year) - int(vital.birth_year)) \
 			- Vital.age_base(float(applied.vital.base), int(applied.vital.year) - int(applied.vital.birth_year))
-		if drop > 0.0 and not PersonSkills.of(body).get("lines", {}).is_empty(): PersonSkills.write(body, PersonSkills.age_decline(PersonSkills.of(body), drop))
+		if drop > 0.0 and not PersonSkills.of(body).get("lines", {}).is_empty():
+			PersonSkills.write(body, PersonSkills.age_decline(PersonSkills.of(body), drop))
+			if _crowd_active(): lab.crowd_site.mark_person_skills_dirty() # 技能 K3
 		var hp := float(person.hp)
 		if bool(applied.dies):
 			_apply_supply_damage(identity, hp)

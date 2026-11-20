@@ -203,6 +203,22 @@ static func work_factor(body: Variant, line: String) -> float:
 	if not lines is Dictionary or not lines.has(line): return 1.0
 	return 0.5 + float(clampi(int(lines[line]), 0, MAX_VALUE)) / float(MAX_VALUE)
 
+## K3/K2b (§4, §5.2; Nekki 2026-11-20 A): the native crowd inputs of a person, [melee, riding, ranged, rescue]:
+## 武力 + (近戰 / 騎乘 / 弓弩 - 50) x 0.5, clamped 0..100, and his medicine speed. Ordinary soldiers fight at 50 (Q5 A:
+## no personal martial for them); everyone's medicine counts.
+static func combat_inputs(body: Variant) -> Array:
+	if body == null: return [50.0, 50.0, 50.0, 1.0]
+	var role: Variant = body.get("military_role")
+	var result: Array = [50.0, 50.0, 50.0]
+	if str(role) != "soldier":
+		var raw: Variant = body.get("combat_ability")
+		var ability := clampf(float(raw), 0.0, 100.0) if raw is float or raw is int else 50.0
+		var packet := of(body)
+		result = []
+		for line: String in ["melee", "riding", "archery"]: result.append(clampf(ability + (level(packet, line) - 50.0) * 0.5, 0.0, 100.0))
+	result.append(work_factor(body, "medicine"))
+	return result
+
 ## The aptitude that governs `line`: 根骨, 悟性, or their average for building and craft (§5.6).
 static func talent_for(aptitude_values: Dictionary, line: String) -> float:
 	var kind := str(APTITUDE_OF.get(line, "body"))

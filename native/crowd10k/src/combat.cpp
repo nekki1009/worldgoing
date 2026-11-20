@@ -73,7 +73,7 @@ bool World::set_aboard_melee_pairs(const std::vector<int> &flat) {
 ExStats World::ex_stats(int i) const {
 	const Formation &f = formations[form[i]];
 	ExStats s;
-	s.ability = TROOP_COMBAT_ABILITY;
+	s.ability = mounted[i] ? riding_ability[i] : melee_ability[i]; // 技能 K3: the person's own ability (host input)
 	s.training = f.training;
 	s.fatigue = f.fatigue;
 	s.morale = f.morale;
@@ -519,7 +519,7 @@ void World::ranged_commit() {
 			p.target = {(int)px[j], (int)py[j]};
 			p.source_eye = terrain.height[terrain.idx(p.source.x, p.source.y)] + 1.;
 			p.goal_eye = terrain.height[terrain.idx(p.target.x, p.target.y)] + 1.;
-			p.stats.ability = TROOP_COMBAT_ABILITY; p.stats.training = f.training; p.stats.fatigue = f.fatigue;
+			p.stats.ability = ranged_ability[i]; p.stats.training = f.training; p.stats.fatigue = f.fatigue; // 技能 K3
 			p.stats.skill = skill[i]; p.stats.equip = equip[i];
 			int ox = p.target.x - p.source.x, oy = p.target.y - p.source.y;
 			double dist = std::sqrt((double)(ox * ox + oy * oy));
@@ -748,7 +748,7 @@ void World::rescue_stage(float dt) {
 		float lim = std::max(1.5f, cfg.rescue_seek_cells + 2.f);
 		bool ok = can_act(r) && alive(p) && ko[p] > 0.0 && !captive[p] && dx * dx + dy * dy <= lim * lim;
 		if (!ok) { cancel_actions_involving(r); continue; }
-		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[r] += dt; // the 4 s count only while adjacent and stopped
+		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[r] += dt * rescue_rate[r]; // the 4 s count only while adjacent and stopped; 技能 K2b: at his medicine speed
 		if (act_t[r] >= RESCUE_SECONDS) {
 			ko[p] = std::min(ko[p], cfg.rescued_ko_seconds);
 			bandaged[p] = 1; // rescue stops the bleeding (2026-09-29)
@@ -1009,7 +1009,7 @@ bool World::commit_host_ranged(int i, int expected_ammo, int mode, int64_t relea
 	const int dx = target_x-sx, dy = target_y-sy;
 	// Every rejection precedes original skill/fatigue/cooldown/ammo mutation.
 	if (auto_power && ability[i].has()) activate_skill(i,rules::SK_POWER);
-	receipt.ability = rules::TROOP_COMBAT_ABILITY;
+	receipt.ability = ranged_ability[i]; // 技能 K3: the shooter's own ranged ability (host input)
 	receipt.training = f.training; receipt.fatigue = f.fatigue;
 	receipt.skill = skill[i]; receipt.equip = equip[i];
 	--ammo[i];

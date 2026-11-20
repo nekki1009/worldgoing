@@ -617,6 +617,8 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(form, fi); push(slot, (int)f.members.size() - 1); push(target, -1); push(cell, -1); push(enc_target, -1);
 	push(rescue_of, -1); push(capture_of, -1); push(captor, -1); push(life_ck, (uint8_t)0);
 	push(prison_id, int64_t(0)); push(escort_goal, -1); push(escort_mode, (uint8_t)0); push(housing_attendance_cell, -1);
+	push(melee_ability, (float)rules::TROOP_COMBAT_ABILITY); push(riding_ability, (float)rules::TROOP_COMBAT_ABILITY);
+	push(ranged_ability, (float)rules::TROOP_COMBAT_ABILITY); push(rescue_rate, 1.f);
 	push(contact_revision, int64_t(0));
 	push(siege_crew, (uint8_t)0); push(siege_member_group, -1); push(siege_step_source,-1);
 	// The host's per-person wreck exits (set_siege_person_inputs) are all-or-none: a person appended after they were
@@ -2197,6 +2199,14 @@ bool World::set_soldier_equip(int i, const rules::Equip &equipment) {
 	return true;
 }
 
+bool World::set_person_skill(int i, float melee, float riding, float ranged, float rescue) {
+	if (i < 0 || i >= soldier_count() || melee_ability.size() != px.size()) return false;
+	for (float v : {melee, riding, ranged}) if (!std::isfinite(v) || v < 0.f || v > 100.f) return false;
+	if (!std::isfinite(rescue) || rescue < 0.5f || rescue > 1.5f) return false;
+	melee_ability[i] = melee; riding_ability[i] = riding; ranged_ability[i] = ranged; rescue_rate[i] = rescue;
+	return true;
+}
+
 bool World::set_sustain_input(int fi, bool fed, double delta) {
 	if (fi < 0 || fi >= (int)formations.size() || !std::isfinite(delta) || !std::isfinite(formations[fi].sustain_morale_delta + delta)) return false;
 	formations[fi].fully_fed = fed; formations[fi].sustain_morale_delta += delta;
@@ -2206,6 +2216,9 @@ bool World::set_sustain_input(int fi, bool fed, double delta) {
 void World::rebuild_buffers() {
 	siege_crew.resize(soldier_count(),0); siege_member_group.resize(soldier_count(),-1); siege_step_source.resize(soldier_count(),-1);
 	housing_attendance_cell.assign(soldier_count(), -1);
+	// Host skill inputs keep their values; only new slots take the defaults.
+	melee_ability.resize(soldier_count(), (float)rules::TROOP_COMBAT_ABILITY); riding_ability.resize(soldier_count(), (float)rules::TROOP_COMBAT_ABILITY);
+	ranged_ability.resize(soldier_count(), (float)rules::TROOP_COMBAT_ABILITY); rescue_rate.resize(soldier_count(), 1.f);
 	const int n = soldier_count(); chunks_ = (n + cfg.chunk - 1) / cfg.chunk;
 	pair_buf_.resize(chunks_); fire_buf_.resize(chunks_); illegal_buf_.resize((size_t)chunks_ * 3, 0);
 	wake_buf_.resize(chunks_); getup_buf_.resize(chunks_); ex_acc_.resize(n);

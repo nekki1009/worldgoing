@@ -482,11 +482,13 @@ func _run() -> void:
 	if not _require(OS.get_cmdline_user_args().has("--crowd") and OS.get_cmdline_user_args().has("--crowd-test"), "explicit isolated crowd startup"): return
 	# 11/17: World::validate allows 1024 empty formations beyond the people (validation only; the KW21 layout is unchanged).
 	# 11/20 (平民 C1c, ff8aadf): World::validate accepts absent kind 5 "at home" (validation only; the KW21 layout is unchanged).
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "37adeecd13e0c60723616577f73dbd5dba5cb8988a6ab9d7d64f5ab1af414aa4", "fixed KW21 serializer state.cpp for typed byte comparison"): return
+	# 11/20 (技能 K3/K2b): World gained the host-set person skill inputs (melee/riding/ranged ability, rescue rate): not
+	# serialized, assigned defaults on load, size-checked by validate; the KW21 layout is unchanged.
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "3a49e311c62d9c9fd8660f2de739b721b4dcbd2668259776559fa68592e61319", "fixed KW21 serializer state.cpp for typed byte comparison"): return
 	# TCM 11/16: crowd_core.hpp gained the runtime-only step_combat_start (not serialized); the KW21 layout is unchanged.
 	# CIV-A0 11/19 (2f454b0): Presentation gained the RenderActivity override (presentation only, cleared on load, not
 	# serialized); the KW21 layout is unchanged.
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "e6141d8770cc42042e74c08b7ce33b8248d69fc4fe114220b2b81cd29119ba63", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "3a34c4a0e93394d82d0543e33026f5e24cfbaf19edc5f5cb4edf985ce08a8308", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
 	root.gui_embed_subwindows = true
 	var initial := _initial()
 	if failed: return

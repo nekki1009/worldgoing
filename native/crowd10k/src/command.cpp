@@ -569,6 +569,7 @@ bool World::site_person_readmit(int i, int fi, const rules::Equip &e, Role r, ui
 	form[i] = fi; slot[i] = -1; target[i] = -1; cell[i] = -1; enc_target[i] = -1;
 	rescue_of[i] = -1; capture_of[i] = -1; captor[i] = -1; life_ck[i] = 0;
 	prison_id[i] = 0; escort_goal[i] = -1; escort_mode[i] = 0; housing_attendance_cell[i] = -1;
+	melee_ability[i] = riding_ability[i] = ranged_ability[i] = (float)rules::TROOP_COMBAT_ABILITY; rescue_rate[i] = 1.f;
 	contact_revision[i] = 0;
 	siege_crew[i] = 0; siege_member_group[i] = -1; siege_step_source[i] = -1;
 	if ((size_t)i < siege_wreck_exit.size()) siege_wreck_exit[i].clear();

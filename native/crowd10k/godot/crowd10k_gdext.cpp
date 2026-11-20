@@ -1101,6 +1101,17 @@ void m_set_garrisoned(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t f,v;
 	ret_bool(r,arg_int(a[0],f) && arg_int(a[1],v) && (v==0 || v==1) && w.set_garrisoned((int)f,v!=0));
 }
+// 技能 K3/K2b: the person's host-set ability (foot, mounted, ranged) and rescue speed; never serialized.
+void m_set_person_skill(CALL_ARGS) {
+	SELF; NEED(5); WORLD; int64_t i; double melee, riding, ranged, rescue;
+	if (!arg_int(a[0],i) || !arg_num(a[1],melee) || !arg_num(a[2],riding) || !arg_num(a[3],ranged) || !arg_num(a[4],rescue) || i<0 || i>=w.soldier_count()) { ret_bool(r,false); return; }
+	ret_bool(r,w.set_person_skill((int)i,(float)melee,(float)riding,(float)ranged,(float)rescue));
+}
+void m_person_skill(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t i;
+	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || w.melee_ability.size()!=w.px.size()) { return_doubles(r,{}); return; }
+	return_doubles(r,{double(w.melee_ability[i]),double(w.riding_ability[i]),double(w.ranged_ability[i]),double(w.rescue_rate[i])});
+}
 void m_set_housing_attendance_input(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i,d;
 	if (!arg_int(a[0],i) || !arg_int(a[1],d) || i<0 || i>=w.soldier_count() || d < -1 || d>=w.terrain.w*w.terrain.h) { ret_bool(r,false); return; }
@@ -1605,6 +1616,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("set_soldier_ammo", m_set_soldier_ammo, {{INT,"soldier"},{INT,"ammo"}}, BOOL);
 	add_method("set_sustain_input", m_set_sustain_input, {{INT,"formation"},{BOOL,"fully_fed"},{FLOAT,"morale_delta"}}, BOOL);
 	add_method("set_housing_attendance_input", m_set_housing_attendance_input, {{INT,"soldier"},{INT,"home_cell"}}, BOOL);
+	add_method("set_person_skill", m_set_person_skill, {{INT,"soldier"},{FLOAT,"melee"},{FLOAT,"riding"},{FLOAT,"ranged"},{FLOAT,"rescue"}}, BOOL);
+	add_method("person_skill", m_person_skill, {{INT,"soldier"}}, DOUBLES);
 	add_method("set_housing_recovery_input", m_set_housing_recovery_input, {{INT,"formation"},{FLOAT,"multiplier"}}, BOOL);
 	add_method("set_recovery_input", m_set_recovery_input, {{INT,"formation"},{FLOAT,"multiplier"}}, BOOL);
 	add_method("set_fire_safe_rest_input", m_set_fire_safe_rest_input, {{INT,"formation"},{BOOL,"safe"}}, BOOL);

@@ -995,6 +995,7 @@ func _departed_people() -> Dictionary:
 
 
 func _bind_people() -> void:
+	_skill_inputs_dirty = true # 技能 K3: a (re)bound native crowd gets every person's skill inputs again
 	owners.clear()
 	_owner_by_id.clear()
 	_index_by_id.clear()
@@ -1413,6 +1414,9 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 			last_event_error = SiteRuntime.fail("INVALID_GARRISON", "原駐營資格已變更，未套用本步恢復倍率")
 			lab.site_controller.show_result(last_event_error)
 			return false
+	if not _sync_person_skills():
+		last_event_error = SiteRuntime.fail("INVALID_CROWD", "原生群眾拒絕人物技能輸入")
+		return false
 	var housing_input_supported := crowd.has_method("set_housing_recovery_input") and crowd.has_method("set_housing_attendance_input")
 	if housing_input_supported:
 		for attendance: Dictionary in Site.Housing.attendance_input(lab):
@@ -2413,6 +2417,32 @@ func _battle_event(kind: int, identity: int, other: int) -> void:
 		_faction_of_person(other) if kind == 4 else -1, rank != "" and rank != "none")
 	if kind in [0, 1] and striker > 0 and lab.site_controller.has_method("civilian_harmed"): lab.site_controller.civilian_harmed(kind, identity, striker)
 	if kind == 0 and lab.site_controller.has_method("resident_died"): lab.site_controller.resident_died(identity)
+
+## 技能 K3/K2b (Nekki 2026-11-20 A): each person's ability (foot, mounted, ranged) and rescue speed are native host
+## inputs that the native crowd never saves; they are set again after every bind and whenever a skill or 武力 changes.
+var _skill_inputs_dirty := true
+
+func mark_person_skills_dirty() -> void:
+	_skill_inputs_dirty = true
+
+## Writes PersonSkills.combat_inputs of every bound person where the native value differs. Returns false on a refusal.
+func _sync_person_skills() -> bool:
+	if not _skill_inputs_dirty or crowd == null: return true
+	if not crowd.has_method("set_person_skill"): # an older module keeps everyone at 50
+		_skill_inputs_dirty = false
+		return true
+	for identity: Variant in _index_by_id:
+		var index := int(_index_by_id[identity])
+		var body: Variant = _actors.get(identity) if _actors.has(identity) else _records.get(identity)
+		var wanted: Array = PersonSkills.combat_inputs(body)
+		var current: PackedFloat64Array = crowd.person_skill(index)
+		var same := current.size() == 4
+		for at: int in range(4):
+			if same and absf(float(current[at]) - float(wanted[at])) > 0.0001: same = false
+		if same: continue
+		if not bool(crowd.set_person_skill(index, float(wanted[0]), float(wanted[1]), float(wanted[2]), float(wanted[3]))): return false
+	_skill_inputs_dirty = false
+	return true
 
 ## 技能 K2 (reports/skill-system-plan.md §4, §8): a finished rescue trains the rescuer's medicine by its action time.
 func _credit_rescue(rescuer: int) -> void:

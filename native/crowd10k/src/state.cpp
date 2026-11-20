@@ -333,6 +333,7 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	CHECK_VALID(contact_revision.size() == n);
 	if (allow_site_jobs) {
 		CHECK_VALID(housing_attendance_cell.size() == n && siege_crew.size() == n && siege_member_group.size() == n && siege_step_source.size() == n);
+		CHECK_VALID(melee_ability.size() == n && riding_ability.size() == n && ranged_ability.size() == n && rescue_rate.size() == n);
 		CHECK_VALID(siege_person_blocked.empty() || siege_person_blocked.size() == cells);
 		CHECK_VALID(siege_wreck_exit.empty() || siege_wreck_exit.size() == n);
 		for (uint8_t value : siege_crew) CHECK_VALID(value <= 1);
@@ -596,6 +597,7 @@ void World::swap_state(World &o) {
 	swap(capture_of, o.capture_of);
 	swap(captor, o.captor);
 	swap(prison_id, o.prison_id); swap(escort_goal, o.escort_goal); swap(escort_mode, o.escort_mode); swap(housing_attendance_cell, o.housing_attendance_cell);
+	swap(melee_ability, o.melee_ability); swap(riding_ability, o.riding_ability); swap(ranged_ability, o.ranged_ability); swap(rescue_rate, o.rescue_rate);
 	swap(contact_revision, o.contact_revision);
 	swap(convoys, o.convoys); swap(convoy_of, o.convoy_of); swap(convoy_body_owner, o.convoy_body_owner); swap(convoy_serial, o.convoy_serial);
 	swap(convoy_claim_owner, o.convoy_claim_owner);
@@ -680,6 +682,9 @@ bool World::load_impl(const std::vector<uint8_t> &blob, const std::vector<int> *
 		const size_t n = (size_t)candidate.soldier_count();
 		if (candidate.escort_mode.size() != n || candidate.escort_goal.size() != n) return false;
 		candidate.housing_attendance_cell.assign(n, -1);
+		// Host skill inputs are not saved: a loaded crowd starts at the defaults until the Site sets them again.
+		candidate.melee_ability.assign(n, (float)rules::TROOP_COMBAT_ABILITY); candidate.riding_ability.assign(n, (float)rules::TROOP_COMBAT_ABILITY);
+		candidate.ranged_ability.assign(n, (float)rules::TROOP_COMBAT_ABILITY); candidate.rescue_rate.assign(n, 1.f);
 		if (!kw21) { candidate.siege_crew.assign(n, 0); candidate.siege_step_source.assign(n, -1); }
 		candidate.siege_member_group.assign(n, -1);
 		for (size_t at = 0; at < candidate.siege_compounds.size(); ++at)
