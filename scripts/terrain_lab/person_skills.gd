@@ -70,9 +70,12 @@ const TITLE_NAMES := {"farming": "農神", "gathering": "樵神", "building": "�
 	"leadership": "軍神", "coach": "兵神"}
 const TITLE_PRESTIGE := 5.0
 const START_AGE := 15
+const LEARNING_START_AGE := 7 # K5 (§5.7): a 文吏 or 文官 met at world creation has studied from 7
 const TRADE_RATE := 0.5
 const SOLDIER_RATE := 0.25
 const COMMAND_LABELS := {"tactics": "戰術", "leadership": "統御", "coach": "教練"}
+## K5 (§5.5): the start template's budget; the defaults (four abilities 50, 學業 0, lines and aptitudes 50) use exactly it.
+const START_POINTS := 200
 const TECHNOLOGY_LABELS := {"F01": "農事記錄", "F02": "適地留種", "F03": "炭化控火", "F04": "冶煉鍛打", "F05": "纖維處理",
 	"F06": "毛紡織造", "F07": "弓作工法", "F08": "弩機裝配", "F09": "丈量放樣", "F10": "木石營造", "F11": "器械木作",
 	"F12": "配重機構", "F13": "舟楫工法", "F14": "鞣革", "F15": "引火配方"}
@@ -324,10 +327,63 @@ static func initial(packet: Dictionary, age: int, trades: Array, rate: float, se
 			lines[line] = 0
 			if worked > 0: pending[line] = mini(MAX_MICROS, int(pending.get(line, 0)) + worked)
 		else: lines[line] = OTHER_START
+	for line: Variant in trades: # K5 (§5.5): an officer's or a bandit's martial line is worked the same way
+		if not line is String or WORK_LINES.has(line) or not LINES.has(line) or lines.has(line): continue
+		lines[line] = 0
+		if worked > 0: pending[line] = mini(MAX_MICROS, int(pending.get(line, 0)) + worked)
 	result["lines"] = lines
 	result["pending"] = pending
 	result["start"] = 1
 	return settle(result, seed_value, identity)
+
+## K5 (§5.5): what a person met at world creation has worked since 15 and at what share of a full-time year:
+## {trades, rate}. A bandit fights (近戰, half); an officer works his main weapon's line (half); a soldier builds and
+## gathers (a quarter); a civilian his household's trade (`trade`, half; none when "").
+static func start_trades(role: String, bandit: bool, martial: String, trade: String) -> Dictionary:
+	if bandit and role != "civilian": return {"trades": ["melee"], "rate": TRADE_RATE}
+	if role == "officer": return {"trades": [martial], "rate": TRADE_RATE}
+	if role == "soldier": return {"trades": ["building", "gathering"], "rate": SOLDIER_RATE}
+	return {"trades": [] if trade.is_empty() else [trade], "rate": TRADE_RATE}
+
+## K5 (§5.7 開局要有老師): a 文吏 or 文官 met at world creation has studied half a full-time year a year from 7, on the
+## §5.3 curve with talent 悟性. Returns study()'s {packet, value}.
+static func start_learning(packet: Dictionary, age: int, seed_value: int, identity: int) -> Dictionary:
+	var seconds := float(maxi(0, age - LEARNING_START_AGE)) * TRADE_RATE * YEAR_SECONDS
+	return study(packet, seconds, 0, 100, seed_value, identity)
+
+## K5 (§5.5): the start template's points: 武力 + 戰術 + 統御 + 教練 + 學業 + Σ(line − 50) + (根骨 − 50) + (悟性 − 50).
+## Missing lines and aptitudes count as 50, missing command abilities as 50.
+static func start_points(combat_ability: int, command: Dictionary, learning: int, lines: Dictionary, aptitude_values: Dictionary) -> int:
+	var total := combat_ability + learning
+	for key: String in COMMAND_KEYS: total += int(command.get(key, 50))
+	for line: String in LINES: total += int(lines.get(line, 50)) - 50
+	for kind: String in APTITUDES: total += int(aptitude_values.get(kind, APTITUDE_MEAN)) - APTITUDE_MEAN
+	return total
+
+## K5: the points of a created person's packet (whole lines, stored aptitude) with his abilities and 學業.
+static func packet_points(packet: Dictionary, combat_ability: int, command: Dictionary, learning: int) -> int:
+	var lines := {}
+	for line: String in LINES: lines[line] = level_milli(packet, line) / SCALE
+	var stored: Variant = packet.get("aptitude")
+	return start_points(combat_ability, command, learning, lines, stored if stored is Dictionary else {})
+
+## K5 (§5.5, §5.8): a created person's packet: the chosen whole-number lines and stored aptitude, marked started (K1c
+## leaves him alone), and a title for every line, ability, command ability or 學業 set to 100.
+static func start_packet(lines: Dictionary, aptitude_values: Dictionary, combat_ability: int = 50, command: Dictionary = {}, learning: int = 0) -> Dictionary:
+	var result := {"version": VERSION, "start": 1}
+	var stored := {}
+	for line: String in LINES:
+		var milli := clampi(int(lines.get(line, 50)), 0, 100) * SCALE
+		if milli != NEUTRAL: stored[line] = milli
+		if milli >= MAX_VALUE: _earn_title(result, line)
+	if not stored.is_empty(): result["lines"] = stored
+	result["aptitude"] = {"body": clampi(int(aptitude_values.get("body", APTITUDE_MEAN)), 0, 100),
+		"mind": clampi(int(aptitude_values.get("mind", APTITUDE_MEAN)), 0, 100)}
+	if combat_ability >= 100: _earn_title(result, ABILITY)
+	if learning >= 100: _earn_title(result, "learning")
+	for key: String in COMMAND_KEYS:
+		if int(command.get(key, 0)) >= 100: _earn_title(result, key)
+	return saved(result)
 
 ## K1d (§5.8): records the title of `key` once, in the order earned.
 static func _earn_title(result: Dictionary, key: String) -> void:

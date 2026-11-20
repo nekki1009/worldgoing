@@ -5,11 +5,13 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 ##   rolls give 80–90, about 85); a soldier's building and gathering at a quarter year a
 ##   year; every other work line starts at 30; a line he already has is kept; the packet is marked `start`;
 ## - on a real Site with skills_start on, the day's settlement seeds a civilian by his household job (farming) and a
-##   soldier (building, gathering), never the controlled person or an officer, and only once; with the switch off
+##   soldier (building, gathering), an officer by his main weapon (技能 K5; as a 文吏 also 學業 from 7), never the
+##   controlled person, and only once; with the switch off
 ##   (old saves) nobody is seeded and everyone stays at 50.
 ## Output: SITE_SKILLS_K1C_PASS on success; quit(1) on failure.
 
 const Skills = preload("res://scripts/terrain_lab/person_skills.gd")
+const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
@@ -60,6 +62,7 @@ func _run() -> void:
 	team.combat_units[0]["military_role"] = "civilian"
 	team.combat_units[1]["military_role"] = "soldier"
 	team.combat_units[2]["military_role"] = "officer"
+	PersonSocial.set_civil_role(team.combat_units[2], "clerk") # 技能 K5: 文武兼備, so he has studied from 7
 	if not data.site.has("housing"): data.site["housing"] = {}
 	data.site.housing[str(civilian)] = {"version": 1, "house_id": house, "cell": int(layout.slots[0])}
 	Households.reconcile(data.site)
@@ -80,7 +83,11 @@ func _run() -> void:
 	if not _ok(int(on.get("seeded", 0)) >= 2 and int(civ.get("start", 0)) == 1 and int(sol.get("start", 0)) == 1, "the civilian and the soldier are seeded", [on, civ, sol]): return
 	if not _ok(Skills.level(civ, "farming") > 30.0 and Skills.level(civ, "craft") == 30.0 and Skills.level(civ, "building") == 30.0, "the civilian's farming comes from his years on the household's farm, the rest start at 30", civ): return
 	if not _ok(Skills.level(sol, "building") > 30.0 and Skills.level(sol, "gathering") > 30.0 and Skills.level(sol, "farming") == 30.0, "the soldier's building and gathering come from his years in the field", sol): return
-	if not _ok(Skills.of(team.combat_units[2]).is_empty() and Skills.of(lab.character).is_empty(), "the officer and the controlled person keep 50 for the start template"): return
+	var off_packet := Skills.of(team.combat_units[2])
+	var line := Skills.martial_line(team.combat_units[2])
+	if not _ok(int(off_packet.get("start", 0)) == 1 and Skills.level(off_packet, "farming") == 30.0 and off_packet.get("lines", {}).has(line), "技能 K5: the officer is seeded by his main weapon's line (%s), the work lines at 30" % line, off_packet): return
+	if not _ok(PersonSocial.learning(team.combat_units[2]) > PersonSocial.LITERATE and int(off_packet.get("study", 0)) >= PersonSocial.learning(team.combat_units[2]) * 1000, "技能 K5: as a 文吏 he has studied from 7", [PersonSocial.read(team.combat_units[2]), off_packet]): return
+	if not _ok(Skills.of(lab.character).is_empty(), "the controlled person keeps his start template"): return
 	var before := Skills.of(team.combat_units[0])
 	data.site.minute = Calendar.day_start_minute(4) + 60
 	controller.skills_day()

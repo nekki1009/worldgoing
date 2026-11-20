@@ -120,11 +120,24 @@ func _run() -> void:
 	var traits := {"risk": 90, "mercy": 10, "innovation": 75}
 	for axis: String in traits:
 		(menu.find_child("Personality_" + axis, true, false) as HSlider).value = traits[axis]
+	# 技能 K5: 260 points are over the 200 budget until 自由分配 is ticked or other items give points back.
+	(menu.find_child("CharacterNext", true, false) as Button).pressed.emit()
+	if _page_visible("confirm") or int(menu.call("start_points")) != 260: return _fail("over-budget character accepted (%s points)" % menu.call("start_points"))
+	var free := menu.find_child("CharacterFreePoints", true, false) as CheckBox
+	free.button_pressed = true
+	if not bool(menu.call("points_within_limit")): return _fail("自由分配 did not lift the cap")
+	free.button_pressed = false
+	var skills := {"Skill_farming": 10, "Skill_riding": 10, "Skill_learning": 10, "Aptitude_mind": 60}
+	for node_name: String in skills:
+		(menu.find_child(node_name, true, false) as HSlider).value = skills[node_name]
+	if int(menu.call("start_points")) != 200 or not bool(menu.call("points_within_limit")): return _fail("lines and aptitude did not give points back (%s)" % menu.call("start_points"))
 	var expected: Dictionary = menu.call("character_data")
+	if expected.skills != {"version": 1, "start": 1, "lines": {"farming": 10000, "riding": 10000}, "aptitude": {"body": 50, "mind": 60}} or int(expected.learning) != 10:
+		return _fail("start packet %s" % expected.skills)
 	(menu.find_child("CharacterNext", true, false) as Button).pressed.emit()
 	if not _page_visible("confirm"): return _fail("confirm page not shown")
 	var summary := (menu.find_child("NewGameSummary", true, false) as Label).text
-	if "林測試" not in summary or "(1170, 13252)" not in summary or "勇猛 90" not in summary: return _fail("summary incomplete: " + summary)
+	if "林測試" not in summary or "(1170, 13252)" not in summary or "勇猛 90" not in summary or "農牧 10" not in summary or "悟性 60" not in summary: return _fail("summary incomplete: " + summary)
 	(menu.find_child("WorldName", true, false) as LineEdit).text = "測試世界"
 	if not _press("StartGame"): return
 	if not await _scene_is(SITE): return _fail("new game did not open TerrainLab")
@@ -214,6 +227,9 @@ func _player_matches(lab: TerrainLab, expected: Dictionary) -> bool:
 	for kind: String in ["tactics", "leadership", "coach"]:
 		if int(native.get(kind, -1)) != int(expected.command_abilities.get(kind, -2)): return _fail("command abilities %s" % native)
 	if PersonPersonality.read(record.get("personality", {})) != expected.personality: return _fail("personality %s" % record.get("personality"))
+	var skills: Dictionary = record.get("skills", {})
+	if skills.get("lines") != expected.skills.lines or skills.get("aptitude") != expected.skills.aptitude or int(skills.get("start", 0)) != 1 \
+		or TerrainTestCharacter.PersonSocial.learning(record) != int(expected.learning): return _fail("skills %s learning %s" % [skills, record.get("social_state")])
 	var appearance: Dictionary = record.appearance
 	if int(appearance.body) != int(expected.body) or str(appearance.parts.hair) != str(expected.hair) or str(appearance.parts.face) != str(expected.face) \
 		or str(appearance.hair_dye) != str(expected.hair_dye) or not bool(appearance.hair_dyed): return _fail("appearance %s" % appearance)
@@ -256,7 +272,8 @@ func _creation_whitelist_check() -> bool:
 	traits.innovation = 75
 	var approved := {"body": 1, "face": "face_standard_04", "hair": "hair_standard_03",
 		"hair_dye": "2050c0", "hair_dyed": true, "name": "林測試", "combat_ability": 80,
-		"command_abilities": {"tactics": 70, "leadership": 20, "coach": 90}, "personality": traits}
+		"command_abilities": {"tactics": 70, "leadership": 20, "coach": 90}, "personality": traits,
+		"learning": 10, "skills": {"version": 1, "start": 1, "aptitude": {"body": 50, "mind": 60}}, "free_points": false}
 	var source := approved.duplicate(true)
 	for forbidden: String in ["hp", "faction_id", "technology", "item_state", "equipment", "family"]:
 		source[forbidden] = {"old_world": true}

@@ -27,6 +27,7 @@ void fragment() {
 """
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K5: the start template's points
 const DEFAULT_HAIR_DYE := "9b775dff"
 ## The project renders at 2560×1440 and scales to the window; size UI for that.
 const UI := 1.6
@@ -47,6 +48,11 @@ var _dye_toggle: CheckBox
 var _dye_picker: ColorPickerButton
 var _ability_inputs: Dictionary = {}
 var _personality_sliders: Dictionary = {}
+var _learning_slider: HSlider
+var _line_sliders: Dictionary = {}
+var _aptitude_sliders: Dictionary = {}
+var _free_points: CheckBox
+var _points_label: Label
 var _character_error: Label
 var _preview_host: Node
 var _preview_editor: HumanCharacter3DEditor
@@ -353,8 +359,28 @@ func _build_character_page(parent: Node) -> void:
 	row.add_child(_dye_picker)
 	form.add_child(HSeparator.new())
 	_label(form, "能力（0–100）", 20)
+	# 技能 K5 (reports/skill-system-plan.md §5.5): one budget of START_POINTS for the four abilities, 學業, the eight lines
+	# (counted from 50) and the two aptitudes (counted from 50); 自由分配 lifts the cap.
+	row = _row(form)
+	_points_label = _label(row, "", 16)
+	_points_label.name = "CharacterPoints"
+	_free_points = CheckBox.new()
+	_free_points.name = "CharacterFreePoints"
+	_free_points.text = "自由分配（不設上限）"
+	_free_points.toggled.connect(func(_on: bool) -> void: _update_points())
+	row.add_child(_free_points)
 	for ability: Array in ABILITIES:
 		_ability_inputs[ability[0]] = _slider_row(form, str(ability[1]), "", "Ability_" + str(ability[0]))
+	_learning_slider = _slider_row(form, "學業", "", "Skill_learning")
+	_learning_slider.value = 0
+	_label(form, "熟練（50 為尋常）", 17)
+	for line: String in PersonSkills.LINES:
+		_line_sliders[line] = _slider_row(form, str(PersonSkills.LINE_LABELS[line]), "", "Skill_" + line)
+	_label(form, "資質（50 為尋常）", 17)
+	for kind: String in PersonSkills.APTITUDES:
+		_aptitude_sliders[kind] = _slider_row(form, str(PersonSkills.APTITUDE_LABELS[kind]), "", "Aptitude_" + kind)
+	for slider: HSlider in _point_sliders(): slider.value_changed.connect(func(_v: float) -> void: _update_points())
+	_update_points()
 	form.add_child(HSeparator.new())
 	_label(form, "性格（50 為中性）", 20)
 	for group: Array in PersonPersonality.GROUPS:
@@ -409,13 +435,48 @@ func character_data() -> Dictionary:
 	var personality := PersonPersonality.neutral()
 	for axis: String in PersonPersonality.AXES:
 		personality[axis] = int(_personality_sliders[axis].value)
+	var command := _command_values()
 	return {"name": _name_input.text.strip_edges(), "body": _body_select.selected,
 		"face": str(_face_select.get_item_metadata(_face_select.selected)),
 		"hair": str(_hair_select.get_item_metadata(_hair_select.selected)),
 		"hair_dye": _dye_picker.color.to_html(true), "hair_dyed": _dye_toggle.button_pressed,
 		"combat_ability": int(_ability_inputs.combat_ability.value),
-		"command_abilities": {"tactics": int(_ability_inputs.tactics.value), "leadership": int(_ability_inputs.leadership.value), "coach": int(_ability_inputs.coach.value)},
-		"personality": personality}
+		"command_abilities": command,
+		"personality": personality,
+		# 技能 K5: 學業, the chosen lines and aptitude (with titles for 100s), and whether 自由分配 lifted the cap.
+		"learning": int(_learning_slider.value),
+		"skills": PersonSkills.start_packet(_line_values(), _aptitude_values(), int(_ability_inputs.combat_ability.value), command, int(_learning_slider.value)),
+		"free_points": _free_points.button_pressed}
+
+func _command_values() -> Dictionary:
+	return {"tactics": int(_ability_inputs.tactics.value), "leadership": int(_ability_inputs.leadership.value), "coach": int(_ability_inputs.coach.value)}
+
+func _line_values() -> Dictionary:
+	var values := {}
+	for line: String in _line_sliders: values[line] = int(_line_sliders[line].value)
+	return values
+
+func _aptitude_values() -> Dictionary:
+	var values := {}
+	for kind: String in _aptitude_sliders: values[kind] = int(_aptitude_sliders[kind].value)
+	return values
+
+func _point_sliders() -> Array:
+	return _ability_inputs.values() + [_learning_slider] + _line_sliders.values() + _aptitude_sliders.values()
+
+## 技能 K5 (§5.5): the points the page uses now.
+func start_points() -> int:
+	return PersonSkills.start_points(int(_ability_inputs.combat_ability.value), _command_values(), int(_learning_slider.value), _line_values(), _aptitude_values())
+
+func points_within_limit() -> bool:
+	return _free_points.button_pressed or start_points() <= PersonSkills.START_POINTS
+
+func _update_points() -> void:
+	if _points_label == null: return
+	var used := start_points()
+	if _free_points.button_pressed: _points_label.text = "能力點：已用 %d（自由分配，不設上限）" % used
+	else: _points_label.text = "能力點：已用 %d／%d" % [used, PersonSkills.START_POINTS]
+	_points_label.modulate = Color.WHITE if points_within_limit() else Color("f0a0a0")
 
 func _restore_character_draft() -> void:
 	var data: Dictionary = RegionEntry.draft.get("character", {})
@@ -432,6 +493,14 @@ func _restore_character_draft() -> void:
 	_ability_inputs.combat_ability.value = int(data.combat_ability)
 	for kind: String in ["tactics", "leadership", "coach"]:
 		_ability_inputs[kind].value = int(data.command_abilities[kind])
+	# 技能 K5: a draft from before K5 has none of these and keeps the defaults.
+	_learning_slider.value = int(data.get("learning", 0))
+	var packet: Dictionary = data.get("skills", {}) if data.get("skills") is Dictionary else {}
+	for line: String in _line_sliders: _line_sliders[line].value = int(PersonSkills.level(packet, line))
+	var aptitude: Dictionary = packet.get("aptitude", {}) if packet.get("aptitude") is Dictionary else {}
+	for kind: String in _aptitude_sliders: _aptitude_sliders[kind].value = int(aptitude.get(kind, PersonSkills.APTITUDE_MEAN))
+	_free_points.button_pressed = bool(data.get("free_points", false))
+	_update_points()
 	for axis: String in PersonPersonality.AXES:
 		_personality_sliders[axis].value = int(data.personality[axis])
 	_update_preview()
@@ -446,6 +515,9 @@ func _character_next() -> void:
 	var data := character_data()
 	if str(data.name).is_empty():
 		_character_error.text = "請輸入名字。"
+		return
+	if not points_within_limit():
+		_character_error.text = "能力點已用 %d，超過 %d；請調低某些項目（熟練、資質可壓到 50 以下換回點數），或勾選「自由分配」。" % [start_points(), PersonSkills.START_POINTS]
 		return
 	_character_error.text = ""
 	RegionEntry.draft["character"] = data
@@ -524,9 +596,17 @@ func _refresh_summary() -> void:
 		var value := int(data.personality[axis])
 		if value != PersonPersonality.NEUTRAL:
 			traits.append("%s %d" % [str(PersonPersonality.LABELS[axis][0 if value > 50 else 1]), value])
-	_summary.text = "地圖：台灣\n起點 Site：(%d, %d)\n人物：%s（%s）\n能力：武力 %d・戰術 %d・統御 %d・教練 %d\n性格：%s" % [
+	# 技能 K5: 學業, the lines set away from 50 and the two aptitudes.
+	var packet: Dictionary = data.get("skills", {}) if data.get("skills") is Dictionary else {}
+	var lines: Array[String] = []
+	for line: String in PersonSkills.LINES:
+		if PersonSkills.level_milli(packet, line) != PersonSkills.NEUTRAL: lines.append("%s %d" % [str(PersonSkills.LINE_LABELS[line]), int(PersonSkills.level(packet, line))])
+	var aptitude: Dictionary = packet.get("aptitude", {}) if packet.get("aptitude") is Dictionary else {}
+	_summary.text = "地圖：台灣\n起點 Site：(%d, %d)\n人物：%s（%s）\n能力：武力 %d・戰術 %d・統御 %d・教練 %d・學業 %d\n熟練：%s\n資質：根骨 %d・悟性 %d\n性格：%s" % [
 		site.x, site.y, str(data.name), "男" if int(data.body) == 0 else "女", int(data.combat_ability),
 		int(data.command_abilities.tactics), int(data.command_abilities.leadership), int(data.command_abilities.coach),
+		int(data.get("learning", 0)), "八行皆 50" if lines.is_empty() else "、".join(lines),
+		int(aptitude.get("body", PersonSkills.APTITUDE_MEAN)), int(aptitude.get("mind", PersonSkills.APTITUDE_MEAN)),
 		"中性" if traits.is_empty() else "、".join(traits)]
 
 ## The selected start faction for RegionEntry.request_new_world.

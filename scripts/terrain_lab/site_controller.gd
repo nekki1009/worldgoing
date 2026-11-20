@@ -11481,8 +11481,12 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 		var packet := TerrainTestCharacter.PersonPersonality.saved(personality)
 		if packet.is_empty(): state.erase("personality")
 		else: state.personality = packet
+	var started := _created_skills(data, float(state.combat_ability), state.get("command_abilities", {}))
+	if not started.ok: return started
+	if bool(started.apply): state["skills"] = started.packet
 	if not TerrainTestCharacter.valid_state(state, lab.terrain): return Runtime.fail("INVALID", "建立的人物資料不合法")
 	actor.restore_state(state)
+	if bool(started.apply): PersonSocialPacket.set_learning(actor, int(started.learning))
 	if lab.crowd_site != null and lab.crowd_site.active: lab.crowd_site.mark_person_skills_dirty() # 技能 K3: his 武力 counts
 	# A crowd start Site already admitted this Actor; native owns its abilities and syncs them back each step.
 	if lab.crowd_site != null and lab.crowd_site.active and not actor.command_abilities.is_empty():
@@ -11517,6 +11521,8 @@ func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	if personality is Dictionary and not personality.is_empty():
 		if not TerrainTestCharacter.PersonPersonality.valid(personality): return Runtime.fail("INVALID", "人物性格資料不完整")
 		packet = TerrainTestCharacter.PersonPersonality.saved(personality)
+	var started := _created_skills(data, float(ability), abilities)
+	if not started.ok: return started
 	var projected: Dictionary = Runtime.equipment_appearance(lab.terrain, record.item_state, appearance)
 	if projected.is_empty(): return Runtime.fail("INVALID", "建立的人物實裝無法投影")
 	var guard: Dictionary = crowd.equipment_recipe_guard(identity, projected)
@@ -11534,11 +11540,30 @@ func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	else: record["name"] = person_name
 	record["combat_ability"] = float(ability)
 	record["command_abilities"] = values
+	if bool(started.apply): # 技能 K5: his chosen lines, aptitude and 學業
+		PersonSkills.write(record, started.packet)
+		PersonSocialPacket.set_learning(record, int(started.learning))
 	crowd.mark_person_skills_dirty() # 技能 K3: his 武力 counts in the crowd
 	if packet.is_empty(): record.erase("personality")
 	else: record["personality"] = packet.duplicate(true)
 	crowd.equipment_changed(identity)
 	return save_to(save_path)
+
+## 技能 K5 (reports/skill-system-plan.md §5.5): the created person's start template. {ok, apply, packet, learning}: apply
+## is false for data without `skills` (callers before K5). Refuses a malformed packet or 學業, a packet without its
+## chosen aptitude, and, without 自由分配, a budget over PersonSkills.START_POINTS.
+func _created_skills(data: Dictionary, ability: float, abilities: Dictionary) -> Dictionary:
+	if not data.has("skills"): return {"ok": true, "apply": false}
+	var packet: Variant = data.skills
+	var learning: Variant = data.get("learning", 0)
+	if not PersonSkills.valid(packet) or not packet.get("aptitude") is Dictionary: return Runtime.fail("INVALID", "建立的人物熟練資料不合法")
+	if not PersonSkills._integer(learning, 0, 100): return Runtime.fail("INVALID", "建立的人物學業不合法")
+	var used := PersonSkills.packet_points(packet, int(ability), abilities, int(learning))
+	if not bool(data.get("free_points", false)) and used > PersonSkills.START_POINTS:
+		return Runtime.fail("INVALID", "建立的人物能力點 %d 超過 %d" % [used, PersonSkills.START_POINTS])
+	var stored := PersonSkills.normalized(packet)
+	stored["start"] = 1
+	return {"ok": true, "apply": true, "packet": PersonSkills.saved(stored), "learning": int(learning)}
 
 ## Neutral part 2: the shown name of a controlled person: an actor's display_name, or a crowd/roster row's saved name.
 func _controlled_display_name(controlled: Dictionary) -> String:
@@ -12391,7 +12416,8 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 
 func _initial_creation_appearance(source: Dictionary) -> Dictionary:
 	var result := {}
-	for key: String in ["body", "face", "hair", "hair_dye", "hair_dyed", "name", "combat_ability", "command_abilities", "personality"]:
+	for key: String in ["body", "face", "hair", "hair_dye", "hair_dyed", "name", "combat_ability", "command_abilities", "personality",
+			"learning", "skills", "free_points"]: # 技能 K5: the start template's 學業, lines, aptitude and 自由分配
 		if source.has(key): result[key] = source[key]
 	return result
 
@@ -15385,21 +15411,32 @@ func _skills_initial(body: Variant, seed_value: int) -> Dictionary:
 	var identity := int(body.get("person_id"))
 	if identity <= 0 or identity == int(lab.controlled_person_id()): return {}
 	var role := str(body.get("military_role")) if body.get("military_role") != null else ""
-	if role not in ["civilian", "soldier"]: return {}
+	if role not in ["civilian", "soldier", "officer"]: return {}
 	var year := int(Calendar.date(float(lab.terrain.site.get("minute", 0))).year)
 	var vital: Dictionary = PersonSocialPacket.vital(body)
 	if vital.is_empty(): vital = Vital.fresh(_vital_world_seed(), identity, year)
 	var age := year - int(vital.birth_year)
-	var trades: Array = []
-	var rate := PersonSkills.TRADE_RATE
-	if role == "soldier":
-		trades = ["building", "gathering"]
-		rate = PersonSkills.SOLDIER_RATE
-	else:
+	var trade := ""
+	if role == "civilian":
 		var job := ResidentWork.job_of(lab.terrain.site, identity)
-		var line := PersonSkills.line_for_task(lab.terrain.site, {"action": "operate", "target": "feature:" + job}) if not job.is_empty() else ""
-		if not line.is_empty(): trades = [line]
-	return PersonSkills.initial(PersonSkills.of(body), age, trades, rate, seed_value, identity)
+		trade = PersonSkills.line_for_task(lab.terrain.site, {"action": "operate", "target": "feature:" + job}) if not job.is_empty() else ""
+	# 技能 K5 (§5.5): officers (the start cadres too, until a cadre template library) by their main weapon; bandits fight.
+	var plan := PersonSkills.start_trades(role, _skills_bandit(identity), PersonSkills.martial_line(body), trade)
+	var packet := PersonSkills.initial(PersonSkills.of(body), age, plan.trades, float(plan.rate), seed_value, identity)
+	# 技能 K5 (§5.7 開局要有老師): a 文吏 or 文官 without a recorded 學業 has studied from 7.
+	if PersonSocialPacket.civil_role(body) != "none" and not PersonSocialPacket.read(body).has("learning"):
+		var studied := PersonSkills.start_learning(packet, age, seed_value, identity)
+		packet = studied.packet
+		PersonSocialPacket.set_learning(body, int(studied.value))
+	return packet
+
+## 技能 K5: whether the person's team belongs to a bandit faction (the Region registry; never without a Region).
+func _skills_bandit(identity: int) -> bool:
+	if region_slot == null: return false
+	var person: Dictionary = person_actions._person(identity, false)
+	var owner: Variant = person.get("owner") if not person.is_empty() else null
+	if owner == null or (owner is Object and not is_instance_valid(owner)) or owner.get("faction_id") == null: return false
+	return RegionFactionQuery.is_bandit(region_slot.control.get("faction_registry", {}), int(owner.faction_id))
 
 ## 技能 K4 (§6): a day as the captain of a crowd team of at least 5 present people is 1/360 of a round of 統御.
 func _skills_leadership_day() -> void:
