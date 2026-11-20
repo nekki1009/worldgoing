@@ -3,6 +3,33 @@ extends RefCounted
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K4b: drill trains martial skill and 教練
+
+## 技能 K4b (§5.3, §6): `drilled` (identity -> drill seconds) credits each officer (and the controlled person) on his
+## martial line and toward 武力 hour for hour; the commander's supervision (the longest drill) counts toward 教練 when he
+## holds it. `bodies` maps identity -> body.
+static func credit_drill(bodies: Dictionary, drilled: Dictionary, controlled_id: int, commander_id: int) -> void:
+	var longest := 0.0
+	for identity: Variant in drilled:
+		var seconds := float(drilled[identity])
+		longest = maxf(longest, seconds)
+		var body: Variant = bodies.get(identity)
+		if body == null or seconds <= 0.0: continue
+		if str(body.get("military_role")) == "officer" or int(identity) == controlled_id:
+			PersonSkills.credit(body, PersonSkills.martial_line(body), seconds)
+			PersonSkills.credit(body, PersonSkills.ABILITY, seconds)
+	var commander: Variant = bodies.get(commander_id)
+	var held: Variant = commander.get("command_abilities") if commander != null else null
+	if longest > 0.0 and held is Dictionary and held.has("coach"): PersonSkills.credit(commander, "coach", longest)
+
+## The drilling team's bodies, read from its own owner (the crowd roster rows or Actors), never a Site-wide lookup.
+static func _drill_bodies(owner: Variant, ids: Array) -> Dictionary:
+	var bodies := {}
+	for identity: Variant in ids:
+		var index: int = owner.index_for_identity(int(identity))
+		if index >= 0 and owner.combat_units.has(index) and owner.combat_units[index] != null: bodies[int(identity)] = owner.combat_units[index]
+	return bodies
+
 static func stop(entry: Dictionary) -> void:
 	entry["training_order"] = false
 	entry["training_requester"] = -1
@@ -109,6 +136,10 @@ static func advance_native(controller: Variant, owner: RefCounted, entry: Dictio
 	if not applied: return Runtime.fail("BUSY", "原生訓練條件已變更，未套用本步結果")
 	for identity: int in trained.handled_ids:
 		owner.combat_hot_set(owner.index_for_identity(identity), &"work_resting", bool(checked.members[identity].get("work_resting", false)))
+	var drilled := {}
+	for identity: int in trained.handled_ids: drilled[identity] = seconds
+	var commander_id := int(entry.training_requester)
+	credit_drill(_drill_bodies(owner, drilled.keys() + [commander_id]), drilled, int(controller.lab.controlled_person_id()), commander_id)
 	return Runtime.ok()
 
 
@@ -204,6 +235,11 @@ static func finish_native_work_prefix(controller: Variant, checked: Dictionary) 
 		if identity != int(controller.lab.controlled_person_id()) and (paused == "REST" or PersonFatigue.needs_work_rest(float(owner.combat_hot_get(unit, &"fatigue")), bool(owner.combat_hot_get(unit, &"work_resting", false)))):
 			owner.combat_hot_set(unit, &"work_resting", true)
 			owner.work_fatigue_rest(identity) # Original cancel_siege_step/release, after point publication.
+	var drilled := {}
+	for identity: int in held.people:
+		var drill: float = float(checked.plan.get("jobs", {}).get("training", {}).get(str(identity), {}).get("participant_seconds", {}).get(identity, 0.0))
+		if drill > 0.0: drilled[identity] = drill
+	credit_drill(_drill_bodies(held.owner, drilled.keys() + [int(held.commander_id)]), drilled, int(controller.lab.controlled_person_id()), int(held.commander_id))
 	var current: Dictionary = inspect(controller, int(held.owner.team_id), str(held.feature_id))
 	if not current.ok or int(current.get("commander_id", -1)) != int(held.commander_id): stop(held.entry)
 
