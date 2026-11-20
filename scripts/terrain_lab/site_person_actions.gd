@@ -8,6 +8,7 @@ const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const BoardingContract = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1a: handcraft trains craft.
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
@@ -1514,9 +1515,13 @@ func _commit(job: Dictionary) -> Dictionary:
 	if str(job.kind) == "prison_release":
 		return _commit_prison_release(job)
 	if str(job.kind) == "ranged_craft":
-		if job.has("technology_scope_token"): return _commit_scope_ranged_craft(job)
-		if job.has("technology_project"): return _commit_technology_trial(job)
-		return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
+		var crafted: Dictionary
+		if job.has("technology_scope_token"): crafted = _commit_scope_ranged_craft(job)
+		elif job.has("technology_project"): crafted = _commit_technology_trial(job)
+		else: crafted = Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
+		# 技能 K1a: a finished handcraft job (its own duration, the F07 saving included) trains craft.
+		if bool(crafted.get("ok", false)) and not executor.is_empty(): PersonSkills.credit(executor.get("body"), "craft", float(job.get("duration", 0.0)))
+		return crafted
 	if str(job.kind) == "equipment":
 		var audio_data: TerrainData = lab.terrain
 		var audio_ground: Vector2 = executor.get("position", Vector2(-1, -1))

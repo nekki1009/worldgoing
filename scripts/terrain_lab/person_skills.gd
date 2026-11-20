@@ -8,6 +8,11 @@ extends RefCounted
 ## - aptitude: 根骨 (body) and 悟性 (mind). People met at world creation never store it: it is derived from the world
 ##   seed and the person id (normal, mean 50, sd 15, clamped 0..100), like TC7 age. Only people born in play store it.
 ## K0 only carries and shows the data: nothing reads a line for speed or ability yet, so behaviour is unchanged.
+## K1a (reports/skill-k1-implementation.md) adds three optional growth fields, all keyed by line:
+## - pending: effective work credited since the last daily settlement (credit()), in whole microseconds so a save and a
+##   load keep the exact value (JSON integers);
+## - toward: at 80 and above, effective work gathered toward the next yearly roll (3600 effective hours), microseconds;
+## - rolls: how many yearly rolls a line has had (the roll seed, so a reload never re-rolls).
 
 const VERSION := 1
 const SCALE := 1000
@@ -28,12 +33,26 @@ const APTITUDE_SD := 15
 const NORMAL_DRAWS := 12
 const NORMAL_SPAN := 1000
 const NORMAL_MEAN_SUM := 5994
+## K1a growth (§5.3, §5.6). Below 80 each effective hour adds RATE x (1 - L/100)^2 x (0.5 + aptitude/100); from 80,
+## every YEAR_SECONDS of effective work rolls ROLLS times at aptitude %, +1 for each success, up to 100.
+const RATE := 0.0074
+const PLATEAU := 80000
+const YEAR_SECONDS := 3600.0 * 3600.0
+const ROLLS := 5
+const MICROS := 1000000.0
+const MAX_MICROS := 1000000000000000 # about 31 years of seconds
+const MAX_ROLLS := 1000000
+const APTITUDE_OF := {"farming": "body", "gathering": "body", "building": "both", "craft": "both", "medicine": "mind",
+	"melee": "body", "archery": "body", "riding": "body"}
+const FARM_FEATURES: Array[String] = ["farm", "fiber_farm", "fodder_farm", "pasture", "horse_ranch"]
+const CRAFT_FEATURES: Array[String] = ["saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver"]
+const BUILD_FEATURES: Array[String] = ["shipyard"]
 const COMMAND_LABELS := {"tactics": "戰術", "leadership": "統御", "coach": "教練"}
 const TECHNOLOGY_LABELS := {"F01": "農事記錄", "F02": "適地留種", "F03": "炭化控火", "F04": "冶煉鍛打", "F05": "纖維處理",
 	"F06": "毛紡織造", "F07": "弓作工法", "F08": "弩機裝配", "F09": "丈量放樣", "F10": "木石營造", "F11": "器械木作",
 	"F12": "配重機構", "F13": "舟楫工法", "F14": "鞣革", "F15": "引火配方"}
 
-## Strict: version 1 plus optional `lines` and `aptitude`; never coerces a bad packet.
+## Strict: version 1 plus optional `lines`, `aptitude`, `pending`, `toward` and `rolls`; never coerces a bad packet.
 static func valid(packet: Variant) -> bool:
 	if not packet is Dictionary or not _integer(packet.get("version"), VERSION, VERSION): return false
 	var extra := 0
@@ -43,7 +62,17 @@ static func valid(packet: Variant) -> bool:
 	if packet.has("aptitude"):
 		if not _valid_aptitude(packet.aptitude): return false
 		extra += 1
+	for field: String in ["pending", "toward", "rolls"]:
+		if packet.has(field):
+			if not _valid_counts(packet[field], MAX_ROLLS if field == "rolls" else MAX_MICROS): return false
+			extra += 1
 	return packet.size() == 1 + extra
+
+static func _valid_counts(value: Variant, high: int) -> bool:
+	if not value is Dictionary: return false
+	for line: Variant in value:
+		if not line is String or not LINES.has(line) or not _integer(value[line], 0, high): return false
+	return true
 
 static func _valid_lines(lines: Variant) -> bool:
 	if not lines is Dictionary or lines.is_empty(): return false
@@ -66,6 +95,12 @@ static func normalized(packet: Dictionary) -> Dictionary:
 		if not lines.is_empty(): result["lines"] = lines
 	if packet.get("aptitude") is Dictionary:
 		result["aptitude"] = {"body": int(packet.aptitude.body), "mind": int(packet.aptitude.mind)}
+	for field: String in ["pending", "toward", "rolls"]:
+		if not packet.get(field) is Dictionary: continue
+		var values := {}
+		for line: String in LINES:
+			if packet[field].has(line): values[line] = int(packet[field][line])
+		result[field] = values
 	return result
 
 ## Sparse save form: lines at 50 are dropped; empty when nothing differs from the default and no aptitude is stored.
@@ -76,6 +111,11 @@ static func saved(packet: Dictionary) -> Dictionary:
 		for line: String in LINES:
 			if int(result.lines.get(line, NEUTRAL)) == NEUTRAL: result.lines.erase(line)
 		if result.lines.is_empty(): result.erase("lines")
+	for field: String in ["pending", "toward", "rolls"]:
+		if not result.has(field): continue
+		for line: String in LINES:
+			if result[field].has(line) and int(result[field][line]) <= 0: result[field].erase(line)
+		if result[field].is_empty(): result.erase(field)
 	return {} if result.size() == 1 else result
 
 ## Read side: the packet of a body (Dictionary row or Actor object); a missing or bad packet reads as empty (all 50).
@@ -84,6 +124,116 @@ static func of(body: Variant) -> Dictionary:
 	if body is Dictionary: packet = body.get("skills")
 	elif body is Object and "skills" in body: packet = body.get("skills")
 	return normalized(packet) if valid(packet) else {}
+
+## Writes `packet` as the body's packet (a Dictionary row's "skills" or an Actor's `skills`); {} removes it.
+static func write(body: Variant, packet: Dictionary) -> void:
+	if body is Dictionary:
+		if packet.is_empty(): body.erase("skills")
+		else: body["skills"] = packet
+	elif body is Object and "skills" in body: body.set("skills", packet)
+
+## K1a: the line a work task trains (reports/skill-k1-implementation.md); "" when it trains none.
+static func line_for_task(state: Dictionary, task: Dictionary) -> String:
+	var action := str(task.get("action", ""))
+	if action in ["construct", "repair"]: return "building"
+	if action in ["harvest", "clear"]: return "gathering"
+	if action == "capture": return "farming"
+	var target := str(task.get("target", ""))
+	if action != "operate" or not target.begins_with("feature:"): return ""
+	var kind := str(state.get("features", {}).get(target.trim_prefix("feature:"), {}).get("kind", ""))
+	if FARM_FEATURES.has(kind): return "farming"
+	if CRAFT_FEATURES.has(kind): return "craft"
+	return "building" if BUILD_FEATURES.has(kind) else ""
+
+## K1a: credits `seconds` of effective work on `line` to the body's pending work, in place (called on hot work paths, so
+## it never copies the packet). The daily settlement turns pending work into proficiency.
+static func credit(body: Variant, line: String, seconds: float) -> void:
+	if body == null or not LINES.has(line) or not is_finite(seconds) or seconds <= 0.0: return
+	var packet: Variant = null
+	if body is Dictionary: packet = body.get("skills")
+	elif body is Object and "skills" in body: packet = body.get("skills")
+	else: return
+	if not packet is Dictionary: packet = {}
+	if packet.is_empty():
+		packet["version"] = VERSION
+		write(body, packet)
+	var pending: Variant = packet.get("pending")
+	if not pending is Dictionary:
+		pending = {}
+		packet["pending"] = pending
+	pending[line] = mini(MAX_MICROS, int(pending.get(line, 0)) + roundi(seconds * MICROS))
+
+## K1b (§5.2): a worker's speed on `line`, 0.5 + proficiency / 100 (x1.0 at 50). A raw read for hot work paths: no
+## packet, no line or an unknown line is 1.0.
+static func work_factor(body: Variant, line: String) -> float:
+	if line.is_empty() or body == null: return 1.0
+	var packet: Variant = null
+	if body is Dictionary: packet = body.get("skills")
+	elif body is Object and "skills" in body: packet = body.get("skills")
+	if not packet is Dictionary: return 1.0
+	var lines: Variant = packet.get("lines")
+	if not lines is Dictionary or not lines.has(line): return 1.0
+	return 0.5 + float(clampi(int(lines[line]), 0, MAX_VALUE)) / float(MAX_VALUE)
+
+## The aptitude that governs `line`: 根骨, 悟性, or their average for building and craft (§5.6).
+static func talent_for(aptitude_values: Dictionary, line: String) -> float:
+	var kind := str(APTITUDE_OF.get(line, "body"))
+	if kind == "both": return (float(aptitude_values.get("body", APTITUDE_MEAN)) + float(aptitude_values.get("mind", APTITUDE_MEAN))) * 0.5
+	return float(aptitude_values.get(kind, APTITUDE_MEAN))
+
+## Effective seconds that take a line from `from_milli` to `to_milli` below the plateau (closed form of §5.3).
+static func seconds_between(from_milli: int, to_milli: int, talent: float) -> float:
+	var rate := RATE * (0.5 + talent / 100.0)
+	return (1.0 / (1.0 - float(to_milli) / 100000.0) - 1.0 / (1.0 - float(from_milli) / 100000.0)) * 100.0 / rate * 3600.0
+
+## One yearly roll from 80 (§5.3): ROLLS draws at `talent` %, fixed by the world seed, the person, the line and the count.
+static func yearly_gain(seed_value: int, identity: int, line: String, count: int, talent: float) -> int:
+	var gain := 0
+	for draw: int in range(ROLLS):
+		if float(posmod(hash([seed_value, identity, "skill_roll", line, count, draw]), 1000000)) < talent * 10000.0: gain += 1
+	return gain
+
+## K1a daily settlement: turns the pending work into proficiency and returns the new sparse packet. Below 80 the line
+## grows by the closed-form curve to the last whole thousandth it reaches; the seconds not yet worth one thousandth stay
+## pending. From 80 the seconds gather in `toward`, and every full year of them rolls once.
+static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictionary:
+	var result := normalized(packet) if valid(packet) else {"version": VERSION}
+	var pending: Dictionary = result.get("pending", {})
+	if pending.is_empty(): return saved(result)
+	var talents := aptitude(result, seed_value, identity)
+	var lines: Dictionary = result.get("lines", {})
+	var toward: Dictionary = result.get("toward", {})
+	var rolls: Dictionary = result.get("rolls", {})
+	var left := {}
+	for line: String in LINES:
+		if not pending.has(line): continue
+		var seconds := float(pending[line]) / MICROS
+		var talent := talent_for(talents, line)
+		var milli := int(lines.get(line, NEUTRAL))
+		if milli < PLATEAU:
+			var rate := RATE * (0.5 + talent / 100.0)
+			var u := 1.0 / (1.0 / (1.0 - float(milli) / 100000.0) + rate * seconds / 3600.0 / 100.0)
+			var reached := mini(PLATEAU, floori(100000.0 * (1.0 - u)))
+			seconds = maxf(0.0, seconds - seconds_between(milli, reached, talent))
+			milli = reached
+			if milli < PLATEAU:
+				if floori(seconds * MICROS) > 0: left[line] = floori(seconds * MICROS)
+				lines[line] = milli
+				continue
+		if milli < MAX_VALUE:
+			var gathered := float(toward.get(line, 0)) / MICROS + seconds
+			while gathered >= YEAR_SECONDS and milli < MAX_VALUE:
+				var count := int(rolls.get(line, 0))
+				milli = mini(MAX_VALUE, milli + SCALE * yearly_gain(seed_value, identity, line, count, talent))
+				rolls[line] = count + 1
+				gathered -= YEAR_SECONDS
+			toward[line] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
+		lines[line] = milli
+	result["lines"] = lines
+	result["pending"] = left
+	result["toward"] = toward
+	result["rolls"] = rolls
+	return saved(result)
 
 ## Proficiency of `line` in thousandths (50000 when not stored).
 static func level_milli(packet: Dictionary, line: String) -> int:

@@ -6,6 +6,7 @@ const Season = preload("res://scripts/terrain_lab/site_season.gd") # 時間與�
 const Ships = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const EquipmentDye = preload("res://scripts/ui/equipment_dye.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1a: work trains the task's line.
 const TechnologyPolicy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
 const TechnologyCatalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 const COMBAT_GRACE := 10.0
@@ -4250,7 +4251,9 @@ static func _work(data: TerrainData, minutes: float, worker_ready: bool, manual_
 			data.site.notices.append(str(ready.message))
 			manual["target"] = ""
 			return
-		manual["progress"] = float(manual.progress) + (float(work_time.call(true, minutes)) if work_time.is_valid() else minutes)
+		# 技能 K1b: the controlled person's own manual work at his gathering speed.
+		manual["progress"] = float(manual.progress) + (float(work_time.call(true, minutes)) if work_time.is_valid() else minutes) \
+			* _skill_work_factor(data, manual, original_identity)
 		var required := resource_work_minutes(int(r.kind), str(manual.action))
 		if float(manual.progress) + 0.00000001 >= required:
 			if _fire_defer_resource_completion(data, manual, manual.cargo, str(manual.target), data.cell_from_index(int(manual.cell)), str(manual.action), manual_limit, true):
@@ -10279,7 +10282,9 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 		elif int(ledger.operator_id) == identity:
 			ledger_seconds += float(prefix_ref.productive_seconds)
 			ledger_counted = true
-	var progress := minf(threshold, previous + productive_seconds * scale)
+	# 技能 K1b: the worker's speed on the task's line (x1.0 at 50); the applied seconds and every ledger stay unscaled.
+	var skill_factor := _skill_work_factor(data, task, identity, prefix_ref)
+	var progress := minf(threshold, previous + productive_seconds * scale * skill_factor)
 	if progress + 0.00000001 >= threshold: progress = threshold # The endpoint tolerance, as below.
 	# Workshop batches: the production this step adds, in seconds, is its effective work.
 	var ledger_effective_tracked: bool = endpoint == "feature" and action == "operate" and not target.has("ship_build") and not ledger.is_empty() \
@@ -14173,6 +14178,34 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 		prepared.task.status = "原已核定工作前缀已提交；完成端点待原当前资格验收" if prepared.deferred_endpoint else "原工作者施工中"
 	prepared.data.environment_revision += 1
 	prepared["published"] = true
+	_credit_skill_work(prepared)
+
+## 技能 K1b (reports/skill-k1-implementation.md): the speed of `identity` on `task`'s line, 0.5 + proficiency / 100. The
+## body comes from the prefix's start when it has one, else from the Site's person lookup; 1.0 when neither is known.
+static func _skill_work_factor(data: TerrainData, task: Dictionary, identity: int, prefix: Dictionary = {}) -> float:
+	var line := PersonSkills.line_for_task(data.site, task)
+	if line.is_empty() or identity <= 0: return 1.0
+	var body: Variant = prefix.get("start", {}).get("body") if prefix.get("start") is Dictionary else null
+	if body == null:
+		var actions: Variant = _technology_actions(data)
+		var person: Dictionary = actions._person(identity, false) if actions != null else {}
+		body = person.get("body")
+	return PersonSkills.work_factor(body, line)
+
+## 技能 K1a (reports/skill-k1-implementation.md): the worker's effective seconds of a published work prefix count toward the
+## line of its task (PersonSkills.line_for_task); the daily settlement turns them into proficiency.
+static func _credit_skill_work(prepared: Dictionary) -> void:
+	var line := PersonSkills.line_for_task(prepared.site, prepared.task)
+	if line.is_empty(): return
+	var prefix: Dictionary = prepared.get("prefix_ref", {})
+	var seconds := float(prefix.get("productive_seconds", prefix.get("actual_seconds", 0.0)))
+	if not is_finite(seconds) or seconds <= 0.0: return
+	var body: Variant = prefix.get("start", {}).get("body") if prefix.get("start") is Dictionary else null
+	if body == null:
+		var actions: Variant = _technology_actions(prepared.data)
+		var person: Dictionary = actions._person(int(prepared.get("identity", 0)), false) if actions != null else {}
+		body = person.get("body")
+	PersonSkills.credit(body, line, seconds)
 
 # Called AFTER Native publication, with current original life/authority checks.
 # Rejection retains the already paid completed progress for a real zero retry.

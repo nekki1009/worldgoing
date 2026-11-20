@@ -5217,6 +5217,7 @@ func run_daily_hooks() -> void:
 	daily_hooks_due = false
 	BanditDay.day(self)
 	resident_exodus_day()
+	skills_day()
 
 func settle_person_deaths(real_seconds: float) -> void:
 	_sync_fief_owner_once()
@@ -15309,6 +15310,48 @@ func person_skills_page(identity: int) -> Dictionary:
 	var sections: Array = PersonSkills.page(packet, aptitude, float(ability) if ability is float or ability is int else 50.0,
 		PersonSocialPacket.learning(body), command if command is Dictionary else {}, learned)
 	return {"ok": true, "identity": identity, "aptitude": aptitude, "sections": sections}
+
+## 技能 K1a: the people last settled by skills_day (runtime only).
+var last_skills_day: Dictionary = {}
+
+## 技能 K1a (reports/skill-k1-implementation.md): once per Site calendar day, every person's pending work turns into
+## proficiency (PersonSkills.settle). Settling is linear in the pending work, so a reload that settles again the same
+## day changes nothing. Returns {day, settled}.
+func skills_day() -> Dictionary:
+	if lab == null or lab.terrain == null: return {}
+	var today := int(Calendar.day_index(float(lab.terrain.site.get("minute", 0))))
+	if int(get_meta(&"skills_day", -2)) == today: return {}
+	set_meta(&"skills_day", today)
+	var seed_value := _skills_world_seed()
+	var settled := 0
+	for body: Variant in _skills_bodies():
+		var raw: Variant = body.get("skills") if body is Dictionary else body.get("skills")
+		if not raw is Dictionary or not raw.has("pending"): continue
+		PersonSkills.write(body, PersonSkills.settle(PersonSkills.of(body), seed_value, int(body.get("person_id"))))
+		settled += 1
+	last_skills_day = {"day": today, "settled": settled}
+	return last_skills_day
+
+## Every person body here once (Actors, grid army rows, crowd roster rows), read straight from its owner.
+func _skills_bodies() -> Array:
+	var bodies: Array = []
+	var seen := {}
+	var add := func(body: Variant) -> void:
+		if body == null or (body is Object and not is_instance_valid(body)): return
+		var identity := int(body.get("person_id")) if body.get("person_id") != null else 0
+		if identity <= 0 or seen.has(identity): return
+		seen[identity] = true
+		bodies.append(body)
+	for actor: Variant in lab.combat_actors: add.call(actor)
+	for team: Variant in lab.combat_armies:
+		if not is_instance_valid(team) or not team.combat_enabled: continue
+		for index: Variant in (team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())):
+			add.call(team.combat_units[index])
+	if _crowd_active():
+		for owner: Variant in lab.team_owners():
+			if not is_instance_valid(owner): continue
+			for key: Variant in owner.combat_units.keys(): add.call(owner.combat_units[key])
+	return bodies
 
 func _open_person_skills(identity: int = -1, host: Window = null) -> void:
 	if identity <= 0:

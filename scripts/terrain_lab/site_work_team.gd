@@ -6,6 +6,7 @@ extends RefCounted
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C4a: slow work at high discontent.
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1a: work trains the task's line.
 const RETRY_SECONDS := 30.0
 const WORK_PROVIDER := "work_team"
 var lab: Variant
@@ -440,7 +441,11 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			continue # Selection/routes belong to this original pipeline; no work yet.
 		var work_time := func(_manual: bool, minutes: float) -> float:
 			var mood := ResidentMood.work_factor(lab, identity, row) # 平民 C4a: a resident at G >= 40 works at 80%.
-			if _native_person(person): return _native_work_minutes(person, manual, minutes, handled) * mood
+			var skill_line := PersonSkills.line_for_task(lab.terrain.site, task) # 技能 K1a
+			if _native_person(person):
+				var native_minutes := _native_work_minutes(person, manual, minutes, handled)
+				PersonSkills.credit(row, skill_line, native_minutes * 60.0)
+				return native_minutes * mood * PersonSkills.work_factor(row, skill_line) # 技能 K1b
 			var work_rate := PersonFatigue.effort_rate(row)
 			var effort := minutes * 60.0 if manual else minf(minutes * 60.0, maxf(0.0, (PersonFatigue.WORK_REST_AT - PersonFatigue.read(row)) / work_rate))
 			var productive := PersonFatigue.work_seconds(PersonFatigue.read(row), effort, work_rate)
@@ -451,7 +456,8 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if effort > 0.0:
 				handled[identity] = float(handled.get(identity, 0.0)) + effort
 				_working[identity] = true
-			return productive / 60.0 * mood
+			PersonSkills.credit(row, skill_line, productive)
+			return productive / 60.0 * mood * PersonSkills.work_factor(row, skill_line) # 技能 K1b
 		var work_target := SiteRuntime.work_claim_key(task)
 		if str(task.target).begins_with("vehicle:"):
 			var key := str(task.target).trim_prefix("vehicle:")
@@ -956,7 +962,10 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			if bool(consumed.used): return 0.0
 			consumed["used"] = true
 			_record_planned_work(entry, interval, handled)
-			return base / 60.0 # Pool fatigue was admitted once by the shared collector.
+			var planned_line := PersonSkills.line_for_task(lab.terrain.site, entry.task)
+			PersonSkills.credit(entry.row, planned_line, base) # 技能 K1a
+			# Pool fatigue was admitted once by the shared collector; 技能 K1b: the worker's speed on the task's line.
+			return base / 60.0 * PersonSkills.work_factor(entry.row, planned_line)
 		if str(entry.target).begins_with("vehicle:"):
 			var key := str(entry.target).trim_prefix("vehicle:")
 			var vehicle: Dictionary = lab.terrain.site.vehicles.get(key, {})

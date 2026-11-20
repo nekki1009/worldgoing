@@ -168,6 +168,8 @@ func _shared_weighted_batch() -> void:
 	_near(float(feature.production), base * 72.0 / 60.0, "Runtime applies each physical station weight exactly once")
 	_check(bool(feature.batch_paid) and int(fixture.terrain.site.inventory.seeds) == seeds - 1, "Two work stations prepay one original batch")
 	_check(is_same(first.cargo, cargo), "Original cargo identity is preserved")
+	# 技能 K1a: each worker's effective seconds train farming, pending until the day's settlement.
+	_check(int(first.get("skills", {}).get("pending", {}).get("farming", 0)) == roundi(base * 1000000.0) and int(second.get("skills", {}).get("pending", {}).get("farming", 0)) == roundi(base * 1000000.0), "Both farm workers' effective seconds train farming", [first.get("skills"), second.get("skills"), base])
 	_near(float(pool.fatigue), admitted, "Plan consumer does not charge fatigue again")
 	var produced := float(feature.production)
 	_check(fixture.crew.advance(60.0, plan).handled_seconds.is_empty(), "Same accepted allocation cannot be consumed twice")
