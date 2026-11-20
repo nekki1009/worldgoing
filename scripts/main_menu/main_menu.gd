@@ -28,6 +28,7 @@ void fragment() {
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K5: the start template's points
+const Templates = preload("res://scripts/main_menu/character_templates.gd") # 開局流程規劃 §2: the template library
 const DEFAULT_HAIR_DYE := "9b775dff"
 ## The project renders at 2560×1440 and scales to the window; size UI for that.
 const UI := 1.6
@@ -53,6 +54,28 @@ var _line_sliders: Dictionary = {}
 var _aptitude_sliders: Dictionary = {}
 var _free_points: CheckBox
 var _points_label: Label
+# 開局流程規劃 §2: the template library and the New Game 選人物 step.
+var _character_mode := "new_game" # "new_game" or "template" (the main menu's character editor)
+var _editing_template_id := ""
+var _character_title: Label
+var _template_title_row: HBoxContainer
+var _template_title: LineEdit
+var _surname_input: LineEdit
+var _family_name_input: LineEdit
+var _character_back: Button
+var _character_next_button: Button
+var _character_save_template: Button
+var _template_editor_back: Button
+var _template_list: ItemList
+var _template_rows: Array = []
+var _template_note: Label
+var _template_rename: LineEdit
+var _template_delete: Button
+var _template_delete_armed := ""
+var _pick_list: ItemList
+var _pick_rows: Array = []
+var _world_delete: Button
+var _world_delete_armed := ""
 var _character_error: Label
 var _preview_host: Node
 var _preview_editor: HumanCharacter3DEditor
@@ -105,8 +128,10 @@ func _ready() -> void:
 	_build_map_page(column)
 	_build_character_page(column)
 	_build_confirm_page(column)
+	_build_templates_page(column)
+	_build_pick_character_page(column)
 	var step := str(RegionEntry.draft.get("step", ""))
-	if step == "character" and RegionEntry.draft.get("site") is Vector2i: show_page("character")
+	if step == "character" and RegionEntry.draft.get("site") is Vector2i: show_page(_character_entry_page())
 	else:
 		RegionEntry.draft = {}
 		show_page("main")
@@ -116,7 +141,11 @@ func show_page(page: String) -> void:
 		_pages[id].visible = id == page
 	if page == "main": _refresh_continue()
 	elif page == "load": _refresh_worlds()
-	elif page == "character": _restore_character_draft()
+	elif page == "character":
+		_refresh_character_mode()
+		if _character_mode == "new_game": _restore_character_draft()
+	elif page == "templates": _refresh_templates()
+	elif page == "pick_character": _refresh_pick()
 	elif page == "confirm": _refresh_summary()
 	_set_preview_active(page == "character")
 
@@ -202,8 +231,12 @@ func _build_main_page(parent: Node) -> void:
 	_continue_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_button(page, "新遊戲", "NewGame", func() -> void:
 		RegionEntry.draft = {"step": "map", "map": "taiwan"}
+		_character_mode = "new_game"
 		show_page("map"))
 	_button(page, "載入世界", "LoadWorld", func() -> void: show_page("load"))
+	_button(page, "角色編輯器", "CharacterEditor", func() -> void: show_page("templates"))
+	var settings := _button(page, "設定（尚未開放）", "Settings", func() -> void: pass)
+	settings.disabled = true # 開局流程規劃 §1: the button first, its content later
 	_button(page, "地圖編輯器", "MapEditor", _open_map_editor)
 	_button(page, "離開", "QuitGame", func() -> void: get_tree().quit())
 
@@ -223,8 +256,10 @@ func _continue_game() -> void:
 func _world_line(meta: Dictionary) -> String:
 	var site: Array = meta.get("active_site", [])
 	var at := "(%d, %d)" % [int(site[0]), int(site[1])] if site.size() == 2 else "—"
-	return "%s · 地點 %s · 第 %d 日 · 最後保存 %s" % [str(meta.get("name", meta.world_id)), at, int(meta.get("day", 1)),
-		Time.get_datetime_string_from_unix_time(int(meta.get("saved_unix", 0)) + _timezone_seconds(), true)]
+	var start: Variant = meta.get("start")
+	var free := " · 自由分配開局" if start is Dictionary and start.get("free_points") == true else ""
+	return "%s · 地點 %s · 第 %d 日 · 最後保存 %s%s" % [str(meta.get("name", meta.world_id)), at, int(meta.get("day", 1)),
+		Time.get_datetime_string_from_unix_time(int(meta.get("saved_unix", 0)) + _timezone_seconds(), true), free]
 
 static func _timezone_seconds() -> int:
 	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60
@@ -237,11 +272,16 @@ func _build_load_page(parent: Node) -> void:
 	_world_list = ItemList.new()
 	_world_list.name = "WorldList"
 	_world_list.custom_minimum_size = Vector2(620, 280) * UI
-	_world_list.item_selected.connect(func(_index: int) -> void: _load_button.disabled = false)
+	_world_list.item_selected.connect(func(_index: int) -> void:
+		_load_button.disabled = false
+		_world_delete.disabled = false
+		_world_delete_armed = ""
+		_world_delete.text = "刪除")
 	_world_list.item_activated.connect(func(_index: int) -> void: _load_selected())
 	page.add_child(_world_list)
 	var row := _row(page)
 	_load_button = _button(row, "載入", "LoadSelectedWorld", _load_selected)
+	_world_delete = _button(row, "刪除", "DeleteSelectedWorld", _delete_selected_world)
 	_button(row, "返回", "LoadBack", func() -> void: show_page("main"))
 
 func _refresh_worlds() -> void:
@@ -251,6 +291,23 @@ func _refresh_worlds() -> void:
 		_world_list.add_item(_world_line(meta))
 	if _worlds.is_empty(): _world_list.add_item("尚無已保存的世界", null, false)
 	_load_button.disabled = true
+	_world_delete.disabled = true
+	_world_delete_armed = ""
+	_world_delete.text = "刪除"
+
+## 開局流程規劃 §1: a world is deleted only on a second press for the same world (it cannot be undone).
+func _delete_selected_world() -> void:
+	var selected := _world_list.get_selected_items()
+	if selected.is_empty() or selected[0] >= _worlds.size(): return
+	var world_id := str(_worlds[selected[0]].world_id)
+	if _world_delete_armed != world_id:
+		_world_delete_armed = world_id
+		_world_delete.text = "確定刪除？再按一次"
+		return
+	var deleted := RegionEntry.delete_world(world_id)
+	_message.text = "已刪除世界「%s」" % str(_worlds[selected[0]].get("name", world_id)) if deleted else "無法刪除這個世界"
+	_message.visible = true
+	_refresh_worlds()
 
 func _load_selected() -> void:
 	var selected := _world_list.get_selected_items()
@@ -299,7 +356,7 @@ func _pick_start() -> void:
 
 func _build_character_page(parent: Node) -> void:
 	var page := _page(parent, "character")
-	_label(page, "建立人物", 24)
+	_character_title = _label(page, "建立人物", 24)
 	var body := _row(page)
 	_preview_host = Node.new()
 	_preview_host.name = "CharacterPreviewHost"
@@ -318,6 +375,16 @@ func _build_character_page(parent: Node) -> void:
 	form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	form.add_theme_constant_override("separation", 8)
 	scroll.add_child(form)
+	# 開局流程規劃 §2: in the character editor the page edits one template, named here.
+	_template_title_row = _row(form)
+	_label(_template_title_row, "範本名稱", 16).custom_minimum_size.x = 72 * UI
+	_template_title = LineEdit.new()
+	_template_title.name = "TemplateTitle"
+	_template_title.max_length = Templates.MAX_TITLE
+	_template_title.placeholder_text = "必填"
+	_template_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_template_title_row.add_child(_template_title)
+	_template_title_row.visible = false
 	_label(form, "外觀", 20)
 	var row := _row(form)
 	_label(row, "名字", 16).custom_minimum_size.x = 72 * UI
@@ -358,6 +425,25 @@ func _build_character_page(parent: Node) -> void:
 		_update_preview())
 	row.add_child(_dye_picker)
 	form.add_child(HSeparator.new())
+	# 開局流程規劃 §2 家族 (v1): the family blueprint, the head himself and the family name.
+	_label(form, "家族（開局時你是家長）", 20)
+	row = _row(form)
+	_label(row, "姓氏", 16).custom_minimum_size.x = 72 * UI
+	_surname_input = LineEdit.new()
+	_surname_input.name = "CharacterSurname"
+	_surname_input.max_length = Templates.MAX_SURNAME
+	_surname_input.placeholder_text = "可不填"
+	_surname_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_surname_input)
+	row = _row(form)
+	_label(row, "家族名", 16).custom_minimum_size.x = 72 * UI
+	_family_name_input = LineEdit.new()
+	_family_name_input.name = "CharacterFamilyName"
+	_family_name_input.max_length = Templates.MAX_FAMILY_NAME
+	_family_name_input.placeholder_text = "不填則用「姓氏＋家」；兩者都空就不建家族名"
+	_family_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_family_name_input)
+	form.add_child(HSeparator.new())
 	_label(form, "能力（0–100）", 20)
 	# 技能 K5 (reports/skill-system-plan.md §5.5): one budget of START_POINTS for the four abilities, 學業, the eight lines
 	# (counted from 50) and the two aptitudes (counted from 50); 自由分配 lifts the cap.
@@ -391,8 +477,10 @@ func _build_character_page(parent: Node) -> void:
 	_character_error = _label(page, "", 15)
 	_character_error.modulate = Color("f0a0a0")
 	var buttons := _row(page)
-	_button(buttons, "上一步：重選起點", "CharacterBack", _pick_start)
-	_button(buttons, "下一步", "CharacterNext", _character_next)
+	_character_back = _button(buttons, "上一步：重選起點", "CharacterBack", _character_back_pressed)
+	_template_editor_back = _button(buttons, "返回範本清單", "TemplateEditorBack", func() -> void: show_page("templates"))
+	_character_save_template = _button(buttons, "存成範本", "CharacterSaveTemplate", _save_character_template)
+	_character_next_button = _button(buttons, "下一步", "CharacterNext", _character_next)
 	_fill_hair(0)
 
 func _option_row(parent: Node, text: String, node_name: String) -> OptionButton:
@@ -479,7 +567,13 @@ func _update_points() -> void:
 	_points_label.modulate = Color.WHITE if points_within_limit() else Color("f0a0a0")
 
 func _restore_character_draft() -> void:
-	var data: Dictionary = RegionEntry.draft.get("character", {})
+	var family: Dictionary = RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}
+	_surname_input.text = str(family.get("surname", ""))
+	_family_name_input.text = str(family.get("name", ""))
+	_fill_character_form(RegionEntry.draft.get("character", {}))
+
+## Fills the form from a character_data() dictionary; {} leaves the form as it is.
+func _fill_character_form(data: Dictionary) -> void:
 	if data.is_empty():
 		_update_preview()
 		return
@@ -505,6 +599,199 @@ func _restore_character_draft() -> void:
 		_personality_sliders[axis].value = int(data.personality[axis])
 	_update_preview()
 
+# --- 開局流程規劃 §2: the character editor (template library) and the New Game 選人物 step.
+
+func _usable_templates() -> Array:
+	return Templates.list().filter(func(row: Dictionary) -> bool: return row.problems.is_empty())
+
+## After the start Site: 選人物 when a usable template exists and no character is drafted yet, else the character page.
+func _character_entry_page() -> String:
+	_character_mode = "new_game"
+	var drafted: Variant = RegionEntry.draft.get("character", {})
+	return "pick_character" if (not drafted is Dictionary or drafted.is_empty()) and not _usable_templates().is_empty() else "character"
+
+func _character_back_pressed() -> void:
+	if _usable_templates().is_empty(): _pick_start()
+	else: show_page("pick_character")
+
+func _refresh_character_mode() -> void:
+	var editing := _character_mode == "template"
+	_character_title.text = "編輯人物範本" if editing else "建立人物"
+	_template_title_row.visible = editing
+	_character_back.visible = not editing
+	_character_back.text = "上一步：重選起點" if _usable_templates().is_empty() else "上一步：選人物"
+	_character_next_button.visible = not editing
+	_template_editor_back.visible = editing
+	_character_save_template.text = "儲存範本" if editing else "存成範本"
+	_character_error.text = ""
+
+## The form at its defaults: abilities, lines and aptitudes 50, 學業 0, personality neutral, no family, no name.
+func _reset_character_form() -> void:
+	_name_input.text = ""
+	_body_select.select(0)
+	_fill_hair(0)
+	_face_select.select(0)
+	_dye_picker.color = Color(DEFAULT_HAIR_DYE)
+	_dye_toggle.button_pressed = false
+	for key: String in _ability_inputs: _ability_inputs[key].value = 50
+	_learning_slider.value = 0
+	for line: String in _line_sliders: _line_sliders[line].value = 50
+	for kind: String in _aptitude_sliders: _aptitude_sliders[kind].value = PersonSkills.APTITUDE_MEAN
+	for axis: String in PersonPersonality.AXES: _personality_sliders[axis].value = PersonPersonality.NEUTRAL
+	_free_points.button_pressed = false
+	_surname_input.text = ""
+	_family_name_input.text = ""
+	_template_title.text = ""
+	_update_points()
+	_update_preview()
+
+## Saves the page as a template: in the editor the edited one (new when it has no id), in New Game a new one titled
+## by the character's name.
+func _save_character_template() -> void:
+	var editing := _character_mode == "template"
+	var title := _template_title.text.strip_edges() if editing else _name_input.text.strip_edges()
+	var saved := Templates.save_template(Templates.make(title, character_data(), family_data()), _editing_template_id if editing else "")
+	if not saved.ok:
+		_character_error.text = "範本未儲存：" + "；".join(saved.problems)
+		return
+	if editing: _editing_template_id = str(saved.id)
+	_character_error.text = "已儲存範本「%s」。" % title
+
+func _build_templates_page(parent: Node) -> void:
+	var page := _page(parent, "templates")
+	_label(page, "角色編輯器（人物範本）", 24)
+	_label(page, "範本存外觀、名字、能力、學業、熟練、資質、性格與家族設定；開新遊戲時可以選用，同一個範本可開很多個世界。", 14)
+	_template_list = ItemList.new()
+	_template_list.name = "TemplateList"
+	_template_list.custom_minimum_size = Vector2(620, 260) * UI
+	_template_list.item_selected.connect(func(_index: int) -> void: _template_selected())
+	_template_list.item_activated.connect(func(_index: int) -> void: _open_template_editor(_selected_template_id()))
+	page.add_child(_template_list)
+	_template_note = _label(page, "", 14)
+	_template_note.name = "TemplateNote"
+	var row := _row(page)
+	_button(row, "新建", "TemplateNew", func() -> void: _open_template_editor(""))
+	_button(row, "編輯", "TemplateEdit", func() -> void: _open_template_editor(_selected_template_id()))
+	_button(row, "複製", "TemplateCopy", _copy_template)
+	row = _row(page)
+	_template_rename = LineEdit.new()
+	_template_rename.name = "TemplateRenameInput"
+	_template_rename.max_length = Templates.MAX_TITLE
+	_template_rename.placeholder_text = "新名稱"
+	_template_rename.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_template_rename)
+	_button(row, "改名", "TemplateRename", _rename_template)
+	_template_delete = _button(row, "刪除", "TemplateDelete", _delete_template)
+	_button(page, "返回", "TemplatesBack", func() -> void: show_page("main"))
+
+func _refresh_templates() -> void:
+	_template_rows = Templates.list()
+	_template_list.clear()
+	for row: Dictionary in _template_rows:
+		var character: Dictionary = row.template.get("character", {}) if row.template.get("character") is Dictionary else {}
+		var line := "%s · %s" % [str(row.title), str(character.get("name", "—"))]
+		if not row.problems.is_empty(): line += "（無法使用）"
+		_template_list.add_item(line)
+	if _template_rows.is_empty(): _template_list.add_item("尚無範本；按「新建」開始", null, false)
+	_template_note.text = ""
+	_template_delete_armed = ""
+	_template_delete.text = "刪除"
+
+func _selected_template_id() -> String:
+	var selected := _template_list.get_selected_items()
+	return str(_template_rows[selected[0]].id) if not selected.is_empty() and selected[0] < _template_rows.size() else ""
+
+func _template_selected() -> void:
+	_template_delete_armed = ""
+	_template_delete.text = "刪除"
+	var selected := _template_list.get_selected_items()
+	if selected.is_empty() or selected[0] >= _template_rows.size(): return
+	var row: Dictionary = _template_rows[selected[0]]
+	_template_note.text = "可以用來開新遊戲。" if row.problems.is_empty() else "問題：" + "；".join(row.problems)
+	_template_rename.text = str(row.title)
+
+## Opens the character page on one template (id "" = a new one).
+func _open_template_editor(id: String) -> void:
+	_character_mode = "template"
+	_editing_template_id = id
+	_reset_character_form()
+	if not id.is_empty():
+		var loaded := Templates.load_template(id)
+		if not loaded.ok:
+			_template_note.text = "；".join(loaded.problems)
+			return
+		var family: Dictionary = loaded.template.get("family", {}) if loaded.template.get("family") is Dictionary else {}
+		_template_title.text = str(loaded.template.get("title", ""))
+		_surname_input.text = str(family.get("surname", ""))
+		_family_name_input.text = str(family.get("name", ""))
+		if loaded.template.get("character") is Dictionary and Templates.character_problems(loaded.template.character).is_empty():
+			_fill_character_form(loaded.template.character)
+	show_page("character")
+
+func _copy_template() -> void:
+	var id := _selected_template_id()
+	if id.is_empty(): return
+	var copied := Templates.copy_template(id)
+	_refresh_templates()
+	_template_note.text = "已複製。" if copied.ok else "無法複製：" + "；".join(copied.problems)
+
+func _rename_template() -> void:
+	var id := _selected_template_id()
+	if id.is_empty(): return
+	var renamed := Templates.rename_template(id, _template_rename.text)
+	_refresh_templates()
+	_template_note.text = "已改名。" if renamed.ok else "無法改名：" + "；".join(renamed.problems)
+
+## Deleted only on a second press for the same template.
+func _delete_template() -> void:
+	var id := _selected_template_id()
+	if id.is_empty(): return
+	if _template_delete_armed != id:
+		_template_delete_armed = id
+		_template_delete.text = "確定刪除？再按一次"
+		return
+	var deleted := Templates.delete_template(id)
+	_refresh_templates()
+	_template_note.text = "已刪除。" if deleted.ok else "無法刪除：" + "；".join(deleted.problems)
+
+func _build_pick_character_page(parent: Node) -> void:
+	var page := _page(parent, "pick_character")
+	_label(page, "選人物", 24)
+	_label(page, "從範本挑一個人物（之後還能修改），或新建人物。", 14)
+	_pick_list = ItemList.new()
+	_pick_list.name = "PickTemplateList"
+	_pick_list.custom_minimum_size = Vector2(620, 260) * UI
+	_pick_list.item_activated.connect(func(_index: int) -> void: _use_picked_template())
+	page.add_child(_pick_list)
+	var row := _row(page)
+	_button(row, "用這個範本", "PickTemplateUse", _use_picked_template)
+	_button(row, "新建人物", "PickCharacterNew", _new_game_character)
+	var existing := _button(row, "選現成人物（尚未開放）", "PickExisting", func() -> void: pass)
+	existing.disabled = true # 開局流程規劃 §3: the scenario's ready-made people come later
+	_button(page, "上一步：重選起點", "PickCharacterBack", _pick_start)
+
+func _refresh_pick() -> void:
+	_pick_rows = _usable_templates()
+	_pick_list.clear()
+	for row: Dictionary in _pick_rows:
+		_pick_list.add_item("%s · %s" % [str(row.title), str(row.template.character.get("name", "—"))])
+
+func _use_picked_template() -> void:
+	var selected := _pick_list.get_selected_items()
+	if selected.is_empty() or selected[0] >= _pick_rows.size(): return
+	var row: Dictionary = _pick_rows[selected[0]]
+	RegionEntry.draft["character"] = row.template.character.duplicate(true)
+	RegionEntry.draft["family"] = row.template.get("family", {}).duplicate(true)
+	RegionEntry.draft["template_title"] = str(row.title)
+	_character_mode = "new_game"
+	show_page("character")
+
+func _new_game_character() -> void:
+	for key: String in ["character", "family", "template_title"]: RegionEntry.draft.erase(key)
+	_character_mode = "new_game"
+	_reset_character_form()
+	show_page("character")
+
 static func _select_metadata(select: OptionButton, id: String) -> void:
 	for index: int in range(select.item_count):
 		if str(select.get_item_metadata(index)) == id:
@@ -521,8 +808,13 @@ func _character_next() -> void:
 		return
 	_character_error.text = ""
 	RegionEntry.draft["character"] = data
+	RegionEntry.draft["family"] = family_data()
 	RegionEntry.draft["step"] = "confirm"
 	show_page("confirm")
+
+## 開局流程規劃 §2 家族: the family blueprint on the page.
+func family_data() -> Dictionary:
+	return {"surname": _surname_input.text.strip_edges(), "name": _family_name_input.text.strip_edges()}
 
 # Preview: one hidden HumanCharacter3DEditor; only its viewport texture is shown.
 func _set_preview_active(active: bool) -> void:
@@ -608,6 +900,12 @@ func _refresh_summary() -> void:
 		int(data.get("learning", 0)), "八行皆 50" if lines.is_empty() else "、".join(lines),
 		int(aptitude.get("body", PersonSkills.APTITUDE_MEAN)), int(aptitude.get("mind", PersonSkills.APTITUDE_MEAN)),
 		"中性" if traits.is_empty() else "、".join(traits)]
+	# 開局流程規劃 §2: the family blueprint, the template used and a 自由分配 start.
+	var family_name := Templates.family_name_of({"family": RegionEntry.draft.get("family", {})})
+	_summary.text += "\n家族：%s" % (family_name if not family_name.is_empty() else "（不建家族名）")
+	var template_title := str(RegionEntry.draft.get("template_title", ""))
+	if not template_title.is_empty(): _summary.text += "\n範本：%s" % template_title
+	if bool(data.get("free_points", false)): _summary.text += "\n開局：自由分配（不設能力點上限）"
 
 ## The selected start faction for RegionEntry.request_new_world.
 func start_faction_choice() -> Dictionary:
@@ -632,7 +930,9 @@ func start_new_game() -> void:
 		return
 	var scenario_id := str(_initial_scenario.get_item_metadata(_initial_scenario.selected))
 	var start_faction := start_faction_choice()
-	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction):
+	var start_record := {"free_points": bool(data.get("free_points", false)), "template": str(RegionEntry.draft.get("template_title", ""))}
+	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction,
+		RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}, start_record):
 		_message.text = RegionEntry.menu_message
 		_message.visible = true
 		return

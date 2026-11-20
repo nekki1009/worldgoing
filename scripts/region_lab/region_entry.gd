@@ -42,7 +42,9 @@ static func bandit_start_allowed(initial_scenario_id: String) -> bool:
 	if initial_scenario_id.is_empty(): return true
 	return bool(TechnologyArtisans.scenario_config(initial_scenario_id).get("allow_bandit_start", true))
 
-static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}) -> bool:
+## `family` is the template's family blueprint {surname, name} (開局流程規劃 §2) and `start_record` what world.json keeps
+## about the start ({free_points, template}).
+static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}, family: Dictionary = {}, start_record: Dictionary = {}) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
 		return false
@@ -65,7 +67,9 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		return false
 	pending = {"manifest": manifest_path, "world_id": "taiwan_%d" % int(Time.get_unix_time_from_system()),
 		"slot_id": SLOT, "site": site, "create_new": true, "character": character.duplicate(true),
-		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true)}
+		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true),
+		"family": {"surname": str(family.get("surname", "")).strip_edges(), "name": str(family.get("name", "")).strip_edges()},
+		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", ""))}}
 	return true
 
 
@@ -91,7 +95,7 @@ static func last_world() -> Dictionary:
 	return decoded
 
 ## Records the world as opened/saved now. Keeps the first creation time and name.
-static func record_world(world_id: String, slot_id: String, manifest_path: String, active: Vector2i, day: int, world_name: String = "") -> void:
+static func record_world(world_id: String, slot_id: String, manifest_path: String, active: Vector2i, day: int, world_name: String = "", start: Dictionary = {}) -> void:
 	var meta := read_world(world_id)
 	var slot_pin: Variant = _read_json(WORLDS.path_join(world_id).path_join("slots").path_join(slot_id).path_join("manifest.json"))
 	if not slot_pin is Dictionary: return
@@ -106,6 +110,8 @@ static func record_world(world_id: String, slot_id: String, manifest_path: Strin
 		meta = {"version": 2 if int(slot_pin.get("format", 0)) in [2, 3] else 1, "world_id": world_id, "created_unix": now,
 			"name": world_name if not world_name.is_empty() else "台灣 %s" % Time.get_datetime_string_from_unix_time(now, true)}
 	if int(meta.version) == 2: meta["technology_policy"] = policy.policy.duplicate(true)
+	# 開局流程規劃 §2: how the world was started (自由分配, the template), written once.
+	if not start.is_empty() and not meta.has("start"): meta["start"] = {"free_points": bool(start.get("free_points", false)), "template": str(start.get("template", ""))}
 	meta["slot_id"] = slot_id
 	meta["manifest"] = manifest_path
 	meta["saved_unix"] = now
@@ -113,6 +119,27 @@ static func record_world(world_id: String, slot_id: String, manifest_path: Strin
 	meta["day"] = day
 	_write_json(world_path(world_id), meta)
 	_write_json(LAST_WORLD, {"world_id": world_id, "slot_id": slot_id})
+
+## 開局流程規劃 §1: removes one world's folder (the menu asks twice first). Only a valid world id under WORLDS; the
+## last-world pointer is cleared when it named this world.
+static func delete_world(world_id: String) -> bool:
+	if world_id.is_empty() or not world_id.is_valid_filename() or world_id.begins_with("."): return false
+	var root := WORLDS.path_join(world_id)
+	if not DirAccess.dir_exists_absolute(root): return false
+	if not _remove_tree(root): return false
+	var pointer: Variant = _read_json(LAST_WORLD) # the raw pointer: last_world() hides one whose world is unreadable
+	if pointer is Dictionary and str(pointer.get("world_id", "")) == world_id: DirAccess.remove_absolute(LAST_WORLD)
+	return true
+
+static func _remove_tree(path: String) -> bool:
+	var directory := DirAccess.open(path)
+	if directory == null: return false
+	directory.include_hidden = true
+	for file: String in directory.get_files():
+		if DirAccess.remove_absolute(path.path_join(file)) != OK: return false
+	for child: String in directory.get_directories():
+		if not _remove_tree(path.path_join(child)): return false
+	return DirAccess.remove_absolute(path) == OK
 
 static func world_path(world_id: String) -> String:
 	return WORLDS.path_join(world_id).path_join("world.json")

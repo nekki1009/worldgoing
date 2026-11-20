@@ -10481,6 +10481,14 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
+	# 開局流程規劃 §2 家族 (v1): the template's family blueprint, the player alone as head under the family name.
+	if result.ok and bool(request.get("create_new", false)):
+		var blueprint: Dictionary = request.get("family", {}) if request.get("family") is Dictionary else {}
+		var family_name := str(blueprint.get("name", "")).strip_edges()
+		if family_name.is_empty() and not str(blueprint.get("surname", "")).strip_edges().is_empty(): family_name = str(blueprint.surname).strip_edges() + "家"
+		if not family_name.is_empty():
+			var founded_family := apply_family_blueprint(family_name)
+			if not founded_family.ok: result = founded_family
 	var start_faction: Dictionary = request.get("start_faction", {})
 	if result.ok and str(start_faction.get("mode", "neutral")) in ["found", "bandit"]:
 		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
@@ -10489,7 +10497,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and bool(request.get("create_new", false)): _start_climate()
 	if result.ok:
 		lab._audio_boot_complete()
-		_record_world(str(request.get("world_name", "")))
+		_record_world(str(request.get("world_name", "")), request.get("start_record", {}) if bool(request.get("create_new", false)) and request.get("start_record") is Dictionary else {})
 		show_result(result)
 		return
 	RegionEntry.menu_message = str(result.get("message", result.get("code", "無法開啟世界")))
@@ -11565,6 +11573,17 @@ func _created_skills(data: Dictionary, ability: float, abilities: Dictionary) ->
 	stored["start"] = 1
 	return {"ok": true, "apply": true, "packet": PersonSkills.saved(stored), "learning": int(learning)}
 
+## 開局流程規劃 §2 家族 (v1): registers the player's family with himself as its only member (not marked complete, so no
+## Game Over is read from it), makes him its head and gives it `family_name`. Each step is the family owner's own.
+func apply_family_blueprint(family_name: String) -> Dictionary:
+	var player := int(lab.controlled_person_id())
+	var member := {"site_id": str(lab.terrain.site.get("id", "")), "person_id": player, "path": _archive_path(), "label": "家長", "age_years": -1}
+	var registered: Dictionary = family_continuity.register_members([member], false, player)
+	if not registered.ok: return registered
+	var head: Dictionary = family_continuity.appoint_head(player, player)
+	if not head.ok: return head
+	return family_continuity.establish_identity(player, family_name.strip_edges())
+
 ## Neutral part 2: the shown name of a controlled person: an actor's display_name, or a crowd/roster row's saved name.
 func _controlled_display_name(controlled: Dictionary) -> String:
 	var identity := int(lab.controlled_person_id())
@@ -11575,11 +11594,11 @@ func _controlled_display_name(controlled: Dictionary) -> String:
 	if identity == lab.character.person_id and not lab.character.display_name.is_empty(): return lab.character.display_name
 	return "#%d" % identity
 
-func _record_world(world_name: String = "") -> void:
+func _record_world(world_name: String = "", start: Dictionary = {}) -> void:
 	if region_slot == null or lab.terrain == null: return
 	var day := floori(float(lab.terrain.site.get("minute", 0)) / 1440) + 1
 	RegionEntry.record_world(str(region_slot.pin.world_instance_id), str(region_slot.pin.slot_id), _region_manifest_path,
-		_current_region_site(), day, world_name)
+		_current_region_site(), day, world_name, start)
 
 func _open_region_map() -> void:
 	RegionEntry.region_mode = "view"

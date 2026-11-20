@@ -8,6 +8,7 @@ const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const REGION := "res://scenes/region_lab/RegionLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
+const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const START := Vector2i(1170, 13252)
 var deadline := 0
 var _finished := false
@@ -131,13 +132,14 @@ func _run() -> void:
 	for node_name: String in skills:
 		(menu.find_child(node_name, true, false) as HSlider).value = skills[node_name]
 	if int(menu.call("start_points")) != 200 or not bool(menu.call("points_within_limit")): return _fail("lines and aptitude did not give points back (%s)" % menu.call("start_points"))
+	(menu.find_child("CharacterSurname", true, false) as LineEdit).text = "林" # 開局流程規劃 §2: the family blueprint
 	var expected: Dictionary = menu.call("character_data")
 	if expected.skills != {"version": 1, "start": 1, "lines": {"farming": 10000, "riding": 10000}, "aptitude": {"body": 50, "mind": 60}} or int(expected.learning) != 10:
 		return _fail("start packet %s" % expected.skills)
 	(menu.find_child("CharacterNext", true, false) as Button).pressed.emit()
 	if not _page_visible("confirm"): return _fail("confirm page not shown")
 	var summary := (menu.find_child("NewGameSummary", true, false) as Label).text
-	if "林測試" not in summary or "(1170, 13252)" not in summary or "勇猛 90" not in summary or "農牧 10" not in summary or "悟性 60" not in summary: return _fail("summary incomplete: " + summary)
+	if "林測試" not in summary or "(1170, 13252)" not in summary or "勇猛 90" not in summary or "農牧 10" not in summary or "悟性 60" not in summary or "家族：林家" not in summary: return _fail("summary incomplete: " + summary)
 	(menu.find_child("WorldName", true, false) as LineEdit).text = "測試世界"
 	if not _press("StartGame"): return
 	if not await _scene_is(SITE): return _fail("new game did not open TerrainLab")
@@ -151,6 +153,11 @@ func _run() -> void:
 	if _files_under("user://sites") > 0: return _fail("placeholder Site was archived or saved under user://sites")
 	var meta := RegionEntry.read_world(world_id)
 	if str(meta.get("name", "")) != "測試世界": return _fail("world meta name " + str(meta))
+	if meta.get("start") != {"free_points": false, "template": ""}: return _fail("world meta start " + str(meta.get("start")))
+	var family: Dictionary = lab.terrain.site.get("family", {})
+	var player := int(lab.controlled_person_id())
+	if int(family.get("version", 0)) < 4 or str(family.get("name", "")) != "林家" or family.get("members", []).size() != 1 or int(family.members[0].person_id) != player 		or FamilyContinuity.family_offices(family, true).get("positions", []).filter(func(seat: Dictionary) -> bool: return bool(seat.get("head", false)) and int(seat.holder) == player).is_empty():
+		return _fail("the family blueprint: %s" % family)
 	print("MAIN MENU FLOW new world ", world_id, " ", meta)
 	# In-game Region view and return.
 	if not _press("OpenRegionMap"): return
