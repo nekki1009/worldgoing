@@ -2,6 +2,7 @@ extends "res://scripts/tests/site_settlement_first_earned_base.gd"
 ## Isolated admitted Catalog; true natural source, original people/work/Store
 ## and shared replay. No fixed-map, Native, GPU or whole-Region acceptance.
 const ColdFatigue = preload("res://scripts/terrain_lab/person_fatigue.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1b: progress follows proficiency
 var cold_serial := 0
 
 func _settlement_earned_id() -> String:
@@ -421,7 +422,10 @@ func _p4_feature_after_contact(f: Dictionary, identity: String, key: String, nod
 	_p4_advance(f, 12.0)
 	# Crowd: the formation's shared pool rises at the pooled share of this effort, so output integrates over that rise.
 	var productive := ColdFatigue.work_seconds(fatigue, 12.0, ColdFatigue.effort_rate(row) * _p4_pool_share(f))
-	_check(absf((float(f.data.site.features[key].production) - production) * 60.0 - productive * 0.5 * float(preflight.productivity)) < 0.000001
+	# 技能 K1b: output also follows the worker's proficiency on the task's line (x1.0 at 50; it grows with his work).
+	var task_for_line: Dictionary = row.work_task.duplicate(true)
+	var skill_factor := Runtime._skill_work_factor(f.data, task_for_line, int(f.worker))
+	_check(absf((float(f.data.site.features[key].production) - production) * 60.0 - productive * 0.5 * float(preflight.productivity) * skill_factor) < 0.000001
 		and absf(float(f.data.site.features[key].tech_batch.work_seconds) - effort - productive) < 0.000001
 		and absf(_p4_fatigue(f) - fatigue - 12.0 * ColdFatigue.effort_rate(row) * _p4_pool_share(f)) < 0.000001
 		and _p4_project(f).budget.spent == spent, "Original feature retains unweighted canonical work/full effort fatigue, half output and one actual payment")
@@ -465,8 +469,10 @@ func _p4_feature_after_contact(f: Dictionary, identity: String, key: String, nod
 	_p4_clock_tag = "phase_done"
 	var retained := _p4_project(f)
 	if retained.is_empty(): retained = f.data.site.settlement.technology.projects[0] if f.scope == "settlement" else f.data.site.family.technology.projects[-1]
-	_check(retained.receipts.size() == prior_receipts + 1 and float(retained.receipts[-1].work_seconds) >= float(phase.seconds) * 2.0 - 0.000001,
-		"True cold output receipts contain original actual effort rather than nominal half work")
+	# 技能 K1b: at half output a worker of factor k works 2/k of the nominal phase; his line only grows during the phase.
+	var end_factor := PersonSkills.work_factor(_p4_body(f), PersonSkills.line_for_task(f.data.site, task_for_line))
+	_check(retained.receipts.size() == prior_receipts + 1 and float(retained.receipts[-1].work_seconds) * end_factor >= float(phase.seconds) * 2.0 - 0.000001,
+		"True cold output receipts contain original actual effort rather than nominal half work (x proficiency)")
 	return f
 
 func _p4_siege_token(f: Dictionary, target: String) -> Dictionary:

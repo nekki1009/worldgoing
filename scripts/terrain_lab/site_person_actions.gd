@@ -1294,7 +1294,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 		var remaining := maxf(0.0, float(job.duration) - float(job.elapsed))
 		# Loot and handcraft share work productivity; binding retains its confirmed clock.
 		var productive_work := str(job.kind) in ["loot", "ranged_craft", "tent_deploy", "tent_pack"]
-		var multiplier := _technology_work_multiplier(job)
+		var multiplier := _technology_work_multiplier(job) * _craft_skill_factor(job) # 技能: handcraft follows 工藝
 		var productive := (Fatigue.work_seconds(fatigue, work, work_rate) if productive_work else work) * multiplier
 		if productive > remaining:
 			# Monotone shared fatigue integral: find actual effort, not an entire long frame.
@@ -1519,8 +1519,6 @@ func _commit(job: Dictionary) -> Dictionary:
 		if job.has("technology_scope_token"): crafted = _commit_scope_ranged_craft(job)
 		elif job.has("technology_project"): crafted = _commit_technology_trial(job)
 		else: crafted = Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
-		# 技能 K1a: a finished handcraft job (its own duration, the F07 saving included) trains craft.
-		if bool(crafted.get("ok", false)) and not executor.is_empty(): PersonSkills.credit(executor.get("body"), "craft", float(job.get("duration", 0.0)))
 		return crafted
 	if str(job.kind) == "equipment":
 		var audio_data: TerrainData = lab.terrain
@@ -3445,7 +3443,13 @@ func work_requests(seconds: float) -> Array[Dictionary]:
 		var kind := "joint" if str(job.kind) == "technology_lesson" else ("single" if str(job.kind) in ["loot", "ranged_craft", "tent_deploy", "tent_pack", "technology_analysis", "nation_administration", "water_schedule", "food_order"] else "raw")
 		var request: Dictionary = {"provider": "person_actions", "key": key, "participants": participants, "remaining": maxf(0.0, float(job.duration) - float(job.elapsed)),
 			"productive_kind": kind, "progress_multiplier": _technology_work_multiplier(job), "max_game_seconds": seconds, "paused": paused}
-		if str(job.kind) == "ranged_craft" and paused.is_empty() and float(request.remaining) <= seconds * float(request.progress_multiplier) + Fatigue.WORK_PLAN_EPS:
+		# 技能 (§5.2): handcraft runs at the craft line's speed. The planner admits only 0.5/1.0 request multipliers, so a
+		# skilled or unskilled hand carries his factor as the one participant of a "sum" request.
+		var craft_factor := _craft_skill_factor(job)
+		if not is_equal_approx(craft_factor, 1.0):
+			request["productive_kind"] = "sum"
+			participants[0]["progress_multiplier"] = craft_factor
+		if str(job.kind) == "ranged_craft" and paused.is_empty() and float(request.remaining) <= seconds * float(request.progress_multiplier) * craft_factor + Fatigue.WORK_PLAN_EPS:
 			request["payment_source"] = lab.terrain.site.inventory
 			request["payment"] = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
 			request["payment_key"] = "person_actions:" + key
@@ -3517,6 +3521,13 @@ func begin_npc_technology_trial(requester_id: int, executor_id: int = -1) -> Dic
 	var selected := int(check.candidates[0].person_id)
 	if executor_id >= 0 and executor_id != selected: return Runtime.fail("NO_CANDIDATE")
 	return _begin_technology_trial(requester_id, selected)
+
+## 技能 (reports/skill-system-plan.md V0.7 §5.2, §2): handcraft and its technology trials run at the executor's craft
+## speed, 0.5 + 工藝/100; 1.0 for every other job and for a person without a stored craft line.
+func _craft_skill_factor(job: Dictionary) -> float:
+	if str(job.get("kind", "")) != "ranged_craft": return 1.0
+	var executor := _person(int(job.get("executor_id", 0)))
+	return PersonSkills.work_factor(executor.get("body"), "craft") if not executor.is_empty() else 1.0
 
 func _technology_work_multiplier(job: Dictionary) -> float:
 	if job.get("kind") == "food_order" and not job.get("nation_token", {}).is_empty() and lab.get("restore_only") == true and not bool(_person(int(job.executor_id)).get("player", true)): return 0.5
@@ -5764,6 +5775,11 @@ func _settle_ranged_terminal_chunk(keys: Array, first_key: String) -> Dictionary
 	var results: Array[Dictionary] = Runtime.publish_prepared_ranged_craft_batch(batch)
 	for index: int in jobs.size():
 		if bool(results[index].ok): _publish_ranged_technology_completion(completions[index], results[index])
+		# 技能 K1a: a finished handcraft job trains craft by the time actually worked (its duration, the F07 saving
+		# included, over the craft speed factor). Every finished ranged_craft job settles here.
+		if bool(results[index].ok) and jobs[index].kind == "ranged_craft":
+			var crafter: Dictionary = _person(int(jobs[index].executor_id))
+			if not crafter.is_empty(): PersonSkills.credit(crafter.get("body"), "craft", float(jobs[index].get("duration", 0.0)) / _craft_skill_factor(jobs[index]))
 		_finish(selected[index], results[index])
 	return Runtime.ok("", {"keys": selected})
 
