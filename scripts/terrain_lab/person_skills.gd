@@ -24,7 +24,13 @@ const LINE_LABELS := {"farming": "農牧", "gathering": "樵採", "building": "�
 const MARTIAL: Array[String] = ["melee", "archery", "riding"]
 ## K3b: 武力 grows like a line (key "ability", §6) but its value lives in the person's combat_ability.
 const ABILITY := "ability"
-const GROWTH_KEYS: Array[String] = ["farming", "gathering", "building", "craft", "medicine", "melee", "archery", "riding", "ability"]
+const GROWTH_KEYS: Array[String] = ["farming", "gathering", "building", "craft", "medicine", "melee", "archery", "riding", "ability",
+	"tactics", "leadership", "coach"]
+## K4 (§6): the command abilities grow like lines, talent 悟性, no decline; their thousandths live in `command`.
+const COMMAND_KEYS: Array[String] = ["tactics", "leadership", "coach"]
+const TACTICS_PER_BATTLE := YEAR_SECONDS / 10.0 # 10 battles commanded = one round
+const LEADERSHIP_PER_DAY := YEAR_SECONDS / 360.0 # 360 days as captain = one round
+const LEADERSHIP_MIN_TEAM := 5
 const ABILITY_PACE := 3.0 # one round of 武力 = 3 full-time years of the same events
 const BATTLE_SECONDS := 70.0 * 3600.0 # §5.3: a battle with real exchange counts 70 hours
 const WeaponMaterials = preload("res://scripts/ui/weapon_materials.gd")
@@ -88,6 +94,11 @@ static func valid(packet: Variant) -> bool:
 	if packet.has("start"):
 		if not _integer(packet.start, 1, 1): return false
 		extra += 1
+	if packet.has("command"):
+		if not packet.command is Dictionary or packet.command.is_empty(): return false
+		for key: Variant in packet.command:
+			if not key is String or not COMMAND_KEYS.has(key) or not _integer(packet.command[key], 0, MAX_VALUE): return false
+		extra += 1
 	if packet.has("titles"):
 		if not packet.titles is Array or packet.titles.is_empty(): return false
 		var seen := {}
@@ -131,6 +142,11 @@ static func normalized(packet: Dictionary) -> Dictionary:
 			if packet[field].has(line): values[line] = int(packet[field][line])
 		result[field] = values
 	if packet.has("start"): result["start"] = 1
+	if packet.get("command") is Dictionary and not packet.command.is_empty():
+		var command := {}
+		for key: String in COMMAND_KEYS:
+			if packet.command.has(key): command[key] = int(packet.command[key])
+		result["command"] = command
 	if packet.get("titles") is Array and not packet.titles.is_empty():
 		var titles: Array = []
 		for key: Variant in packet.titles: titles.append(str(key))
@@ -256,6 +272,8 @@ static func settle(packet: Dictionary, seed_value: int, identity: int) -> Dictio
 	var rolls: Dictionary = result.get("rolls", {})
 	var left := {}
 	if pending.has(ABILITY): left[ABILITY] = int(pending[ABILITY]) # 武力 settles in settle_ability()
+	for key: String in COMMAND_KEYS: # the command abilities settle in settle_command()
+		if pending.has(key): left[key] = int(pending[key])
 	for line: String in LINES:
 		if not pending.has(line): continue
 		var seconds := float(pending[line]) / MICROS
@@ -363,6 +381,45 @@ static func settle_ability(packet: Dictionary, ability: float, seed_value: int, 
 	result["pending"] = pending
 	# Below 80 the curve only reaches whole thousandths; keep the stored value when it did not move.
 	return {"packet": saved(result), "ability": float(milli) / float(SCALE) if milli != start_milli else ability}
+
+## K4 (§6): a command ability's growth. `current` is the whole number in command_abilities; the packet's `command`
+## keeps the thousandths. Returns {packet, value} (value: the new whole number).
+static func settle_command(packet: Dictionary, key: String, current: int, seed_value: int, identity: int) -> Dictionary:
+	var result := normalized(packet) if valid(packet) else {"version": VERSION}
+	var pending: Dictionary = result.get("pending", {})
+	if not COMMAND_KEYS.has(key) or not pending.has(key): return {"packet": saved(result), "value": current}
+	var seconds := float(pending[key]) / MICROS
+	pending.erase(key)
+	var talent := float(aptitude(result, seed_value, identity).mind)
+	var command: Dictionary = result.get("command", {})
+	var milli := clampi(int(command.get(key, current * SCALE)), 0, MAX_VALUE)
+	if absi(milli / SCALE - current) > 0: milli = clampi(current * SCALE, 0, MAX_VALUE) # the whole number moved elsewhere (an edit): restart from it
+	if milli < PLATEAU:
+		var rate := RATE * (0.5 + talent / 100.0)
+		var u := 1.0 / (1.0 / (1.0 - float(milli) / 100000.0) + rate * seconds / 3600.0 / 100.0)
+		var reached := mini(PLATEAU, maxi(milli, floori(100000.0 * (1.0 - u))))
+		seconds = maxf(0.0, seconds - seconds_between(milli, reached, talent))
+		milli = reached
+		if milli < PLATEAU:
+			if floori(seconds * MICROS) > 0: pending[key] = floori(seconds * MICROS)
+			seconds = 0.0
+	if milli >= PLATEAU and milli < MAX_VALUE and seconds > 0.0:
+		var toward: Dictionary = result.get("toward", {})
+		var rolls: Dictionary = result.get("rolls", {})
+		var gathered := float(toward.get(key, 0)) / MICROS + seconds
+		while gathered >= YEAR_SECONDS and milli < MAX_VALUE:
+			var count := int(rolls.get(key, 0))
+			milli = mini(MAX_VALUE, milli + SCALE * yearly_gain(seed_value, identity, key, count, talent))
+			rolls[key] = count + 1
+			gathered -= YEAR_SECONDS
+		toward[key] = mini(MAX_MICROS, floori(gathered * MICROS)) if milli < MAX_VALUE else 0
+		result["toward"] = toward
+		result["rolls"] = rolls
+	if milli >= MAX_VALUE: _earn_title(result, key)
+	command[key] = milli
+	result["command"] = command
+	result["pending"] = pending
+	return {"packet": saved(result), "value": milli / SCALE}
 
 ## K3b: the martial line a person fights on: 弓弩 with a bow or crossbow, 騎乘 when mounted, else 近戰.
 static func martial_line(body: Variant) -> String:

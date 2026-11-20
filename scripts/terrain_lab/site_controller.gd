@@ -10685,6 +10685,11 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 		if str(role) == "officer" or int(person) == int(lab.controlled_person_id()):
 			PersonSkills.credit(found.body, PersonSkills.martial_line(found.body), PersonSkills.BATTLE_SECONDS)
 			PersonSkills.credit(found.body, PersonSkills.ABILITY, PersonSkills.BATTLE_SECONDS)
+		# 技能 K4 (§6): each battle he commanded is a tenth of a round of 戰術 (holders of the ability only).
+		var commanded := int(closed.deltas[person].get("commanded", 0))
+		var held: Variant = found.body.get("command_abilities")
+		if commanded > 0 and held is Dictionary and held.has("tactics"):
+			PersonSkills.credit(found.body, "tactics", PersonSkills.TACTICS_PER_BATTLE * float(commanded))
 	if region_slot != null: region_slot.pending_battles.append(closed.battle)
 	return closed
 
@@ -15335,6 +15340,7 @@ func skills_day() -> Dictionary:
 	if int(get_meta(&"skills_day", -2)) == today: return {}
 	set_meta(&"skills_day", today)
 	var seed_value := _skills_world_seed()
+	_skills_leadership_day()
 	var seeding: bool = lab.terrain.site.get("skills_start") == true
 	var settled := 0
 	var seeded := 0
@@ -15355,6 +15361,13 @@ func skills_day() -> Dictionary:
 			after = grown.packet
 			if body is Dictionary: body["combat_ability"] = float(grown.ability)
 			else: body.set("combat_ability", float(grown.ability))
+		for key: String in PersonSkills.COMMAND_KEYS: # 技能 K4: the command abilities, written back as whole numbers
+			if not after.get("pending", {}).has(key): continue
+			var held: Variant = body.get("command_abilities")
+			if not held is Dictionary or not held.has(key): continue
+			var ruled: Dictionary = PersonSkills.settle_command(after, key, int(held[key]), seed_value, int(body.get("person_id")))
+			after = ruled.packet
+			if int(ruled.value) != int(held[key]): _skills_set_command(body, key, int(ruled.value))
 		PersonSkills.write(body, after)
 		settled += 1
 		# 技能 K1d (§5.8): each title earned today is worth +5 prestige once.
@@ -15387,6 +15400,25 @@ func _skills_initial(body: Variant, seed_value: int) -> Dictionary:
 		var line := PersonSkills.line_for_task(lab.terrain.site, {"action": "operate", "target": "feature:" + job}) if not job.is_empty() else ""
 		if not line.is_empty(): trades = [line]
 	return PersonSkills.initial(PersonSkills.of(body), age, trades, rate, seed_value, identity)
+
+## 技能 K4 (§6): a day as the captain of a crowd team of at least 5 present people is 1/360 of a round of 統御.
+func _skills_leadership_day() -> void:
+	if not _crowd_active(): return
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or team.get("person_ids", []).size() < PersonSkills.LEADERSHIP_MIN_TEAM: continue
+		var captain := team_captain_of_team(int(team.team_id))
+		if captain <= 0: continue
+		var person: Dictionary = person_actions._person(captain, false)
+		var held: Variant = person.get("body").get("command_abilities") if not person.is_empty() and person.get("body") != null else null
+		if held is Dictionary and held.has("leadership"): PersonSkills.credit(person.body, "leadership", PersonSkills.LEADERSHIP_PER_DAY)
+
+## 技能 K4: writes a grown command ability to the person (his row or Actor, and the crowd's native copy).
+func _skills_set_command(body: Variant, key: String, value: int) -> void:
+	var held: Dictionary = body.get("command_abilities")
+	held[key] = clampi(value, 0, 100)
+	var identity := int(body.get("person_id"))
+	if _crowd_active() and lab.crowd_site._index_by_id.has(identity):
+		lab.crowd_site.set_soldier_fields(int(lab.crowd_site._index_by_id[identity]), {key: clampi(value, 0, 100)})
 
 ## Every person body here once (Actors, grid army rows, crowd roster rows), read straight from its owner.
 func _skills_bodies() -> Array:
