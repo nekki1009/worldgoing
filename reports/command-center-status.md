@@ -1,7 +1,25 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-21 15:30（台北）
+更新：2026-11-21 18:20（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-21 18:20（台北）載入畫面、平民派工、居民進屋 Site 停住
+- 推送：Nekki 11/21 16:07「Push」。已推到 da7b6f0（草稿 PR nekki1009/worldgoing#2），目前沒有未推送的提交。
+  - 中途一次推送被本機自動權限檢查擋下，因為那次的「Push」是經由轉達送來；Nekki 直接在串內下指令後就推成功。
+- 51152e3 P1-5 載入畫面：
+  - 開世界時每個 PerfTrace 階段都重畫一次進度畫面，並讓視窗處理系統事件，畫面不再凍結。
+  - 驗收 start_progress_visual_test 15 項，回歸 SP_REG 103 項通過。
+- cc0d862 CA-05 平民派工：
+  - 兩位居民照遊戲本身的做法組成沒有隊長的居民隊（SiteFallenResidents._submit），配一塊真的農田。
+  - 工作時段由排程自己派工：走動時搬運，站著工作時抬起，都在平民圖集批次裡畫。
+- da7b6f0 修正 C1c 的漏洞：
+  - 居民進屋（原生 absent kind 5）後仍被列進住宅出席名單，原生層拒絕，整個群眾那一步被取消。
+  - 結果是第一位居民一進屋，整個 Site 的群眾和時鐘就全部停住。
+  - 現在出席名單跳過屋內的人。site_civilian_household_visual_test 補回傍晚、屋內、存讀檔，共 32 項。
+  - 回歸 HOUSING_FIX_REG 121 項：只有 site_housing_test 失敗，這是 11/17 起的網格退役既有失敗。
+- 其他：
+  - 主選單 0.3 秒；地圖選起點 1.4 秒。地理清冊快取（P1-2／P1-3）收益不到 1 秒，不做。
+  - 共用動畫庫改成先壓縮再複製，只省 0.17 秒，不做。
 
 ## 2026-11-21 15:30（台北）開局效能兩輪、劇本欄位、平民一日
 - 推送：Nekki 11/21 07:13「push 並且繼續做」，推到 fb227ec。之後的提交尚未推送：
