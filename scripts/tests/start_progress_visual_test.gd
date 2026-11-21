@@ -105,7 +105,10 @@ func _run() -> void:
 			break
 	if not _check(lab != null and lab.crowd_site != null and lab.crowd_site.active, "the new world opens"): return
 	if not _check(StartProgress.draws >= 8, "the screen was redrawn through the opening", StartProgress.draws): return
-	if not _check(not StartProgress.active(), "the screen is finished once the boot request settled"): return
+	# It stays three more frames: work queued behind the opening (a first captivity look capture) shows it, not a frozen world.
+	for _frame: int in range(4): await process_frame
+	print("START_PROGRESS_VISUAL captivity stage shown: ", StartProgress.last_detail == "準備俘虜外觀", " draws=", StartProgress.draws)
+	if not _check(not StartProgress.active(), "the screen is finished a few frames after the boot request settled"): return
 	await process_frame
 	if not _check(lab.get_node_or_null("StartProgress") == null, "no loading node is left in the Lab"): return
 	var opened := _frame()

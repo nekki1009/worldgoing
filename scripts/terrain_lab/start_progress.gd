@@ -15,7 +15,7 @@ const STAGES := [
 	["bind_displayed", "還原隊伍"], ["crowd_validate_begin", "檢查群眾"], ["crowd_contacts_ready", "準備人物外觀"],
 	["bind_armies", "建立群眾"], ["bind_controller", "建立群眾"], ["crowd_body", "準備人物"],
 	["bind_owners_begin", "還原歸屬"], ["bound", "完成世界"], ["finished", "完成世界"], ["open_done", "即將進入"],
-	["settled", "即將進入"],
+	["settled", "即將進入"], ["captivity_capture", "準備俘虜外觀"],
 ]
 const MIN_REDRAW_MSEC := 120
 const BACKGROUND := Color(0.05, 0.08, 0.09)
@@ -58,6 +58,15 @@ static func begin(host: Node, title: String) -> void:
 	draws = 0
 	last_detail = ""
 	_present(true)
+
+## Ends the screen after `frames` more frames. Work queued behind the opening runs in those frames' deferred flushes (a
+## first captivity look capture can hold the main thread for seconds), so the player sees this screen, not a frozen world.
+static func finish_after_frames(tree: SceneTree, frames: int = 3) -> void:
+	if not active(): return
+	_detail = "即將進入"
+	_present(true)
+	for _frame: int in range(frames): await tree.process_frame
+	finish()
 
 static func finish() -> void:
 	if _item.is_valid(): RenderingServer.free_rid(_item)

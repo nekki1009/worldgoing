@@ -2680,6 +2680,7 @@ static func prepare_captivity_recipe(capture_host: Node, appearance: Dictionary)
 	var capture := script.new() as Node
 	if capture == null: return false
 	Atlas._preparation = capture
+	PerfTrace.mark("captivity_capture") # A loading-screen step too: the capture's first part holds the main thread.
 	capture_host.add_child(capture)
 	var complete: bool = await capture.capture(plan, directory, Atlas._mixed_sources.duplicate(), Atlas.DyeAtlas.fingerprints())
 	if is_instance_valid(capture): capture.queue_free()

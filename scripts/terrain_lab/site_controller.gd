@@ -10496,7 +10496,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if _boot_request.is_empty() or str(result.get("code", "")) == "PENDING": return
 	var request: Dictionary = _boot_request
 	_boot_request = {}
-	StartProgress.finish() # The opening has settled (opened, or refused back to the menu).
+	StartProgress.finish_after_frames(get_tree()) # The opening has settled (opened, or refused back to the menu).
 	# 時間與氣候 TC3: a world created from the menu has climate on (old saves and tests stay off).
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
 	# 技能 K1c: a world created from the menu seeds its people's starting proficiency by age (old saves stay at 50).
