@@ -41,6 +41,7 @@ func issue_command(command_id: int, requested_target: Vector2i = Vector2i(-1, -1
 	if command == Command.STOP:
 		target_cell = terrain_cell
 		command_status = "Stopped / 已停止"
+		_invalidate_ranged_order()
 		queue_redraw()
 		return true
 	if command == Command.FOLLOW_PLAYER:
@@ -52,6 +53,7 @@ func issue_command(command_id: int, requested_target: Vector2i = Vector2i(-1, -1
 		target_cell = _follow_target.terrain_cell
 		_rebuild_path(target_cell)
 		command_status = "Following player / 跟隨玩家"
+		_invalidate_ranged_order()
 		queue_redraw()
 		return true
 	if not data.contains(requested_target) or not data.is_walkable(requested_target):
@@ -67,6 +69,7 @@ func issue_command(command_id: int, requested_target: Vector2i = Vector2i(-1, -1
 		queue_redraw()
 		return false
 	command_status = "Moving to %s" % target_cell
+	_invalidate_ranged_order()
 	queue_redraw()
 	return true
 
@@ -127,12 +130,18 @@ func _rebuild_path(goal: Vector2i) -> void:
 		return
 	# Only following's actual player goal may be occupied, not its whole route.
 	# An occupied MOVE goal cannot be reached; avoid scanning the map to prove it.
-	if command != Command.FOLLOW_PLAYER and not can_enter_cell(goal): return
-	var blocked := func(cell: Vector2i) -> bool: return not (command == Command.FOLLOW_PLAYER and cell == goal) and not can_enter_cell(cell)
-	_path = data.path_between(terrain_cell, goal, blocked)
+	var original_source := terrain_cell
+	# Person-purpose edge checks preserve original source and final goal through BFS.
+	# FOLLOW may plan to the real player's occupied endpoint; the actual step still refuses it.
+	var blocked := func(from_cell: Vector2i, cell: Vector2i) -> bool:
+		if command == Command.FOLLOW_PLAYER and cell == goal and is_instance_valid(_follow_target):
+			if step_blocker.is_valid(): return bool(step_blocker.call(original_source, from_cell, cell, goal, self, _follow_target))
+			return false
+		return not can_enter_cell(cell, goal, from_cell, original_source)
+	_path = data.path_between(original_source, goal, Callable(), blocked)
 
-func capture_state() -> Dictionary:
-	var state := super.capture_state()
+func capture_state(read_only: bool = false) -> Dictionary:
+	var state: Dictionary = super.capture_state(read_only)
 	var route: Array = []
 	for cell: Vector2i in _path:
 		route.append([cell.x, cell.y])
@@ -168,3 +177,6 @@ func _draw() -> void:
 		var path_position := (Vector2(cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - position
 		draw_circle(path_position, 4.0, Color(0.94, 0.73, 0.35, 0.65))
 	draw_string(ThemeDB.fallback_font, Vector2(-18.0, -29.0), "工人", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color("f4dfb5"))
+
+func navigation_goal() -> Vector2i:
+	return target_cell if command in [Command.MOVE_TO_CELL, Command.FOLLOW_PLAYER] else Vector2i(-1, -1)

@@ -1,0 +1,550 @@
+[
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=pay"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=fight"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_day_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-1"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_rout_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-2"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_raid_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3a"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_alarm_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C3a"
+ },
+ {
+  "script": "res://scripts/tests/site_civilian_harm_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C3b"
+ },
+ {
+  "script": "res://scripts/tests/site_militia_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C3c"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_mood_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 240,
+  "note": "C4a"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_exodus_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4b"
+ },
+ {
+  "script": "res://scripts/tests/site_militia_crowd_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C3c crowd"
+ },
+ {
+  "script": "res://scripts/tests/site_fallen_residents_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C5"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_new_person_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4c-1"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_migrants_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "C4c-2"
+ },
+ {
+  "script": "res://scripts/tests/region_site_strength_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "cross-Site strength intel"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_far_raid_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3c far raid"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_aftermath_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4d-3b aftermath"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=flee"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c flee"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_drifters_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4e drifters"
+ },
+ {
+  "script": "res://scripts/tests/site_desertion_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4 desertion"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_lair_map_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "BA-12 lair map"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_formation_reuse_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "formation reuse"
+ },
+ {
+  "script": "res://scripts/tests/site_bandit_npc_chief_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "NPC chief raids"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_formation_preset_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "crowd presets"
+ },
+ {
+  "script": "res://scripts/tests/region_storm_port_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "TC11 storm port"
+ },
+ {
+  "script": "res://scripts/tests/site_typhoon_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "TC11 typhoon"
+ },
+ {
+  "script": "res://scripts/tests/region_ship_wind_tc11_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "TC11 wind"
+ },
+ {
+  "script": "res://scripts/tests/site_fund_requests_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "cross-Site funding"
+ },
+ {
+  "script": "res://scripts/tests/site_lord_fund_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "lord funding"
+ },
+ {
+  "script": "res://scripts/tests/site_famine_refugees_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "B4 source E famine"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_t5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "T5 caravans slice 1"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_trade_t5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "T5 caravans slice 2"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_trip_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "T5 caravans slice 3: whole trip (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_live_dispatch_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 900,
+  "note": "NPC team leaves the live Site inside real steps (in-file 840)"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_risk_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 1 route risk"
+ },
+ {
+  "script": "res://scripts/tests/site_caravan_lost_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 2 raided_by"
+ },
+ {
+  "script": "res://scripts/tests/site_market_bandit_b5_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "B5 slice 3 market refuses bandits"
+ },
+ {
+  "script": "res://scripts/tests/region_caravan_daily_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "T5 daily rule sends a real caravan (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_tax_envoy_p3b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "P3b slice 1 rules"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=pay"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round pay (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=refuse"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round refuse (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=room"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round room (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=npc_day"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b round npc_day (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_tax_lost_p3b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "P3b slice 3 robbery, mark, answer"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=lord"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b lord round (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/region_tax_team_test.gd",
+  "args": [
+   "--tax-case=cart"
+  ],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "P3b tax team takes its cart across Sites behind an auto driver (in-file 900)"
+ },
+ {
+  "script": "res://scripts/tests/site_market_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 1 market building"
+ },
+ {
+  "script": "res://scripts/tests/site_market_listing_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 2 listings"
+ },
+ {
+  "script": "res://scripts/tests/site_market_ai_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 3 duty AI listings"
+ },
+ {
+  "script": "res://scripts/tests/site_market_observation_t3_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T3 slice 4 observations"
+ },
+ {
+  "script": "res://scripts/tests/site_civilian_atlas_admission_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "cc198_new_01",
+   "--ca01-out",
+   "res://output/ca01_new_01",
+   "--ca01-reference",
+   "res://output/ca01_original_reference/result.json"
+  ],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "CIV-A0 CA-01 native presentation override (Codex CC-198)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t4_own_vehicle_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "trade T4 TR-40 the player's own cart hold trades"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_exchange_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "person_fighting (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t2_vehicle_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "trade vehicles (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t1b_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_candidate_n_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_leg_treasury_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_nation_leg_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_nation_source_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_save_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t1a_visual_test.gd",
+  "args": [],
+  "mode": "visual",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t2_estate_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_t2_settlement_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_inkind_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_treasury_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_treaty_rate_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_values_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "trade (trade T1/T2 tests had no regression entry; added 11/19)"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_t4_round_trip_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "t4trip_reg"
+  ],
+  "mode": "headless",
+  "timeout": 480,
+  "note": "trade T4 TR-40 wagon carries salt across Sites and trades from its hold"
+ },
+ {
+  "script": "res://scripts/tests/site_trade_tax_live_t6_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "trade T6 S6 live trades pay the settlement trade tax"
+ },
+ {
+  "script": "res://scripts/tests/region_trade_treaty_t6_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 120,
+  "note": "trade T6 S7 trade treaty"
+ },
+ {
+  "script": "res://scripts/tests/crowd_civilian_activity_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 120,
+  "note": "CIV-A3 activity rule"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_home_crowd_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 300,
+  "note": "C1c at home"
+ },
+ {
+  "script": "res://scripts/tests/site_resident_shelter_rules_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 180,
+  "note": "C1c shelter rules"
+ }
+]

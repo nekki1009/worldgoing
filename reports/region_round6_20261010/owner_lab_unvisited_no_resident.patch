@@ -1,0 +1,37 @@
+--- a/scripts/region_lab/region_save_slot.gd
++++ b/scripts/region_lab/region_save_slot.gd
+@@ -206,7 +206,9 @@
+ 	if not entry.is_empty(): return folder.path_join(str(entry.path))
+ 	return folder.path_join("sites/%d/%d.json" % [site.x, site.y])
+ 
+-func open_site(site: Vector2i) -> Dictionary:
++## starter=false: an unvisited Site opened for an original Region owner (not an
++## explicit new-world start) has no resident Actor or default worker.
++func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
+ 	if pin.is_empty() or source == null:
+ 		return fail("INVALID_SLOT", "存檔尚未開啟")
+ 	var path := site_path(site)
+@@ -260,6 +262,12 @@
+ 	# storage, which Core construction payment reads before any first save.
+ 	var storage := Runtime.initialize_item_storage(data.site)
+ 	if not storage.ok: return storage
++	if not starter:
++		data.site.actor_presence_version = 1
++		data.site.actors = {}
++		data.site.worker_enabled = false
++		var retired := Store.retire_default_worker(data)
++		if not retired.ok: return retired
+ 	data.site.world_pin = pin.duplicate(true)
+ 	var genesis := _settle_cold_candidate(data, float(control.logical_game_seconds))
+ 	if not genesis.ok: return genesis
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -8917,7 +8917,7 @@
+ 	if RegionGrid.site_id(str(slot.pin.atlas_id), coordinate) != site_id: return SiteRuntime.fail("WRONG_SITE")
+ 	var original: TerrainLab = slot._region_original_labs.get(site_id)
+ 	if not is_instance_valid(original):
+-		var opened: Dictionary = slot.open_site(coordinate)
++		var opened: Dictionary = slot.open_site(coordinate, false)
+ 		if not opened.get("ok", false): return opened
+ 		var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
+ 		if scene == null: return SiteRuntime.fail("MISSING_ORIGINAL_SCENE")

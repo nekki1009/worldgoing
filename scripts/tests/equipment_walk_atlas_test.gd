@@ -13,22 +13,25 @@ func digest(path: String) -> String:
 	return hashes[path]
 
 func _initialize() -> void:
-	var snapshot: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(DIR+"snapshot.json"))
-	var publication: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(DIR+"publication.json"))
+	var steel_mingguang := OS.get_cmdline_user_args().has("--steel-mingguang")
+	var evidence_dir := "res://output/steel_mingguang_walk_20260919/atlas/" if steel_mingguang else DIR
+	var stamp := "steel_mingguang_walk_revalidation" if steel_mingguang else "equipment_walk_revalidation"
+	var snapshot: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(evidence_dir+"snapshot.json"))
+	var publication: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(evidence_dir+"publication.json"))
 	assert(publication.published and publication.manifests == 260)
 	var count := 0
 	for path: String in snapshot.active:
 		assert(digest(path) == publication.published_md5[path])
-		var before: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(DIR+"manifest_before/"+path.trim_prefix("res://")))
+		var before: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(evidence_dir+"manifest_before/"+path.trim_prefix("res://")))
 		var current: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
-		assert(current.equipment_walk_revalidation.rebaked == false)
+		assert(current[stamp].rebaked == false)
 		for source: String in current.source_fingerprints:
 			assert(current.source_fingerprints[source] == digest(source),source)
 		current.source_fingerprints = before.source_fingerprints
 		if current.has("source_manifest_md5"):
 			assert(current.source_manifest_md5 == digest(current.get("source_manifest",Atlas.BASE_MANIFEST)))
 			current.source_manifest_md5 = before.source_manifest_md5
-		current.erase("equipment_walk_revalidation")
+		current.erase(stamp)
 		assert(current == before,"Existing data changed: "+path)
 		count += 1
 	assert(count == 260)
@@ -38,7 +41,7 @@ func _initialize() -> void:
 	for option: Dictionary in Ranged.Materials.OPTIONS:
 		if option.id == &"none": continue
 		var source := Ranged.ROOT+"/"+str(option.id)+"/manifest.json"
-		var original: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(DIR+"manifest_before/"+source.trim_prefix("res://")))
+		var original: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(evidence_dir+"manifest_before/"+source.trim_prefix("res://")))
 		var appearance: Dictionary = original.appearance.duplicate(true)
 		appearance.equipment_dyes = {"armor":"396fbbff"}
 		assert(Atlas.supports(appearance) and not Dyes.entry(appearance).is_empty())

@@ -1,0 +1,50 @@
+--- a/scripts/tests/site_family_first_earned_base.gd
++++ b/scripts/tests/site_family_first_earned_base.gd
+@@ -58,4 +58,7 @@
+ 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
+ 	Env.initialize(data, "family-first-earned-natural-" + identity)
++	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
++	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
++	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
+ 	# Explicit finite starting stock only. Never alter generated terrain or
+ 	# the five original land-condition arrays to make the cold test buildable.
+--- a/scripts/tests/site_technology_armor_recipes_test.gd
++++ b/scripts/tests/site_technology_armor_recipes_test.gd
+@@ -231,4 +231,7 @@
+ 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
+ 	Env.initialize(data, site_id)
++	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
++	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
++	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
+ 	for item: String in Env.ITEM_NAMES: data.site.inventory[item] = 10000
+ 	data.site.capacity = 1000000
+--- a/scripts/tests/site_technology_nation_material_test.gd
++++ b/scripts/tests/site_technology_nation_material_test.gd
+@@ -305,4 +305,7 @@
+ 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
+ 	Env.initialize(data, "nation-material-natural")
++	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
++	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
++	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
+ 	return data # No generated terrain or land-condition field is overwritten.
+ 
+--- a/scripts/tests/site_technology_natural_cold_fixture.gd
++++ b/scripts/tests/site_technology_natural_cold_fixture.gd
+@@ -6,4 +6,7 @@
+ 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
+ 	Env.initialize(data, site_id)
++	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
++	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
++	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
+ 	for item: String in Env.ITEM_NAMES: data.site.inventory[item] = 10000
+ 	data.site.capacity = 1000000
+--- a/scripts/tests/site_technology_shipyard_physical_test.gd
++++ b/scripts/tests/site_technology_shipyard_physical_test.gd
+@@ -85,4 +85,7 @@
+ 		data=TerrainGenerator.generate(TerrainPreset.Kind.COASTAL_CLIFF,seed_value,{"max_height":1,"micro_strength":0})
+ 		Env.initialize(data,"technology-s12-natural-shore-"+str(seed_value))
++		# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
++		var fixture_item_storage = Runtime.initialize_item_storage(data.site)
++		assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
+ 		for material: String in Env.ITEM_NAMES: data.site.inventory[material]=10000
+ 		data.site.capacity=1000000

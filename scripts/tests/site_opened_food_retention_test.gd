@@ -267,6 +267,7 @@ func _run() -> void:
 		# Independent fixtures must not reuse the intentionally dead, restored NPC
 		# from the previous gender's migration/bind verification.
 		var lab := TerrainLab.new()
+		lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 		lab.pause_when_unfocused = false
 		root.add_child(lab)
 		lab.set_process(false)

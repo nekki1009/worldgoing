@@ -1,6 +1,6 @@
 extends SceneTree
 const Batch = preload("res://scripts/terrain_lab/terrain_army_batch_view.gd")
-const RESULT := "res://output/site_army_5k_hot_close_20260926/retained_batch_smoke.json"
+const RESULT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/retained_batch_smoke.json"
 var comparisons := 0
 var mismatches := 0
 var assertions := {}

@@ -1,0 +1,91 @@
+{
+ "task": "考試學校 E1 school sprites",
+ "target": "assets/map/site/settlement/building_v2/",
+ "manifest": "art_manifest.json",
+ "requests": [
+  {
+   "key": "village_school",
+   "kind": "village_school",
+   "facing": "south",
+   "footprint": "3x3",
+   "prompt": "building_v2 house style, 蒙學 village school, traditional Taiwanese Qing-era schoolhouse, footprint 3x3 cells, entrance facing south, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "village_school_west",
+   "kind": "village_school",
+   "facing": "west",
+   "footprint": "3x3",
+   "prompt": "building_v2 house style, 蒙學 village school, traditional Taiwanese Qing-era schoolhouse, footprint 3x3 cells, entrance facing west, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "village_school_north",
+   "kind": "village_school",
+   "facing": "north",
+   "footprint": "3x3",
+   "prompt": "building_v2 house style, 蒙學 village school, traditional Taiwanese Qing-era schoolhouse, footprint 3x3 cells, entrance facing north, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "village_school_east",
+   "kind": "village_school",
+   "facing": "east",
+   "footprint": "3x3",
+   "prompt": "building_v2 house style, 蒙學 village school, traditional Taiwanese Qing-era schoolhouse, footprint 3x3 cells, entrance facing east, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "district_school",
+   "kind": "district_school",
+   "facing": "south",
+   "footprint": "4x4",
+   "prompt": "building_v2 house style, 鄉學 district school, traditional Taiwanese Qing-era schoolhouse, footprint 4x4 cells, entrance facing south, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "district_school_west",
+   "kind": "district_school",
+   "facing": "west",
+   "footprint": "4x4",
+   "prompt": "building_v2 house style, 鄉學 district school, traditional Taiwanese Qing-era schoolhouse, footprint 4x4 cells, entrance facing west, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "district_school_north",
+   "kind": "district_school",
+   "facing": "north",
+   "footprint": "4x4",
+   "prompt": "building_v2 house style, 鄉學 district school, traditional Taiwanese Qing-era schoolhouse, footprint 4x4 cells, entrance facing north, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "district_school_east",
+   "kind": "district_school",
+   "facing": "east",
+   "footprint": "4x4",
+   "prompt": "building_v2 house style, 鄉學 district school, traditional Taiwanese Qing-era schoolhouse, footprint 4x4 cells, entrance facing east, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "state_academy",
+   "kind": "state_academy",
+   "facing": "south",
+   "footprint": "5x5",
+   "prompt": "building_v2 house style, 國學 state academy, traditional Taiwanese Qing-era academy hall, footprint 5x5 cells, entrance facing south, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "state_academy_west",
+   "kind": "state_academy",
+   "facing": "west",
+   "footprint": "5x5",
+   "prompt": "building_v2 house style, 國學 state academy, traditional Taiwanese Qing-era academy hall, footprint 5x5 cells, entrance facing west, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "state_academy_north",
+   "kind": "state_academy",
+   "facing": "north",
+   "footprint": "5x5",
+   "prompt": "building_v2 house style, 國學 state academy, traditional Taiwanese Qing-era academy hall, footprint 5x5 cells, entrance facing north, same camera, scale and palette as the existing building_v2 sprites"
+  },
+  {
+   "key": "state_academy_east",
+   "kind": "state_academy",
+   "facing": "east",
+   "footprint": "5x5",
+   "prompt": "building_v2 house style, 國學 state academy, traditional Taiwanese Qing-era academy hall, footprint 5x5 cells, entrance facing east, same camera, scale and palette as the existing building_v2 sprites"
+  }
+ ]
+}

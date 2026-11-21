@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://61nag0j33pui"
+path="res://.godot/imported/crowd_gpu_formation.glsl-9273cf9bdbf6fbee7365253073c6602c.res"
+
+[deps]
+
+source_file="res://scripts/benchmark/3d_crowd/crowd_gpu_formation.glsl"
+dest_files=["res://.godot/imported/crowd_gpu_formation.glsl-9273cf9bdbf6fbee7365253073c6602c.res"]
+
+[params]
+

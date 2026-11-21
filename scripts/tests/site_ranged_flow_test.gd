@@ -1,4 +1,5 @@
 extends SceneTree
+## Explicit pre-migration reference; new physical semantics use site_fire_projectile_pipeline_test.
 ## Production Lab launch / due-event / occupancy path, with original actor owners.
 
 var events: Array[Dictionary] = []
@@ -15,6 +16,7 @@ func run() -> void:
 	data.feature_at.resize(400)
 	data.site = {"paused": false, "features": {}, "combat_left": 0.0}
 	var lab := TerrainLab.new()
+	lab.physical_ranged_enabled = false # Named legacy flight/roll reference only.
 	lab.terrain = data
 	var a := TerrainTestCharacter.new()
 	var b := TerrainTestCharacter.new()
@@ -46,7 +48,17 @@ func run() -> void:
 	assert(events.is_empty() and a.projectiles.size() == 1)
 	var controller := preload("res://scripts/terrain_lab/site_controller.gd").new()
 	controller.lab = lab
-	assert(controller.supply_save_guard().code == "BUSY")
+	controller.person_actions.init(lab)
+	controller.equipment_orders.init(lab, controller.person_actions)
+	if controller.person_actions.lab != lab or controller.equipment_orders.lab != lab or controller.equipment_orders.actions != controller.person_actions:
+		push_error("Ranged save guard fixture services did not initialize")
+		quit(1)
+		return
+	var save_guard := controller.supply_save_guard()
+	if save_guard.code != "BUSY":
+		push_error("An arrow in flight must block saving: %s" % str(save_guard.code))
+		quit(1)
+		return
 	var replacement := TerrainData.new()
 	lab.bind_terrain(replacement)
 	assert(lab.terrain == data, "Direct replacement cannot discard active events")
@@ -120,6 +132,7 @@ func _tiered_arrivals(lab: TerrainLab, source: TerrainTestCharacter, target: Ter
 		var appearance := HumanCharacter3DEditor.default_appearance()
 		appearance.parts.armor = "none"
 		appearance.parts.shield = "none"
+		appearance.parts.cape = "none"
 		actor._saved_appearance = appearance
 		assert(SiteRuntime.seed_person_equipment(data, actor.item_state, actor.person_id, appearance).ok)
 	var original_weapon := str(source.item_state.equipped.weapon)

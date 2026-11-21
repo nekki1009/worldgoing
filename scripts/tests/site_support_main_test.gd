@@ -32,9 +32,11 @@ func _capture(name: String) -> void:
 	lab.site_controller.vehicle_view.refresh()
 	await process_frame
 	await RenderingServer.frame_post_draw
-	assert(root.get_texture().get_image().save_png(OUT + "/" + name + ".png") == OK)
+	var viewport: Viewport = lab.site_test_window if name.begins_with("menu_") else root
+	assert(viewport.get_texture().get_image().save_png(OUT + "/" + name + ".png") == OK)
 
 func _run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Support deployment controls require --site-test-ui")
 	visual = DisplayServer.get_name() != "headless"
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
@@ -43,6 +45,7 @@ func _run() -> void:
 	root.gui_embed_subwindows = true
 	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
 	lab = main.instantiate()
+	lab.npc = TerrainTestNPC.new() # Explicit original-worker fixture, independent of formal defaults.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -83,8 +86,11 @@ func _run() -> void:
 	print("SUPPORT_MAIN_DEPLOY ", ui.message.text)
 	await _capture("three_roles")
 	ui._open_combat_window()
+	(lab.site_test_window.get("tabs") as TabContainer).current_tab = 1
 	await _capture("menu_roles")
-	var control := ui.combat_window.find_child("TrialVehicleControls", true, false) as Control
+	(lab.site_test_window.get("tabs") as TabContainer).current_tab = 4
+	var control := ui.combat_window.find_child("TrialVehicleStatus", true, false) as Control
+	assert(control != null, "Original vehicle controls are in the logistics test page")
 	var parent: Node = control.get_parent()
 	while parent != null and not parent is ScrollContainer: parent = parent.get_parent()
 	var scroll := parent as ScrollContainer

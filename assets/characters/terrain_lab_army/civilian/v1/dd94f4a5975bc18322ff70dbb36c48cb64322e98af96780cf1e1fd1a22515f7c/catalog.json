@@ -1,0 +1,120 @@
+{
+  "omitted": [],
+  "phase": 2,
+  "profile": "civilian_v1",
+  "recipes": [
+    {
+      "appearance": {
+        "body": 0,
+        "coat": "bay",
+        "equipment_dyes": {
+          "armor": "396fbbff",
+          "outfit": "d8dce3ff"
+        },
+        "hair_dye": "9b775dff",
+        "hair_dyed": false,
+        "hair_mask": "auto",
+        "mounted": false,
+        "parts": {
+          "armor": "outfit_medieval_chinese_01",
+          "boots": "boots_civilian_straw_01",
+          "cape": "none",
+          "face": "face_standard_01",
+          "hair": "hair_male_01",
+          "helmet": "none",
+          "outfit": "outfit_underlayer_01",
+          "shield": "none",
+          "weapon": "none"
+        },
+        "tack": true
+      },
+      "id": "CIV-M01",
+      "key": "d99dbbfd0a4812f768af18145b6ddc6cb88c909c5f258d161a49fb6ccf39a4c5"
+    },
+    {
+      "appearance": {
+        "body": 0,
+        "coat": "bay",
+        "equipment_dyes": {
+          "armor": "825438ff",
+          "outfit": "84966aff"
+        },
+        "hair_dye": "9b775dff",
+        "hair_dyed": false,
+        "hair_mask": "auto",
+        "mounted": false,
+        "parts": {
+          "armor": "outfit_medieval_chinese_01",
+          "boots": "boots_civilian_straw_01",
+          "cape": "none",
+          "face": "face_standard_01",
+          "hair": "hair_male_01",
+          "helmet": "helmet_civilian_straw_01",
+          "outfit": "outfit_underlayer_01",
+          "shield": "none",
+          "weapon": "none"
+        },
+        "tack": true
+      },
+      "id": "CIV-M02",
+      "key": "142586cf10b595fa1c4212732cc58061acec1f6136d6a5757303255fd26f1ee9"
+    },
+    {
+      "appearance": {
+        "body": 1,
+        "coat": "bay",
+        "equipment_dyes": {
+          "armor": "396fbbff",
+          "outfit": "d8dce3ff"
+        },
+        "hair_dye": "9b775dff",
+        "hair_dyed": false,
+        "hair_mask": "auto",
+        "mounted": false,
+        "parts": {
+          "armor": "outfit_medieval_chinese_01",
+          "boots": "boots_civilian_straw_01",
+          "cape": "none",
+          "face": "face_standard_01",
+          "hair": "hair_female_01",
+          "helmet": "none",
+          "outfit": "outfit_underlayer_01",
+          "shield": "none",
+          "weapon": "none"
+        },
+        "tack": true
+      },
+      "id": "CIV-F01",
+      "key": "b745567858c9cc380b43bd56679d0ffb521770f6456b8b9b874e4ce3de108fec"
+    },
+    {
+      "appearance": {
+        "body": 1,
+        "coat": "bay",
+        "equipment_dyes": {
+          "armor": "825438ff",
+          "outfit": "84966aff"
+        },
+        "hair_dye": "9b775dff",
+        "hair_dyed": false,
+        "hair_mask": "auto",
+        "mounted": false,
+        "parts": {
+          "armor": "outfit_medieval_chinese_01",
+          "boots": "boots_civilian_straw_01",
+          "cape": "none",
+          "face": "face_standard_01",
+          "hair": "hair_female_01",
+          "helmet": "helmet_civilian_straw_01",
+          "outfit": "outfit_underlayer_01",
+          "shield": "none",
+          "weapon": "none"
+        },
+        "tack": true
+      },
+      "id": "CIV-F02",
+      "key": "121da098db54d977978ec445aa84cab03fbf862456fa425b5bcba09fe61399b1"
+    }
+  ],
+  "source_id": "dd94f4a5975bc18322ff70dbb36c48cb64322e98af96780cf1e1fd1a22515f7c"
+}

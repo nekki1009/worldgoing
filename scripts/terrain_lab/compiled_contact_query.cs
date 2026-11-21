@@ -287,7 +287,11 @@ public partial class compiled_contact_query : RefCounted
                 if (intersection == null)
                     continue;
                 double fraction = 0.0;
-                if (sweep.Before.Length == sweep.Shape.Length && FirstIntersection(sweep.Before, body) == null)
+                // Same rule as terrain_weapon_collision.gd contact(): equal vertex counts keep the original
+                // per-vertex sweep exactly; different non-empty counts refine over the Minkowski
+                // interpolation (1 - t) * before + t * shape instead of staying at fraction 0.
+                bool equalCounts = sweep.Before.Length == sweep.Shape.Length;
+                if ((equalCounts || (sweep.Before.Length > 0 && sweep.Shape.Length > 0)) && FirstIntersection(sweep.Before, body) == null)
                 {
                     var partials = sweep.Partials ??= new Vector2[256][];
                     double low = 0.0, high = 1.0;
@@ -298,10 +302,25 @@ public partial class compiled_contact_query : RefCounted
                         var partial = partials[key];
                         if (partial == null)
                         {
-                            var vertices = new Vector2[sweep.Before.Length + sweep.Shape.Length];
-                            sweep.Before.CopyTo(vertices, 0);
-                            for (int vertex = 0; vertex < sweep.Shape.Length; vertex++)
-                                vertices[sweep.Before.Length + vertex] = sweep.Before[vertex].Lerp(sweep.Shape[vertex], (float)middle);
+                            Vector2[] vertices;
+                            if (equalCounts)
+                            {
+                                vertices = new Vector2[sweep.Before.Length + sweep.Shape.Length];
+                                sweep.Before.CopyTo(vertices, 0);
+                                for (int vertex = 0; vertex < sweep.Shape.Length; vertex++)
+                                    vertices[sweep.Before.Length + vertex] = sweep.Before[vertex].Lerp(sweep.Shape[vertex], (float)middle);
+                            }
+                            else
+                            {
+                                // Same point order as the GDScript branch: before, then every
+                                // before vertex lerped toward every current vertex.
+                                vertices = new Vector2[sweep.Before.Length + sweep.Before.Length * sweep.Shape.Length];
+                                sweep.Before.CopyTo(vertices, 0);
+                                int next = sweep.Before.Length;
+                                foreach (var beforeVertex in sweep.Before)
+                                    foreach (var shapeVertex in sweep.Shape)
+                                        vertices[next++] = beforeVertex.Lerp(shapeVertex, (float)middle);
+                            }
                             partial = Geometry2D.ConvexHull(vertices);
                             partials[key] = partial;
                         }

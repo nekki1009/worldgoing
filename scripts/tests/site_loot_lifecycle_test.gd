@@ -3,6 +3,7 @@ const Actions = preload("res://scripts/terrain_lab/site_person_actions.gd")
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit original NPC fixture; formal startup has no worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

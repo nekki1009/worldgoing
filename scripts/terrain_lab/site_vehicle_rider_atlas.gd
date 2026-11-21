@@ -52,7 +52,7 @@ static func frame(appearance: Dictionary, direction: String, moving: bool, progr
 		var texture := AtlasTexture.new()
 		texture.atlas = bundle.texture
 		texture.region = Rect2(float(item.rect[0]), float(item.rect[1]), float(item.rect[2]), float(item.rect[3]))
-		item.texture = texture
+		item["texture"] = texture
 	return {"texture": item.texture, "key": key, "map_scale": float(bundle.map_scale),
 		"anchor": Vector2(float(item.anchor[0]), float(item.anchor[1])) * float(bundle.map_scale),
 		"horse_offset": Vector2(float(item.horse_offset[0]), float(item.horse_offset[1])), "frame": number}

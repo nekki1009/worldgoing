@@ -1,7 +1,7 @@
 extends SceneTree
 
 const EXTENSION := "res://native/army_idle/army_idle.gdextension"
-const OUTPUT := "res://output/site_army_5k_hot_close_20260926/native_exact_oracle_smoke.json"
+const OUTPUT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/native_exact_oracle_smoke.json"
 
 func _initialize() -> void:
 	_run.call_deferred()

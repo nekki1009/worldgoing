@@ -1,0 +1,8 @@
+Freesound license record (plain text). It replaces the saved Freesound page snapshot (HTML), 2026-11-14.
+Sound: Horse Galloping.wav
+Author: Max_Headroom
+Source: https://freesound.org/people/Max_Headroom/sounds/175356/
+License: Creative Commons 0 (CC0 1.0 Universal Public Domain Dedication)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+Quality: the public low-quality MP3 preview only; not the original master file.
+Used for: horse hoof steps (source preview kept as output/audio_preview_20261008/clips/freesound_175356_horse_hoof.mp3; catalog.json "sources")

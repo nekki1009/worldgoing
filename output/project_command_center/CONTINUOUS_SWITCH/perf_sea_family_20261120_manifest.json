@@ -1,0 +1,176 @@
+[
+ {
+  "script": "res://scripts/tests/region_crowd_journey_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "c6t07"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "crowd core regression 11/08 (region_callers + crowd ship tick)"
+ },
+ {
+  "script": "res://scripts/tests/region_crowd_ship_journey_ui_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "c6t13"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "crowd core regression 11/08 (region_callers + crowd ship tick)"
+ },
+ {
+  "script": "res://scripts/tests/region_crowd_ship_sea_departure_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "c6t14"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "crowd core regression 11/08 (region_callers + crowd ship tick)"
+ },
+ {
+  "script": "res://scripts/tests/site_crowd_ship_journey_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "c6t19"
+  ],
+  "mode": "headless",
+  "timeout": 360,
+  "note": "crowd core regression 11/08 (region_callers + crowd ship tick)"
+ },
+ {
+  "script": "res://scripts/tests/region_travel_test.gd",
+  "args": [
+   "--grid"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "GD path guard"
+ },
+ {
+  "script": "res://scripts/tests/region_npc_ship_original_dispatch_physical_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 480,
+  "note": "crowd port 11/08, in-file 420"
+ },
+ {
+  "script": "res://scripts/tests/region_npc_ship_lawful_arrival_unload_physical_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 480,
+  "note": "crowd port 11/08, in-file 420"
+ },
+ {
+  "script": "res://scripts/tests/region_food_reinforcement_multi_approach_physical_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 960,
+  "note": "Nekki 11/08 B 900/960"
+ },
+ {
+  "script": "res://scripts/tests/site_ship_journey_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "crowd port 4753d2f"
+ },
+ {
+  "script": "res://scripts/tests/site_ship_journey_edge_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "crowd port"
+ },
+ {
+  "script": "res://scripts/tests/region_carried_intel_original_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 540,
+  "note": "crowd port"
+ },
+ {
+  "script": "res://scripts/tests/region_remote_nation_original_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 540,
+  "note": "crowd port"
+ },
+ {
+  "script": "res://scripts/tests/region_player_first_siege_contact_physical_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 540,
+  "note": "B port regression 2026-11-10"
+ },
+ {
+  "script": "res://scripts/tests/site_shared_step_replay_test.gd",
+  "args": [
+   "--crowd",
+   "--crowd-test",
+   "full1114ssr"
+  ],
+  "mode": "headless",
+  "timeout": 660
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=pay"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=fight"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c"
+ },
+ {
+  "script": "res://scripts/tests/region_bandit_toll_road_test.gd",
+  "args": [
+   "--toll-case=flee"
+  ],
+  "mode": "headless",
+  "timeout": 600,
+  "note": "B4c flee"
+ },
+ {
+  "script": "res://scripts/tests/region_route_context_cache_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "perf 11/20 probe: touches route context / contact labels / party proof"
+ },
+ {
+  "script": "res://scripts/tests/region_sea_contact_navigation_memo_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "perf 11/20 probe: touches route context / contact labels / party proof"
+ },
+ {
+  "script": "res://scripts/tests/region_party_life_original_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "perf 11/20 probe: touches route context / contact labels / party proof"
+ },
+ {
+  "script": "res://scripts/tests/region_cold_original_matrix_test.gd",
+  "args": [],
+  "mode": "headless",
+  "timeout": 420,
+  "note": "perf 11/20 probe: touches route context / contact labels / party proof"
+ }
+]

@@ -6,6 +6,7 @@ class Fixture extends RefCounted:
 	var npc := TerrainTestNPC.new()
 	var actions := SitePersonActions.new()
 	var equipment := SiteEquipmentOrders.new()
+	var site_controller := SiteController.new()
 	var controlled_id := 1
 	var threatened := false
 	var changed: Array[int] = []
@@ -14,7 +15,7 @@ class Fixture extends RefCounted:
 		terrain.flags.fill(TerrainData.Flag.WALKABLE)
 		terrain.site = {"id": "ranged-craft-test", "minute": 0, "phase": 0.0, "paused": false, "combat_left": 0.0,
 			"depot_cell": terrain.index(Vector2i(5, 4)), "capacity": 800,
-			"inventory": {"wood": 40, "iron": 20, "fiber": 10, "tools": 1},
+			"inventory": {"wood": 40, "iron": 20, "fiber": 10, "cloth": 8, "tools": 1},
 			"manual": {"target": "", "cargo": {}}, "worker": {"target": "", "cargo": {}}}
 		assert(SiteRuntime.initialize_item_storage(terrain.site).ok)
 		character.person_id = 1
@@ -47,6 +48,8 @@ class Fixture extends RefCounted:
 			if actor.person_id == identity:
 				return {"owner": actor, "unit": -1, "cell": actor.terrain_cell, "hp": actor.hp}
 		return {}
+	func _original_person_target(identity: int, _with_bodies: bool = false) -> Dictionary:
+		return _combat_target(identity)
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:
 		return threatened
 	func close() -> void:
@@ -58,6 +61,7 @@ class Fixture extends RefCounted:
 		equipment.lab = null
 		equipment.actions = null
 		equipment.equipment_apply_guard = Callable()
+		site_controller.free()
 		character.free()
 		npc.free()
 
@@ -69,7 +73,7 @@ func run() -> void:
 	_check_controlled_npc_equipment()
 	_check_interruptions()
 	_check_revalidation_and_work()
-	print("SITE_RANGED_CRAFTING_PASS: four paid recipes, actual depot collection -> original five-second personal equipment -> real-ammo ranged shot, controlled-NPC personal authority, pause/contact/site/holder cancellation, materials/tools/capacity/definition recheck, fatigue and simultaneous completion conservation")
+	print("SITE_RANGED_CRAFTING_PASS: four original paid ranged recipes plus paid camp-tent package, actual depot collection -> original five-second personal equipment -> real-ammo ranged shot, controlled-NPC personal authority, pause/contact/site/holder cancellation, materials/tools/capacity/definition recheck, fatigue and simultaneous completion conservation")
 	quit(0)
 
 func _check_products_and_collection() -> void:
@@ -79,7 +83,7 @@ func _check_products_and_collection() -> void:
 	var depot: Dictionary = fixture.terrain.site.depot_items
 	var cargo: Dictionary = fixture.terrain.site.manual.cargo
 	var original_stock := stock.duplicate()
-	for recipe: String in SiteRuntime.RANGED_RECIPES:
+	for recipe: String in ["bow", "crossbow", "arrow", "bolt"]:
 		var before := var_to_bytes(fixture.terrain.site)
 		assert(SiteRuntime.ranged_craft(fixture.terrain, recipe, 1, true).ok)
 		assert(var_to_bytes(fixture.terrain.site) == before, "Recipe preview never creates stock or registry entries")
@@ -97,6 +101,15 @@ func _check_products_and_collection() -> void:
 		assert(actions.settle_after_contacts().is_empty(), "Repeated settlement cannot produce twice")
 	assert(stock.wood == original_stock.wood - 10 and stock.iron == original_stock.iron - 4 and stock.fiber == original_stock.fiber - 3)
 	assert(stock.tools == 1 and stock.arrow == 10 and stock.bolt == 10)
+	assert(stock.cloth == original_stock.cloth and not stock.has("camp_tent"), "Original ranged recipes do not mint tent packages")
+	var tent_before := stock.duplicate()
+	var tent_started := actions.begin_ranged_craft(1, "camp_tent")
+	assert(tent_started.ok and tent_started.seconds == 120.0)
+	actions.advance(120.0)
+	assert(stock == tent_before, "Tent materials remain owned until original post-contact completion")
+	assert(actions.settle_after_contacts()[0].ok)
+	assert(stock.camp_tent == 1 and stock.cloth == tent_before.cloth - 4 and stock.wood == tent_before.wood - 2 and stock.fiber == tent_before.fiber - 2)
+	assert(stock.iron == tent_before.iron and stock.tools == 1 and actions.settle_after_contacts().is_empty())
 	assert(is_same(stock, fixture.terrain.site.inventory) and is_same(depot, fixture.terrain.site.depot_items) and cargo.is_empty())
 	assert(depot.item_ids.size() == 2 and depot.equipped.is_empty() and fixture.character.fatigue > 0.0)
 	var bow_id := ""

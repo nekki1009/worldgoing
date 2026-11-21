@@ -43,8 +43,11 @@ var special_max_full_shadow_actors: int = 24
 var special_rigid_socket_update_stride: int = 1
 var deterministic_camera_motion_enabled: bool = false
 var deterministic_camera_motion_time: float = 0.0
+var benchmark_fixed_delta: float = -1.0
+var benchmark_stage_trace: bool = false
+var _benchmark_trace_frame: int = 0
 var spike_threshold_ms: float = 33.0
-var selected_crowd_render_path: int = CrowdRenderer3DType.RenderPath.CURRENT_PER_INSTANCE
+var selected_crowd_render_path: int = CrowdRenderer3DType.RenderPath.FORMATION_PARENT_TRANSFORM
 
 var last_frame_ms: float = 0.0
 var last_simulation_ms: float = 0.0
@@ -134,20 +137,26 @@ func _ready() -> void:
 	# the existing MultiMesh groups without changing simulation ownership.
 	crowd_renderer.initialize(simulation)
 	crowd_renderer.set_near_actor_budget(0)
+	set_crowd_render_path(selected_crowd_render_path)
 	if hud != null:
 		hud.setup(self)
 	set_near_actor_budget(INITIAL_NEAR_BUDGET)
 	focus_on_soldier(0, 42.0)
 
 func _process(delta: float) -> void:
+	if benchmark_stage_trace:
+		_benchmark_trace_frame += 1
+		_trace_benchmark_stage("begin")
 	_handle_camera_pan(delta)
+	var simulation_delta: float = benchmark_fixed_delta if benchmark_fixed_delta > 0.0 else delta
 	if deterministic_camera_motion_enabled:
-		_apply_deterministic_camera_motion(delta)
+		_apply_deterministic_camera_motion(simulation_delta)
 	var simulation_started_usec: int = Time.get_ticks_usec()
 	simulation.reset_world_position_query_count()
 	if not simulation_paused:
-		simulation.step(delta)
+		simulation.step(simulation_delta)
 	last_simulation_ms = float(Time.get_ticks_usec() - simulation_started_usec) / 1000.0
+	_trace_benchmark_stage("simulation")
 
 	var desired_slots: PackedInt32Array
 	var policy_started_usec: int = Time.get_ticks_usec()
@@ -157,6 +166,7 @@ func _process(delta: float) -> void:
 		actor_pool.get_slot_soldier_ids()
 	)
 	last_policy_ms = float(Time.get_ticks_usec() - policy_started_usec) / 1000.0
+	_trace_benchmark_stage("policy")
 
 	var pool_started_usec: int = Time.get_ticks_usec()
 	actor_pool.sync_from_simulation(
@@ -167,13 +177,17 @@ func _process(delta: float) -> void:
 	last_pool_ms = float(Time.get_ticks_usec() - pool_started_usec) / 1000.0
 	last_animation_ms = actor_pool.last_animation_cpu_ms
 	last_promotion_ms = actor_pool.last_transition_cpu_ms
+	_trace_benchmark_stage("pool")
 
 	# This is the only bridge into the existing crowd renderer: promoted ids
 	# are omitted from its MultiMesh layout in the same frame that actors show.
-	crowd_renderer.set_external_near_soldiers(desired_slots, selected_near_budget)
+	# Hide a proxy only after the SPECIAL pool actually owns that soldier ID.
+	crowd_renderer.set_external_near_soldiers(actor_pool.get_slot_soldier_ids(), selected_near_budget)
+	_trace_benchmark_stage("mask")
 	var renderer_started_usec: int = Time.get_ticks_usec()
 	crowd_renderer.sync_from_simulation(camera)
 	last_renderer_ms = float(Time.get_ticks_usec() - renderer_started_usec) / 1000.0
+	_trace_benchmark_stage("renderer")
 
 	last_frame_ms = maxf(delta * 1000.0, 0.001)
 	worst_frame_ms = maxf(worst_frame_ms, last_frame_ms)
@@ -244,6 +258,15 @@ func _process(delta: float) -> void:
 		_sample_rigid_structural_changes += float(actor_pool.rigid_structural_changes_this_frame)
 		_sample_lod_transitions += float(actor_pool.lod_transitions_this_frame)
 		_sample_shadow_transitions += float(actor_pool.shadow_transitions_this_frame)
+	_trace_benchmark_stage("end")
+
+func _trace_benchmark_stage(stage: String) -> void:
+	if benchmark_stage_trace:
+		print("FORMATION_SPACE_STAGE frame=%d stage=%s usec=%d near=%d gpu_completed=%d" % [
+			_benchmark_trace_frame, stage, Time.get_ticks_usec(),
+			actor_pool.active_actor_count if actor_pool != null else 0,
+			int(crowd_renderer.crowd_gpu_status().get("completed_frames", 0)) if crowd_renderer != null else 0
+		])
 
 func set_near_actor_budget(requested_budget: int) -> void:
 	var nearest_budget: int = VALID_NEAR_BUDGETS[0]
@@ -267,13 +290,13 @@ func set_crowd_render_path(next_path: int) -> void:
 	selected_crowd_render_path = clampi(
 		next_path,
 		CrowdRenderer3DType.RenderPath.CURRENT_PER_INSTANCE,
-		CrowdRenderer3DType.RenderPath.FORMATION_PARENT_TRANSFORM
+		CrowdRenderer3DType.RenderPath.GPU_FORMATION_OUTPUT
 	)
 	if crowd_renderer != null:
 		crowd_renderer.set_render_path(selected_crowd_render_path)
 	if simulation != null:
 		simulation.set_world_position_cache_enabled(
-			selected_crowd_render_path != CrowdRenderer3DType.RenderPath.FORMATION_PARENT_TRANSFORM
+			selected_crowd_render_path == CrowdRenderer3DType.RenderPath.CURRENT_PER_INSTANCE
 		)
 
 func set_near_render_options(
@@ -356,7 +379,7 @@ func reset_deterministic_state() -> void:
 	simulation.set_active_soldiers(TOTAL_SOLDIERS)
 	simulation.set_mode(BattleCrowdSimulationType.BenchmarkMode.HUMANOID_LOD)
 	simulation.set_world_position_cache_enabled(
-		selected_crowd_render_path != CrowdRenderer3DType.RenderPath.FORMATION_PARENT_TRANSFORM
+		selected_crowd_render_path == CrowdRenderer3DType.RenderPath.CURRENT_PER_INSTANCE
 	)
 	actor_pool.clear_all()
 	actor_pool.set_render_mode(special_render_mode)
@@ -466,6 +489,7 @@ func end_measurement() -> Dictionary:
 		"updated_transform_instances": _sample_updated_transform_instances / divisor,
 		"updated_custom_instances": _sample_updated_custom_instances / divisor,
 		"render_path": crowd_renderer.render_path_name(),
+		"gpu_status": crowd_renderer.crowd_gpu_status(),
 		"formation_gpu_transform_supported": crowd_renderer.formation_gpu_transform_supported(),
 		"formation_culling": crowd_renderer.formation_culling_mode_name(),
 		"formation_batch_nodes": crowd_renderer.formation_batch_node_count,
@@ -553,6 +577,7 @@ func _metrics_dictionary(viewport_fps: float) -> Dictionary:
 		"updated_transform_instances": crowd_renderer.last_updated_transform_instances,
 		"updated_custom_instances": crowd_renderer.last_updated_custom_instances,
 		"render_path": crowd_renderer.render_path_name(),
+		"gpu_status": crowd_renderer.crowd_gpu_status(),
 		"formation_batch_nodes": crowd_renderer.formation_batch_node_count,
 		"formation_culling": crowd_renderer.formation_culling_mode_name(),
 		"visible_formations": crowd_renderer.visible_formation_count,

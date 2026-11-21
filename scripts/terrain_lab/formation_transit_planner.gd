@@ -12,6 +12,14 @@ const REANCHOR_DISTANCE := 6.0
 const MIN_TRANSIT_LOOKAHEAD_ROWS := 2
 const MAX_TRANSIT_LOOKAHEAD_ROWS := 4
 
+# One synchronous calculation on original owners. The GD path remains the oracle
+# and the fallback for custom terrain/profile implementations.
+static var native_transit_enabled := true
+static var native_transit_calls := 0
+static var native_transit_fallbacks := 0
+static var native_distance_field_calls := 0
+static var _native_transit_kernel: RefCounted
+
 static func _count_capacity_reject(counts: Dictionary, old_index: int, next_candidate: int, max_index: int, stationary: bool, gate: bool) -> void:
 	counts["capacity_bound"] = int(counts.get("capacity_bound", 0)) + 1
 	var detail := ""
@@ -27,6 +35,8 @@ static func _count_capacity_reject(counts: Dictionary, old_index: int, next_cand
 static func _height_of(terrain: Object, cell: Vector2i) -> int:
 	if terrain == null or not terrain.contains(cell):
 		return 0
+	if terrain.has_method("effective_height"):
+		return int(terrain.effective_height(cell))
 	if "height_levels" in terrain:
 		var idx: int = terrain.index(cell)
 		return int(terrain.height_levels[idx])
@@ -136,18 +146,29 @@ static func get_transit_distance_field(move_plan: CombatMovePlan, terrain: Objec
 		int(profile.get("profile_hash")) if profile != null else 0, goal]
 	if move_plan.get_meta("_transit_distance_key", []) == key:
 		return move_plan.get_meta("_transit_distance_field", {})
-	var distances: Dictionary = {goal: 0}
-	var queue: Array[Vector2i] = [goal]
-	var head := 0
-	while head < queue.size():
-		var cell: Vector2i = queue[head]
-		head += 1
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var neighbor := cell + direction
-			if distances.has(neighbor) or not terrain.contains(neighbor) or not _can_profile_step(terrain, neighbor, cell, profile):
-				continue
-			distances[neighbor] = int(distances[cell]) + 1
-			queue.append(neighbor)
+	var distances: Dictionary = {}
+	if native_transit_enabled and terrain.get_script() == preload("res://scripts/terrain_lab/terrain_data.gd") \
+			and (profile == null or profile.get_script() == preload("res://scripts/terrain_lab/formation_movement_profile.gd")):
+		if _native_transit_kernel == null and ClassDB.class_exists(&"ArmyIdleKernel"):
+			_native_transit_kernel = ClassDB.instantiate(&"ArmyIdleKernel")
+		if _native_transit_kernel != null and _native_transit_kernel.has_method("transit_distance_field"):
+			var native_field: Dictionary = _native_transit_kernel.call("transit_distance_field", terrain, profile, goal)
+			if native_field.has(goal):
+				distances = native_field
+				native_distance_field_calls += 1
+	if distances.is_empty():
+		distances = {goal: 0}
+		var queue: Array[Vector2i] = [goal]
+		var head := 0
+		while head < queue.size():
+			var cell: Vector2i = queue[head]
+			head += 1
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var neighbor := cell + direction
+				if distances.has(neighbor) or not terrain.contains(neighbor) or not _can_profile_step(terrain, neighbor, cell, profile):
+					continue
+				distances[neighbor] = int(distances[cell]) + 1
+				queue.append(neighbor)
 	move_plan.set_meta("_transit_distance_key", key)
 	move_plan.set_meta("_transit_distance_field", distances)
 	return distances
@@ -313,6 +334,23 @@ static func _get_static_row_sections(move_plan: CombatMovePlan, terrain: Object,
 	move_plan.set_meta("_transit_row_sections_key", cache_key)
 	return sections
 
+static func _get_exact_path_indices(move_plan: CombatMovePlan) -> Dictionary:
+	var cached: Dictionary = move_plan.get_meta("_transit_exact_path_indices", {})
+	if cached.get("epoch", -1) == move_plan.path_epoch \
+			and cached.get("size", -1) == move_plan.macro_path.size() \
+			and is_same(cached.get("path", null), move_plan.macro_path):
+		return cached["indices"]
+	var indices: Dictionary = {}
+	for k in range(move_plan.macro_path.size()):
+		indices[move_plan.macro_path[k]] = k # Repeated cells use the last path index.
+	move_plan.set_meta("_transit_exact_path_indices", {
+		"epoch": move_plan.path_epoch,
+		"size": move_plan.macro_path.size(),
+		"path": move_plan.macro_path,
+		"indices": indices,
+	})
+	return indices
+
 static func _find_furthest_verified_head_s(
 	start_k: int,
 	requested_k: int,
@@ -389,6 +427,45 @@ static func calculate_transit_slots(
 	member_ids: Array[int],
 	current_cells: Dictionary
 ) -> Dictionary:
+	if native_transit_enabled and move_plan != null and not move_plan.macro_path.is_empty() and not member_ids.is_empty() and (move_plan.destination_plan == null or move_plan.destination_plan.following_member_ids.is_empty()):
+		var canonical_terrain: bool = terrain == null or terrain.get_script() == preload("res://scripts/terrain_lab/terrain_data.gd")
+		var canonical_profile: bool = profile == null or profile.get_script() == preload("res://scripts/terrain_lab/formation_movement_profile.gd")
+		var canonical_plan: bool = move_plan.get_script() == preload("res://scripts/terrain_lab/combat_move_plan.gd") and (move_plan.destination_plan == null or move_plan.destination_plan.get_script() == preload("res://scripts/terrain_lab/combat_deployment_plan.gd"))
+		if canonical_terrain and canonical_profile and canonical_plan:
+			if _native_transit_kernel == null and ClassDB.class_exists(&"ArmyIdleKernel"):
+				_native_transit_kernel = ClassDB.instantiate(&"ArmyIdleKernel")
+			if _native_transit_kernel != null and _native_transit_kernel.has_method("calculate_transit_slots"):
+				var packet: Dictionary = _native_transit_kernel.call("calculate_transit_slots", move_plan, terrain, profile, member_ids, current_cells)
+				if packet.has("slots"):
+					for field_name: String in packet["fields"]:
+						var value: Variant = packet["fields"][field_name]
+						if value is Dictionary and field_name != "member_transit_slots":
+							var original: Dictionary = move_plan.get(field_name)
+							original.clear()
+							original.merge(value)
+						elif field_name == "member_transit_slots" and value.is_empty():
+							move_plan.member_transit_slots.clear()
+						else:
+							move_plan.set(field_name, value)
+					for meta_name: String in packet["meta"]:
+						move_plan.set_meta(meta_name, packet["meta"][meta_name])
+					if move_plan.destination_plan != null:
+						for destination_field: String in packet["destination_fields"]:
+							move_plan.destination_plan.set(destination_field, packet["destination_fields"][destination_field])
+						for destination_meta: String in packet["destination_meta"]:
+							move_plan.destination_plan.set_meta(destination_meta, packet["destination_meta"][destination_meta])
+					native_transit_calls += 1
+					return packet["slots"]
+		native_transit_fallbacks += 1
+	return _calculate_transit_slots_gd(move_plan, terrain, profile, member_ids, current_cells)
+
+static func _calculate_transit_slots_gd(
+	move_plan: CombatMovePlan,
+	terrain: Object,
+	profile: Object,
+	member_ids: Array[int],
+	current_cells: Dictionary
+) -> Dictionary:
 	var result: Dictionary = {}
 	if move_plan == null or move_plan.macro_path.is_empty() or member_ids.is_empty():
 		return result
@@ -414,7 +491,7 @@ static func calculate_transit_slots(
 	var flow_mids: Array[int] = []
 	var other_mids: Array[int] = []
 	for mid in member_ids:
-		if move_plan.destination_plan == null or (move_plan.destination_plan.member_role_map.has(mid) and move_plan.destination_plan.is_platform_member(mid) and (not move_plan.destination_plan.admitted_platform_member_ids.has(mid) or move_plan.destination_plan.needs_transit_soft_target(mid, current_cells.get(mid, Vector2i(-1, -1))))):
+		if move_plan.destination_plan == null or move_plan.destination_plan.is_following_member(mid) or (move_plan.destination_plan.member_role_map.has(mid) and move_plan.destination_plan.is_platform_member(mid) and (not move_plan.destination_plan.admitted_platform_member_ids.has(mid) or move_plan.destination_plan.needs_transit_soft_target(mid, current_cells.get(mid, Vector2i(-1, -1))))):
 			flow_mids.append(mid)
 		else:
 			other_mids.append(mid)
@@ -478,11 +555,9 @@ static func calculate_transit_slots(
 	var tail_k: int = int(head_s)
 	var crossed_by_k := PackedInt32Array()
 	crossed_by_k.resize(path_size)
-	var exact_path_k: Dictionary = {}
+	var exact_path_k: Dictionary = _get_exact_path_indices(move_plan)
 	var physical_path_k: Dictionary = {}
 	var exact_on_path: Dictionary = {}
-	for k in range(path_size):
-		exact_path_k[move_plan.macro_path[k]] = k
 	for mid in sorted_mids:
 		var checkpoint_k: int = clampi(int(move_plan.member_checkpoint_path_k.get(mid, 0)), 0, path_size - 1)
 		if current_cells.has(mid):

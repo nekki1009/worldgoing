@@ -237,13 +237,19 @@ static func build(source: Variant) -> Dictionary:
 				centered_reason = "LIMB_OUTSIDE_HIPS"
 			else:
 				centered_span = maxf(centered_span, pixel_gain * (world_gain * root_gain * maxf(hip_radii[start], hip_radii[end]) + _norm(camera.global_basis.x) * float(limb[2])))
+	# The once-per-Source proof covers its baseline shield, including hidden/holstered copies.
+	var shield_id := str(source._baseline.get("parts", {}).get("shield", ""))
+	var shield_component: Dictionary = editor._component_definition(&"shield", StringName(shield_id))
+	var baseline_shields: Dictionary = {}
+	for shield_node: Node in editor._find_component_nodes(shield_component.get("prefixes", [])):
+		baseline_shields[shield_node.get_instance_id()] = true
 	var shield_vertices := 0
 	var faces := 0
 	var shields := 0
 	for node: Node in editor.model_root.find_children("*", "MeshInstance3D", true, false):
 		var name := str(node.name)
 		var face := name.begins_with("Face_Standard")
-		if not face and not name.begins_with("Shield_"):
+		if not face and (not name.begins_with("Shield_") or not baseline_shields.has(node.get_instance_id())):
 			continue
 		var part := node as MeshInstance3D
 		if not part.mesh is ArrayMesh or part.mesh.get_surface_count() == 0 or part.skin == null or part.get_blend_shape_count() != 0 or part.get_node_or_null(part.skeleton) != skeleton:
@@ -367,14 +373,14 @@ static func build(source: Variant) -> Dictionary:
 				centered_clips[clip] = {"center": center, "radius": rounded, "height": height,
 					"continuous_pixels": local_radius, "hips_residual": motion.residual, "hips_maximum": motion.maximum}
 	# All of these attack tracks already contributed to the CURVES envelope.
-	# This encloses body/all-shield only, never a weapon used for guard/parry
+	# This encloses body/baseline-shield only, never a weapon used for guard/parry
 	# or a custom aimed bone pose. The Army owner must reject possible IK.
 	return {"radius": radius, "clips": NONATTACK + NATIVE_ATTACKS, "reason": "NATIVE_CONTINUOUS_UNAIMED_BODY_SHIELD",
 		"continuous_pixels": continuous, "float_padding_pixels": 1.0, "world_coordinate_limit": 16384.0,
 		"centered_clips": centered_clips, "centered_reason": centered_reason, "centered_root_gain": root_gain,
 		"centered_root_tilt": root_tilt, "centered_span_pixels": centered_span, "centered_weight_deficit": weight_deficit,
 		"maximum_position_extrapolation_metres": maximum_position_extrapolation,
-		"position_keys": position_keys, "faces": faces, "shields": shields, "build_usec": Time.get_ticks_usec() - started}
+		"position_keys": position_keys, "faces": faces, "shields": shields, "shield_id": shield_id, "build_usec": Time.get_ticks_usec() - started}
 
 static func _hips_enclosure(animation: Animation, curve: Dictionary) -> Dictionary:
 	# Only a unique enabled, nonempty, already validated Hips position track

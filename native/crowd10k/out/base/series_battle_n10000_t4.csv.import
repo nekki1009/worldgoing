@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://6hes207dgymn"
+
+[deps]
+
+files=["res://native/crowd10k/out/base/series_battle_n10000_t4.t.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.alive.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.down.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.captive.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.fighting.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.engaging.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.routed.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.deaths.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.bled.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.kos.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.pairs.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.shots.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.rescues.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.captures.translation"]
+
+source_file="res://native/crowd10k/out/base/series_battle_n10000_t4.csv"
+dest_files=["res://native/crowd10k/out/base/series_battle_n10000_t4.t.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.step.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.alive.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.down.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.captive.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.fighting.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.engaging.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.routed.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.deaths.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.bled.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.kos.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.pairs.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.shots.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.rescues.translation", "res://native/crowd10k/out/base/series_battle_n10000_t4.captures.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

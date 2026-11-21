@@ -9,6 +9,7 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	_projection_guard_check()
 	var appearance := HumanCharacter3DEditor.default_appearance()
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 581, {"size": Vector2i(32, 32)})
 	Env.initialize(data, "equipment-dye-test")
@@ -89,3 +90,83 @@ func _run() -> void:
 	harness.free()
 	print("EQUIPMENT DYE CONTRACT PASS: five slots, isolated instances, defaults, strict invalid input, stale atomic refusal, original identity, transfer/loot/save/load, nationality authority, explicit presets, reset")
 	quit()
+
+# Same-call projection guard boundaries; the original dye contract above remains intact.
+class ProjectionMutation:
+	extends RefCounted
+	var original: Dictionary
+	var dye := false
+	var calls := 0
+	func _to_string() -> String:
+		calls += 1
+		if dye:
+			original.equipment_dyes = {"helmet": "invalidf"}
+			return "invalidf"
+		original.parts.helmet = "not_a_catalog_asset"
+		return "not_a_catalog_asset"
+
+func _projection_fixture() -> Dictionary:
+	var data := TerrainData.new()
+	var original := HumanCharacter3DEditor.default_appearance()
+	var helmet: String = original.parts.helmet
+	for slot: String in Runtime.EQUIPMENT_SLOTS: original.parts[slot] = "none"
+	original.parts.helmet = helmet
+	var holder := Runtime.new_item_state("person:1")
+	holder.item_ids.append("1")
+	holder.equipped["helmet"] = "1"
+	assert(Runtime._item_holder_shape(holder))
+	data.site = {"item_records": {"1": {"definition": "helmet", "holder": holder.holder}},
+		"item_definitions": {"helmet": {"slot": "helmet", "asset": helmet, "tint": [1.0, 1.0, 1.0, 1.0]}}}
+	return {"data": data, "holder": holder, "original": original}
+
+func _projection_guard_check() -> void:
+	# A callback cannot change the catalogs that validated the saved fields.
+	assert(HumanCharacter3DEditor.PART_SLOTS.is_read_only() and HumanCharacter3DEditor.HAIR_OPTIONS.is_read_only() and Dye.SLOTS.is_read_only())
+	for slot: Dictionary in HumanCharacter3DEditor.PART_SLOTS:
+		assert(slot.is_read_only() and slot.options.is_read_only())
+		for option: Dictionary in slot.options: assert(option.is_read_only())
+	for options: Array in HumanCharacter3DEditor.HAIR_OPTIONS:
+		assert(options.is_read_only())
+		for option: Dictionary in options: assert(option.is_read_only())
+	var typed := _projection_fixture()
+	var parts: Dictionary[String, String] = {}
+	parts.assign(typed.original.parts)
+	var dyes: Dictionary[String, String] = {"helmet": "123456ff"}
+	typed.original.parts = parts
+	typed.original.equipment_dyes = dyes
+	typed.original.body = 0.0
+	typed.data.site.item_records["1"].dye_color = "123456ff"
+	parts.make_read_only()
+	dyes.make_read_only()
+	typed.original.make_read_only()
+	var before := var_to_bytes([typed.original, typed.holder, typed.data.site])
+	var projected := Runtime.equipment_appearance(typed.data, typed.holder, typed.original)
+	assert(projected == typed.original and HumanCharacter3DEditor.valid_appearance(projected))
+	projected.parts.helmet = "none"
+	projected.equipment_dyes.helmet = "ff0000ff"
+	assert(before == var_to_bytes([typed.original, typed.holder, typed.data.site]))
+	var named := _projection_fixture()
+	var named_parts: Dictionary[StringName, StringName] = {}
+	for key: String in named.original.parts: named_parts[StringName(key)] = StringName(named.original.parts[key])
+	named.original.parts = named_parts
+	named.original.equipment_dyes = {}
+	named.original.equipment_dyes.make_read_only()
+	named_parts.make_read_only()
+	projected = Runtime.equipment_appearance(named.data, named.holder, named.original)
+	assert(not projected.is_empty() and HumanCharacter3DEditor.valid_appearance(projected) and projected.parts.helmet == named_parts.helmet and not projected.has("equipment_dyes"))
+	var extra := _projection_fixture()
+	var unread := ProjectionMutation.new()
+	extra.original.extra = {"object": unread, "aliases": [unread]}
+	projected = Runtime.equipment_appearance(extra.data, extra.holder, extra.original)
+	assert(not projected.is_empty() and unread.calls == 0 and is_same(projected.extra.object, unread))
+	for mutate_dye: bool in [false, true]:
+		var fixture := _projection_fixture()
+		var mutation := ProjectionMutation.new()
+		mutation.original = fixture.original
+		mutation.dye = mutate_dye
+		if mutate_dye: fixture.data.site.item_records["1"].dye_color = mutation
+		else: fixture.data.site.item_definitions.helmet.asset = mutation
+		assert(Runtime.equipment_appearance(fixture.data, fixture.holder, fixture.original).is_empty())
+		assert(mutation.calls == 1)
+		assert(fixture.original.equipment_dyes.helmet == "invalidf" if mutate_dye else fixture.original.parts.helmet == "not_a_catalog_asset")
+	print("EQUIPMENT PROJECTION GUARD PASS: immutable catalogs, typed/readonly fields, StringName, float body, empty dyes, clone isolation and callback mutation")

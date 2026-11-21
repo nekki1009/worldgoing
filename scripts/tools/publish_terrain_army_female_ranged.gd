@@ -69,6 +69,11 @@ func _check(weapon: String, directory: String, dye_path: String) -> Dictionary:
 	assert(dye.schema_version == 1 and dye.slots == Atlas.DyeAtlas.Dye.SLOTS and dye.complete and dye.frame_count == 632 and dye.appearance == plan.appearance)
 	assert(dye.source_fingerprints == Atlas.DyeAtlas.fingerprints() and dye.source_manifest == path and dye.source_manifest_md5 == FileAccess.get_md5(path))
 	assert(dye.mask_md5 == FileAccess.get_md5(dye.mask_path))
+	_check_pixels(manifest, dye)
+	return {"manifest": manifest, "dye": dye}
+
+func _check_pixels(manifest: Dictionary, dye: Dictionary) -> void:
+	# Shared unchanged lossless/mask preflight for narrow provenance revalidation.
 	var page: Dictionary = manifest.pages[0]
 	var png := Image.load_from_file(page.path)
 	var texture := ResourceLoader.load(page.resource_path, "Texture2D", ResourceLoader.CACHE_MODE_IGNORE) as Texture2D
@@ -86,7 +91,6 @@ func _check(weapon: String, directory: String, dye_path: String) -> Dictionary:
 		assert(mask_bytes[index] <= 5)
 		if mask_bytes[index] > 0: occupied += 1
 	assert(occupied > 0 and dye.width == page.width and dye.height == page.height)
-	return {"manifest": manifest, "dye": dye}
 
 func _write(path: String, value: Dictionary) -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)

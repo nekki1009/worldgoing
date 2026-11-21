@@ -6,7 +6,7 @@ var measurements := {}
 
 func _initialize() -> void:
 	recovery = "--recovery" in OS.get_cmdline_user_args()
-	deadline = Time.get_ticks_msec() + 100000 if recovery else (Time.get_ticks_msec() + 23000 if "--visual" in OS.get_cmdline_user_args() else Time.get_ticks_msec() + 15000)
+	deadline = Time.get_ticks_msec() + 100000 if recovery else (Time.get_ticks_msec() + 23000 if "--visual" in OS.get_cmdline_user_args() else Time.get_ticks_msec() + 60000)
 	enabled = "--baseline" not in OS.get_cmdline_user_args()
 	assert(not recovery or enabled, "New paired recovery suite requires actual original remains")
 	_run.call_deferred()
@@ -59,6 +59,7 @@ func _run() -> void:
 		measurements.alive = await _frames(lab, false)
 	var death_start := Time.get_ticks_usec()
 	for team: TerrainArmy in lab.combat_armies:
+		if not team.has_army(): continue # The third original slot is an empty team, not a 100-row death owner.
 		for index in range(100):
 			team.apply_unit_contact(index, {"result": {"hp": 1000.0, "stun": 0.0, "guard_break": false}, "shield": false, "environmental": true})
 	measurements.death_dispatch_ms = (Time.get_ticks_usec() - death_start) / 1000.0

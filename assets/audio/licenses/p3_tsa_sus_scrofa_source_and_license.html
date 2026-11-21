@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Tierstimmenarchiv</title>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta http-equiv="cache-control" content="no-cache" />
+    <meta name="referrer" content="no-referrer-when-downgrade">
+
+    
+
+    <!-- Stuff required by all pages -->
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/css/tsa.css">
+    <link rel="stylesheet" href="/static/css/responsive.css">
+    <script src="/static/jquery-3.6.1.min.js"></script>
+    <script src="/static/fontawesome.js"></script>
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/i18n.json"></script>
+    <script src="/static/js/tsa.js"></script>
+
+    <!-- Stuff required for search pages -->
+    <link rel="stylesheet" href="/static/css/range.css">
+    <script src="/static/bootstrap-autocomplete.min.js"></script>
+    <script src="/static/js/results_table.js"></script>
+    <script src="/static/js/settings.js"></script>
+
+    <!-- search.js must come after results_*.js (event listeners order)-->
+    <script src="/static/js/search.js"></script>
+
+    <script src="/static/js/autocomplete.js"></script>
+    <script src="/static/js/date.js"></script>
+    <script src="/static/js/taxa.js"></script>
+    <script src="/static/js/audio.js"></script>
+    <script src="/static/js/map.js"></script>
+    <script src="/static/js/details.js"></script>
+    <script src="/static/js/basket.js"></script>
+    <script src="/static/js/download.js"></script>
+    <script type= "text/javascript" src= "/static/bootstrap-datepicker.min.js"></script>
+    <link rel= "stylesheet" href= "/static/bootstrap-datepicker3.css"/>
+    <script src="https://cdn.usefathom.com/script.js" data-site="GBFVUZWL" defer></script>
+  </head>
+  <body>
+    <!-- HEADER -->
+
+<script>
+    // instantiate a Basket object
+    let basket = null;
+    if ('' && ''.toUpperCase() != 'GUEST') {
+        // logged-in user, basket is saved in DB
+        basket = new DBBasket('', 'Jprep6pWMpFhx3i3OYaPXoLBNU9BwfBKATf6mJPnTcHgyYfd8v20FtoEzna1qbP6');
+    } else {
+        // anonymous or guest user, basket is saved in local storage (browser)
+        basket = new LocalBasket();
+    }
+    // set max downloads
+    max_downloads = 10;
+
+    // instantiate a Settings object
+    let settings = null;
+    if ('' && ''.toUpperCase() != 'GUEST') {
+        // logged-in user, settings saved in DB
+        settings = new DBSettings('', 'Jprep6pWMpFhx3i3OYaPXoLBNU9BwfBKATf6mJPnTcHgyYfd8v20FtoEzna1qbP6');
+    } else {
+        // anonymous or guest user, settings saved in local storage (browser)
+        settings = new LocalSettings();
+    }
+</script>
+
+<div class="container-fluid mfn-page__header">
+    <div class="container">
+        <div class="mfn-header__container">
+            <div class="container-fluid" id="header_container">
+                <!-- LOGOS -->
+                <a href="https://www.museumfuernaturkunde.berlin/">
+                    <img src="/static/img/mfn_logo.svg" width="100" alt="Startseite">
+                </a>
+                <a href="https://www.museumfuernaturkunde.berlin/de/wissenschaft/tierstimmenarchiv">
+                    <img src="/static/img/tierstimmenarchiv-logo.jpg" alt="Startseite"  width="100">
+                </a>
+                <h1 i18n-key="tsa" style="display: inline">Tierstimmenarchiv</h1>
+            </div>
+
+            <div class="container-fluid menu_row">
+
+                <!-- SEARCH BUTTON -->
+                <div class="dropdown search_main_menu">
+                    <button class="btn btn-link dropdown-toggle"
+                        type="button" id="searchMenuButton"
+                        data-toggle="dropdown"
+                        aria-haspopup="true" aria-expanded="false">
+                        <i class="fas fa-search"></i>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-right"
+                        aria-labelledby="dropdownSearchButton">
+                        <a class="dropdown-item" onclick="new_search()">
+                            <span i18n-key="new_search">New search</span>
+                        </a>
+                        <a class="dropdown-item disabled" id="edit_last_search" onclick="edit_search()">
+                            <span i18n-key="edit_last_search">Edit last search</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- BASKET -->
+                <div class="btn btn-link disabled" id="basket" onclick="open_basket()">
+                    <i class="fa fa-shopping-basket"></i>
+                </div>
+
+                <!-- LANGUAGE -->
+                <div class="language-switcher">
+                    <a id="language_deutsch" class="active" href="#" onclick="setLanguage('deutsch');">de</a>
+                    <a id="language_english" href="#" onclick="setLanguage('english');">en</a>
+                </div>
+
+                <!--USER-->
+                <div class="dropdown user_main_menu">
+                    <button class="btn btn-link dropdown-toggle"
+                        type="button" id="dropdownUserButton"
+                        data-toggle="dropdown"
+                        aria-haspopup="true" aria-expanded="false">
+                        <i class="fas fa-user"></i>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-right"
+                        aria-labelledby="dropdownUserButton">
+                    
+                        <!-- login -->
+                        <a class="dropdown-item" href="/login"><span i18n-key="login">Log in</span></a>
+                    
+                    </div>
+                </div>
+
+                <!--MENU-->
+                
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+    <div class="page">
+    
+
+
+
+
+
+
+    
+<div class="container details-wrapper" id="details">
+    <!-- PLAYER -->
+    
+        
+
+<div class="audio-wrapper">
+<div class="row align-items-end">
+    <div class="container-fluid">
+
+        <!-- PLAYER -->
+        <div class="audio-player">
+            <audio
+                id="audioplayer"
+                src="/download.mp3?unique_identifier=TSA:Sus_scrofa_V_2124_17_2"
+                controls preload="metadata"></audio>
+        </div>
+        <div id="throbber">
+            <img src="/static/img/throbber.gif" title="loading...">
+        </div>
+        <!-- LICENSE -->
+        <div class="license-wrapper">
+            <span class="details_header" i18n-key="license">Terms of use</span>
+            
+                
+                    <a target="_blank" href="https://creativecommons.org/licenses/by-sa/3.0/de/legalcode">CC BY-SA</a>
+                
+            
+        </div>
+    </div>
+</div>
+<!-- Download format collapsible -->
+<form id="download_form" class="details_page_download_form" action="/search/basket.html">
+    <div class="row basket_sub">
+        <div class="col-12">
+            <div>
+                <button class="btn btn-collapse" data-toggle="collapse"
+                    data-target="#collapseBasketFormat" aria-expanded="true"
+                    aria-controls="collapseBasketFormat"
+                    onClick="return(false)">
+                  <i class="fa fa-cloud-download"></i>&nbsp;
+                  <span i18n-key="download_audio">Download audio file</span>
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="collapse" id="collapseBasketFormat">
+        <!-- Download format options -->
+        <div class="row" id="basket_formats">
+            <!-- METADATA FORMATS -->
+            <div class="col-6">
+                <div class="basket_header" i18n-key="metadata_format">Metadata format</div>
+                <ul>
+                    <li>
+                        <input type="radio" id="download_csv" name="metadata_format" value="csv"/>
+                        <label for="download_csv" i18n-key="download_csv">CSV (all columns)</label>
+                    </li>
+                    
+                    
+                    <li>
+                        <input type="radio" id="download_json" name="metadata_format" value="json"/>
+                        <label for="download_json" i18n-key="download_json">JSON</label>
+                    </li>
+                </ul>
+            </div>
+            <div class="col-6">
+                <div class="basket_header" i18n-key="audio_format">Audio format</div>
+                <ul>
+                    <li>
+                        <input type="radio" id="download_flac" name="audio_format" value="flac"/>
+                        <label for="download_flac" i18n-key="download_flac">FLAC</label>
+                    </li>
+                    <li>
+                        <input type="radio" id="download_mp3" name="audio_format" value="mp3"/>
+                        <label for="download_mp3" i18n-key="download_mp3">MP3</label>
+                    </li>
+                    <li>
+                        <input type="radio" id="download_wav" name="audio_format" value="wav_high"/>
+                        <label for="download_wav" i18n-key="wav_high">WAV high</label>
+                    </li>
+                    <li>
+                        <input type="radio" id="download_wav_low" name="audio_format" value="wav_low"/>
+                        <label for="download_wav_low" i18n-key="wav_low">WAV low</label>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <!-- DOWNLOAD BUTTONS -->
+        <div class="row" id="basket_buttons_row">
+            <div class="col-4">
+                
+            </div>
+            <div class="col-8 search_buttons">
+                <!-- download button -->
+                <button type="submit" class="btn btn-primary disabled" id="download_button" disabled>
+                    <i class="fas fa-download"></i>
+                    <span i18n-key="download">Download</span>
+                </button>
+            </div>
+        </div>
+
+    </div>
+    <!-- Required for CSRF protection -->
+    <input type="hidden" name="csrfmiddlewaretoken" value="Jprep6pWMpFhx3i3OYaPXoLBNU9BwfBKATf6mJPnTcHgyYfd8v20FtoEzna1qbP6">
+    <!-- HIDDEN FIELD, holds all the recording UIDs, set in basket.js / submit_basket() -->
+    <input type="hidden" name="basket" id="hidden_basket" value="TSA:Sus_scrofa_V_2124_17_2"/>
+</form>
+</div>
+
+
+    
+
+    <!-- DETAILS page container -->
+    <div class="container">
+
+        <!-- unique id -->
+        <div class="row">
+            <div class="col-6" id="unique_identifier">
+                <b>TSA:Sus_scrofa_V_2124_17_2</b>
+            </div>
+            <div class="col-6 text-right">
+                <span i18n-key="add_to_basket"></span>
+                <input type="checkbox" value="TSA:Sus_scrofa_V_2124_17_2" name="basket_check"></input>
+            </div>
+        </div>
+
+        <!-- title (species) -->
+        <div class="row">
+            <div class="col">
+                <h1 id="species_full">
+                
+                <!-- Common name and latin name -->
+                    Wildschwein
+                    <span class="species">(
+                    
+                        Sus scrofa
+                    
+                    )</span>
+                
+                
+                </h1>
+            </div>
+        </div>
+
+        <!-- DETAILS -->
+        <div class="row">
+
+            <!-- 1st column details-->
+            <div class="col-sm">
+                <p>
+                    <!-- RECORDIST -->
+                    <span class="details_header" i18n-key="author">Author</span>
+                    Tembrock, Günter
+                </p><p>
+                <!-- COLLECTION -->
+                    <span class="details_header" i18n-key="collection">Collection</span>
+                    
+                        TSA
+                    
+                </p><p>
+                    <!-- DATE -->
+                    <span class="details_header" i18n-key="date">Date</span>
+                    
+                        31
+                        <span i18n-key="august">August</span>
+                        2005
+                    
+                </p><p>
+                    <!-- TIME -->
+                    <span class="details_header" i18n-key="time">Time</span>
+                    
+                        13:36
+                    
+                </p><p>
+                    <!-- WEATHER -->
+                    <span class="details_header" i18n-key="weather">Weather</span>
+                    
+                        cloudy, 22°C
+                    
+                </p><p>
+                    <!-- Habitat -->
+                    <span class="details_header" i18n-key="habitat">Habitat</span>
+                     <span i18n-key="not_specified"  class="details_warning"/></span>
+                    
+                </p>
+                </p><p>
+                    <!-- Altitude -->
+                    <span class="details_header" i18n-key="altitude">Altitude</span>
+                     <span i18n-key="not_specified"  class="details_warning"/></span>
+                    
+                </p>
+            </div>
+
+            <!-- 2nd column details-->
+            <div class="col-sm">
+                <p>
+                    <!-- Age -->
+                    <span class="details_header" i18n-key="age">Age</span>
+                    
+                        <span i18n-key="age_diverse"/>
+                    
+                </p><p>
+                    <!-- Sex -->
+                    <span class="details_header" i18n-key="sex">Sex</span>
+                    
+                        <span i18n-key="sex_group"/>
+                    
+               </p><p>
+                   <!-- SOUND TYPE -->
+                    <span class="details_header" i18n-key="sound_type">Sound</span>
+                    
+                        call
+                    
+                </p><p>
+                    <!-- BACKGROUND -->
+                    <span class="details_header" i18n-key="background_species">Background species</span>
+                     <span i18n-key="not_specified"  class="details_warning"/></span>
+                    
+                </p><p>
+                    <!-- Visual ID -->
+                    <span class="details_header" i18n-key="visual_identification">Visual identification</span>
+                    
+                        <i class="fa fa-check"></i>
+                    
+                </p><p>
+                    <!-- SPECIMEN -->
+                    <span class="details_header" i18n-key="specimen">Specimen</span>
+                     <span i18n-key="not_specified"  class="details_warning"/></span>
+                    
+                </p>
+            </div>
+
+            <!-- 3rd column details-->
+            <div class="col-sm">
+                <p>
+                <!-- TYPE -->
+                    <span class="details_header" i18n-key="recording_type">Recording type</span>
+                    
+                        <span i18n-key="search_recording_type_z"/>
+                    
+                </p><p>
+                <!-- EQUIPMENT -->
+                    <span class="details_header" i18n-key="recording_equipment">Equipment</span>
+                    
+                        Panasonic RQ-2102, Sennheiser ME 80, Kopie Uher 4000 Report Monitor
+                    
+                </p><p>
+                <!-- QUALITY -->
+                    <div class="property">
+                        <span class="details_subheader" i18n-key="sound_quality">Sound quality</span>
+                    </div>
+                    <div class="value">
+                        
+                            B
+                        
+                    </div>
+                </p><p>
+                    <div class="property">
+                        <span class="details_subheader" i18n-key="recording_number">Recording number</span>
+                    </div>
+                    <div class="value">
+                        
+                            17
+                        
+                    </div>
+                    <div class="property">
+                        
+                        <span class="details_subheader" i18n-key="duration">Duration</span>
+                    </div>
+                    <div class="value">
+                        
+                        
+                            00:03:51
+                        
+                    </div>
+                </p><p>
+                    <div class="property">
+                        <span class="details_subheader" i18n-key="sample_rate">Sample rate</span>
+                        <br/>
+                        <span class="details_subheader" i18n-key="bit_depth">Bit depth</span>
+                    </div>
+                    <div class="value">
+                        
+                            <span i18n-key="not_specified"  class="details_warning"/></span>
+                        
+                        <br/>
+                        
+                            <span i18n-key="not_specified"  class="details_warning"/></span>
+                        
+                    </div>
+                </p><p>
+                <!-- TAPE -->
+                    <div class="property">
+                        <span class="details_subheader" i18n-key="tape_identifier">Identifier</span>
+                        <br/>
+                        <span class="details_subheader" i18n-key="tape_number">Number</span>
+                        <br/>
+                        <span class="details_subheader" i18n-key="tape_speed">Speed</span>
+                        
+                    </div>
+                    <div class="value">
+                        
+                            V
+                        
+                        <br/>
+                        
+                            2124
+                        
+                        <br/>
+                        
+                            19
+                        
+                        
+                    </div>
+
+                </p>
+            </div>
+
+            <!-- map column -->
+            <div class="col-md">
+                <p>
+                    <!-- PLACE -->
+                    <span class="details_header" i18n-key="place">Place</span>
+                    <script>
+                        var place = [];
+                        <!-- output locality or administrative area (not both)-->
+                        
+                            place.push('<a href="/search/query.html?locality=Hermsdorf, Wildgehege&requested=">Hermsdorf, Wildgehege</a>');
+                        
+                        <!-- STATE -->
+                        
+                            place.push('<a href="/search/query.html?state=Berlin&requested=">Berlin</a>');
+                        
+                        <!-- COUNTRY -->
+                        
+                            if ('Deutschland'.trim() != '')
+                                place.push('<a href="/search/query.html?country=Deutschland&requested=">Deutschland</a>');
+                        
+
+                        document.write(place.join(', '));
+                    </script>
+                </p><p>
+                    <!-- MAP -->
+                    
+                </p><p>
+                    <!-- COORDINATES -->
+                    <span class="details_header" i18n-key="details_coords">Coordinates</span>
+                    <span class="details_subheader" i18n-key="longitude">Longitude</span>
+                     -
+                    
+                    &nbsp;
+                    <span class="details_subheader" i18n-key="latitude">Latitude</span>
+                     -
+                    
+                </p>
+            </div>
+        </div>
+        <!-- end details row -->
+
+        <!-- bottom row description and notes -->
+        <div class="row-12">
+            <div class="col-12">
+                <p>
+                    <!-- DESCRIPTION -->
+                    <span class="details_header" i18n-key="description">Description</span>
+                    
+                        Mehrere Tiere: Laute vor Fütterung.
+                    
+                </p><p>
+                    <!-- NOTES -->
+                    <span class="details_header" i18n-key="notes">Notes</span>
+                    
+                        sv
+                    
+                </p>
+            </div>
+        </div>
+    </div>
+    <p>&nbsp;</p>
+    <!-- prev/back/next buttons (see details.js)-->
+    <div class="row">
+        <div class="col-2 text-right" id="prev">
+        </div>
+        <div class="col-8 text-center" id="back_to_search">
+        </div>
+        <div class="col-2 text-left" id="next">
+        </div>
+    </div>
+
+</div>
+
+    </div>
+    <!-- FOOTER -->
+<footer class="page-footer">
+    <div class="row mfn-footer__container">
+        <div class="col-12 d-flex justify-content-center">
+            <ul class="list-inline">
+                
+                    <li><a href="https://www.museumfuernaturkunde.berlin/de/datenschutzerklaerung" data-drupal-link-system-path="node/322"><span i18n-key="privacy">General Privacy Notice</span></a></li>
+                    <li><a href="https://www.museumfuernaturkunde.berlin/de/impressum" data-drupal-link-system-path="node/82"><span i18n-key="imprint">Imprint</span></a></li>
+                
+            </ul>
+        </div>
+    </div>
+</footer>
+
+  </body>
+</html>

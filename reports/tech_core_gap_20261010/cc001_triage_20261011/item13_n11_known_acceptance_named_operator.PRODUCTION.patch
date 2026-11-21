@@ -1,0 +1,34 @@
+--- a/scripts/terrain_lab/site_person_actions.gd
++++ b/scripts/terrain_lab/site_person_actions.gd
+@@ -4140,6 +4140,9 @@
+ 	if not selection.ok: return selection
+ 	var token: Dictionary = selection.token
+ 	var identity := requester_id if token.is_empty() else int(token.person.person_id)
++	# A known N11 has no research token: its acceptance worker is the order's named
++	# operator, as in the research case. Requester authority was checked above.
++	if token.is_empty() and checked.order.tech_id == "N11": identity = int(checked.order.payload.operator_id)
+ 	if checked.order.tech_id == "N11" and identity != int(checked.order.payload.operator_id): return Runtime.fail("NO_WORKER")
+ 	var ready := _technology_scope_person("nation", checked.nation, identity)
+ 	if not ready.ok: return ready
+--- a/scripts/tests/site_technology_armor_recipes_test.gd
++++ b/scripts/tests/site_technology_armor_recipes_test.gd
+@@ -197,8 +197,19 @@
+ 	_check(int(data.site.next_item) == next_item + 1 and data.site.item_records[str(next_item)].definition == "armor:armor_iron_01" and order.receipts.size() == 1, "Actual original N11 output emits exactly one iron armor and its first order receipt")
+ 	# N11 completes on its second receipt: the original public acceptance job
+ 	# (administration, the "arsenal" binding) by the same operator on that item.
++	var admin_actions: SitePersonActions = lab.site_controller.person_actions
++	var admin_before := var_to_bytes([data.site, admin_actions._jobs.keys()])
++	# Command authority is unchanged: a requester other than the controlled head is refused.
++	_check(not admin_actions.begin_nation_administration(int(fixture.executor), "n1", str(issued.order_id), "arsenal").ok and var_to_bytes([data.site, admin_actions._jobs.keys()]) == admin_before, "A requester without command authority cannot start the arsenal acceptance")
++	# The worker is the named operator: if he cannot work, no other person is substituted.
++	var operator_index: int = fixture.team.index_for_identity(int(fixture.executor))
++	var operator_hp: float = float(fixture.team.combat_hot_get(operator_index, &"hp"))
++	fixture.team.combat_hot_set(operator_index, &"hp", 0.0)
++	_check(not lab.site_controller._nation_ui_command("n1", "administration", {"order": str(issued.order_id)}).ok and var_to_bytes([data.site, admin_actions._jobs.keys()]) == admin_before, "With its named operator unable to work, acceptance is refused rather than run by another person")
++	fixture.team.combat_hot_set(operator_index, &"hp", operator_hp)
+ 	var accepted: Dictionary = lab.site_controller._nation_ui_command("n1", "administration", {"order": str(issued.order_id)})
+ 	_check(accepted.ok, "Actual public acceptance form begins the original arsenal job: " + str(accepted))
++	_check(admin_actions._jobs.has(str(int(fixture.executor))) and not admin_actions._jobs.has(str(int(lab.controlled_person_id()))), "The arsenal acceptance job runs on the named operator, not on the requester")
+ 	var acceptance_steps := 0
+ 	while lab.site_controller.person_actions.is_busy(int(fixture.executor)) and acceptance_steps < 2000:
+ 		var point: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP)

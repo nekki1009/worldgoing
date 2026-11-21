@@ -56,6 +56,10 @@ func run() -> void:
 	assert(loaded.ok)
 	assert(loaded.data.site.next_person_id is int and loaded.data.site.next_person_id == 23)
 	assert(JSON.stringify(loaded.data.site.ground_loot, "", true) == JSON.stringify(data.site.ground_loot, "", true))
+	if not loaded.data.ground_loot_at.has(data.index(cell)) or loaded.data.ground_loot_at[data.index(cell)].size() != 2:
+		printerr("LOOT_STORAGE_INDEX_FAILURE cell=", data.index(cell), " index=", loaded.data.ground_loot_at, " containers=", loaded.data.site.ground_loot.size())
+		quit(1)
+		return
 	assert(loaded.data.ground_loot_at[data.index(cell)].size() == 2)
 	assert(loaded.data.site.item_records[sword.item_id].original_owner == 21)
 	var loaded_first: Dictionary = loaded.data.site.ground_loot[first_drop.container_id]

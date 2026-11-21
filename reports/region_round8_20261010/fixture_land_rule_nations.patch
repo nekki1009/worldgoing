@@ -1,0 +1,121 @@
+--- a/scripts/tests/region_controlled_death_restriction_test.gd
++++ b/scripts/tests/region_controlled_death_restriction_test.gd
+@@ -14,6 +14,9 @@
+ 
+ var out := ""
+ var manifest_path := ""
++## Fixtures that found settlements declare the fixed land rule so their
++## synthetic geography carries mapped foundation/fertility.
++var fixture_land_condition_rule := ""
+ var world_id := ""
+ var lab: TerrainLab
+ var controller: SiteController
+@@ -110,6 +113,7 @@
+ 		"base_revision": "region-travel-r1-fixture-v1", "crs": "EPSG:3826",
+ 		"grid": {"origin": [0, 0], "cell_m": 2, "site_cells": 100, "region_sites": 100},
+ 		"summary": summary_record, "elevation_tiles": [height_record], "sources": [{"title": "Synthetic Region travel fixture only"}]}
++	if not fixture_land_condition_rule.is_empty(): manifest["land_condition_rule"] = fixture_land_condition_rule
+ 	manifest_path = out.path_join("manifest.json")
+ 	var file := FileAccess.open(manifest_path, FileAccess.WRITE)
+ 	file.store_string(JSON.stringify(manifest, "", true, true))
+--- a/scripts/tests/region_remote_nation_original_test.gd
++++ b/scripts/tests/region_remote_nation_original_test.gd
+@@ -22,6 +22,7 @@
+ func _initialize() -> void:
+ 	deadline = Time.get_ticks_msec() + 480000
+ 	out = "res://.godot-temp/region_remote_nation_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
++	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Founding needs mapped land.
+ 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
+ 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
+ 	action_kind = "ballista"
+@@ -117,6 +118,7 @@
+ 	nation_guard = headquarters.combat_identity(1)
+ 	nation_courier_team = lab.combat_armies[2].team_id
+ 	nation_id = "source_nation_%d" % OS.get_process_id()
++	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
+ 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", nation_head, true)}
+ 	var offices: Dictionary = lab.terrain.site.equipment_nations[nation_id].offices
+ 	var explicit_head: Dictionary = lab.site_controller.equipment_orders.apply_nation_office_plan(nation_head, nation_id, int(offices.revision),
+@@ -142,6 +144,13 @@
+ 		nation_goal.site_controller.initialize_team_items(enemy)
+ 	nation_goal.terrain.site.army_next_team = nation_goal._next_army_identity()
+ 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "initial Source, receiver and strategic target whole graphs publish together"): return false
++	# Stable nation/team refs come from the original travel identity allocator,
++	# which a departure would run; nothing has travelled yet in this fixture. It
++	# indexes the captured armies, so it follows the whole-graph checkpoint.
++	var identified := RegionTravel.prepare_identity(lab.terrain.site)
++	if not _check(identified.ok, "original identity allocator indexes the source nation and teams", identified): return false
++	lab.terrain.site.travel_identity = identified.state.travel_identity
++	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "the indexed source identity publishes with the same whole graphs"): return false
+ 	nation_source_head_ref = DeliveryAI.person_ref(lab.terrain.site, nation_head)
+ 	nation_source_nation_ref = lab.terrain.site.travel_identity.refs.nation[nation_id].duplicate(true)
+ 	nation_remote_team_ref = lab.terrain.site.travel_identity.refs.team[str(remote.team_id)].duplicate(true)
+--- a/scripts/tests/region_n08_civil_original_ui_test.gd
++++ b/scripts/tests/region_n08_civil_original_ui_test.gd
+@@ -20,6 +20,7 @@
+ func _initialize() -> void:
+ 	deadline = Time.get_ticks_msec() + 180000
+ 	out = "res://.godot-temp/region_n08_civil_original_ui/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
++	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Founding needs mapped land.
+ 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
+ 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
+ 	_run.call_deferred()
+@@ -66,7 +67,9 @@
+ ## constructors, before the first N08 command. These are not delivery receipts.
+ func _n08_birth_warehouse(original: TerrainLab, anchor: Vector2i) -> String:
+ 	var data := original.terrain
+-	data.site.inventory.wood = 64; data.site.inventory.stone = 64
++	data.site.inventory.wood = 64; data.site.inventory.stone = 64; data.site.inventory.rope = 64 # Original warehouse cost: wood, stone and rope.
++	# Construction keeps (does not consume) one tool; a fixed-geography Site starts with none.
++	if int(data.site.inventory.get("tools", 0)) < 1: data.site.inventory["tools"] = 1
+ 	var faction := int(original.character.faction_id)
+ 	var settings := {"layout_version": 1, "quarter": 0, "owner_faction": faction}
+ 	var placement: Dictionary = N08Runtime.building_cells(data, "warehouse", anchor, Vector2i.ONE, settings)
+@@ -110,6 +113,7 @@
+ 	supply.inventory.grain = 2
+ 	var technology: Dictionary = N08Technology.empty_scope_record(owner_id)
+ 	technology.known = ["N06"] # Named prerequisite antecedent only; N08 stays unknown.
++	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
+ 	lab.terrain.site.equipment_nations[n08_nation] = {"offices": SiteOffices.default_offices("nation", lab.controlled_person_id()),
+ 		"members": [lab.controlled_person_id(), n08_driver], "standards": {}, "technology": technology}
+ 	var funding_person: Dictionary = controller.person_actions._person(lab.controlled_person_id())
+--- a/scripts/tests/region_two_npc_sea_public_contact_physical_test.gd
++++ b/scripts/tests/region_two_npc_sea_public_contact_physical_test.gd
+@@ -85,7 +85,10 @@
+ 		original.character.faction_id = faction
+ 		if not _check(original.character.place(Vector2i(x, 21), true), "original founder begins on dry shore before intervals", index): return false
+ 		var actor: TerrainTestCharacter = original.controlled_target().owner
+-		if not _check(actor == original.character and not original.terrain.site.has("controlled_person_id"), "local existing Actor fallback is not a controlled NPC or a new control field", index): return false
++		# Opening rule: the new World's main Site controls its own founder as person 1
++		# (INVALID_INITIAL_POPULATION); the other cold Site's founder has no control field.
++		var control_ok: bool = int(original.terrain.site.get("controlled_person_id", -1)) == 1 and actor.person_id == 1 if index == 0 else not original.terrain.site.has("controlled_person_id")
++		if not _check(actor == original.character and control_ok, "local existing Actor is the original founder under the opening control rule", index): return false
+ 		if not _check(FleetGarrison.set_military_role(original, actor.person_id, "officer").ok, "original Garrison qualifies the original local Actor", index): return false
+ 		var side := {"prefix": "friendly", "count": 3, "slot_count": 3, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
+ 		var other: Dictionary = side.duplicate(true)
+@@ -120,6 +123,7 @@
+ 			for row: int in team.combat_units.size(): members.append(team.combat_identity(row))
+ 		var head := headquarters.combat_identity(headquarters.current_commander)
+ 		var nation := "c06_sea_nation_%d_%d" % [OS.get_process_id(), index]
++		if not original.terrain.site.has("equipment_nations"): original.terrain.site.equipment_nations = {}
+ 		original.terrain.site.equipment_nations[nation] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", head, true)}
+ 		var nation_offices: Dictionary = original.terrain.site.equipment_nations[nation].offices
+ 		var authorized: Dictionary = original.site_controller.equipment_orders.apply_nation_office_plan(head, nation, int(nation_offices.revision), [{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(nation_offices).id)}])
+--- a/scripts/tests/region_carried_intel_original_test.gd
++++ b/scripts/tests/region_carried_intel_original_test.gd
+@@ -116,6 +116,7 @@
+ 	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
+ 	delivery_guard = guard.combat_identity(guard.current_commander)
+ 	delivery_receiver_nation = "receiver_nation_%d" % OS.get_process_id()
++	if not action_owner.terrain.site.has("equipment_nations"): action_owner.terrain.site.equipment_nations = {}
+ 	action_owner.terrain.site.equipment_nations[delivery_receiver_nation] = {"members": [delivery_receiver, delivery_guard], "standards": {}, "offices": SiteOffices.default_offices("nation", delivery_receiver, false)}
+ 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
+ 	if not _check(saved.ok, "recipient and original national office publish through the true full joint checkpoint", saved): return false
+@@ -174,6 +175,7 @@
+ 	var nation_id := "courier_nation_%d" % OS.get_process_id()
+ 	var members: Array[int] = []
+ 	for index: int in source.combat_units.size(): members.append(source.combat_identity(index))
++	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
+ 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", captain, true)}
+ 	if not _delivery_initial_visible_feature(Vector2i(start_x - 1, 48)): return false
+ 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)

@@ -1,0 +1,408 @@
+--- a/scripts/terrain_lab/site_technology_catalog.gd
++++ b/scripts/terrain_lab/site_technology_catalog.gd
+@@ -1,8 +1,8 @@
+ class_name SiteTechnologyCatalog
+ extends RefCounted
+-## Pure design catalog. No owner, jobs, inventory, save, elapsed time or commit state.
+-## All entries stay disabled until their original operation and named validation ship.
+-## Non-F07 values are implementation proposals, not approved balance or runtime proof.
++## Pure content catalog. Original owners retain people, jobs, inventory and time.
++## This immutable full-content candidate is for isolated operation acceptance.
++## Enabled metadata is not proof of work, knowledge, costs, effects or a release.
+ const VERSION := 1
+ const NODE_IDS := ["F01","F02","F03","F04","F05","F06","F07","F08","F09","F10","F11","F12","F13","F14","F15","S01","S02","S03","S04","S05","S06","S07","S08","S09","S10","S11","S12","S13","N01","N02","N03","N04","N05","N06","N07","N08","N09","N10","N11","N12"]
+ const POLICY_CATEGORIES := ["F04", "F06", "F11", "F12"]
+@@ -94,7 +94,7 @@
+ const _NODES := [
+ 	{
+ 		"id": "F01", "name": "農事記錄", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["legal_farm_trial_plots"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -115,7 +115,7 @@
+ 	},
+ 	{
+ 		"id": "F02", "name": "適地留種", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F01"],"any":[],"conditions":["legal_farm_and_local_conditions"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -136,7 +136,7 @@
+ 	},
+ 	{
+ 		"id": "F03", "name": "炭化控火", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["usable_charcoal_kiln"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -155,7 +155,7 @@
+ 	},
+ 	{
+ 		"id": "F04", "name": "冶煉鍛打", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F03"],"any":[],"conditions":["usable_smelter_and_smithy","water_and_tool_access"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -177,7 +177,7 @@
+ 	},
+ 	{
+ 		"id": "F05", "name": "纖維處理", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["usable_weaver"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -197,7 +197,7 @@
+ 	},
+ 	{
+ 		"id": "F06", "name": "毛紡織造", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F05"],"any":[],"conditions":["usable_weaver","water_and_tool_access"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -217,7 +217,7 @@
+ 	},
+ 	{
+ 		"id": "F07", "name": "弓作工法", "scope": "family",
+-		"enabled": false, "status": "p1_integration", "tuning_confirmed": true,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["registered_family_and_research_duty","original_camp_source_budget"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -238,7 +238,7 @@
+ 	},
+ 	{
+ 		"id": "F08", "name": "弩機裝配", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F07"],"any":[],"conditions":["original_camp_source_budget"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -256,7 +256,7 @@
+ 	},
+ 	{
+ 		"id": "F09", "name": "丈量放樣", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["legal_building_site"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -275,7 +275,7 @@
+ 	},
+ 	{
+ 		"id": "F10", "name": "木石營造", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F09"],"any":[],"conditions":["legal_civil_and_wall_worksites"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -295,7 +295,7 @@
+ 	},
+ 	{
+ 		"id": "F11", "name": "器械木作", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F09"],"any":[],"conditions":["legal_siege_slots_and_qualified_trial_worker"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -316,7 +316,7 @@
+ 	},
+ 	{
+ 		"id": "F12", "name": "配重機構", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F11"],"any":[],"conditions":["family_original_traction_build_receipt","legal_counterweight_trial"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -335,7 +335,7 @@
+ 	},
+ 	{
+ 		"id": "F13", "name": "舟楫工法", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F09"],"any":[],"conditions":["usable_shipyard_and_original_team"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -354,7 +354,7 @@
+ 	},
+ 	{
+ 		"id": "F14", "name": "鞣革", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["usable_tannery_and_water"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -373,7 +373,7 @@
+ 	},
+ 	{
+ 		"id": "F15", "name": "引火配方", "scope": "family",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F03"],"any":[],"conditions":["usable_original_traction_trebuchet","safe_original_firing_target"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -395,7 +395,7 @@
+ 	},
+ 	{
+ 		"id": "S01", "name": "供水排程", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["active_settlement_jurisdiction","working_original_water_sources"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -414,7 +414,7 @@
+ 	},
+ 	{
+ 		"id": "S02", "name": "灌排工程", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["S01","F09"],"any":[],"conditions":["active_settlement_jurisdiction","connected_channel_site"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -435,7 +435,7 @@
+ 	},
+ 	{
+ 		"id": "S03", "name": "炭窯工序", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F03"],"any":[],"conditions":["active_settlement_jurisdiction","usable_charcoal_kiln","learned_F03_operator"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -454,7 +454,7 @@
+ 	},
+ 	{
+ 		"id": "S04", "name": "冶鐵作坊協作", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F04"],"any":[],"conditions":["active_settlement_jurisdiction","usable_smelter_and_smithy","legal_real_carrier"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -476,7 +476,7 @@
+ 	},
+ 	{
+ 		"id": "S05", "name": "紡織工序", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F06"],"any":[],"conditions":["active_settlement_jurisdiction","usable_weaver","learned_F06_operator"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -495,7 +495,7 @@
+ 	},
+ 	{
+ 		"id": "S06", "name": "糧食乾燥與倉儲", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["active_settlement_jurisdiction","usable_authorized_warehouse","legal_real_carrier"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -515,7 +515,7 @@
+ 	},
+ 	{
+ 		"id": "S07", "name": "弓弩作坊", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F07"],"any":[],"conditions":["active_settlement_jurisdiction","usable_smithy","learned_F07_operator"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -535,7 +535,7 @@
+ 	},
+ 	{
+ 		"id": "S08", "name": "修造與備件", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["S07"],"any":[],"conditions":["active_settlement_jurisdiction","damaged_live_original_ballista","original_repair_geometry_and_clearance"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -556,7 +556,7 @@
+ 	},
+ 	{
+ 		"id": "S09", "name": "工程標準化", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F10"],"any":[],"conditions":["active_settlement_jurisdiction","legal_building_site"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -575,7 +575,7 @@
+ 	},
+ 	{
+ 		"id": "S10", "name": "防禦工務", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["S09"],"any":[],"conditions":["active_settlement_jurisdiction","legal_wall_and_stair_geometry"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -595,7 +595,7 @@
+ 	},
+ 	{
+ 		"id": "S11", "name": "器械場", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F11"],"any":[],"conditions":["settlement_level_3","active_settlement_jurisdiction","legal_siege_yard_geometry","learned_F11_master"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -615,7 +615,7 @@
+ 	},
+ 	{
+ 		"id": "S12", "name": "船塢工序", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F13"],"any":[],"conditions":["settlement_level_2","active_settlement_jurisdiction","usable_shipyard","original_ship_workers_and_carrier","learned_F13_build_worker"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -635,7 +635,7 @@
+ 	},
+ 	{
+ 		"id": "S13", "name": "甲冑作坊", "scope": "settlement",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["F14","F04"],"any":[],"conditions":["settlement_level_3","active_settlement_jurisdiction","usable_tannery_and_smithy","learned_F14_and_F04_operators"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -656,7 +656,7 @@
+ 	},
+ 	{
+ 		"id": "N01", "name": "度量衡制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["original_nation_and_source_authorization"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -675,7 +675,7 @@
+ 	},
+ 	{
+ 		"id": "N02", "name": "戶籍與勞役登記", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":[],"conditions":["original_nation","active_settlement_jurisdiction","consenting_original_labor_person"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -696,7 +696,7 @@
+ 	},
+ 	{
+ 		"id": "N03", "name": "糧儲與賑濟制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N01","S06"],"any":[],"conditions":["original_nation","authorized_real_food_reserve","two_original_recipients"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -715,7 +715,7 @@
+ 	},
+ 	{
+ 		"id": "N04", "name": "工坊驗收制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N01"],"any":["S04","S05","S07"],"conditions":["original_nation_and_workshop_inspector"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "metal", "requires_all": ["S04"], "phases": [
+@@ -743,7 +743,7 @@
+ 	},
+ 	{
+ 		"id": "N05", "name": "軍需規格制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N04","S07"],"any":[],"conditions":["original_nation_standard","certified_original_smithy","original_equipment_recipient"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -764,7 +764,7 @@
+ 	},
+ 	{
+ 		"id": "N06", "name": "公共工程編制", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N02","S09"],"any":[],"conditions":["original_nation","active_settlement_jurisdiction","registered_labor_and_source_budget"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -783,7 +783,7 @@
+ 	},
+ 	{
+ 		"id": "N07", "name": "技藝傳習制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":[],"any":["F01","F02","F03","F04","F05","F06","F07","F08","F09","F10","F11","F12","F13","F14","F15"],"conditions":["original_nation","real_master_of_selected_family_skill","registered_original_student","authorized_stipend_source"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -803,7 +803,7 @@
+ 	},
+ 	{
+ 		"id": "N08", "name": "道路驛運制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N06"],"any":[],"conditions":["original_nation","legal_original_route","original_transport_and_driver","authorized_source_and_destination"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -824,7 +824,7 @@
+ 	},
+ 	{
+ 		"id": "N09", "name": "稅籍與財政制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N01","N02"],"any":[],"conditions":["original_nation","explicit_original_property_source_consent","authorized_recipient_holder"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -843,7 +843,7 @@
+ 	},
+ 	{
+ 		"id": "N10", "name": "地方行政制度", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N02","N09"],"any":[],"conditions":["original_nation","active_original_settlement","legal_current_local_exerciser"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -863,7 +863,7 @@
+ 	},
+ 	{
+ 		"id": "N11", "name": "軍器監", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N04"],"any":["S11","S13"],"conditions":["original_nation_and_arsenal_duty"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "siege", "requires_all": ["S11"], "phases": [
+@@ -887,7 +887,7 @@
+ 	},
+ 	{
+ 		"id": "N12", "name": "水師編制", "scope": "nation",
+-		"enabled": false, "status": "candidate", "tuning_confirmed": false,
++		"enabled": true, "status": "implemented", "tuning_confirmed": true,
+ 		"prerequisites": {"all":["N05","S12"],"any":[],"conditions":["original_nation_and_corps","two_original_ships","original_legal_helm_crews"]},
+ 		"research": {"version": 1, "routes": [
+ 			{"id": "default", "requires_all": [], "phases": [
+@@ -1031,8 +1031,8 @@
+ 		if not entry.get("name") is String or str(entry.name).is_empty() or not entry.get("enabled") is bool or not entry.get("tuning_confirmed") is bool: return false
+ 		var scope := "family" if str(entry.id).begins_with("F") else ("settlement" if str(entry.id).begins_with("S") else "nation")
+ 		if entry.get("scope") != scope or entry.get("status") not in ["candidate", "p1_integration", "implemented"]: return false
+-		if bool(entry.enabled) and (entry.id != "F07" or entry.status != "implemented"): return false
+-		if bool(entry.tuning_confirmed) != (entry.id == "F07"): return false
++		if bool(entry.enabled) and (entry.status != "implemented" or not bool(entry.tuning_confirmed)): return false
++		if entry.status == "implemented" and not bool(entry.tuning_confirmed): return false
+ 		if not entry.get("prerequisites") is Dictionary or not _strings(entry.prerequisites.get("all"), NODE_IDS) or not _strings(entry.prerequisites.get("any"), NODE_IDS) or not _strings(entry.prerequisites.get("conditions")): return false
+ 		if entry.prerequisites.all.has(entry.id) or entry.prerequisites.any.has(entry.id): return false
+ 		if not entry.get("research") is Dictionary or not _integer(entry.research.get("version"), VERSION, VERSION) or not entry.research.get("routes") is Array or entry.research.routes.is_empty(): return false
+--- a/scripts/tests/site_technology_catalog_test.gd
++++ b/scripts/tests/site_technology_catalog_test.gd
+@@ -16,7 +16,7 @@
+ 	all_ids.clear()
+ 	assert(Catalog.ids().size() == 40, "Catalog IDs are caller-local")
+ 	for entry: Dictionary in entries:
+-		assert(not bool(entry.enabled), "Candidates and P1 integration cannot claim runtime completion")
++		assert(bool(entry.enabled) and entry.status == "implemented" and bool(entry.tuning_confirmed), "Immutable full-content candidate has consistent admission metadata; this schema test is not operation or release proof")
+ 		assert(not entry.operations.is_empty() and not entry.research.routes.is_empty())
+ 		for hook: String in entry.required_hooks: _check_hook(hook)
+ 		for route: Dictionary in entry.research.routes:
+@@ -87,7 +87,11 @@
+ 	assert(not Catalog.validate_catalog(invalid), "Only the four bound D10 self-trials may waive their own gate")
+ 	invalid = Catalog.all()
+ 	invalid[0].enabled = true
++	invalid[0].status = "candidate"
+ 	assert(not Catalog.validate_catalog(invalid), "An unimplemented operation cannot become enabled")
++	invalid = Catalog.all()
++	invalid[0].tuning_confirmed = false
++	assert(not Catalog.validate_catalog(invalid), "Enabled content requires its declared reviewed terms")
+ 	invalid = Catalog.all()
+ 	invalid[0].research.routes[0].phases[0].binding = "fictional-owner"
+ 	assert(not Catalog.validate_catalog(invalid))

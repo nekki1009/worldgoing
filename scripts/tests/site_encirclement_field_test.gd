@@ -32,7 +32,7 @@ func _run() -> void:
 	rng.seed = 520495
 	for trial in range(160):
 		var data := TerrainData.new()
-		data.allocate(Vector2i(100, 100) if trial < 16 else Vector2i(21, 23))
+		data.allocate(Vector2i(128, 128) if trial == 0 else (Vector2i(100, 100) if trial < 16 else Vector2i(21, 23)))
 		data.static_blocked.resize(data.flags.size())
 		var occupied := {}
 		for i in range(data.flags.size()):
@@ -64,7 +64,7 @@ func _run() -> void:
 		match invalid:
 			0: args[0] = [Vector2i.ZERO]
 			1: args[1] = PackedByteArray([1])
-			2: args[2] = Vector2i(101, 100)
+			2: args[2] = Vector2i(129, 128)
 			3: args[3] = PackedByteArray()
 			4: args[4] = PackedByteArray()
 			5: args[5] = PackedByteArray()

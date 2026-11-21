@@ -216,7 +216,10 @@ func _check_shared_feature() -> void:
 	var fixture := _fixture()
 	fixture.terrain.site.zones.clear()
 	fixture.terrain.site.inventory = {"tools": 4, "wood": 100, "stone": 100, "clay": 100}
-	var built := SiteRuntime.request_build(fixture.terrain, "house", [fixture.terrain.index(Vector2i(13, 11))])
+	var layout := SiteRuntime.building_cells(fixture.terrain, "house", Vector2i(13, 11), Vector2i.ONE, {"variant": "small"})
+	var footprint: Array[int] = []
+	footprint.assign(layout.cells)
+	var built := SiteRuntime.request_build(fixture.terrain, "house", footprint, Callable(), {"variant": "small"})
 	assert(built.ok, str(built))
 	var feature: Dictionary = fixture.terrain.site.features[str(built.feature)]
 	assert(fixture.crew.assign(fixture.army, fixture.ids(), fixture.army.combat_identity(0)).ok)

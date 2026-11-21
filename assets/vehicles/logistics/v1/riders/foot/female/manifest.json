@@ -11836,11 +11836,11 @@
   "map_scale": 0.379809115843455,
   "metrics": {
     "decoded_rgba_bytes": 44613632.0,
-    "elapsed_seconds": 15.708652,
+    "elapsed_seconds": 41.818732,
     "pixel_sha256": "291389c088cc56fbd80bcfdac9033f740a10cda8e7e9858ebb3e3348f66564b8",
     "png_bytes": 5794816.0,
     "png_decoded_sha256": "291389c088cc56fbd80bcfdac9033f740a10cda8e7e9858ebb3e3348f66564b8",
-    "resource_bytes": 8418818.0,
+    "resource_bytes": 8418820.0,
     "resource_decoded_sha256": "291389c088cc56fbd80bcfdac9033f740a10cda8e7e9858ebb3e3348f66564b8"
   },
   "padding": 8.0,
@@ -11851,7 +11851,7 @@
       "page": 0.0,
       "path": "res://assets/vehicles/logistics/v1/riders/foot/female/page_000.png",
       "png_md5": "a79f6643518443c0ed6fe0dda96fea2d",
-      "resource_md5": "3bf139920c8dc9398768cef65b59f5cd",
+      "resource_md5": "9db2797f9c032b87f949138c0d45f1b7",
       "resource_path": "res://assets/vehicles/logistics/v1/riders/foot/female/page_000.res",
       "width": 4096.0
     }
@@ -11869,48 +11869,21 @@
   ],
   "source_contract": "CharacterRenderContract",
   "source_fingerprints": {
-    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "ddbd4fc44fd3f6d9739b53f4ab54f94d",
-    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "76d262bdae0449f9a86b8e56287551f2",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "8c98639fca305d617cc7132cb232094d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "b541208a463cff72fbe4db5c36f58d89",
     "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
     "res://scripts/terrain_lab/site_wagon_rider_recipe.gd": "d71f2459151a83906a8e2163f0fbe119",
     "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
     "res://scripts/tools/bake_wagon_rider_foot.gd": "f9b213e94a69023b8d9000c7abd4207f",
     "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
-    "res://scripts/ui/equipment_dye.gd": "bca8b3f03fc03cf5254fe0743361dbfd",
-    "res://scripts/ui/human_character_3d_editor.gd": "34190c5b67f3ea8c8aec633808a4310c",
+    "res://scripts/ui/equipment_dye.gd": "8d63fdfb5a491c9979621020f1e2e36d",
+    "res://scripts/ui/human_character_3d_editor.gd": "91e3e7d561818bc000b71ed7b18d10ba",
     "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
   },
   "source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json",
-  "source_manifest_md5": "cf935d4ce680af21f875b4c76bbe5198",
+  "source_manifest_md5": "5ef732f3042d6507d09ead20538ff6dc",
   "source_viewport": {
     "height": 768.0,
     "width": 640.0
-  },
-  "equipment_matrix_additive_revalidation": {
-    "rebaked": false,
-    "evidence": "output/equipment_matrix_20260918",
-    "old_manifest_md5": "dd5ff62ba7c2cee0d056da7aedb26f45",
-    "old_sources": {
-      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
-      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
-      "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
-      "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
-      "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
-      "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6"
-    }
-  },
-  "equipment_limits_revalidation": {
-    "rebaked": false,
-    "rgba_pairs": 450,
-    "evidence": "output/equipment_limits_20260919",
-    "old_manifest_md5": "798c9b427763e7971354c657dbebb3fd"
-  },
-  "equipment_walk_revalidation": {
-    "rebaked": false,
-    "representative_control_pairs": 368,
-    "full_atlas_frame_proof": false,
-    "native_unselected_data_unchanged": true,
-    "evidence": "res://output/equipment_walk_fix_20260919/atlas/gpu_comparison_20260919T045450307055Z.json",
-    "old_manifest_md5": "9e5fb4208d1608e198b732d0a3908704"
   }
 }

@@ -89,7 +89,8 @@ func _run() -> void:
 	for iron in range(1, 8):
 		assert(team.equipment_appearance(iron) == Plan.appearance_for(31, baseline, iron))
 	lab.get_node("SiteUI").hide()
-	lab.get_node("TerrainLabUI").hide()
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
+	if is_instance_valid(lab.site_test_window): lab.site_test_window.hide()
 	var overlay := CanvasLayer.new()
 	lab.add_child(overlay)
 	title = Label.new()

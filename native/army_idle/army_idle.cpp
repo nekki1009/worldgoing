@@ -7,11 +7,13 @@
 #include <cstring>
 #include <initializer_list>
 #include <memory>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <array>
 #include <unordered_map>
 #include <unordered_set>
+#include <string>
 
 namespace {
 constexpr auto ARRAY = GDEXTENSION_VARIANT_TYPE_ARRAY;
@@ -38,6 +40,7 @@ struct alignas(8) TextStorage { unsigned char bytes[8]; };
 static_assert(sizeof(void *) == 8, "This library targets x64 only");
 GDExtensionClassLibraryPtr library;
 bool recovery_marker; // Stateless entry-point tag, never person data.
+bool sustain_sample_marker; // Same validator, with a call-local native life projection.
 GDExtensionInterfaceVariantGetType type_of;
 GDExtensionInterfaceVariantDestroy destroy;
 GDExtensionInterfaceVariantNewCopy copy_variant;
@@ -78,6 +81,7 @@ GDExtensionObjectPtr worker_pool;
 GDExtensionMethodBindPtr wait_group_task;
 GDExtensionInterfaceStringNameNewWithLatin1Chars make_name;
 GDExtensionInterfaceStringNewWithLatin1Chars make_string;
+GDExtensionInterfaceStringToUtf32Chars string_to_utf32;
 GDExtensionVariantGetInternalPtrFunc internal[GDEXTENSION_VARIANT_TYPE_VARIANT_MAX];
 GDExtensionVariantFromTypeConstructorFunc from_float, from_int, from_string, from_name, from_v2i, from_bool;
 GDExtensionPtrDestructor destroy_string, destroy_name;
@@ -85,10 +89,13 @@ GDExtensionPtrBuiltInMethod array_size, array_readonly, array_typed, dict_size, 
 GDExtensionPtrOperatorEvaluator string_equal, name_equal;
 TextStorage class_name, hot_class_name, parent_name, idle_string, unconscious_string, down_string, guard_raise_string, guard_lower_string, guard_break_string, rescue_string, male_string, female_string, get_up_string, empty_name, empty_string;
 TextStorage keys_method_name, typed_builtin_method_name, typed_class_method_name, typed_script_method_name;
-enum Key { AGE, THINK, POSE, HP, KO, STUN, GRACE, VISUAL, DURATION, COOLDOWN, STAGGER, SKILL, RANGED, FATIGUE, REST, PERSON_ID, PAGE, PALETTE, ROLE, CAPTIVE, DEPARTED, OWNER, UNIT, IDENTITY, CELL, FACTION, READY, RECEIVE, MEMBER, CARGO, PRESENT, ATTACK, LEFT, FACING, KEY_COUNT };
+enum Key { AGE, THINK, POSE, HP, KO, STUN, GRACE, VISUAL, DURATION, COOLDOWN, STAGGER, SKILL, RANGED, FATIGUE, REST, PERSON_ID, PAGE, PALETTE, ROLE, CAPTIVE, DEPARTED, OWNER, UNIT, IDENTITY, CELL, FACTION, READY, RECEIVE, MEMBER, CARGO, PRESENT, ATTACK, LEFT, FACING, SITE_EXITED, SURRENDER_PENDING, KEY_COUNT };
 VariantStorage keys[KEY_COUNT];
 VariantStorage lookup_keys[KEY_COUNT];
-const char *key_text[KEY_COUNT] = {"age", "think", "pose", "hp", "ko", "stun", "grace", "exchange_visual", "exchange_pose_duration", "exchange_cooldown", "exchange_stagger", "exchange_skill_cooldown", "ranged_cooldown", "fatigue", "fatigue_rest", "person_id", "page", "palette", "visual_role", "captive", "departed", "owner", "unit", "id", "cell", "faction", "ready", "receive", "member", "cargo", "present", "attack", "left", "facing"};
+const char *key_text[KEY_COUNT] = {"age", "think", "pose", "hp", "ko", "stun", "grace", "exchange_visual", "exchange_pose_duration", "exchange_cooldown", "exchange_stagger", "exchange_skill_cooldown", "ranged_cooldown", "fatigue", "fatigue_rest", "person_id", "page", "palette", "visual_role", "captive", "departed", "owner", "unit", "id", "cell", "faction", "ready", "receive", "member", "cargo", "present", "attack", "left", "facing", "site_exited", "surrender_pending"};
+enum SummaryKey { SUMMARY_HOLDER, SUMMARY_EQUIPPED, SUMMARY_WEAPON, SUMMARY_DEFINITION, SUMMARY_ASSET, SUMMARY_POOL, SUMMARY_KEY_COUNT };
+VariantStorage summary_keys[SUMMARY_KEY_COUNT];
+const char *summary_key_text[SUMMARY_KEY_COUNT] = {"item_state", "equipped", "weapon", "definition", "asset", "_fatigue_pool"};
 struct HotStore;
 int64_t hot_row_count(HotStore *store);
 bool hot_owns(Key key);
@@ -141,11 +148,20 @@ struct ReadField {
             owned = true;
         }
     }
+    ReadField(const void *dictionary, const void *key) {
+        get_keyed(dictionary, key, &value, &valid);
+        owned = true;
+    }
     ~ReadField() { if (owned) destroy(&value); }
     ReadField(const ReadField &) = delete;
     ReadField &operator=(const ReadField &) = delete;
     void *get() { return borrowed ? borrowed : (valid ? &value : nullptr); }
 };
+bool optional_bool(void *value, bool &flag) {
+    if (value && type_of(value) != BOOL) return false;
+    flag = value && *static_cast<GDExtensionBool *>(internal[BOOL](value));
+    return true;
+}
 bool number(void *value, double &result, double **storage = nullptr) {
     if (storage) *storage = nullptr;
     if (!value) return false;
@@ -262,19 +278,36 @@ int64_t dictionary_size(void *value) {
     dict_size(value, nullptr, &count, 0);
     return count;
 }
-bool contains_unsupported(const void *value, int depth = 0) {
+bool contains_unsupported(const void *value, int depth = 0, bool json = false) {
     if (depth > 64) return true;
     const auto type = type_of(value);
+    // Only the JSON guard rejects nonfinite leaves; existing oracle modes are unchanged.
+    if (json && type == FLOAT) return !std::isfinite(*static_cast<double *>(read_internal(FLOAT, value)));
+    if (json && type == V2) {
+        const auto *components = static_cast<float *>(read_internal(V2, value));
+        return !std::isfinite(components[0]) || !std::isfinite(components[1]);
+    }
+    if (json && type == DOUBLES) {
+        void *values = read_internal(DOUBLES, value);
+        int64_t count = 0;
+        size_doubles(values, nullptr, &count, 0);
+        for (int64_t i = 0; i < count; ++i)
+            if (!std::isfinite(*doubles_read(values, i))) return true;
+        return false;
+    }
     if (type == ARRAY) {
         if (!supported_array_type(value)) return true;
         void *array = read_internal(ARRAY, value);
+        if (json && predicate(array_readonly, array)) return true;
+        // Prepare the same COW detach JSON Array::begin() needs, on the caller thread.
+        if (json && size(array) > 0) (void)array_write(array, 0);
         for (int64_t i = 0, count = size(array); i < count; ++i)
-            if (contains_unsupported(array_at(array, i), depth + 1)) return true;
+            if (contains_unsupported(array_at(array, i), depth + 1, json)) return true;
         return false;
     }
     if (type == DICT) {
         void *dict = read_internal(DICT, value);
-        if (predicate(dict_typed, dict)) return true;
+        if (predicate(dict_typed, dict) || (json && predicate(dict_readonly, dict))) return true;
         VariantStorage keys_result{};
         if (!get_keys(value, keys_result)) { destroy(&keys_result); return true; }
         void *keys_array = internal[ARRAY](&keys_result);
@@ -282,7 +315,7 @@ bool contains_unsupported(const void *value, int depth = 0) {
         for (int64_t i = 0, count = size(keys_array); !unsupported && i < count; ++i) {
             void *key = array_at(keys_array, i);
             void *child = dict_at(dict, key);
-            unsupported = !child || contains_unsupported(key, depth + 1) || contains_unsupported(child, depth + 1);
+            unsupported = !child || contains_unsupported(key, depth + 1, json) || contains_unsupported(child, depth + 1, json);
         }
         destroy(&keys_result);
         return unsupported;
@@ -358,7 +391,7 @@ ExactResult exact_value_equal(const void *left, const void *right, int depth = 0
     }
     return leaf_equal(left, right);
 }
-int exact_oracle_modes[] = {0, 1};
+int exact_oracle_modes[] = {0, 1, 2};
 void call_exact_oracle(void *mode_ptr, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
         GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
     *error = {GDEXTENSION_CALL_OK, 0, 0};
@@ -374,7 +407,7 @@ void call_exact_oracle(void *mode_ptr, GDExtensionClassInstancePtr, const GDExte
         int64_t answer = static_cast<int64_t>(exact_value_equal(args[0], args[1]));
         from_int(result, &answer);
     } else {
-        GDExtensionBool answer = contains_unsupported(args[0]);
+        GDExtensionBool answer = contains_unsupported(args[0], 0, mode == 2);
         from_bool(result, &answer);
     }
 }
@@ -552,6 +585,72 @@ int64_t packed_size(GDExtensionPtrBuiltInMethod method, void *value) {
     return count;
 }
 
+// A single Army's read-only transit candidates, packed by its original owner
+// after every external callback and target lookup has been resolved. The
+// reservation grid still decides whether a proposed step can commit.
+void call_batch_transit_field_intents(void *, GDExtensionClassInstancePtr,
+        const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
+        GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    reset_variant(result, LONGS);
+    if (argc != 2 || type_of(args[0]) != LONGS || type_of(args[1]) != LONGS) return;
+    void *member_array = internal[LONGS](const_cast<void *>(args[0]));
+    void *candidate_array = internal[LONGS](const_cast<void *>(args[1]));
+    const int64_t member_length = packed_size(size_longs, member_array);
+    const int64_t candidate_length = packed_size(size_longs, candidate_array);
+    if (member_length <= 0 || member_length % 3 != 0 || candidate_length < 0 || candidate_length % 3 != 0) return;
+    const int64_t member_count = member_length / 3, candidate_count = candidate_length / 3;
+    const int64_t *members = longs_read(member_array, 0);
+    const int64_t *candidates = candidate_count ? longs_read(candidate_array, 0) : nullptr;
+    constexpr int64_t external = 1, lease = 2, reserved = 4, grid_blocked = 8;
+    constexpr int64_t owner_present = 16, owner_moving = 32, owner_ineligible = 64;
+    constexpr int64_t owner_transit = 128, initial_occupied = 256;
+    constexpr int64_t valid_flags = external | lease | reserved | grid_blocked | owner_present |
+        owner_moving | owner_ineligible | owner_transit | initial_occupied;
+    int64_t expected_start = 0;
+    for (int64_t i = 0; i < member_count; ++i) {
+        const int64_t start = members[i * 3 + 1], count = members[i * 3 + 2];
+        if (start != expected_start || count < 0 || count > candidate_count - expected_start) return;
+        expected_start += count;
+    }
+    if (expected_start != candidate_count) return;
+    for (int64_t i = 0; i < candidate_count; ++i) {
+        const int64_t x = candidates[i * 3], y = candidates[i * 3 + 1], flags = candidates[i * 3 + 2];
+        if (x < std::numeric_limits<int32_t>::min() || x > std::numeric_limits<int32_t>::max() ||
+                y < std::numeric_limits<int32_t>::min() || y > std::numeric_limits<int32_t>::max() ||
+                flags < 0 || (flags & ~valid_flags) != 0 ||
+                ((flags & (owner_moving | owner_ineligible | owner_transit)) && !(flags & owner_present))) return;
+    }
+    void *output = internal[LONGS](result);
+    resize(resize_longs, output, member_length);
+    int64_t *answer = longs_write(output, 0);
+    for (int64_t i = 0; i < member_count; ++i) {
+        bool temporarily_blocked = false;
+        int best_occupancy = 2;
+        int64_t chosen_x = 0, chosen_y = 0;
+        const int64_t start = members[i * 3 + 1], end = start + members[i * 3 + 2];
+        for (int64_t j = start; j < end; ++j) {
+            const int64_t *candidate = candidates + j * 3;
+            const int64_t flags = candidate[2];
+            if (flags & (external | lease)) continue;
+            if (flags & (reserved | grid_blocked)) { temporarily_blocked = true; continue; }
+            int occupancy = 0;
+            if (flags & owner_present) {
+                if (flags & owner_moving) { temporarily_blocked = true; continue; }
+                if ((flags & owner_ineligible) || !(flags & owner_transit)) continue;
+                occupancy = 1;
+            } else if (flags & initial_occupied) continue;
+            if (occupancy < best_occupancy) {
+                best_occupancy = occupancy;
+                chosen_x = candidate[0]; chosen_y = candidate[1];
+            }
+        }
+        answer[i * 3] = best_occupancy < 2 ? 2 : (temporarily_blocked ? 1 : 0);
+        answer[i * 3 + 1] = chosen_x;
+        answer[i * 3 + 2] = chosen_y;
+    }
+}
+
 struct Point { float x, y; };
 double point_distance(Point a, Point b, bool squared) {
     // Same public Godot Vector2 method and real_t rounding, without boxing
@@ -600,13 +699,16 @@ bool collect_presence(void *rows, void *cells, void *moving, PresenceInputs &inp
         void *departed = store ? hot_value(store, i, DEPARTED) : field(dict, DEPARTED);
         void *captive = store ? hot_value(store, i, CAPTIVE) : field(dict, CAPTIVE);
         void *pose = store ? hot_value(store, i, POSE) : field(dict, POSE);
+        bool exited, surrender;
+        if (!optional_bool(store ? hot_value(store, i, SITE_EXITED) : field(dict, SITE_EXITED), exited) ||
+                !optional_bool(store ? hot_value(store, i, SURRENDER_PENDING) : field(dict, SURRENDER_PENDING), surrender)) return false;
         if ((member && type_of(member) != BOOL) || !departed || type_of(departed) != BOOL || !captive || type_of(captive) != BOOL || !pose || type_of(pose) != STRING) return false;
         const bool admitted = (!member || *static_cast<GDExtensionBool *>(internal[BOOL](member))) && hp > 0.0 &&
-            !*static_cast<GDExtensionBool *>(internal[BOOL](departed)) && !*static_cast<GDExtensionBool *>(internal[BOOL](captive));
+            !*static_cast<GDExtensionBool *>(internal[BOOL](departed)) && !*static_cast<GDExtensionBool *>(internal[BOOL](captive)) && !exited;
         GDExtensionBool getting_up = false;
         string_equal(internal[STRING](pose), &get_up_string, &getting_up);
         input.admitted[i] = admitted;
-        input.active[i] = admitted && ko <= 0.0 && !getting_up;
+        input.active[i] = admitted && ko <= 0.0 && !getting_up && !surrender;
         const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
         // Exact half-cell centres for this bounded range; *64 /64 is exact.
         if (xy[0] < -10000 || xy[0] > 10000 || xy[1] < -10000 || xy[1] > 10000) return false;
@@ -951,7 +1053,7 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         GDExtensionVariantPtr result, GDExtensionCallError *error) {
     *error = {GDEXTENSION_CALL_OK, 0, 0};
     reset_variant(result, ARRAY);
-    if (argc != 10) { error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT; return; }
+    if (argc != 10 && argc != 11) { error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT; return; }
     const GDExtensionVariantType types[] = {ARRAY, ARRAY, ARRAY, ARRAY, DICT, ARRAY, ARRAY, ARRAY, ARRAY, FLOAT};
     void *input[10]{};
     for (int i = 0; i < 10; ++i) {
@@ -964,8 +1066,33 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
     if (count <= 0 || count > 10000 || (store && hot_row_count(store) != count) ||
             *static_cast<double *>(input[9]) != 64.0) return;
     for (int i : {1, 2, 3, 5, 6, 8}) if (size(input[i]) != count) return;
+    // Crowd adds references to the original movement columns, never a GD-built
+    // per-person packet. The ten-argument idle contract remains unchanged.
+    const bool crowd = argc == 11;
+    const double *progress = nullptr, *durations = nullptr;
+    const uint8_t *curves = nullptr;
+    void *owners = nullptr;
+    double run_duration = 0.0;
+    if (crowd) {
+        if (type_of(args[10]) != ARRAY) return;
+        void *movement = internal[ARRAY](const_cast<void *>(args[10]));
+        if (size(movement) != 5) return;
+        const GDExtensionVariantType movement_types[] = {DOUBLES, DOUBLES, BYTES, DICT, FLOAT};
+        void *columns[5]{};
+        for (int i = 0; i < 5; ++i) {
+            void *value = array_at(movement, i);
+            if (type_of(value) != movement_types[i]) return;
+            columns[i] = internal[movement_types[i]](value);
+        }
+        if (packed_size(size_doubles, columns[0]) != count || packed_size(size_doubles, columns[1]) != count ||
+                packed_size(size_bytes, columns[2]) != count || !number(array_at(movement, 4), run_duration) || run_duration <= 0.0) return;
+        progress = doubles_read(columns[0], 0); durations = doubles_read(columns[1], 0);
+        curves = bytes_read(columns[2], 0); owners = columns[3];
+    }
+    TextStorage walk_pose, run_pose;
+    make_string(&walk_pose, "walk"); make_string(&run_pose, "run");
     void *output = internal[ARRAY](result);
-    resize(resize_array, output, 7);
+    resize(resize_array, output, crowd ? 8 : 7);
     void *columns[7]{};
     for (int i = 0; i < 7; ++i) {
         const auto type = i == 0 ? BYTES : (i == 1 ? VECTORS : INTS);
@@ -999,8 +1126,14 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         if (type_of(row) != DICT || type_of(cell) != V2I || type_of(moving) != V2I || type_of(facing) != V2I) continue;
         const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
         const auto *destination = static_cast<int32_t *>(internal[V2I](moving));
-        if (destination[0] != -1 || destination[1] != -1 || xy[0] < 0 || xy[0] >= 128 || xy[1] < 0 || xy[1] >= 128) continue;
+        const bool moving_now = destination[0] != -1 || destination[1] != -1;
+        if ((!crowd && moving_now) || xy[0] < 0 || xy[0] >= 128 || xy[1] < 0 || xy[1] >= 128) continue;
+        if (moving_now && (destination[0] < 0 || destination[0] >= 128 || destination[1] < 0 || destination[1] >= 128 ||
+                !std::isfinite(progress[i]) || !std::isfinite(durations[i]) || durations[i] <= 0.0 || curves[i] > 1)) continue;
         void *dict = internal[DICT](row);
+        ReadField exited_field(row, SITE_EXITED, store, i);
+        bool exited;
+        if (!optional_bool(exited_field.get(), exited) || exited) continue;
         ReadField pose_field(row, POSE, store, i), role_field(row, ROLE, store, i);
         void *pose = pose_field.get();
         if (void *role = role_field.get()) {
@@ -1015,15 +1148,26 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         }
         if (!pose || type_of(pose) != STRING ||
                 (store ? hot_value(store, i, VISUAL) != nullptr : has(dict, &lookup_keys[VISUAL]))) continue;
-        GDExtensionBool idle = false, unconscious = false;
+        GDExtensionBool idle = false, unconscious = false, walk = false, run = false;
         string_equal(internal[STRING](pose), &idle_string, &idle);
         if (!idle) {
             string_equal(internal[STRING](pose), &unconscious_string, &unconscious);
-            if (!unconscious) continue;
-            double hp, ko;
-            ReadField hp_field(row, HP, store, i), ko_field(row, KO, store, i);
-            if (!number(hp_field.get(), hp) || hp <= 0.0 ||
-                    !number(ko_field.get(), ko) || ko <= 0.0) continue;
+            if (crowd && !unconscious) {
+                string_equal(internal[STRING](pose), &walk_pose, &walk);
+                string_equal(internal[STRING](pose), &run_pose, &run);
+            }
+            if (!unconscious && !walk && !run) continue;
+            if (unconscious) {
+                double hp, ko;
+                ReadField hp_field(row, HP, store, i), ko_field(row, KO, store, i);
+                if (!number(hp_field.get(), hp) || hp <= 0.0 ||
+                        !number(ko_field.get(), ko) || ko <= 0.0) continue;
+            } else {
+                // A completed short exchange can override the old pose/clock.
+                // Keep that exceptional presentation on its original owner.
+                ReadField duration_field(row, DURATION, store, i);
+                if (!zero(duration_field.get(), true)) continue;
+            }
         }
         double age;
         ReadField age_field(row, AGE, store, i);
@@ -1061,13 +1205,14 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         if (direction[0] == 0 && direction[1] == -1) d = 0;
         else if (direction[0] == 1 && direction[1] == 0) d = 1;
         else if (direction[0] == -1 && direction[1] == 0) d = 3;
-        const int pose_index = unconscious ? 1 : 0;
+        const int pose_index = unconscious ? 1 : ((run || (walk && moving_now && durations[i] <= run_duration + 0.000001)) ? 3 : (walk ? 2 : 0));
         if (page != last_page || d != last_direction || age != last_age || pose_index != last_pose) {
             void *directions = array_at(input[7], page);
             if (type_of(directions) != ARRAY) continue;
             void *direction_samples = internal[ARRAY](directions);
-            if (size(direction_samples) != 4 && size(direction_samples) != 8) continue;
-            if (unconscious && size(direction_samples) != 8) continue;
+            const int64_t sample_count = size(direction_samples);
+            if (sample_count != 4 && sample_count != 8 && sample_count != 16) continue;
+            if (d + pose_index * 4 >= sample_count) continue;
             void *record = array_at(direction_samples, d + pose_index * 4);
             if (type_of(record) != ARRAY || size(internal[ARRAY](record)) != 5) continue;
             void *sample = internal[ARRAY](record);
@@ -1095,8 +1240,34 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         }
         // Original Vector2 construction -> float32 add -> float32 scale ->
         // float32 subtract, with the original pre-scaled frame anchor.
-        const float gx = (static_cast<float>(xy[0]) + 0.5f) * 64.0f;
-        const float gy = (static_cast<float>(xy[1]) + 0.5f) * 64.0f;
+        float gx = (static_cast<float>(xy[0]) + 0.5f) * 64.0f;
+        float gy = (static_cast<float>(xy[1]) + 0.5f) * 64.0f;
+        if (moving_now) {
+            const double fraction = std::clamp(progress[i], 0.0, 1.0);
+            const double weight = curves[i] == 1 ? fraction * fraction * (3.0 - 2.0 * fraction) : fraction * (2.0 - fraction);
+            const float w = static_cast<float>(weight);
+            const float dx = (static_cast<float>(destination[0]) + 0.5f) * 64.0f;
+            const float dy = (static_cast<float>(destination[1]) + 0.5f) * 64.0f;
+            gx = gx + (dx - gx) * w;
+            gy = gy + (dy - gy) * w;
+            if (has(owners, moving)) {
+                int64_t partner;
+                if (integer(dict_at(owners, moving), partner) && partner >= 0 && partner < count && partner != i) {
+                    void *partner_to = array_at(input[2], partner);
+                    if (type_of(partner_to) == V2I) {
+                        const auto *other = static_cast<int32_t *>(internal[V2I](partner_to));
+                        if (other[0] == xy[0] && other[1] == xy[1]) {
+                            const float sine = static_cast<float>(std::sin(3.14159265358979323846 * weight));
+                            float sx = -static_cast<float>(destination[1] - xy[1]);
+                            float sy = static_cast<float>(destination[0] - xy[0]);
+                            sx = sx * 64.0f; sy = sy * 64.0f;
+                            sx = sx * 0.42f; sy = sy * 0.42f;
+                            gx += sx * sine; gy += sy * sine;
+                        }
+                    }
+                }
+            }
+        }
         positions[i * 2] = gx - last_anchor_x;
         positions[i * 2 + 1] = gy - last_anchor_y;
         values[0][i] = static_cast<int32_t>(last_sequence);
@@ -1107,6 +1278,17 @@ void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExten
         mask[i] = 1;
     }
     });
+    destroy_string(&walk_pose); destroy_string(&run_pose);
+    if (crowd) {
+        int64_t moving_count = 0;
+        for (int64_t i = 0; i < count; ++i) {
+            if (!mask[i]) continue;
+            const auto *to = static_cast<int32_t *>(internal[V2I](array_at(input[2], i)));
+            if (to[0] != -1 || to[1] != -1) ++moving_count;
+        }
+        void *slot = array_write(output, 7);
+        destroy(slot); from_int(slot, &moving_count);
+    }
 }
 
 struct QueryPerson { int64_t index, identity; int32_t x, y; };
@@ -1146,6 +1328,7 @@ void call_encirclement_field(void *, GDExtensionClassInstancePtr, const GDExtens
     const auto cell_index = [&](int32_t x, int32_t y) { return x < 0 || y < 0 || x >= width || y >= height ? -1 : y * width + x; };
     const auto can_step = [&](int32_t from, int32_t to, int direction) {
         if (from < 0 || to < 0 || !(flags[from] & 1) || !(flags[to] & 1) || (blocked && (blocked[from] || blocked[to]))) return false;
+        if ((ramps[from] & (1 << (direction + 4))) || (ramps[to] & (1 << (((direction + 2) % 4) + 4)))) return false;
         const int difference = std::abs(static_cast<int>(levels[from]) - static_cast<int>(levels[to]));
         return difference == 0 || (difference == 1 && (ramps[from] & (1 << direction)) && (ramps[to] & (1 << ((direction + 2) % 4))));
     };
@@ -1262,10 +1445,14 @@ bool collect_people_range(void *rows, void *cells, int64_t begin, int64_t end,
         void *row = array_at(rows, i);
         if (type_of(row) != DICT) return false;
         double hp, ko;
-        // Same short circuit and predicate as the canonical combat_can_act.
+        // Capture target bodies, including surrendered people who cannot act.
         // Unusual coercions/types reject the WHOLE capture to untouched GD.
         // Reuse the existing read-only lookup: one hash lookup per field,
         // without retaining a pointer into the original person's Dictionary.
+        ReadField exited_value(row, SITE_EXITED, store, i);
+        bool exited;
+        if (!optional_bool(exited_value.get(), exited)) return false;
+        if (exited) continue;
         ReadField hp_value(row, HP, store, i);
         if (!number(hp_value.get(), hp)) return false;
         if (hp <= 0.0) continue;
@@ -1421,6 +1608,344 @@ void call_empty_cargo(void *, GDExtensionClassInstancePtr, const GDExtensionCons
     destroy(result); from_int(result, &next);
 }
 
+// Only a complete, common valid batch may bypass the original GD loop.
+// False always reruns that loop, preserving its errors and unusual coercions.
+void call_item_records_valid(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    GDExtensionBool valid = false;
+    destroy(result); from_bool(result, &valid);
+    if (argc != 4 || type_of(args[0]) != DICT || type_of(args[1]) != DICT ||
+            type_of(args[2]) != INT || type_of(args[3]) != ARRAY || !supported_array_type(args[3])) return;
+    void *records = read_internal(DICT, args[0]), *definitions = read_internal(DICT, args[1]);
+    void *dye_slots = read_internal(ARRAY, args[3]);
+    const int64_t next = *static_cast<int64_t *>(read_internal(INT, args[2]));
+    const int64_t count = dictionary_size(records), slot_count = size(dye_slots);
+    // Soft admission limits only; the original validator still handles larger data.
+    if (predicate(dict_typed, records) || predicate(dict_typed, definitions) ||
+            next < 1 || next > 2147483647 || count > 100000 || slot_count > 64) return;
+    for (int64_t i = 0; i < slot_count; ++i)
+        if (type_of(array_at(dye_slots, i)) != STRING) return;
+
+    enum Field { DEFINITION, ORIGINAL_OWNER, HOLDER, DYE, SLOT, FIELD_COUNT };
+    const char *names[] = {"definition", "original_owner", "holder", "dye_color", "slot"};
+    VariantStorage fields[FIELD_COUNT]{}, ordered_keys{};
+    for (int i = 0; i < FIELD_COUNT; ++i) {
+        TextStorage name;
+        make_string(&name, names[i]); from_string(&fields[i], &name); destroy_string(&name);
+    }
+    const auto scan = [&]() -> bool {
+        if (!get_keys(args[0], ordered_keys)) return false;
+        void *ordered = read_internal(ARRAY, &ordered_keys);
+        if (size(ordered) != count) return false;
+        for (int64_t i = 0; i < count; ++i) {
+            void *identity = array_at(ordered, i);
+            if (type_of(identity) != STRING) return false;
+            char32_t digits[10];
+            const int64_t length = string_to_utf32(read_internal(STRING, identity), digits, 10);
+            if (length < 1 || length > 10 || digits[0] < U'1' || digits[0] > U'9') return false;
+            int64_t serial = 0;
+            for (int64_t c = 0; c < length; ++c) {
+                if (digits[c] < U'0' || digits[c] > U'9') return false;
+                serial = serial * 10 + static_cast<int64_t>(digits[c] - U'0');
+            }
+            if (serial >= next) return false;
+            void *record = dict_at(records, identity);
+            if (!record || type_of(record) != DICT) return false;
+            void *body = read_internal(DICT, record);
+            if (predicate(dict_typed, body)) return false;
+            const bool dyed = has(body, &fields[DYE]);
+            if (dictionary_size(body) != 3 + static_cast<int64_t>(dyed)) return false;
+            ReadField definition_id(record, &fields[DEFINITION]), owner(record, &fields[ORIGINAL_OWNER]), holder(record, &fields[HOLDER]);
+            if (!definition_id.get() || type_of(definition_id.get()) != STRING ||
+                    !has(definitions, definition_id.get()) || !holder.get() || type_of(holder.get()) != STRING) return false;
+            double original_owner;
+            if (!number(owner.get(), original_owner) || original_owner < 1.0 || original_owner > 2147483647.0 ||
+                    original_owner != std::floor(original_owner)) return false;
+            // Full definition validation remains in GD before this helper.
+            // Refuse malformed direct-call input without property/string coercion.
+            void *definition = dict_at(definitions, definition_id.get());
+            if (!definition || type_of(definition) != DICT || predicate(dict_typed, read_internal(DICT, definition))) return false;
+            ReadField slot(definition, &fields[SLOT]);
+            if (!slot.get() || type_of(slot.get()) != STRING) return false;
+            if (!dyed) continue;
+            ReadField dye(record, &fields[DYE]);
+            if (!dye.get() || type_of(dye.get()) != STRING) return false;
+            char32_t color[8];
+            if (string_to_utf32(read_internal(STRING, dye.get()), color, 8) != 8) return false;
+            for (const char32_t c : color)
+                if (!((c >= U'0' && c <= U'9') || (c >= U'a' && c <= U'f') || (c >= U'A' && c <= U'F'))) return false;
+            if ((color[6] != U'f' && color[6] != U'F') || (color[7] != U'f' && color[7] != U'F')) return false;
+            bool permitted = false;
+            for (int64_t s = 0; s < slot_count; ++s) {
+                GDExtensionBool equal = false;
+                string_equal(read_internal(STRING, slot.get()), read_internal(STRING, array_at(dye_slots, s)), &equal);
+                if (equal) { permitted = true; break; }
+            }
+            if (!permitted) return false;
+        }
+        return true;
+    };
+    valid = scan();
+    destroy(&ordered_keys);
+    for (auto &key : fields) destroy(&key);
+    destroy(result); from_bool(result, &valid);
+}
+
+// Read-only feeding ownership validation. [] is unsupported, [false] is invalid,
+// and [owners] is a complete fresh index. No partial index escapes this call.
+void call_sustain_owner_index(void *mode, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    reset_variant(result, ARRAY);
+    const bool sample_life = mode == &sustain_sample_marker;
+    if (argc != (sample_life ? 4 : 3) || type_of(args[0]) != (sample_life ? DICT : ARRAY) || type_of(args[1]) != DICT) return;
+    if (sample_life) {
+        if (type_of(args[2]) != DOUBLES || type_of(args[3]) != DICT) return;
+    } else if (type_of(args[2]) != ARRAY || !supported_array_type(args[0]) || !supported_array_type(args[2])) return;
+    void *states = sample_life ? nullptr : read_internal(ARRAY, args[0]);
+    void *members = read_internal(DICT, args[1]), *labels = sample_life ? nullptr : read_internal(ARRAY, args[2]);
+    void *life = sample_life ? read_internal(DOUBLES, args[2]) : nullptr;
+    void *indices = sample_life ? read_internal(DICT, args[3]) : nullptr;
+    int64_t life_size = 0;
+    if (sample_life) {
+        size_doubles(life, nullptr, &life_size, 0);
+        if (life_size % 3 != 0 || predicate(dict_typed, indices) || dictionary_size(members) > 10000) return;
+    }
+    const int64_t state_count = sample_life ? 1 : size(states), label_count = sample_life ? 0 : size(labels);
+    if (state_count > 10000 || (label_count != 0 && label_count != state_count) || predicate(dict_typed, members)) return;
+    for (int64_t i = 0; i < label_count; ++i)
+        if (type_of(array_at(labels, i)) != STRING) return;
+
+    enum Field { VERSION, AT, OPEN_RATIONS, MORALE, REGROUP, ROUTED, COMMANDER, EVENT,
+        COHORTS, IDS, HUNGER, COVERAGE, UNTIL, PAID, PENDING, HEALTH, FIELD_COUNT };
+    const char *names[FIELD_COUNT] = {"version", "at", "open_rations", "morale", "regroup_seconds", "routed",
+        "commander_present", "last_combat_event", "cohorts", "ids", "hunger", "coverage", "meal_until", "bonus_paid", "bonus_pending", "hp"};
+    VariantStorage fields[FIELD_COUNT]{}, owners{}, empty_label{}, checkpoints{}, member_keys{};
+    for (int i = 0; i < FIELD_COUNT; ++i) {
+        TextStorage name;
+        make_string(&name, names[i]); from_string(&fields[i], &name); destroy_string(&name);
+    }
+    reset_variant(&owners, DICT);
+    reset_variant(&checkpoints, DICT);
+    from_string(&empty_label, &empty_string);
+    void *seen = internal[DICT](&owners);
+    const double infinity = std::numeric_limits<double>::infinity();
+    const auto valid_number = [&](const void *row, Field key, double lower, double upper) {
+        ReadField value(row, &fields[key]);
+        double parsed;
+        return number(value.get(), parsed) && parsed >= lower && parsed <= upper;
+    };
+    const auto valid_bool = [&](const void *row, Field key) {
+        ReadField value(row, &fields[key]);
+        return value.get() && type_of(value.get()) == BOOL;
+    };
+    const auto valid_integer = [&](void *value, int64_t lower, int64_t *identity = nullptr) {
+        // Match Sustain's FLOAT conversion/range, including integral JSON IDs.
+        // The existing general person_identity_value intentionally has other bounds.
+        double parsed;
+        if (!number(value, parsed) || parsed < static_cast<double>(lower) || parsed > 2147483647.0 || std::floor(parsed) != parsed) return false;
+        if (identity) *identity = static_cast<int64_t>(parsed);
+        return true;
+    };
+    enum class Validation { UNSUPPORTED, INVALID, VALID };
+    std::vector<int64_t> counts;
+    std::vector<double> minimums;
+    int64_t total_living = 0;
+    const auto life_index = [&](const void *key, int64_t &index) {
+        if (!has(indices, key)) return false;
+        void *value = dict_at(indices, key);
+        if (!value || type_of(value) != INT) return false;
+        index = *static_cast<int64_t *>(read_internal(INT, value));
+        return index >= 0 && index < life_size / 3;
+    };
+    const auto scan = [&]() -> Validation {
+        int64_t cohort_count = 0, person_count = 0;
+        for (int64_t owner = 0; owner < state_count; ++owner) {
+            void *state = sample_life ? const_cast<void *>(args[0]) : array_at(states, owner);
+            if (type_of(state) != DICT) return Validation::INVALID;
+            if (predicate(dict_typed, read_internal(DICT, state))) return Validation::UNSUPPORTED;
+            ReadField version(state, &fields[VERSION]);
+            if (!version.get() || type_of(version.get()) == NIL) return Validation::INVALID;
+            // Preserve GDScript's unusual cross-type equality through its fallback.
+            if (type_of(version.get()) != INT && type_of(version.get()) != FLOAT) return Validation::UNSUPPORTED;
+            double numeric_version;
+            if (!number(version.get(), numeric_version) || numeric_version != 1.0) return Validation::INVALID;
+            ReadField at_value(state, &fields[AT]);
+            double at;
+            if (!number(at_value.get(), at) || at < 0.0 || !valid_number(state, OPEN_RATIONS, 0.0, 1000000.0)) return Validation::INVALID;
+            if (!valid_number(state, MORALE, 0.0, 100.0) || !valid_number(state, REGROUP, 0.0, 1800.0)) return Validation::INVALID;
+            if (!valid_bool(state, ROUTED) || !valid_bool(state, COMMANDER)) return Validation::INVALID;
+            ReadField event(state, &fields[EVENT]);
+            if (!valid_integer(event.get(), -1)) return Validation::INVALID;
+            ReadField cohorts_value(state, &fields[COHORTS]);
+            if (!cohorts_value.get() || type_of(cohorts_value.get()) != ARRAY) return Validation::INVALID;
+            if (!supported_array_type(cohorts_value.get())) return Validation::UNSUPPORTED;
+            void *cohorts = read_internal(ARRAY, cohorts_value.get());
+            const int64_t count = size(cohorts);
+            if (count > 10000 - cohort_count) return Validation::UNSUPPORTED;
+            cohort_count += count;
+            for (int64_t c = 0; c < count; ++c) {
+                void *cohort = array_at(cohorts, c);
+                if (type_of(cohort) != DICT) return Validation::INVALID;
+                if (predicate(dict_typed, read_internal(DICT, cohort))) return Validation::UNSUPPORTED;
+                ReadField ids_value(cohort, &fields[IDS]);
+                if (!ids_value.get() || type_of(ids_value.get()) != ARRAY) return Validation::INVALID;
+                if (!supported_array_type(ids_value.get())) return Validation::UNSUPPORTED;
+                void *ids = read_internal(ARRAY, ids_value.get());
+                const int64_t length = size(ids);
+                if (length == 0 || !valid_number(cohort, HUNGER, 0.0, infinity) || !valid_number(cohort, COVERAGE, 0.0, 1.0)) return Validation::INVALID;
+                ReadField until_value(cohort, &fields[UNTIL]);
+                double until;
+                if (!number(until_value.get(), until) || until < at || until > (std::floor(at / 21600.0) + 1.0) * 21600.0 + 0.000000001) return Validation::INVALID;
+                if (!valid_bool(cohort, PAID) || !valid_bool(cohort, PENDING)) return Validation::INVALID;
+                if (length > 10000 - person_count) return Validation::UNSUPPORTED;
+                person_count += length;
+                int64_t living = 0;
+                double minimum = infinity;
+                for (int64_t p = 0; p < length; ++p) {
+                    int64_t identity;
+                    if (!valid_integer(array_at(ids, p), 1, &identity)) return Validation::INVALID;
+                    VariantStorage key;
+                    from_int(&key, &identity);
+                    if (has(seen, &key) || !has(members, &key)) { destroy(&key); return Validation::INVALID; }
+                    void *body = dict_at(members, &key);
+                    if (!body || type_of(body) != DICT) { destroy(&key); return Validation::INVALID; }
+                    if (predicate(dict_typed, read_internal(DICT, body))) { destroy(&key); return Validation::UNSUPPORTED; }
+                    if (sample_life) {
+                        int64_t index;
+                        if (!life_index(&key, index)) { destroy(&key); return Validation::UNSUPPORTED; }
+                        const double hp = *doubles_read(life, index * 3);
+                        if (!std::isfinite(hp) || hp < 0.0) { destroy(&key); return Validation::INVALID; }
+                        if (hp > 0.0) { ++living; minimum = std::min(minimum, hp); }
+                    } else if (!valid_number(body, HEALTH, 0.0, infinity)) { destroy(&key); return Validation::INVALID; }
+                    void *slot = dict_write(seen, &key);
+                    destroy(&key); destroy(slot);
+                    copy_variant(slot, label_count == 0 ? &empty_label : array_at(labels, owner));
+                }
+                if (sample_life) { counts.push_back(living); minimums.push_back(minimum); total_living += living; }
+            }
+        }
+        if (sample_life) {
+            // Checkpoints include the whole member dictionary, even roster people
+            // outside a feeding cohort. Exotic keys/body identities use GD's _life.
+            if (!get_keys(args[1], member_keys)) return Validation::UNSUPPORTED;
+            void *ordered = internal[ARRAY](&member_keys), *output = internal[DICT](&checkpoints);
+            for (int64_t i = 0, count = size(ordered); i < count; ++i) {
+                void *key = array_at(ordered, i);
+                if (type_of(key) != INT) return Validation::UNSUPPORTED;
+                const int64_t identity = *static_cast<int64_t *>(read_internal(INT, key));
+                void *body = dict_at(members, key);
+                if (!body || type_of(body) != DICT || predicate(dict_typed, read_internal(DICT, body))) return Validation::UNSUPPORTED;
+                ReadField body_id(body, PERSON_ID);
+                if (!body_id.get() || type_of(body_id.get()) != INT || *static_cast<int64_t *>(read_internal(INT, body_id.get())) != identity) return Validation::UNSUPPORTED;
+                int64_t index;
+                if (!life_index(key, index)) return Validation::UNSUPPORTED;
+                const double hp = *doubles_read(life, index * 3), ko = *doubles_read(life, index * 3 + 1);
+                int64_t state = hp <= 0.0 ? 2 : (ko > 0.0 ? 1 : 0);
+                TextStorage text;
+                make_string(&text, std::to_string(identity).c_str());
+                VariantStorage text_key;
+                from_string(&text_key, &text); destroy_string(&text);
+                void *slot = dict_write(output, &text_key);
+                destroy(slot); from_int(slot, &state); destroy(&text_key);
+            }
+        }
+        return Validation::VALID;
+    };
+    const Validation validation = scan();
+    if (validation != Validation::UNSUPPORTED) {
+        void *output = internal[ARRAY](result);
+        resize(resize_array, output, sample_life && validation == Validation::VALID ? 4 : 1);
+        void *slot = array_write(output, 0);
+        if (sample_life && validation == Validation::VALID) {
+            reset_variant(slot, ARRAY);
+            void *out_counts = internal[ARRAY](slot);
+            resize(resize_array, out_counts, static_cast<int64_t>(counts.size()));
+            void *mins_slot = array_write(output, 1);
+            reset_variant(mins_slot, ARRAY);
+            void *out_minimums = internal[ARRAY](mins_slot);
+            resize(resize_array, out_minimums, static_cast<int64_t>(minimums.size()));
+            for (int64_t i = 0, count = static_cast<int64_t>(counts.size()); i < count; ++i) {
+                void *count_slot = array_write(out_counts, i), *minimum_slot = array_write(out_minimums, i);
+                destroy(count_slot); from_int(count_slot, &counts[i]);
+                destroy(minimum_slot); from_float(minimum_slot, &minimums[i]);
+            }
+            void *living_slot = array_write(output, 2), *checkpoint_slot = array_write(output, 3);
+            destroy(living_slot); from_int(living_slot, &total_living);
+            destroy(checkpoint_slot); copy_variant(checkpoint_slot, &checkpoints);
+        } else {
+            destroy(slot);
+            if (validation == Validation::VALID) copy_variant(slot, &owners);
+            else { GDExtensionBool valid = false; from_bool(slot, &valid); }
+        }
+    }
+    destroy(&owners); destroy(&empty_label); destroy(&checkpoints); destroy(&member_keys);
+    for (auto &field_key : fields) destroy(&field_key);
+}
+
+// One synchronous read of the original publication, never a retained summary.
+// The caller supplies current rule-derived booleans. Unknown data must run GD.
+enum class PublicationRangedState : int64_t { UNSUPPORTED = -1, ALL_MELEE = 0, HAS_RANGED = 1 };
+void call_publication_ranged_state(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    int64_t state = static_cast<int64_t>(PublicationRangedState::UNSUPPORTED);
+    destroy(result); from_int(result, &state);
+    if (argc != 2 || type_of(args[0]) != DICT || type_of(args[1]) != DICT) return;
+    void *publications = read_internal(DICT, args[0]), *classifier = read_internal(DICT, args[1]);
+    if (predicate(dict_typed, publications) || predicate(dict_typed, classifier)) return;
+
+    VariantStorage names[3]{}, classifier_keys{}, publication_keys{};
+    const char *text[] = {"parts", "weapon", "none"};
+    for (int i = 0; i < 3; ++i) {
+        TextStorage name;
+        make_string(&name, text[i]);
+        from_string(&names[i], &name);
+        destroy_string(&name);
+    }
+    const auto scan = [&]() -> PublicationRangedState {
+        // Validate the small, call-local classifier before accepting any result.
+        if (!get_keys(args[1], classifier_keys)) return PublicationRangedState::UNSUPPORTED;
+        void *classified = internal[ARRAY](&classifier_keys);
+        if (size(classified) != dictionary_size(classifier)) return PublicationRangedState::UNSUPPORTED;
+        for (int64_t i = 0, count = size(classified); i < count; ++i) {
+            void *key = array_at(classified, i);
+            if (type_of(key) != STRING) return PublicationRangedState::UNSUPPORTED;
+            void *value = dict_at(classifier, key);
+            if (!value || type_of(value) != BOOL) return PublicationRangedState::UNSUPPORTED;
+        }
+        if (!has(classifier, &names[2])) return PublicationRangedState::UNSUPPORTED;
+        if (!get_keys(args[0], publication_keys)) return PublicationRangedState::UNSUPPORTED;
+        void *ordered = internal[ARRAY](&publication_keys);
+        if (size(ordered) != dictionary_size(publications)) return PublicationRangedState::UNSUPPORTED;
+        for (int64_t i = 0, count = size(ordered); i < count; ++i) {
+            void *published = dict_at(publications, array_at(ordered, i));
+            if (!published || type_of(published) != DICT) return PublicationRangedState::UNSUPPORTED;
+            void *appearance = read_internal(DICT, published);
+            if (predicate(dict_typed, appearance)) return PublicationRangedState::UNSUPPORTED;
+            void *weapon = &names[2]; // Same missing-parts / missing-weapon default as GD.
+            if (has(appearance, &names[0])) {
+                void *parts_value = dict_at(appearance, &names[0]);
+                if (!parts_value || type_of(parts_value) != DICT) return PublicationRangedState::UNSUPPORTED;
+                void *parts = read_internal(DICT, parts_value);
+                if (predicate(dict_typed, parts)) return PublicationRangedState::UNSUPPORTED;
+                if (has(parts, &names[1])) weapon = dict_at(parts, &names[1]);
+            }
+            if (!weapon || type_of(weapon) != STRING || !has(classifier, weapon)) return PublicationRangedState::UNSUPPORTED;
+            void *ranged = dict_at(classifier, weapon);
+            if (!ranged || type_of(ranged) != BOOL) return PublicationRangedState::UNSUPPORTED;
+            if (*static_cast<GDExtensionBool *>(read_internal(BOOL, ranged))) return PublicationRangedState::HAS_RANGED;
+        }
+        return PublicationRangedState::ALL_MELEE;
+    };
+    state = static_cast<int64_t>(scan());
+    destroy(&publication_keys);
+    destroy(&classifier_keys);
+    for (auto &name : names) destroy(&name);
+    destroy(result); from_int(result, &state);
+}
+
 // Pure call-local Manhattan membership only; no terrain/owner callbacks or writes.
 void call_near_front(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
         GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
@@ -1500,8 +2025,9 @@ void call_advance(void *mode, GDExtensionClassInstancePtr, const GDExtensionCons
 // One instance belongs to one TerrainArmy. The old shared ArmyIdleKernel stays
 // stateless; these fields have no Dictionary lookup on their active read path.
 constexpr Key hot_keys[] = {HP, KO, AGE, THINK, STUN, GRACE, COOLDOWN, STAGGER, SKILL, RANGED, DURATION,
-    POSE, ATTACK, MEMBER, CAPTIVE, DEPARTED, PRESENT, VISUAL};
+    POSE, ATTACK, MEMBER, CAPTIVE, DEPARTED, PRESENT, VISUAL, SITE_EXITED, SURRENDER_PENDING};
 constexpr int HOT_NUMBERS = 11;
+constexpr int HOT_SITE_EXITED = 18, HOT_SURRENDER_PENDING = 19;
 constexpr int HOT_COUNT = sizeof(hot_keys) / sizeof(hot_keys[0]);
 struct HotRow {
     VariantStorage values[HOT_COUNT];
@@ -1530,10 +2056,14 @@ int hot_slot(Key key) {
         case DURATION: return 10; case POSE: return 11; case ATTACK: return 12;
         case MEMBER: return 13; case CAPTIVE: return 14; case DEPARTED: return 15;
         case PRESENT: return 16; case VISUAL: return 17;
+        case SITE_EXITED: return HOT_SITE_EXITED; case SURRENDER_PENDING: return HOT_SURRENDER_PENDING;
         default: return -1;
     }
 }
 bool hot_owns(Key key) { return hot_slot(key) >= 0; }
+bool hot_flag(const HotRow &row, int slot) {
+    return row.present[slot] && *static_cast<GDExtensionBool *>(read_internal(BOOL, &row.values[slot]));
+}
 void *hot_value(HotStore *store, int64_t index, Key key) {
     const int slot = hot_slot(key);
     if (slot < 0 || index < 0 || index >= store->count) return nullptr;
@@ -1558,11 +2088,14 @@ void hot_float(HotRow &row, int field, double value) {
     row.present[field] = true;
 }
 HotAdvance advance_hot(HotStore *store, void *moving, void *progress, void *durations, void *rescues,
-        int64_t start, int64_t end, double delta, double game_seconds, double recovery, bool holding) {
+        int64_t start, int64_t end, double delta, double game_seconds, double recovery, bool holding,
+        bool no_patient, int64_t controlled_index) {
     if (start < 0 || end < start || end > store->count || size(moving) != store->count ||
             packed_size(size_doubles, progress) != store->count || packed_size(size_doubles, durations) != store->count ||
-            !std::isfinite(delta) || delta <= 0.0 || !std::isfinite(game_seconds) || game_seconds <= 0.0 ||
-            !std::isfinite(recovery) || recovery < 0.0) return {start, HOT_OWNER, REASON_INPUT_INVALID};
+            !std::isfinite(delta) || delta <= 0.0 || !std::isfinite(game_seconds) || game_seconds < 0.0 ||
+            !std::isfinite(recovery) || recovery < 0.0 ||
+            (no_patient && (controlled_index < -1 || controlled_index >= store->count)))
+        return {start, HOT_OWNER, REASON_INPUT_INVALID};
     for (int64_t i = start; i < end; ++i) {
         HotRow &row = store->rows[i];
         double hp, ko, age, think, stun, grace, pose_duration, timers[4];
@@ -1661,10 +2194,21 @@ HotAdvance advance_hot(HotStore *store, void *moving, void *progress, void *dura
         if (getting_up && aged + 0.000000001 >= 2.2) return {i, HOT_OWNER, REASON_POSE_EXPIRY};
         if (pose_duration > 0.0 && aged + 0.000000001 >= pose_duration) return {i, HOT_OWNER, REASON_POSE_EXPIRY};
         // Exchange mode continues before the legacy second think decrement.
-        const double next_think = 0.0 > think - delta ? 0.0 : think - delta;
+        double next_think = 0.0 > think - delta ? 0.0 : think - delta;
         // Non-HOLD exchange prepares only decrement think and continue; the
         // sole think-expiry callback is HOLD's automatic rescue search.
-        if (next_think <= 0.0 && holding) return {i, HOT_OWNER, REASON_THINK_HOLD};
+        if (next_think <= 0.0 && holding) {
+            // Army proves the synchronous rescue search has no patient before
+            // entering this variant. Only ordinary, stationary members can
+            // skip that callback; every exceptional row stays with its owner.
+            const bool ordinary_hold = no_patient && idle && !moving_now && pose_duration == 0.0 &&
+                !hot_flag(row, 12) && row.present[13] && hot_flag(row, 13) && i != controlled_index &&
+                row.present[14] && !hot_flag(row, 14) && row.present[15] && !hot_flag(row, 15) &&
+                row.present[HOT_SITE_EXITED] && !hot_flag(row, HOT_SITE_EXITED) &&
+                row.present[HOT_SURRENDER_PENDING] && !hot_flag(row, HOT_SURRENDER_PENDING) && !row.present[17];
+            if (!ordinary_hold) return {i, HOT_OWNER, REASON_THINK_HOLD};
+            next_think = 0.5;
+        }
         const double difference = delta - grace, decay = 0.0 > difference ? 0.0 : difference;
         const double recovered = decay * recovery;
         const double grace_left = grace - delta, stun_left = stun - recovered;
@@ -1722,7 +2266,7 @@ bool hot_valid(int field, void *value) {
     if (field == 17) return type_of(value) == DICT;
     return type_of(value) == BOOL;
 }
-bool hot_optional(int field) { return field >= 6 && field <= 10 || field == 13 || field == 17; }
+bool hot_optional(int field) { return field >= 6 && field <= 10 || field == 13 || field == 17 || field == HOT_SITE_EXITED || field == HOT_SURRENDER_PENDING; }
 bool load_hot(HotStore *store, void *input) {
     const int64_t count = size(input);
     if (count < 0 || count > 10000) return false;
@@ -1755,17 +2299,19 @@ bool load_hot(HotStore *store, void *input) {
     store->count = count;
     return true;
 }
-enum class HotMethod { LOAD, GET, HAS, SET, ERASE, COLUMN, CAPTURE, SIZE, ADVANCE, CAPTURE_ROW, ABSORB_ROW, CAN_ACT, RETAINED_IDLE_MASK, ADVANCE_HOLD, ADVANCE_REASON, ADVANCE_HOLD_REASON };
+enum class HotMethod { LOAD, GET, HAS, SET, ERASE, COLUMN, CAPTURE, SIZE, ADVANCE, CAPTURE_ROW, ABSORB_ROW, CAN_ACT, RETAINED_IDLE_MASK, ADVANCE_HOLD, ADVANCE_REASON, ADVANCE_HOLD_REASON, ADVANCE_HOLD_NO_PATIENT, ADVANCE_HOLD_NO_PATIENT_REASON };
 HotMethod hot_methods[] = {HotMethod::LOAD, HotMethod::GET, HotMethod::HAS, HotMethod::SET,
     HotMethod::ERASE, HotMethod::COLUMN, HotMethod::CAPTURE, HotMethod::SIZE, HotMethod::ADVANCE,
     HotMethod::CAPTURE_ROW, HotMethod::ABSORB_ROW, HotMethod::CAN_ACT, HotMethod::RETAINED_IDLE_MASK, HotMethod::ADVANCE_HOLD,
-    HotMethod::ADVANCE_REASON, HotMethod::ADVANCE_HOLD_REASON};
+    HotMethod::ADVANCE_REASON, HotMethod::ADVANCE_HOLD_REASON,
+    HotMethod::ADVANCE_HOLD_NO_PATIENT, HotMethod::ADVANCE_HOLD_NO_PATIENT_REASON};
 void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args,
         GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
     *error = {GDEXTENSION_CALL_OK, 0, 0};
     auto *store = static_cast<HotStore *>(instance);
     const auto mode = *static_cast<HotMethod *>(mode_ptr);
-    const int expected = mode == HotMethod::ADVANCE || mode == HotMethod::ADVANCE_HOLD ||
+    const bool no_patient = mode == HotMethod::ADVANCE_HOLD_NO_PATIENT || mode == HotMethod::ADVANCE_HOLD_NO_PATIENT_REASON;
+    const int expected = no_patient ? 10 : mode == HotMethod::ADVANCE || mode == HotMethod::ADVANCE_HOLD ||
         mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON ? 9 :
         mode == HotMethod::LOAD || mode == HotMethod::COLUMN || mode == HotMethod::CAPTURE_ROW || mode == HotMethod::CAN_ACT ? 1 :
         mode == HotMethod::GET || mode == HotMethod::SET ? 3 :
@@ -1789,7 +2335,7 @@ void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExte
             void *pose = internal[STRING](&row.values[11]);
             string_equal(pose, &idle_string, &idle);
             string_equal(pose, &unconscious_string, &unconscious);
-            mask[i] = (idle || unconscious) && !row.present[17];
+            mask[i] = (idle || unconscious) && !row.present[17] && !hot_flag(row, HOT_SITE_EXITED);
         }
         return;
     }
@@ -1804,15 +2350,17 @@ void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExte
                 string_equal(internal[STRING](&row.values[11]), &get_up_string, &getting_up);
                 capable = hot_number(row, 0, hp) && hp > 0.0 && hot_number(row, 1, ko) && ko <= 0.0 &&
                     !getting_up && !*static_cast<GDExtensionBool *>(internal[BOOL](&row.values[14])) &&
-                    !*static_cast<GDExtensionBool *>(internal[BOOL](&row.values[15]));
+                    !*static_cast<GDExtensionBool *>(internal[BOOL](&row.values[15])) &&
+                    !hot_flag(row, HOT_SITE_EXITED) && !hot_flag(row, HOT_SURRENDER_PENDING);
             }
         }
         result_bool(capable);
         return;
     }
     if (mode == HotMethod::ADVANCE || mode == HotMethod::ADVANCE_HOLD ||
-            mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON) {
-        const bool diagnostic = mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON;
+            mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON || no_patient) {
+        const bool diagnostic = mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON ||
+            mode == HotMethod::ADVANCE_HOLD_NO_PATIENT_REASON;
         reset_variant(result, INTS);
         void *output = internal[INTS](result);
         resize(resize_ints, output, diagnostic ? 3 : 2);
@@ -1821,6 +2369,7 @@ void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExte
         if (diagnostic) status[2] = REASON_INPUT_INVALID;
         const GDExtensionVariantType types[] = {ARRAY, DOUBLES, DOUBLES, DICT, INT, INT, FLOAT, FLOAT, FLOAT};
         for (int i = 0; i < 9; ++i) if (type_of(args[i]) != types[i]) return;
+        if (no_patient && type_of(args[9]) != INT) return;
         const int64_t start = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[4])));
         const int64_t end = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[5])));
         const HotAdvance advanced = advance_hot(store,
@@ -1829,7 +2378,8 @@ void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExte
             start, end, *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[6]))),
             *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[7]))),
             *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[8]))),
-            mode == HotMethod::ADVANCE_HOLD || mode == HotMethod::ADVANCE_HOLD_REASON);
+            mode == HotMethod::ADVANCE_HOLD || mode == HotMethod::ADVANCE_HOLD_REASON || no_patient,
+            no_patient, no_patient ? *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[9]))) : -1);
         status[0] = static_cast<int32_t>(advanced.next);
         status[1] = advanced.barrier;
         if (diagnostic) status[2] = advanced.reason;
@@ -1957,6 +2507,142 @@ void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExte
         result_bool(true);
     }
 }
+// One synchronous projection of this HotStore and its original cold rows.
+// Unsupported input returns [] before publication; no person/ledger reference
+// is retained after this call. Rule-derived asset classes come from Army.
+bool summary_dictionary(const void *value) {
+    return value && type_of(value) == DICT && !predicate(dict_typed, read_internal(DICT, value));
+}
+void call_hot_summary(void *, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    reset_variant(result, ARRAY);
+    if (argc != 6 || type_of(args[0]) != ARRAY || !summary_dictionary(args[1]) ||
+            !summary_dictionary(args[2]) || type_of(args[3]) != ARRAY || !summary_dictionary(args[4])) return;
+    auto *store = static_cast<HotStore *>(instance);
+    void *rows = read_internal(ARRAY, args[0]), *exemptions = read_internal(ARRAY, args[3]);
+    const int64_t count = size(rows), exempt_count = size(exemptions);
+    double threshold;
+    if (count != store->count || count > 10000 || exempt_count > 10001 || !number(const_cast<void *>(args[5]), threshold)) return;
+    std::vector<int64_t> exempt_ids;
+    exempt_ids.reserve(static_cast<size_t>(exempt_count));
+    for (int64_t i = 0; i < exempt_count; ++i) {
+        const void *identity = array_at(exemptions, i);
+        if (type_of(identity) != INT) return;
+        exempt_ids.push_back(*static_cast<int64_t *>(read_internal(INT, identity)));
+    }
+    int64_t alive = 0, knocked = 0, dead = 0, living = 0, tired = 0;
+    double total_fatigue = 0.0;
+    bool have_kind = false, mixed = false;
+    VariantStorage kind;
+    from_name(&kind, &empty_name);
+    // These references exist only during this synchronous read. Reuse a
+    // validated value only when the original Dictionary is the same object.
+    VariantStorage last_pool, last_definition;
+    bool have_pool = false, have_definition = false;
+    double last_fatigue = 0.0;
+    const auto same_dictionary = [](const void *a, const void *b) {
+        const void *arguments[] = {a, b};
+        GDExtensionBool same = false;
+        same_variant(&same, arguments, 2);
+        return same != 0;
+    };
+    const auto scan = [&]() -> bool {
+        for (int64_t i = 0; i < count; ++i) {
+            void *row = array_at(rows, i);
+            if (!summary_dictionary(row)) return false;
+            HotRow &hot = store->rows[i];
+            double hp, ko;
+            if (!hot_number(hot, 0, hp) || !hot_number(hot, 1, ko)) return false;
+            if (hp <= 0.0) ++dead;
+            else if (ko > 0.0) ++knocked;
+            else ++alive;
+            if (hp <= 0.0 || hot_flag(hot, 15)) continue;
+            ++living;
+            // PersonFatigue.read: a nonempty per-row pool wins; unaffiliated
+            // living rows still contribute even when this Army has a pool.
+            ReadField pool(row, &summary_keys[SUMMARY_POOL]);
+            double value = 0.0;
+            if (have_pool && pool.get() && same_dictionary(&last_pool, pool.get())) {
+                value = last_fatigue;
+            } else {
+                const void *fatigue_owner = row;
+                if (pool.get()) {
+                    if (!summary_dictionary(pool.get())) return false;
+                    if (!predicate(dict_empty, read_internal(DICT, pool.get()))) fatigue_owner = pool.get();
+                }
+                ReadField fatigue(fatigue_owner, &lookup_keys[FATIGUE]);
+                if (fatigue.get()) {
+                    if (!number(fatigue.get(), value)) return false;
+                } else if (fatigue_owner != row) return false;
+                if (fatigue_owner != row) {
+                    if (have_pool) destroy(&last_pool);
+                    copy_variant(&last_pool, pool.get());
+                    last_fatigue = value;
+                    have_pool = true;
+                }
+            }
+            total_fatigue += value;
+            tired += value > threshold ? 1 : 0;
+            if (mixed || (hot.present[13] && !hot_flag(hot, 13))) continue;
+            ReadField identity(row, PERSON_ID);
+            if (!identity.get() || type_of(identity.get()) != INT) return false;
+            const int64_t person_id = *static_cast<int64_t *>(read_internal(INT, identity.get()));
+            if (std::find(exempt_ids.begin(), exempt_ids.end(), person_id) != exempt_ids.end()) continue;
+            // Item and definition IDs are arbitrary original registry keys,
+            // never parsed as an asset/family or replaced with appearance.
+            ReadField holder(row, &summary_keys[SUMMARY_HOLDER]);
+            if (!summary_dictionary(holder.get())) return false;
+            ReadField equipped(holder.get(), &summary_keys[SUMMARY_EQUIPPED]);
+            if (!summary_dictionary(equipped.get())) return false;
+            ReadField weapon(equipped.get(), &summary_keys[SUMMARY_WEAPON]);
+            if (!weapon.get() || type_of(weapon.get()) != STRING) return false;
+            ReadField record(args[1], weapon.get());
+            if (!summary_dictionary(record.get())) return false;
+            ReadField definition_id(record.get(), &summary_keys[SUMMARY_DEFINITION]);
+            if (!definition_id.get() || type_of(definition_id.get()) != STRING) return false;
+            ReadField definition(args[2], definition_id.get());
+            if (have_definition && definition.get() && same_dictionary(&last_definition, definition.get())) continue;
+            if (!summary_dictionary(definition.get())) return false;
+            ReadField asset(definition.get(), &summary_keys[SUMMARY_ASSET]);
+            if (!asset.get() || type_of(asset.get()) != STRING) return false;
+            ReadField current(args[4], asset.get());
+            if (!current.get() || type_of(current.get()) != NAME) return false;
+            if (have_definition) destroy(&last_definition);
+            copy_variant(&last_definition, definition.get());
+            have_definition = true;
+            GDExtensionBool empty = false;
+            name_equal(read_internal(NAME, current.get()), &empty_name, &empty);
+            if (empty) continue;
+            if (!have_kind) {
+                destroy(&kind); copy_variant(&kind, current.get()); have_kind = true;
+            } else {
+                GDExtensionBool equal = false;
+                name_equal(read_internal(NAME, &kind), read_internal(NAME, current.get()), &equal);
+                mixed = !equal;
+            }
+        }
+        return true;
+    };
+    if (scan()) {
+        void *output = internal[ARRAY](result);
+        resize(resize_array, output, 7);
+        int64_t counts[] = {alive, knocked, dead, living, tired};
+        const int slots[] = {0, 1, 2, 4, 5};
+        for (int i = 0; i < 5; ++i) {
+            void *slot = array_write(output, slots[i]); destroy(slot); from_int(slot, &counts[i]);
+        }
+        void *fatigue = array_write(output, 3); destroy(fatigue); from_float(fatigue, &total_fatigue);
+        void *troop = array_write(output, 6); destroy(troop);
+        if (mixed) {
+            TextStorage mixed_name;
+            make_name(&mixed_name, "mixed", false); from_name(troop, &mixed_name); destroy_name(&mixed_name);
+        } else copy_variant(troop, &kind);
+    }
+    if (have_pool) destroy(&last_pool);
+    if (have_definition) destroy(&last_definition);
+    destroy(&kind);
+}
 GDExtensionObjectPtr create_hot(void *, GDExtensionBool) {
     auto object = construct_object(&parent_name);
     set_instance(object, &hot_class_name, new HotStore);
@@ -2001,16 +2687,18 @@ void register_hot() {
         for (int i = 0; i < arities[mode]; ++i) destroy_name(&arg_names[i]);
         destroy_name(&name);
     }
-    const char *arg_text_advance[] = {"moving", "progress", "durations", "rescues", "start", "end", "delta", "game_seconds", "recovery"};
-    const GDExtensionVariantType arg_types_advance[] = {ARRAY, DOUBLES, DOUBLES, DICT, INT, INT, FLOAT, FLOAT, FLOAT};
-    for (int mode : {8, 13, 14, 15}) {
-        TextStorage name, arg_names[9];
+    const char *arg_text_advance[] = {"moving", "progress", "durations", "rescues", "start", "end", "delta", "game_seconds", "recovery", "controlled_index"};
+    const GDExtensionVariantType arg_types_advance[] = {ARRAY, DOUBLES, DOUBLES, DICT, INT, INT, FLOAT, FLOAT, FLOAT, INT};
+    for (int mode : {8, 13, 14, 15, 16, 17}) {
+        const int arity = mode >= 16 ? 10 : 9;
+        TextStorage name, arg_names[10];
         const char *advance_name = mode == 8 ? "advance_numeric" : mode == 13 ? "advance_numeric_hold" :
-            mode == 14 ? "advance_numeric_reason" : "advance_numeric_hold_reason";
+            mode == 14 ? "advance_numeric_reason" : mode == 15 ? "advance_numeric_hold_reason" :
+            mode == 16 ? "advance_numeric_hold_no_patient" : "advance_numeric_hold_no_patient_reason";
         make_name(&name, advance_name, false);
-        GDExtensionPropertyInfo arguments[9];
-        GDExtensionClassMethodArgumentMetadata metadata[9]{};
-        for (int i = 0; i < 9; ++i) {
+        GDExtensionPropertyInfo arguments[10];
+        GDExtensionClassMethodArgumentMetadata metadata[10]{};
+        for (int i = 0; i < arity; ++i) {
             make_name(&arg_names[i], arg_text_advance[i], false);
             arguments[i] = {arg_types_advance[i], &arg_names[i], &empty_name, 0, &empty_string, 6};
         }
@@ -2022,11 +2710,11 @@ void register_hot() {
         method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
         method.has_return_value = true;
         method.return_value_info = &result_info;
-        method.argument_count = 9;
+        method.argument_count = arity;
         method.arguments_info = arguments;
         method.arguments_metadata = metadata;
         register_method(library, &hot_class_name, &method);
-        for (auto &arg_name : arg_names) destroy_name(&arg_name);
+        for (int i = 0; i < arity; ++i) destroy_name(&arg_names[i]);
         destroy_name(&name);
     }
     for (int mode = 9; mode <= 10; ++mode) {
@@ -2088,6 +2776,29 @@ void register_hot() {
     mask_method.return_value_info = &mask_result;
     register_method(library, &hot_class_name, &mask_method);
     destroy_name(&mask_name);
+    TextStorage summary_name, summary_names[6];
+    make_name(&summary_name, "read_summary", false);
+    const char *summary_text[] = {"rows", "records", "definitions", "exempt_ids", "asset_classes", "fatigue_threshold"};
+    const GDExtensionVariantType summary_types[] = {ARRAY, DICT, DICT, ARRAY, DICT, FLOAT};
+    GDExtensionPropertyInfo summary_arguments[6];
+    GDExtensionClassMethodArgumentMetadata summary_metadata[6]{};
+    for (int i = 0; i < 6; ++i) {
+        make_name(&summary_names[i], summary_text[i], false);
+        summary_arguments[i] = {summary_types[i], &summary_names[i], &empty_name, 0, &empty_string, 6};
+    }
+    GDExtensionPropertyInfo summary_result{ARRAY, &empty_name, &empty_name, 0, &empty_string, 6};
+    GDExtensionClassMethodInfo summary_method{};
+    summary_method.name = &summary_name;
+    summary_method.call_func = call_hot_summary;
+    summary_method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+    summary_method.has_return_value = true;
+    summary_method.return_value_info = &summary_result;
+    summary_method.argument_count = 6;
+    summary_method.arguments_info = summary_arguments;
+    summary_method.arguments_metadata = summary_metadata;
+    register_method(library, &hot_class_name, &summary_method);
+    for (auto &name : summary_names) destroy_name(&name);
+    destroy_name(&summary_name);
 }
 GDExtensionObjectPtr create(void *, GDExtensionBool) {
     auto object = construct_object(&parent_name);
@@ -2096,6 +2807,10 @@ GDExtensionObjectPtr create(void *, GDExtensionBool) {
     return object;
 }
 void free_instance(void *, GDExtensionClassInstancePtr) {}
+
+#include "movement_core.inc"
+#include "movement_transit.inc"
+#include "movement_projection.inc"
 
 void initialize(void *, GDExtensionInitializationLevel level) {
     if (level != GDEXTENSION_INITIALIZATION_SCENE) return;
@@ -2128,6 +2843,12 @@ void initialize(void *, GDExtensionInitializationLevel level) {
         from_name(&lookup_keys[i], &text);
         destroy_name(&text);
     }
+    for (int i = 0; i < SUMMARY_KEY_COUNT; ++i) {
+        TextStorage text;
+        make_name(&text, summary_key_text[i], false);
+        from_name(&summary_keys[i], &text);
+        destroy_name(&text);
+    }
     GDExtensionClassCreationInfo4 info{};
     info.is_exposed = true;
     info.create_instance_func = create;
@@ -2138,9 +2859,49 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     make_name(&typed_builtin_method_name, "get_typed_builtin", false);
     make_name(&typed_class_method_name, "get_typed_class_name", false);
     make_name(&typed_script_method_name, "get_typed_script", false);
-    for (int mode = 0; mode < 2; ++mode) {
+    {
+        const char *movement_names[] = {"movement_targets", "movement_field", "movement_route", "calculate_transit_slots", "movement_roster", "movement_projection", "movement_propose"};
+        const decltype(&call_movement_targets) callbacks[] = {call_movement_targets, call_movement_field, call_movement_route, call_calculate_transit_slots, call_movement_roster, call_movement_projection, call_movement_propose};
+        const int counts[] = {4, 1, 1, 5, 5, 5, 1};
+        const GDExtensionVariantType movement_types[][5] = {{ARRAY, ARRAY, OBJECT, OBJECT, NIL}, {ARRAY}, {ARRAY}, {OBJECT, OBJECT, OBJECT, ARRAY, DICT}, {ARRAY, ARRAY, DICT, INT, V2I}, {OBJECT, ARRAY, DICT, ARRAY, BOOL}, {ARRAY}};
+        for (int kind = 0; kind < 7; ++kind) {
+            TextStorage name, arg_names[5]; make_name(&name, movement_names[kind], false);
+            GDExtensionPropertyInfo args[5]; GDExtensionClassMethodArgumentMetadata metadata[5]{};
+            const char *labels[] = {"input", "second", "third", "fourth", "fifth"};
+            for (int i = 0; i < counts[kind]; ++i) { make_name(&arg_names[i], labels[i], false); args[i] = {movement_types[kind][i], &arg_names[i], &empty_name, 0, &empty_string, 6}; }
+            GDExtensionPropertyInfo output{DICT, &empty_name, &empty_name, 0, &empty_string, 6};
+            GDExtensionClassMethodInfo method{}; method.name = &name; method.call_func = callbacks[kind];
+            method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL; method.has_return_value = true; method.return_value_info = &output;
+            method.argument_count = counts[kind]; method.arguments_info = args; method.arguments_metadata = metadata;
+            register_method(library, &class_name, &method);
+            if (kind != 3) { method.method_userdata = &movement_hot_marker; register_method(library, &hot_class_name, &method); }
+            for (int i = 0; i < counts[kind]; ++i) destroy_name(&arg_names[i]); destroy_name(&name);
+        }
+    }
+    {
+        TextStorage name, argument_names[3];
+        make_name(&name, "transit_distance_field", false);
+        const char *labels[] = {"terrain", "profile", "goal"};
+        const GDExtensionVariantType types[] = {OBJECT, OBJECT, V2I};
+        GDExtensionPropertyInfo args[3];
+        GDExtensionClassMethodArgumentMetadata metadata[3]{};
+        for (int i = 0; i < 3; ++i) {
+            make_name(&argument_names[i], labels[i], false);
+            args[i] = {types[i], &argument_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo result{DICT, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &name; method.call_func = call_transit_distance_field;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true; method.return_value_info = &result;
+        method.argument_count = 3; method.arguments_info = args; method.arguments_metadata = metadata;
+        register_method(library, &class_name, &method);
+        for (auto &argument_name : argument_names) destroy_name(&argument_name);
+        destroy_name(&name);
+    }
+    for (int mode = 0; mode < 3; ++mode) {
         TextStorage method_name, argument_names[2];
-        make_name(&method_name, mode == 0 ? "exact_value_equal" : "contains_unsupported", false);
+        make_name(&method_name, mode == 0 ? "exact_value_equal" : (mode == 1 ? "contains_unsupported" : "contains_json_unsupported"), false);
         const int count = mode == 0 ? 2 : 1;
         GDExtensionPropertyInfo arguments[2];
         GDExtensionClassMethodArgumentMetadata metadata[2]{};
@@ -2162,6 +2923,50 @@ void initialize(void *, GDExtensionInitializationLevel level) {
         register_method(library, &class_name, &method);
         for (int i = 0; i < count; ++i) destroy_name(&argument_names[i]);
         destroy_name(&method_name);
+    }
+    for (bool sample_life : {false, true}) {
+        TextStorage name, argument_names[4];
+        make_name(&name, sample_life ? "sustain_life_sample" : "sustain_owner_index", false);
+        const int count = sample_life ? 4 : 3;
+        const char *labels[] = {sample_life ? "state" : "states", "members", sample_life ? "life" : "keys", "index_by_id"};
+        const GDExtensionVariantType types[] = {sample_life ? DICT : ARRAY, DICT, sample_life ? DOUBLES : ARRAY, DICT};
+        GDExtensionPropertyInfo arguments[4];
+        GDExtensionClassMethodArgumentMetadata metadata[4]{};
+        for (int i = 0; i < count; ++i) {
+            make_name(&argument_names[i], labels[i], false);
+            arguments[i] = {types[i], &argument_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo output{ARRAY, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &name; method.call_func = call_sustain_owner_index;
+        method.method_userdata = sample_life ? &sustain_sample_marker : nullptr;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true; method.return_value_info = &output;
+        method.argument_count = count; method.arguments_info = arguments; method.arguments_metadata = metadata;
+        register_method(library, &class_name, &method);
+        for (int i = 0; i < count; ++i) destroy_name(&argument_names[i]);
+        destroy_name(&name);
+    }
+    {
+        TextStorage name, argument_names[4];
+        make_name(&name, "item_records_valid", false);
+        const char *labels[] = {"records", "definitions", "next_item", "dye_slots"};
+        const GDExtensionVariantType types[] = {DICT, DICT, INT, ARRAY};
+        GDExtensionPropertyInfo arguments[4];
+        GDExtensionClassMethodArgumentMetadata metadata[4]{};
+        for (int i = 0; i < 4; ++i) {
+            make_name(&argument_names[i], labels[i], false);
+            arguments[i] = {types[i], &argument_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo output{BOOL, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &name; method.call_func = call_item_records_valid;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true; method.return_value_info = &output;
+        method.argument_count = 4; method.arguments_info = arguments; method.arguments_metadata = metadata;
+        register_method(library, &class_name, &method);
+        for (auto &argument_name : argument_names) destroy_name(&argument_name);
+        destroy_name(&name);
     }
     TextStorage method_name;
     make_name(&method_name, "advance_prefix", false);
@@ -2220,6 +3025,25 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     register_method(library, &class_name, &method);
     for (auto &name : pack_names) destroy_name(&name);
     destroy_name(&method_name);
+    make_name(&method_name, "batch_transit_field_intents", false);
+    TextStorage transit_names[2];
+    GDExtensionPropertyInfo transit_args[2];
+    GDExtensionClassMethodArgumentMetadata transit_meta[2]{};
+    const char *transit_text[] = {"member_rows", "candidate_rows"};
+    for (int i = 0; i < 2; ++i) {
+        make_name(&transit_names[i], transit_text[i], false);
+        transit_args[i] = {LONGS, &transit_names[i], &empty_name, 0, &empty_string, 6};
+    }
+    return_info.type = LONGS;
+    method.call_func = call_batch_transit_field_intents;
+    method.method_userdata = nullptr;
+    method.argument_count = 2;
+    method.arguments_info = transit_args;
+    method.arguments_metadata = transit_meta;
+    register_method(library, &class_name, &method);
+    for (auto &name : transit_names) destroy_name(&name);
+    destroy_name(&method_name);
+    return_info.type = ARRAY;
     make_name(&method_name, "group_render_rows", false);
     const GDExtensionVariantType group_types[] = {BYTES, INTS, ARRAY, ARRAY, INTS};
     const char *group_text[] = {"mask", "native_rows", "fallback_rows", "fallback_members", "pages"};
@@ -2259,6 +3083,20 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     method.method_userdata = nullptr;
     for (auto &name : render_arg_names) destroy_name(&name);
     destroy_name(&method_name);
+    {
+        TextStorage crowd_name, crowd_names[11]; make_name(&crowd_name, "render_crowd", false);
+        GDExtensionPropertyInfo crowd_args[11]; GDExtensionClassMethodArgumentMetadata crowd_meta[11]{};
+        for (int i = 0; i < 11; ++i) {
+            make_name(&crowd_names[i], i < 10 ? render_names[i] : "movement", false);
+            crowd_args[i] = {i < 10 ? render_types[i] : ARRAY, &crowd_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionClassMethodInfo crowd{}; crowd.name = &crowd_name; crowd.call_func = call_render;
+        crowd.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL; crowd.has_return_value = true; crowd.return_value_info = &return_info;
+        crowd.argument_count = 11; crowd.arguments_info = crowd_args; crowd.arguments_metadata = crowd_meta;
+        register_method(library, &class_name, &crowd); crowd.method_userdata = &hot_render_marker;
+        register_method(library, &hot_class_name, &crowd);
+        for (auto &name : crowd_names) destroy_name(&name); destroy_name(&crowd_name);
+    }
     make_name(&method_name, "encirclement_field", false);
     const char *field_names[] = {"enemies", "near", "size", "flags", "levels", "ramps", "blocked", "occupied", "limit", "reach"};
     const GDExtensionVariantType field_types[] = {ARRAY, BYTES, V2I, BYTES, BYTES, BYTES, BYTES, DICT, INT, INT};
@@ -2326,6 +3164,24 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     register_method(library, &class_name, &method);
     for (auto &name : capture_arg_names) destroy_name(&name);
     destroy_name(&method_name);
+    make_name(&method_name, "publication_ranged_state", false);
+    TextStorage publication_names[2];
+    const char *publication_text[] = {"publications", "weapon_ranged_by_id"};
+    GDExtensionPropertyInfo publication_args[2];
+    GDExtensionClassMethodArgumentMetadata publication_meta[2]{};
+    for (int i = 0; i < 2; ++i) {
+        make_name(&publication_names[i], publication_text[i], false);
+        publication_args[i] = {DICT, &publication_names[i], &empty_name, 0, &empty_string, 6};
+    }
+    return_info.type = INT;
+    method.call_func = call_publication_ranged_state;
+    method.method_userdata = nullptr;
+    method.argument_count = 2;
+    method.arguments_info = publication_args;
+    method.arguments_metadata = publication_meta;
+    register_method(library, &class_name, &method);
+    for (auto &name : publication_names) destroy_name(&name);
+    destroy_name(&method_name);
     make_name(&method_name, "near_front", false);
     TextStorage near_names[3];
     const char *near_text[] = {"enemies", "contacts", "radius"};
@@ -2384,6 +3240,7 @@ void deinitialize(void *, GDExtensionInitializationLevel level) {
     unregister_class(library, &class_name);
     for (auto &key : keys) destroy(&key);
     for (auto &key : lookup_keys) destroy(&key);
+    for (auto &key : summary_keys) destroy(&key);
     destroy_string(&idle_string);
     destroy_string(&unconscious_string);
     destroy_string(&down_string);
@@ -2443,6 +3300,7 @@ extern "C" __declspec(dllexport) GDExtensionBool army_idle_init(GDExtensionInter
     LOAD(get_method_bind, GDExtensionInterfaceClassdbGetMethodBind, "classdb_get_method_bind");
     LOAD(make_name, GDExtensionInterfaceStringNameNewWithLatin1Chars, "string_name_new_with_latin1_chars");
     LOAD(make_string, GDExtensionInterfaceStringNewWithLatin1Chars, "string_new_with_latin1_chars");
+    LOAD(string_to_utf32, GDExtensionInterfaceStringToUtf32Chars, "string_to_utf32_chars");
     GDExtensionInterfaceGetVariantGetInternalPtrFunc get_internal;
     GDExtensionInterfaceGetVariantFromTypeConstructor get_constructor;
     GDExtensionInterfaceVariantGetPtrDestructor get_destructor;

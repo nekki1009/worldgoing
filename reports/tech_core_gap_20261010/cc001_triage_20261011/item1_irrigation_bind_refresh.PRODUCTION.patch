@@ -1,0 +1,12 @@
+--- a/scripts/terrain_lab/site_controller.gd
++++ b/scripts/terrain_lab/site_controller.gd
+@@ -423,6 +423,9 @@
+ 	build_cells.clear()
+ 	building_resize = false
+ 	_sync_building_controls(true)
++	# The install-time refresh ran before any Site was bound; apply the S02 gate
++	# now instead of waiting for the construction window to become visible.
++	_refresh_irrigation_controls()
+ 	_zone_signature = ""
+ 	_summary_revision = -1
+ 	_work_elapsed = 1.0

@@ -16,9 +16,14 @@ class Fixture extends Node2D:
 	var character: TerrainTestCharacter = source.character
 	var npc: TerrainTestNPC = source.npc
 	var army: TerrainArmy = source.army
+	var combat_actors: Array[TerrainTestCharacter] = [character, npc]
 	var combat_armies: Array[TerrainArmy] = [army]
 	var exchange_enabled := true
 	var controller := Controller.new()
+	# Core SitePersonActions._person checks lab.site_controller (ship positions); none here.
+	var site_controller: Variant = null
+	# Vehicle/transport owners read the Lab's crowd backend; this fixture has none.
+	var crowd_site: Variant = null
 	func _init() -> void:
 		terrain.site.inventory = {}
 		terrain.site.capacity = 100
@@ -36,12 +41,14 @@ class Fixture extends Node2D:
 		army.cape_departure_guard = controller.cape_departure_guard
 		for actor: TerrainTestCharacter in [character, npc]:
 			actor._saved_appearance = HumanCharacter3DEditor.default_appearance(0)
-			for slot: String in SiteRuntime.EQUIPMENT_SLOTS: actor._saved_appearance.parts[slot] = "none"
+			# Appearance parts are the APPEARANCE slots; the CAV-3 mount slot is an item slot, not a part.
+			for slot: String in SiteRuntime.APPEARANCE_EQUIPMENT_SLOTS: actor._saved_appearance.parts[slot] = "none"
 			controller.equipment_changed(actor.person_id)
 		var row: Dictionary = army.combat_units[0]
-		row.merge({"appearance": character._saved_appearance.duplicate(true), "visual_role": "male_live", "present": true, "member": true})
+		row.merge({"appearance": character._saved_appearance.duplicate(true), "visual_role": "male_live", "present": true, "member": true, "military_role": "officer"})
 		var second: Dictionary = row.duplicate(true)
 		second.person_id = 4
+		second.military_role = "soldier"
 		second.item_state = SiteRuntime.new_item_state("person:4")
 		army.combat_units.append(second)
 		army.cells.append(Vector2i(6, 5))
@@ -51,6 +58,11 @@ class Fixture extends Node2D:
 	func _combat_target(identity: int) -> Dictionary:
 		if identity == 4: return {"owner": army, "unit": 1, "cell": army.cells[1], "hp": army.combat_units[1].hp}
 		return source._combat_target(identity)
+	# Core SitePersonActions._person reads TerrainLab._original_person_target.
+	func _original_person_target(identity: int, with_bodies: bool = false) -> Dictionary:
+		var person: Dictionary = _combat_target(identity)
+		if not person.is_empty() and with_bodies: person.bodies = []
+		return person
 	func controlled_person_id() -> int:
 		return source.controlled_id
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:
@@ -66,6 +78,11 @@ class Fixture extends Node2D:
 	func stock() -> String:
 		return JSON.stringify([terrain.site.item_records, terrain.site.depot_items, character.item_state, npc.item_state,
 			army.combat_units[0].item_state, army.combat_units[1].item_state, army.officer_order, army.officer_service])
+	## Real items only (stock() without the cadre lists), for steps where a
+	## cadre change is the legitimate R1b effect being checked separately.
+	func items() -> String:
+		return JSON.stringify([terrain.site.item_records, terrain.site.depot_items, character.item_state, npc.item_state,
+			army.combat_units[0].item_state, army.combat_units[1].item_state])
 	func close() -> void:
 		controller.equipment_orders.lab = null
 		controller.person_actions.lab = null
@@ -96,7 +113,7 @@ func _run() -> void:
 		push_error("SITE CAPE ROLE POLICY incomplete assertion groups: %d/%d" % [_completed_groups, expected_groups])
 		quit(1)
 		return
-	print("SITE CAPE ROLE POLICY PASS: continuing formal/officer/national offices, no temporary-command entitlement or automatic cape retirement, KO/recovery preserves office/items even with full backpack, existing death succession and explicit personnel removal, prepare+commit/editor/save guards, legacy/capacity/atlas preservation; atlas_positive_checks=%s; no GPU or material proof" % str(not OS.get_cmdline_user_args().has("--policy-only")))
+	print("SITE CAPE ROLE POLICY PASS: persistent officer qualification survives appointment/departure and KO/recovery with unchanged items, ordinary soldiers gain no authority from current indexes, explicit qualification removal retains capacity/illegal-cape guards, qualified death succession, prepare+commit/editor/save guards, legacy/capacity/atlas preservation; atlas_positive_checks=%s; no GPU or material proof" % str(not OS.get_cmdline_user_args().has("--policy-only")))
 	quit(0)
 
 func _roles() -> void:
@@ -107,13 +124,18 @@ func _roles() -> void:
 	f.army.command_abilities[1] = {"tactics": 100, "leadership": 100, "coach": 100}
 	f.source.controlled_id = 4
 	assert(not policy.cape_role_allowed(4), "Control and remembered command abilities cannot mint an office")
+	assert(f.army.set_military_role(4, "officer").ok and policy.cape_role_allowed(4), "Explicit original-person qualification permits a cape before appointment")
 	assert(f.army.record_officer_service([1], true).ok and policy.cape_role_allowed(4))
 	f.army.combat_units[1].ko = 10.0
 	assert(policy.cape_role_allowed(4), "Temporary inability does not revoke an existing office")
 	f.army.combat_units[1].ko = 0.0
-	assert(f.army.record_officer_service([1], false).ok and not policy.cape_role_allowed(4))
+	assert(f.army.record_officer_service([1], false).ok and policy.cape_role_allowed(4), "Ending an appointment preserves the original officer qualification")
+	f.army.combat_units[1].member = false
+	assert(policy.cape_role_allowed(4), "Leaving a team preserves the original officer qualification")
+	f.army.combat_units[1].member = true
+	assert(f.army.set_military_role(4, "soldier").ok)
 	f.army.current_commander = 1
-	assert(not policy.cape_role_allowed(4), "Temporary command without a continuing office cannot authorize a cape")
+	assert(not policy.cape_role_allowed(4), "A stale current index cannot authorize a soldier after explicit qualification removal")
 	f.army.combat_units[1].member = false
 	assert(not policy.cape_role_allowed(4), "Stale indexes cannot authorize former members")
 	f.army.player_member = f.character
@@ -134,6 +156,7 @@ func _live_spawn() -> void:
 	lab.set_process(false)
 	lab.site_controller.set_process(false)
 	lab.site_controller._auto_save_blocked = true
+	assert(lab.npc == null and lab.combat_actors.size() == 1, "The formal Site starts with only its original player")
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		actor.set_process(false)
 		assert(HumanCharacter3DEditor.valid_appearance(actor._saved_appearance), "Actor-owned initial snapshot must precede item/cape preflight, including GPU editor startup")
@@ -149,10 +172,12 @@ func _live_spawn() -> void:
 				assert(int(record.original_owner) == actor.person_id and not actor.item_state.equipped.values().has(item_id), "Original preview cape stays owned in the same person's backpack")
 		assert(owned_capes == 1, "Initial authored cape becomes one real retained item, not deleted or replaced by a capeless seed")
 	var before: Dictionary = lab.terrain.site.item_records.duplicate(true)
-	var holders := [lab.character.item_state.duplicate(true), lab.npc.item_state.duplicate(true)]
+	var holders: Array[Dictionary] = []
+	for actor: TerrainTestCharacter in lab.combat_actors: holders.append(actor.item_state.duplicate(true))
 	lab.site_controller.bind()
 	assert(lab.terrain.site.item_records == before, "Rebinding neither refills items nor resurrects the preview's default cape")
-	assert([lab.character.item_state, lab.npc.item_state] == holders, "Rebinding preserves holder versions, backpack and equipped slots")
+	for index in range(lab.combat_actors.size()):
+		assert(lab.combat_actors[index].item_state == holders[index], "Rebinding preserves holder versions, backpack and equipped slots")
 	assert(lab.site_controller.cape_policy_guard().ok)
 	lab.site_controller._capture_positions()
 	var saved := Store.save(lab.terrain, OUT + "/new_site.json")
@@ -219,17 +244,30 @@ func _retirement_and_demotion() -> void:
 	assert(not f.army.combat_units[1].item_state.equipped.has("cape"))
 	assert(f.army.combat_units[1].item_state.item_ids.has(cape) and f.terrain.site.item_records[cape] == record)
 	assert(f.controller.person_appearance(4).parts.cape == "none")
+	assert(f.army.set_military_role(4, "officer").ok)
 	assert(f.army.record_officer_service([1], true).ok)
 	f.source.controlled_id = 4
 	var prepared := f.controller.equipment_orders.prepare(4, {"mode": "personal", "slot": "cape", "item_id": cape})
 	assert(prepared.ok and f.controller.equipment_orders.commit(prepared.order).ok)
 	f.army.combat_units[1].cargo.wood = 20
-	before = f.stock()
-	assert(f.army.record_officer_service([1], false).code == "STORAGE_FULL" and f.stock() == before)
-	f.army.combat_units[1].cargo.clear()
-	assert(f.controller.cape_departure_guard(4).code == "CAPE_REMOVE_FIRST")
+	var qualified_holder: Dictionary = f.army.combat_units[1].item_state.duplicate(true)
 	assert(f.army.record_officer_service([1], false).ok)
+	assert(not f.army.officer_order.has(1) and f.army.military_role(1) == "officer")
+	assert(f.army.combat_units[1].item_state == qualified_holder and f.terrain.site.item_records[cape] == record,
+		"Appointment removal preserves qualified wear and the exact original cape despite a full backpack")
+	assert(f.controller.cape_departure_guard(4).ok)
+	f.army.combat_units[1].member = false
+	assert(f.controller.person_can_wear_cape(4) and f.army.combat_units[1].item_state == qualified_holder)
+	f.army.combat_units[1].member = true
+	assert(f.army.set_military_role(4, "soldier").ok)
+	before = f.stock()
+	assert(f.controller.cape_policy_guard().code == "CAPE_ROLE_RESTRICTED")
+	assert(f.controller.retire_officer_capes([4]).code == "STORAGE_FULL" and f.stock() == before)
+	assert(f.controller.cape_departure_guard(4).code == "CAPE_REMOVE_FIRST")
+	f.army.combat_units[1].cargo.clear()
+	assert(f.controller.reconcile_cape_roles([4]).ok)
 	assert(not f.army.officer_order.has(1) and not f.army.combat_units[1].item_state.equipped.has("cape"))
+	assert(f.army.combat_units[1].item_state.item_ids.has(cape) and f.terrain.site.item_records[cape] == record)
 	# Batch retirement is all-or-none even when a later original holder is full.
 	f.item(1, "cape", "cape_travel_01", true)
 	f.item(2, "cape", "cape_chinese_01", true)
@@ -244,6 +282,7 @@ func _retirement_and_demotion() -> void:
 
 func _command_recovery_keeps_office() -> void:
 	var f := Fixture.new()
+	assert(f.army.set_military_role(4, "officer").ok)
 	assert(f.army.record_officer_service([1], true).ok)
 	var commander_cape := f.item(3, "cape", "cape_travel_01", true)
 	var officer_cape := f.item(4, "cape", "cape_chinese_01", true)
@@ -276,17 +315,29 @@ func _command_recovery_keeps_office() -> void:
 	assert(f.army.officer_service == [1] and f.army.officer_order == [1] and f.stock() == before)
 	assert(f.army.combat_units[0].item_state.equipped.cape == commander_cape and f.army.combat_units[1].item_state.equipped.cape == officer_cape)
 	assert(f.controller.person_appearance(4) == officer_look and f.controller.cape_policy_guard().ok and not f.controller._auto_save_blocked)
-	# Existing explicit personnel removal is different from handback. A current
-	# acting commander cannot use transient authority to retain a removed office.
+	# Removing an appointment preserves the officer's explicit qualification.
 	f.army.combat_units[0].ko = 10.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
-	assert(f.army.record_officer_service([1], false).code == "STORAGE_FULL" and f.stock() == before)
-	f.army.combat_units[1].cargo.clear()
 	var record: Dictionary = f.terrain.site.item_records[officer_cape].duplicate(true)
+	var qualified_holder: Dictionary = f.army.combat_units[1].item_state.duplicate(true)
 	assert(f.army.record_officer_service([1], false).ok)
-	assert(f.army.current_commander == 1 and not f.controller.person_can_wear_cape(4))
+	# R1b (2026-10-07): command needs a post. Leaving the last post ends the
+	# acting command; the explicit officer rank and the cape stay.
+	assert(f.army.current_commander == -1 and f.controller.person_can_wear_cape(4), "Without a post the officer keeps rank and cape but cannot act as commander")
 	assert(f.army.officer_service.is_empty() and f.army.officer_order.is_empty())
+	assert(f.army.combat_units[1].item_state == qualified_holder and f.terrain.site.item_records[officer_cape] == record)
+	assert(f.controller.cape_departure_guard(4).ok and f.controller.cape_policy_guard().ok)
+	# Restore the formal commander before explicitly removing the other person's qualification.
+	f.army.combat_units[0].ko = 0.0
+	f.army._command_dirty = true
+	f.army.settle_combat_command()
+	assert(f.army.current_commander == 0 and f.army.set_military_role(4, "soldier").ok)
+	before = f.stock()
+	assert(not f.controller.person_can_wear_cape(4) and f.controller.cape_policy_guard().code == "CAPE_ROLE_RESTRICTED")
+	assert(f.controller.reconcile_cape_roles([4]).code == "STORAGE_FULL" and f.stock() == before)
+	f.army.combat_units[1].cargo.clear()
+	assert(f.controller.reconcile_cape_roles([4]).ok)
 	assert(not f.army.combat_units[1].item_state.equipped.has("cape") and f.army.combat_units[1].item_state.item_ids.has(officer_cape))
 	assert(f.terrain.site.item_records[officer_cape] == record)
 	f.close()
@@ -300,22 +351,49 @@ func _acting_is_not_appointment() -> void:
 	f.army.combat_units[0].ko = 10.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
-	assert(f.army.formal_commander == 0 and f.army.current_commander == 1)
+	assert(f.army.formal_commander == 0 and f.army.current_commander == -1, "An ordinary soldier cannot become an acting commander")
 	assert(not f.controller.person_can_wear_cape(4) and f.army.officer_service.is_empty())
 	assert(f.controller.equipment_orders.begin_personal(4, "cape", cape).code == "CAPE_ROLE_RESTRICTED")
-	assert(f.stock() == before, "Random temporary command never appoints an officer or moves items")
+	assert(f.stock() == before, "A command vacancy never promotes an ordinary soldier or moves items")
 	f.army.combat_units[0].ko = 0.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
 	assert(f.army.current_commander == 0 and not f.army.officer_order.has(1))
 	assert(f.stock() == before and not f.controller.person_can_wear_cape(4))
-	# The original permanent-vacancy branch is untouched: a deceased formal
-	# commander is succeeded by a real new formal commander, not an invented rank.
+	var goods := f.items()
+	assert(f.army.set_military_role(4, "officer").ok)
+	# R1b: promotion seats the officer in a free 武官 post (so officer_service
+	# and officer_order gain [1]); that post is what lets them act. Acting
+	# itself creates no further appointment and moves no item.
+	var seated: Array = f.army.officer_service.duplicate()
+	var posts: Dictionary = f.army.offices.duplicate(true)
+	assert(seated == [1] and f.army.officer_order == [1], "Promotion seats the new officer in a free 武官 post: service %s order %s" % [str(f.army.officer_service), str(f.army.officer_order)])
+	assert(f.items() == goods, "Promotion moves no item:
+before %s
+after  %s" % [goods, f.items()])
+	before = f.stock()
+	f.army.combat_units[0].ko = 10.0
+	f.army._command_dirty = true
+	f.army.settle_combat_command()
+	assert(f.army.formal_commander == 0 and f.army.current_commander == 1 and f.army.acting_commander == 1)
+	assert(f.controller.person_can_wear_cape(4), "Qualified acting command keeps the original qualification")
+	assert(f.army.officer_service == seated, "Acting creates no appointment: officer_service before %s after %s" % [str(seated), str(f.army.officer_service)])
+	assert(f.army.offices == posts, "Acting leaves the posts unchanged:
+before %s
+after  %s" % [JSON.stringify(posts), JSON.stringify(f.army.offices)])
+	assert(f.stock() == before, "Acting moves no item or cadre place:
+before %s
+after  %s" % [before, f.stock()])
+	# Permanent succession also requires the original person's explicit qualification.
+	# The new captain is the head, so they leave the cadre lists (R1b); items stay.
 	f.army.combat_units[0].hp = 0.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
 	assert(f.army.formal_commander == 1 and f.army.current_commander == 1 and f.army.acting_commander == -1)
-	assert(f.controller.person_can_wear_cape(4) and f.stock() == before)
+	assert(not f.army.officer_service.has(1) and not f.army.officer_order.has(1), "The captain is not cadre: service %s order %s" % [str(f.army.officer_service), str(f.army.officer_order)])
+	assert(f.controller.person_can_wear_cape(4) and f.items() == goods, "Succession moves no item:
+before %s
+after  %s" % [goods, f.items()])
 	var prepared := f.controller.equipment_orders.prepare(4, {"mode": "personal", "slot": "cape", "item_id": cape})
 	assert(prepared.ok and f.controller.equipment_orders.commit(prepared.order).ok)
 	f.close()
@@ -346,17 +424,27 @@ func _strict_atlas() -> void:
 	_completed_groups += 1
 
 func _saved_roles() -> void:
-	var row := {"person_id": 12, "hp": 100.0, "member": true, "departed": false, "item_state": {"equipped": {"cape": "original"}}}
+	var row := {"person_id": 12, "hp": 100.0, "member": true, "departed": false, "military_role": "soldier", "item_state": {"equipped": {"cape": "original"}}}
 	var team := {"roster_version": 1, "units": [row], "formal_commander": -1, "current_commander": -1, "officers": [], "officer_service": [], "player_member": {}}
 	var state := {"actors": {}, "armies": [team], "equipment_nations": {}}
 	var before := JSON.stringify(state)
 	assert(Store._validate_cape_roles(state).code == "CAPE_ROLE_RESTRICTED" and JSON.stringify(state) == before)
+	var legacy: Dictionary = state.duplicate(true)
+	legacy.armies[0].units[0].erase("military_role")
+	assert(Store._validate_cape_roles(legacy).code == "CAPE_ROLE_RESTRICTED")
+	legacy.armies[0].current_commander = 0
+	var legacy_before := JSON.stringify(legacy)
+	assert(Store._validate_cape_roles(legacy).ok and JSON.stringify(legacy) == legacy_before,
+		"A legacy commander without the new field keeps migrated qualification without mutating the incoming state")
 	team.officer_service = [0]
+	row.military_role = "officer"
 	assert(Store._validate_cape_roles(state).ok)
 	team.officer_service = []
+	row.military_role = "soldier"
 	team.current_commander = 0
 	assert(Store._validate_cape_roles(state).code == "CAPE_ROLE_RESTRICTED", "Saved temporary command alone does not establish an office")
 	team.officers = [0]
+	row.military_role = "officer"
 	row.ko = 10.0
 	team.current_commander = -1
 	assert(Store._validate_cape_roles(state).ok, "A KO officer keeps the same continuing office in a saved state")
@@ -364,6 +452,8 @@ func _saved_roles() -> void:
 	team.formal_commander = 0
 	assert(Store._validate_cape_roles(state).ok)
 	row.member = false
+	assert(Store._validate_cape_roles(state).ok, "A saved former member retains the original officer qualification")
+	row.military_role = "soldier"
 	assert(Store._validate_cape_roles(state).code == "CAPE_ROLE_RESTRICTED")
 	row.item_state.equipped.clear()
 	row.appearance = {"parts": {"cape": "cape_travel_01"}}

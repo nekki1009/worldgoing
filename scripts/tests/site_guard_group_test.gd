@@ -2,6 +2,7 @@ extends "res://scripts/tests/site_workflow_test.gd"
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

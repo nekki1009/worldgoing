@@ -18,8 +18,23 @@ func _check(helper: Variant) -> void:
 		states.append(owner.state)
 	assert(Sustain.validate_owners(states, helper._all_members()), "Each real ID has at most one feeding owner")
 
+
+func _assert_original_projection(controller: SiteController, body: Dictionary, projection: Dictionary, original_holder: Dictionary, original_cargo: Dictionary) -> void:
+	# The existing TerrainArmy.combat_hot_materialize returns a deep projection.
+	# Resolve identity/ownership through the original PersonActions owner while
+	# requiring the feeding sample to match every relevant live field.
+	var identity := int(body.person_id)
+	var person: Dictionary = controller.person_actions._person(identity, false)
+	assert(not person.is_empty() and is_same(person.body, body))
+	assert(is_same(person.holder, original_holder) and is_same(person.cargo, original_cargo))
+	assert(int(projection.person_id) == identity and float(projection.hp) == float(person.hp) and float(projection.ko) == float(person.ko) and bool(projection.captive) == bool(person.captive))
+	assert(projection.item_state == original_holder and projection.cargo == original_cargo)
+
 func _run() -> void:
 	var lab := TerrainLab.new()
+	# The formal scene already omits a default worker; this ordinary feeding
+	# fixture explicitly opts in its original NPC before Lab enters the tree.
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -133,7 +148,7 @@ func _run() -> void:
 	assert(source.transfer_members_to(target, [captor_id], source.current_commander, target.current_commander).code == "BUSY")
 	assert(data.site == before)
 	supplying.sustain.at += 1.0
-	controller.person_actions._jobs["fixture"] = {"executor_id": lab.character.person_id, "target_id": lab.npc.person_id}
+	controller.person_actions._jobs["fixture"] = {"kind": "fixture", "executor_id": lab.character.person_id, "target_id": lab.npc.person_id}
 	before = data.site.duplicate(true)
 	assert(source.transfer_members_to(target, [captor_id], source.current_commander, target.current_commander).code == "BUSY")
 	assert(data.site == before)
@@ -167,7 +182,7 @@ func _run() -> void:
 	var captor_personal: Dictionary = data.site.person_supply[str(captor_id)]
 	assert(_history(captor_personal, captor_id) == captor_history and _history(captor_personal, lab.npc.person_id) == npc_history)
 	assert(not helper.team_members(target, helper._original_members(target)).has(captor_id))
-	assert(is_same(helper.personal_members_id(captor_id)[captor_id], captor_body))
+	_assert_original_projection(controller, captor_body, helper.personal_members_id(captor_id)[captor_id], captor_gear, captor_cargo)
 	assert(is_same(captor_body.cargo, captor_cargo) and is_same(captor_body.item_state, captor_gear))
 	assert(supplying.inventory == {"fish": 6} and receiving.inventory == {"grain": 9})
 	captor_personal.open_rations = 0.125 # Existing private opened stock, not an item transfer.
@@ -210,7 +225,9 @@ func _run() -> void:
 	assert(is_same(data.site.worker.cargo, original_npc_cargo))
 	_check(helper)
 	assert(source.combat_units.size() + target.combat_units.size() == 12)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.free()
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE CAPTIVITY ROSTER SUPPLY PASS: original transfer/row leave-rejoin/Actor join-leave; captured military registration preserves actual feeding, unfed joins once, captor's dependants retain meal/hunger without moving stock, guard alone does not; busy/lag/job rejection atomic; original personal history and body/cargo/gear references survive")
 	quit(0)

@@ -1,7 +1,7 @@
 extends "res://scripts/terrain_lab/terrain_lab.gd"
 ## Frozen original-owner fatigue loop before native stationary-zero batching.
 
-func _advance_fatigue(seconds: float) -> void:
+func _advance_fatigue(seconds: float, _accepted_prefix_only: bool = false) -> void:
 	if terrain == null or seconds <= 0.0:
 		return
 	var fatigue_started := Time.get_ticks_usec() if combat_profile_enabled else 0

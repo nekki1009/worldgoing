@@ -1,0 +1,209 @@
+func _try_exchange_encirclement() -> bool:
+	if data == null or bool(data.site.get("paused", false)) or (is_inside_tree() and get_tree().paused) \
+		or not exchange_enabled or not combat_attacking or combat_order not in [CombatOrder.ATTACK, CombatOrder.PURSUE] \
+		or needs_attack_order or is_sustain_routed() or not exchange_people_query.is_valid():
+		return false
+	var enemies := {}
+	var contact_cells: Array[Vector2i] = []
+	var pinned := {}
+	var query_owner: Object = exchange_people_query.get_object()
+	var front: Array = []
+	if get_script() == TerrainArmy and data.get_script() == TerrainData and not is_instance_valid(player_member) \
+		and query_owner is TerrainLab and query_owner.get_script() == TerrainLab \
+		and exchange_people_query.get_method() == &"_exchange_people" and exchange_people_query.get_bound_arguments() == [false] \
+		and exchange_people_query.get_unbound_arguments_count() == 0:
+		front = query_owner._exchange_encirclement_front(self)
+	if front.size() == 3:
+		enemies = front[0]
+		contact_cells = front[1]
+		pinned = front[2]
+	else:
+		# Preserve callback/coercion ordering for custom queries and player teams.
+		var people: Array = exchange_people_query.call()
+		for person: Dictionary in people:
+			if int(person.faction) != faction_id:
+				enemies[Vector2i(person.cell)] = true
+		for person: Dictionary in people:
+			var index := int(person.unit)
+			if not (person.owner == self and index >= 0 and is_member(index)) \
+				and not (is_instance_valid(player_member) and person.owner == player_member):
+				continue
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var next: Vector2i = person.cell + direction
+				if enemies.has(next) and data.can_attack_across(person.cell, next):
+					contact_cells.append(person.cell)
+					if person.owner == self:
+						pinned[index] = true
+					break
+	if contact_cells.is_empty():
+		return false # No automatic long-distance pursuit just because ATTACK is selected.
+	encirclement_reviews += 1
+	# A single bounded reverse field serves this review, not a BFS per person/goal.
+	# Contact stays local, but routes must reach the rear around a dense formation.
+	var distance := {}
+	var pending: Array[Vector2i] = []
+	# Disposable contact buckets, not another movement/target owner. Exact
+	# Manhattan checks still decide membership; enemy iteration/claim order stays.
+	var contact_buckets := {}
+	var enemy_cells := enemies.keys() # Same Dictionary insertion order.
+	var near_mask := PackedByteArray()
+	if native_front_enabled:
+		var kernel := _get_idle_kernel()
+		if kernel != null and kernel.has_method("near_front"):
+			near_mask = kernel.call("near_front", enemy_cells, contact_cells, ENCIRCLEMENT_DISTANCE)
+	var native_front := near_mask.size() == enemy_cells.size()
+	if native_front: native_front_cells += enemy_cells.size()
+	# Only the canonical readers are pure: reject own occupancy before geometry,
+	# whose can_attack_across already includes goal walkability. Keep override order.
+	var pure_seed_predicates: bool = get_script() == TerrainArmy and data.get_script() == TerrainData and (vehicle_transport == null or vehicle_transport.records().is_empty())
+	var external_owner: Object = external_blocker.get_object() if external_blocker.is_valid() else null
+	var pure_external: bool = pure_seed_predicates and external_owner is TerrainArmy \
+		and external_owner.get_script() == TerrainArmy and external_blocker.get_method() == &"blocks_cell" \
+		and external_blocker.get_bound_arguments_count() == 0 and external_blocker.get_unbound_arguments_count() == 0
+	var pure_occupancy := pure_external
+	for actor: Variant in [player, npc]:
+		if actor != null and (not actor is TerrainTestCharacter or actor.get_script() not in [TerrainTestCharacter, TerrainTestNPC]):
+			pure_occupancy = false
+	var occupied := {}
+	if pure_occupancy:
+		# These exact readers cannot mutate the map during this synchronous
+		# field build. Discard the union before any later review/claim changes.
+		occupied = _cell_owners.duplicate()
+		occupied.merge(_reserved_cells)
+		occupied.merge(external_owner._cell_owners)
+		occupied.merge(external_owner._reserved_cells)
+		for actor: Variant in [player, npc]:
+			if actor == null: continue
+			if actor.occupies_cell(actor.terrain_cell): occupied[actor.terrain_cell] = true
+			if actor.occupies_cell(actor.movement_from_cell): occupied[actor.movement_from_cell] = true
+	var native_field := false
+	if pure_occupancy and native_front:
+		var kernel := _get_idle_kernel()
+		if kernel != null and kernel.has_method("encirclement_field"):
+			var packet: Array = kernel.encirclement_field(enemy_cells, near_mask, data.size, data.navigation_flags(), data.navigation_heights(), data.navigation_ramps(), data.static_blocked, occupied, ENCIRCLEMENT_CELLS, ENCIRCLEMENT_ROUTE_DISTANCE)
+			if packet.size() == 1:
+				distance = packet[0]
+				native_field = true
+	# A necessary Manhattan bound rejects distant rows before bucket ranges.
+	# Keep scalar ints (not an expanded Vector2i) to avoid int32 edge wrapping.
+	var min_x: int = contact_cells[0].x
+	var max_x: int = min_x
+	var min_y: int = contact_cells[0].y
+	var max_y: int = min_y
+	for contact: Vector2i in contact_cells:
+		min_x = mini(min_x, contact.x)
+		max_x = maxi(max_x, contact.x)
+		min_y = mini(min_y, contact.y)
+		max_y = maxi(max_y, contact.y)
+		if native_front: continue
+		var bucket := Vector2i(contact.x >> 3, contact.y >> 3)
+		if not contact_buckets.has(bucket): contact_buckets[bucket] = []
+		contact_buckets[bucket].append(contact)
+	for enemy_index in range(0 if native_field else enemy_cells.size()):
+		var enemy_cell: Vector2i = enemy_cells[enemy_index]
+		if native_front and near_mask[enemy_index] == 0: continue
+		if enemy_cell.x < min_x - ENCIRCLEMENT_DISTANCE or enemy_cell.x > max_x + ENCIRCLEMENT_DISTANCE \
+			or enemy_cell.y < min_y - ENCIRCLEMENT_DISTANCE or enemy_cell.y > max_y + ENCIRCLEMENT_DISTANCE:
+			continue
+		var near_front := native_front
+		for bucket_y in range(0) if native_front else range((enemy_cell.y - ENCIRCLEMENT_DISTANCE) >> 3, ((enemy_cell.y + ENCIRCLEMENT_DISTANCE) >> 3) + 1):
+			for bucket_x in range((enemy_cell.x - ENCIRCLEMENT_DISTANCE) >> 3, ((enemy_cell.x + ENCIRCLEMENT_DISTANCE) >> 3) + 1):
+				for contact: Vector2i in contact_buckets.get(Vector2i(bucket_x, bucket_y), []):
+					if absi(enemy_cell.x - contact.x) + absi(enemy_cell.y - contact.y) <= ENCIRCLEMENT_DISTANCE:
+						near_front = true
+						break
+				if near_front: break
+			if near_front: break
+		if not near_front:
+			continue
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var goal := enemy_cell + direction
+			if distance.has(goal) or pending.size() >= ENCIRCLEMENT_CELLS:
+				continue
+			if pure_occupancy:
+				if occupied.has(goal) or not data.can_attack_across(goal, enemy_cell): continue
+			elif pure_seed_predicates:
+				# Occupied enemy interiors cannot be route seeds. With the exact
+				# pure blocker, reject them before repeating terrain work four times.
+				if blocks_cell(goal) or (pure_external and external_owner.blocks_cell(goal)) or not data.can_attack_across(goal, enemy_cell):
+					continue
+			elif not data.is_walkable(goal) or not data.can_attack_across(goal, enemy_cell) or blocks_cell(goal):
+				continue
+			if not pure_occupancy and _is_external_cell(goal):
+				continue
+			distance[goal] = 0
+			pending.append(goal)
+	var head := 0
+	while head < pending.size():
+		var cell := pending[head]
+		head += 1
+		if int(distance[cell]) >= ENCIRCLEMENT_ROUTE_DISTANCE - 1:
+			continue
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cell + direction
+			if distance.has(next) or pending.size() >= ENCIRCLEMENT_CELLS \
+				or not data.can_step(next, cell) or (occupied.has(next) if pure_occupancy else (blocks_cell(next) or _is_external_cell(next))):
+				continue
+			distance[next] = int(distance[cell]) + 1
+			pending.append(next)
+	# Conservative one-review origins only: a legal candidate must be one
+	# cardinal step from this exact field. Keep original eligibility/order below.
+	# Small rosters use the original scan when building the filter costs more
+	# entries than there are people to scan. This never changes eligibility.
+	var filter_origins := distance.size() * TerrainData.DIRECTIONS.size() < combat_units.size()
+	var origins := {}
+	if filter_origins:
+		for step_cell: Vector2i in distance:
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				origins[step_cell - direction] = true
+	# Large fields omit the origins set. Reject only rows with no adjacent
+	# field cell, after proving every skipped original reader is canonical/pure.
+	var geometry_prefilter := not filter_origins and front.size() == 3 and pure_occupancy \
+		and _canonical_geometry_prefilter_safe(query_owner)
+	if geometry_prefilter:
+		geometry_prefilter_reviews += 1
+	var candidates: Array[Dictionary] = []
+	for index in range(combat_units.size()):
+		if filter_origins and not origins.has(cells[index]):
+			continue
+		if geometry_prefilter:
+			var reaches_field := false
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				if distance.has(cells[index] + direction):
+					reaches_field = true
+					break
+			if not reaches_field:
+				geometry_prefilter_skipped += 1
+				continue
+		if pinned.has(index) or not is_member(index) or is_controlled_person(index) or not combat_can_act(index) \
+			or moving_to[index] != INVALID_CELL or _combat_action_blocks_step(index) or _unit_rescues.has(index) \
+			or _exchange_maneuver_blocked(index):
+			continue
+		var best := INVALID_CELL
+		var cost := ENCIRCLEMENT_ROUTE_DISTANCE
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cells[index] + direction
+			if distance.has(next) and int(distance[next]) < cost and data.can_step(cells[index], next):
+				best = next
+				cost = int(distance[next])
+		if best != INVALID_CELL:
+			candidates.append({"unit": index, "id": combat_identity(index), "step": best, "cost": cost})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.cost) < int(b.cost) if int(a.cost) != int(b.cost) else int(a.id) < int(b.id))
+	var issued := 0
+	for candidate: Dictionary in candidates:
+		if issued >= ENCIRCLEMENT_STEPS:
+			break
+		var index := int(candidate.unit)
+		# Several people may follow the same route. Only their committed next
+		# cells are exclusive; a distant shared goal must not starve the queue.
+		if _reserve_combat_step(index, candidate.step):
+			# Keep the accepted endpoint in the original order state: losing contact
+			# must not send this person back to an obsolete pre-engagement slot.
+			for slot_index: int in _vacancy_assignments.keys():
+				if int(_vacancy_assignments[slot_index]) == index:
+					_vacancy_assignments.erase(slot_index)
+			combat_slots[index] = candidate.step
+			issued += 1
+			encirclement_steps += 1
+	return true # A blocked flank waits; it never teleports, swaps bodies or forces allies aside.

@@ -1,12 +1,14 @@
 extends "res://scripts/tests/site_workflow_test.gd"
 
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
+const TrainingFixture = preload("res://scripts/tests/site_training_ground_fixture.gd")
 
 func near(actual: float, expected: float, label: String = "") -> void:
 	assert(absf(actual - expected) < 0.00001, "%s: %.10f != %.10f" % [label, actual, expected])
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -14,6 +16,7 @@ func _run() -> void:
 	lab.npc.set_process(false)
 	lab.site_controller._auto_save_blocked = true
 	var data := _fixture()
+	TrainingFixture.build(data, Vector2i(21, 21), Vector2i(10, 10), lab.character.faction_id)
 	lab.bind_terrain(data)
 	lab.npc.faction_id = lab.character.faction_id
 	lab.npc.place(Vector2i(18, 20), true)
@@ -170,8 +173,10 @@ func _run() -> void:
 	assert(not personal.cohorts.is_empty(), "Clearing NPC test roster preserves actual player's eating history")
 	controller.update_ui()
 	assert(lab.find_child("DeliverTeamFood", true, false) != null and lab.find_child("CancelTeamFood", true, false) != null and lab.find_child("TrainPlayerTeam", true, false) != null)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.queue_free()
 	await process_frame
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE TEAM SUSTAIN FLOW PASS: original controller physical atomic food/delivery/cancel/hit/pause, explicit supply/gear, original-row training80/50, environmental death and orphan-stock retention; common-clock/full-save integration separately required")
 	quit(0)

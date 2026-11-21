@@ -37,7 +37,8 @@ func _run() -> void:
 					var i: int = data.index(cell)
 					maximum = maxi(maximum, data.height_levels[i])
 					if data.surface_types[i] == TerrainData.Surface.WATER:
-						assert(not actor.place(cell), "Character placed on water")
+						var placed_on_water := actor.place(cell, true)
+						assert(not placed_on_water, "Character placed on water")
 						continue
 					for d: int in range(4):
 						var next: Vector2i = cell + TerrainData.DIRECTIONS[d]
@@ -51,8 +52,11 @@ func _run() -> void:
 								assert(difference == 1 and (data.ramp_edges[j] & (1 << ((d + 2) % 4))) != 0)
 								ramp_count += 1
 							allowed = data.surface_types[j] != TerrainData.Surface.WATER and (difference == 0 or ramp)
-						assert(actor.place(cell))
-						assert(actor.step(TerrainData.DIRECTIONS[d]) == allowed, "Movement disagrees with height/water/ramp")
+						# Teleport between probes: an animated place() is still moving and step() refuses a moving actor.
+						var placed := actor.place(cell, true)
+						assert(placed)
+						var stepped := actor.step(TerrainData.DIRECTIONS[d])
+						assert(stepped == allowed, "Movement disagrees with height/water/ramp")
 						assert(actor.terrain_cell == (next if allowed else cell), "Blocked command changed position")
 						edge_checks += 1
 			if preset in [TerrainPreset.Kind.TERRACED_HIGHLAND, TerrainPreset.Kind.COASTAL_CLIFF, TerrainPreset.Kind.ROCKY_HIGHLAND, TerrainPreset.Kind.ISLAND]:
@@ -120,12 +124,15 @@ func _water_spans_map(data: TerrainData) -> bool:
 	return false
 
 func _visual_lab() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Seed conveniences and legacy controls require --site-test-ui")
 	DisplayServer.window_set_size(Vector2i(2560, 1440))
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 60
 	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	var lab: TerrainLab = scene.instantiate() as TerrainLab
+	lab.npc = TerrainTestNPC.new() # Explicit NPC command fixture, never a formal startup worker.
 	get_root().add_child(lab)
+	assert(is_instance_valid(lab.site_test_window) and not lab.has_node("TerrainLabUI"))
 	(lab.find_child("Next", true, false) as Button).pressed.emit()
 	assert(lab.terrain.seed_value == 12346)
 	(lab.find_child("Previous", true, false) as Button).pressed.emit()
@@ -258,8 +265,12 @@ func _visual_lab() -> void:
 	key.pressed = false
 	lab._unhandled_input(key)
 	lab.movement_toggle.button_pressed = false
+	assert(not lab.movement_input_enabled and lab.character.visible)
+	key.pressed = true
 	lab._unhandled_input(key)
-	assert(lab.character.terrain_cell == ramp_cell and not lab.character.visible)
+	assert(lab.character.terrain_cell == ramp_cell and lab._held_directions.is_empty())
+	key.pressed = false
+	lab._unhandled_input(key)
 	lab.movement_toggle.button_pressed = true
 	# The editing window and map must display the same assembled model.
 	var player: TerrainTestCharacter = lab.character

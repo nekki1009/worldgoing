@@ -1,0 +1,1332 @@
+// Exchange-mode combat: readiness, adjacent exchange rounds, ranged fire / flight / arrival,
+// stun / KO / wake / get-up, rescue (D72), capture / escort / escape (institutions sec.6).
+#include "crowd_core.hpp"
+
+#include <algorithm>
+#include <cstdio>
+
+namespace wg {
+
+using namespace rules;
+
+// ---------------------------------------------------------------- readiness (TerrainArmy.exchange_ready / exchange_initiates)
+bool World::exchange_ready(int i) const {
+	if (!can_act(i) || is_crewed(i) || escort_mode[i] >= 3 || stagger[i] > 0.0 || exch_cd[i] > 0.0 || rescue_of[i] >= 0 || capture_of[i] >= 0 || knock_t[i] > 0.0)
+		return false;
+	const Formation &f = formations[form[i]];
+	return !(f.routed && f.order != Order::HOLD);
+}
+
+bool World::initiates(int i, bool melee) const {
+	if (formations[form[i]].garrisoned || is_crewed(i) || escort_mode[i] >= 3) return false;
+	if (host_ctl[i]) return host_engage[i] != 0; // the player's own wish to fight
+	const Formation &f = formations[form[i]];
+	if (f.routed) return false;
+	switch (f.order) {
+	case Order::MOVE: return melee; // move encounter: the pair itself requires adjacency
+	case Order::HOLD: return melee && f.needs_attack_order && rescue_of[i] < 0 && capture_of[i] < 0; // D50 self-defence
+	case Order::ATTACK:
+	case Order::PURSUE: return f.attacking && f.current_cmd >= 0 && !f.needs_attack_order;
+	default: return false;
+	}
+}
+
+// An aboard soldier's melee initiative over a host-published hull contact: the same orders as initiates(), with HOLD
+// answering the contact itself (the original nonhelm boat defence, TerrainArmy.exchange_initiates).
+bool World::aboard_initiates(int i) const {
+	// Aboard is itself a crewed state (is_crewed); only siege and convoy crew stay out of a hull duel.
+	if (formations[form[i]].garrisoned || is_siege_crew(i) || is_convoy_crew(i) || escort_mode[i] >= 3) return false;
+	if (host_ctl[i]) return host_engage[i] != 0;
+	const Formation &f = formations[form[i]];
+	if (f.routed) return false;
+	switch (f.order) {
+	case Order::HOLD: return f.current_cmd >= 0 && rescue_of[i] < 0 && capture_of[i] < 0;
+	case Order::ATTACK:
+	case Order::PURSUE: return f.attacking && f.current_cmd >= 0 && !f.needs_attack_order;
+	default: return false;
+	}
+}
+
+bool World::aboard_exchange_ready(int i) const {
+	if (!can_act(i) || !is_aboard(i) || is_siege_crew(i) || is_convoy_crew(i) || escort_mode[i] >= 3 || stagger[i] > 0.0 || exch_cd[i] > 0.0
+	    || rescue_of[i] >= 0 || capture_of[i] >= 0 || knock_t[i] > 0.0) return false;
+	const Formation &f = formations[form[i]];
+	return !(f.routed && f.order != Order::HOLD);
+}
+
+bool World::set_aboard_melee_pairs(const std::vector<int> &flat) {
+	if (flat.size() % 2) return false;
+	std::vector<std::pair<int, int>> pairs;
+	for (size_t k = 0; k < flat.size(); k += 2) {
+		int a = flat[k], b = flat[k + 1];
+		if (a < 0 || b < 0 || a >= soldier_count() || b >= soldier_count() || a == b) return false;
+		if (!is_aboard(a) || !is_aboard(b) || !hostile(team[a], team[b])) return false;
+		if (a > b) std::swap(a, b);
+		pairs.push_back({a, b});
+	}
+	std::sort(pairs.begin(), pairs.end());
+	pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+	aboard_pairs_ = std::move(pairs);
+	return true;
+}
+
+ExStats World::ex_stats(int i) const {
+	const Formation &f = formations[form[i]];
+	ExStats s;
+	s.ability = mounted[i] ? riding_ability[i] : melee_ability[i]; // 技能 K3: the person's own ability (host input)
+	s.training = f.training;
+	s.fatigue = f.fatigue;
+	s.morale = f.morale;
+	s.armorbonus = armor_bonus(equip[i]);
+	if (mounted[i]) s.armorbonus += cav::MOUNTED_BASIC; // CAV-1 basic mount bonus (4.3 / 4.7), in every mounted exchange
+	s.facility = (cell[i] >= 0 && terrain.facility[cell[i]]) ? 10.0 : 0.0;
+	s.skill = skill[i];
+	s.equip = equip[i];
+	return s;
+}
+
+void World::activate_skill(int i, uint8_t s) {
+	if (!can_act(i) || skill_cd[i] > 0.0 || skill[i] != SK_NONE) return;
+	skill[i] = s;
+}
+
+int World::enemy_sectors(int i) const {
+	int mask = 0;
+	int cx = (int)px[i], cy = (int)py[i];
+	const float r2 = cfg.reach * cfg.reach;
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				int j = hash_items_[k];
+				if (!hostile(team[i], team[j]) || !can_act(j)) continue;
+				float dx = px[j] - px[i], dy = py[j] - py[i];
+				if (dx * dx + dy * dy > r2 || !los(px[i], py[i], px[j], py[j])) continue;
+				int q = std::fabs(dx) >= std::fabs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+				mask |= 1 << q;
+			}
+		}
+	int count = 0;
+	for (int q = 0; q < 4; ++q) count += (mask >> q) & 1;
+	return count;
+}
+
+// ---------------------------------------------------------------- contact result (TerrainArmy.apply_unit_contact)
+void World::cancel_actions_involving(int i) {
+	auto cancel_rescue = [&](int r) {
+		int p = rescue_of[r];
+		if (p < 0) return;
+		rescue_of[r] = -1; act_t[r] = 0;
+		if (rescued_by_[p] == r) rescued_by_[p] = -1;
+		stats.rescues_cancelled++;
+	};
+	auto cancel_capture = [&](int g) {
+		int t = capture_of[g];
+		if (t < 0) return;
+		capture_of[g] = -1; act_t[g] = 0;
+		if (capturing_by_[t] == g) capturing_by_[t] = -1;
+		stats.captures_cancelled++;
+	};
+	cancel_rescue(i);
+	if (rescued_by_[i] >= 0) cancel_rescue(rescued_by_[i]);
+	cancel_capture(i);
+	if (capturing_by_[i] >= 0) cancel_capture(capturing_by_[i]);
+}
+
+void World::apply_contact(int i, double hp_loss, double stun_add, bool environmental) {
+	if (hp[i] <= 0.0) return;
+	Formation &f = formations[form[i]];
+	bool effective = !environmental && (hp_loss > 0.0 || stun_add > 0.0);
+	if (effective && striker_person_ >= 0) {
+		if ((int)last_striker_person.size() < soldier_count()) last_striker_person.resize(soldier_count(), -1);
+		last_striker_person[i] = striker_person_;
+	}
+	if (effective) {
+		contact_revision[i] = contact_revision[i] == INT64_MAX ? 0 : contact_revision[i] + 1;
+		// An impact interrupts custody work without altering the original position.
+		if (controlled_step_pending(i)) { if (escort_mode[i] & 1u) ++escort_mode[i]; }
+		else { escort_mode[i] = 0; escort_goal[i] = -1; }
+	}
+	if (effective || hp_loss >= hp[i]) cancel_actions_involving(i);
+	hp[i] = std::max(0.0, hp[i] - hp_loss);
+	if (!environmental && hp_loss > 0.0 && ko[i] > 0.0) bandaged[i] = 0; // a new wound reopens bleeding
+	f.command_dirty = true;
+	if (stun_add > 0.0) {
+		stun[i] += stun_add;
+		grace[i] = STUN_GRACE;
+		if (ko[i] > 0.0) ko[i] = cfg.ko_seconds; // D72: a new effective impact only resets the wait
+	}
+	if (effective && !quiet_contact_) mark_combat(cfg.combat_grace); // bleeding out is not a combat event
+	if (hp[i] <= 0.0 || (ko[i] <= 0.0 && stun[i] >= STUN_LIMIT)) {
+		// a knockback committed this round still carries the falling body one cell (terrain_army keeps the move)
+		stagger[i] = 0; enc_target[i] = -1; getup[i] = 0;
+		if (hp[i] <= 0.0) {
+			knock_t[i] = 0;
+			ko[i] = 0.0;
+			surrendered[i] = 0; // G5 S4: a dead member is no surrender (validate requires a living one)
+			mounted[i] = 0; cav_hits[i] = 0; // CAV-1: a dead rider is no rider
+			stats.deaths++;
+			f.fatigue_count = std::max(0, f.fatigue_count - 1);
+			push_event(EV_DEATH, i, captive[i] ? captor[i] : -1);
+			set_visual(i, V_DOWN);
+			if (captive[i]) { captive[i] = 0; captor[i] = -1; }
+			prison_id[i] = 0;
+			if (!controlled_step_pending(i)) { escort_goal[i] = -1; escort_mode[i] = 0; }
+		} else {
+			ko[i] = cfg.ko_seconds;
+			bandaged[i] = 0;
+			stats.kos++;
+			push_event(EV_KO, i, -1);
+			set_visual(i, V_DOWN);
+		}
+	}
+}
+
+void World::push_event(EventKind k, int soldier, int other_soldier) {
+	Event e;
+	e.kind = (uint8_t)k;
+	e.soldier = soldier;
+	e.formation = soldier >= 0 ? form[soldier] : -1;
+	e.person = soldier >= 0 ? person_id[soldier] : -1;
+	e.other = other_soldier >= 0 ? person_id[other_soldier] : -1;
+	e.time = time;
+	if (k == EV_DEATH) {
+		const Formation &f = formations[e.formation];
+		e.fatigue = f.fatigue;
+		e.fatigue_rest = f.fatigue_rest;
+	}
+	events.push_back(e);
+	if (k==EV_DEATH && work_point_active_) {
+		const auto &p=work_point_pools_[e.formation];
+		work_point_deaths_.push_back({events.size()-1,e.formation,e.person,p.native_charge,e.fatigue,e.fatigue_rest,e.fatigue,e.fatigue_rest});
+	}
+}
+
+
+bool World::apply_siege_contact(int i, double hp_loss, double stun_add, double stagger_seconds) {
+	if (i < 0 || i >= soldier_count() || !std::isfinite(hp_loss) || !std::isfinite(stun_add) || !std::isfinite(stagger_seconds)
+	    || hp_loss < 0 || stun_add < 0 || stagger_seconds < 0) return false;
+	if (!alive(i)) return true;
+	apply_contact(i, hp_loss, stun_add); // Original revision, interruptions, KO/death and combat marks.
+	if (hp[i] > 0.0 && ko[i] <= 0.0 && getup[i] <= 0.0 && hp_loss > 0.0) {
+		set_visual(i, V_HIT);
+		if (rescue_of[i] >= 0) cancel_actions_involving(i);
+		stagger[i] = std::max(stagger[i], stagger_seconds);
+	}
+	return true; // Siege preserves the original brace skill; it provides no siege reduction.
+}
+
+// Original TerrainArmy.apply_unit_contact for a melee exchange hit (terrain_army.gd:8604-8640).
+// The shared apply_contact supplies the same revision, interruption, stun/grace, KO-at-STUN_LIMIT
+// and death rules. Melee sets no stagger.
+bool World::apply_melee_contact(int i, double hp_loss, double stun_add) {
+	if (i < 0 || i >= soldier_count() || !std::isfinite(hp_loss) || !std::isfinite(stun_add)
+	    || hp_loss < 0 || stun_add < 0) return false;
+	if (!alive(i)) return true;
+	apply_contact(i, hp_loss, stun_add); // Original revision, interruptions, KO/death and combat marks.
+	if (hp[i] > 0.0 && ko[i] <= 0.0 && getup[i] <= 0.0 && hp_loss > 0.0) {
+		set_visual(i, V_HIT);
+		if (rescue_of[i] >= 0) cancel_actions_involving(i);
+	}
+	return true;
+}
+
+bool World::apply_environment_damage(int i, double amount) {
+	if (i < 0 || i >= soldier_count() || !std::isfinite(amount) || amount < 0) return false;
+	if (!alive(i) || amount == 0) return true;
+	if (amount < hp[i]) { hp[i] -= amount; return true; }
+	const bool quiet = quiet_contact_; quiet_contact_ = true;
+	apply_contact(i, amount, 0); quiet_contact_ = quiet;
+	life_ck[i] = 2; // Hunger is not a combat casualty; do not suppress anybody else's checkpoint.
+	return true;
+}
+
+// ---------------------------------------------------------------- timers (parallel, self only)
+void World::timers_stage(float dt, double gdt, int ch) {
+	const int n = soldier_count();
+	const int a = ch * cfg.chunk, b = std::min(n, a + cfg.chunk);
+	auto &woke = wake_buf_[ch];
+	auto &rose = getup_buf_[ch];
+	woke.clear(); rose.clear();
+	for (int i = a; i < b; ++i) {
+		stagger[i] = std::max(0.0, stagger[i] - dt);
+		exch_cd[i] = exch_cd[i] - dt <= 0.000000001 ? 0.0 : exch_cd[i] - dt;
+		ranged_cd[i] = std::max(0.0, ranged_cd[i] - dt);
+		skill_cd[i] = std::max(0.0, skill_cd[i] - dt);
+		knock_t[i] = std::max(0.0, knock_t[i] - dt);
+		cav_down[i] = std::max(0.0, cav_down[i] - dt); // CAV-1 fall of a trampled body (its getup timer keeps it down)
+		if (hp[i] <= 0.0) continue;
+		if (ko[i] > 0.0) {
+			ko[i] -= gdt; // KO wait is game time (prepare_combat: ko -= game_seconds)
+			if (ko[i] <= 0.0) { // D72 natural wake: stun 30, restart the decay wait, 2.2 s get-up; HP unchanged
+				ko[i] = 0.0; stun[i] = WAKE_STUN; grace[i] = STUN_GRACE; getup[i] = GETUP_SECONDS; bandaged[i] = 0;
+				woke.push_back(i);
+			}
+			continue;
+		}
+		if (getup[i] > 0.0) { getup[i] = std::max(0.0, getup[i] - dt); if (getup[i] <= 0.0) rose.push_back(i); }
+		if (rescue_of[i] >= 0) continue; // a rescuing row skips stun decay (prepare_combat `continue`)
+		double decay = std::max(0.0, (double)dt - grace[i]);
+		grace[i] = std::max(0.0, grace[i] - dt);
+		stun[i] = std::max(0.0, stun[i] - decay * STUN_RECOVERY);
+	}
+}
+
+// ---------------------------------------------------------------- exchange round (terrain_lab._resolve_exchanges)
+void World::exchange_collect(int ch) {
+	const int n = soldier_count();
+	const int a = ch * cfg.chunk, b = std::min(n, a + cfg.chunk);
+	auto &out = pair_buf_[ch];
+	out.clear();
+	const float r2 = cfg.reach * cfg.reach;
+	for (int i = a; i < b; ++i) {
+		if (!can_receive(i)) continue;
+		const uint16_t *eb = enemy_blocks(team[i]);
+		int x = (int)px[i], y = (int)py[i];
+		if (!eb[(y >> 3) * bw_ + (x >> 3)]) {
+			bool any = false; // neighbour blocks
+			int bx = x >> 3, by = y >> 3;
+			for (int yy = std::max(0, by - 1); yy <= std::min(bh_ - 1, by + 1) && !any; ++yy)
+				for (int xx = std::max(0, bx - 1); xx <= std::min(bw_ - 1, bx + 1); ++xx)
+					if (eb[yy * bw_ + xx]) { any = true; break; }
+			if (!any) continue;
+		}
+		bool ri = exchange_ready(i) && initiates(i, true);
+		for (int yy = std::max(0, y - 2); yy <= std::min(terrain.h - 1, y + 2); ++yy)
+			for (int xx = std::max(0, x - 2); xx <= std::min(terrain.w - 1, x + 2); ++xx) {
+				int c = terrain.idx(xx, yy);
+				for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+					int j = hash_items_[k];
+					if (j <= i || !hostile(team[i], team[j]) || !can_receive(j)) continue; // each unordered pair once (lower index)
+					float dx = px[j] - px[i], dy = py[j] - py[i];
+					if (dx * dx + dy * dy > r2) continue;
+					if (!ri && !(exchange_ready(j) && initiates(j, true))) continue; // peaceful neighbours do not duel
+					if (!los(px[i], py[i], px[j], py[j])) continue;                   // can_attack_across
+					ExStats sa = ex_stats(i), sb = ex_stats(j);
+					double roll = exchange_roll(person_id[i], person_id[j], exchange_round, cfg.seed);
+					out.push_back({i, j, exchange_result(sa, sb, roll)});
+				}
+			}
+	}
+}
+
+void World::exchange_round_run() {
+	++exchange_round;
+	stats.rounds++;
+	// Automatic skills for command-ability holders in a viable pair (TerrainLab._exchange_context).
+	const float r2 = cfg.reach * cfg.reach;
+	for (auto &f : formations)
+		for (int i : f.members) {
+			if (!ability[i].has() || !can_receive(i) || skill[i] != SK_NONE || skill_cd[i] > 0) continue;
+			bool viable = false;
+			int cx = (int)px[i], cy = (int)py[i];
+			for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2) && !viable; ++yy)
+				for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2) && !viable; ++xx) {
+					int c = terrain.idx(xx, yy);
+					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+						int j = hash_items_[k];
+						if (!hostile(team[i], team[j]) || !can_receive(j)) continue;
+						float dx = px[j] - px[i], dy = py[j] - py[i];
+						if (dx * dx + dy * dy > r2 || !los(px[i], py[i], px[j], py[j])) continue;
+						if ((exchange_ready(i) && initiates(i, true)) || (exchange_ready(j) && initiates(j, true))) { viable = true; break; }
+					}
+				}
+			if (viable) activate_skill(i, enemy_sectors(i) >= 2 ? SK_BRACE : SK_POWER);
+		}
+	pool_.run(chunks_, [&](int ch) { exchange_collect(ch); });
+	// Host hull contacts: aboard soldiers are outside the spatial hash; each published pair duels once with the same
+	// rules and roll as a ground pair (serial, appended to the first chunk so the merge order stays by chunk).
+	for (const auto &pr : aboard_pairs_) {
+		const int i = pr.first, j = pr.second;
+		if (!aboard_can_receive(i) || !aboard_can_receive(j) || !hostile(team[i], team[j])) continue;
+		if (!(aboard_exchange_ready(i) && aboard_initiates(i)) && !(aboard_exchange_ready(j) && aboard_initiates(j))) continue;
+		ExStats sa = ex_stats(i), sb = ex_stats(j);
+		double roll = exchange_roll(person_id[i], person_id[j], exchange_round, cfg.seed);
+		pair_buf_[0].push_back({i, j, exchange_result(sa, sb, roll)});
+	}
+	// Merge: every edge used pre-resolution stats; each person pays / receives one merged outcome.
+	ex_participants_.clear();
+	auto side = [&](int i, int other, double hp_v, double stun_v, double fat, double stag, bool knock, int rank, double margin) {
+		ExAcc &e = ex_acc_[i];
+		if (!e.in) { e = ExAcc{}; e.in = true; ex_participants_.push_back(i); }
+		e.hp += hp_v; e.stun += stun_v; e.fat += fat; e.stag = std::max(e.stag, stag);
+		e.knock = e.knock || knock;
+		e.count++; if (rank == 2) { e.losses++; if (knock || margin >= EXCHANGE_BIG_MARGIN) e.big_losses++; } else if (rank == 1) e.draws++; else if (margin >= EXCHANGE_BIG_MARGIN) e.big_wins++;
+		bool better = e.r_other < 0;
+		if (!better) {
+			if (knock != e.r_knock) better = knock;
+			else if (rank != e.r_rank) better = rank > e.r_rank;
+			else if (hp_v != e.r_hp) better = hp_v > e.r_hp;
+			else if (margin != e.r_margin) better = margin > e.r_margin;
+			else better = person_id[other] < person_id[e.r_other];
+		}
+		if (better) { e.r_other = other; e.r_knock = knock; e.r_rank = rank; e.r_hp = hp_v; e.r_margin = margin; }
+	};
+	for (int ch = 0; ch < chunks_; ++ch)
+		for (auto &p : pair_buf_[ch]) {
+			const ExResult &r = p.r;
+			stats.pairs++;
+			if (r.kind == EX_DRAW) stats.draws++; else if (r.kind == EX_SMALL) stats.small++; else stats.big++;
+			double stag_a = r.winner == -1 ? r.stagger : (r.winner == 0 ? r.hold : 0.0);
+			double stag_b = r.winner == 1 ? r.stagger : (r.winner == 0 ? r.hold : 0.0);
+			int rank_a = r.winner == 0 ? 1 : (r.winner == -1 ? 2 : 0), rank_b = r.winner == 0 ? 1 : (r.winner == 1 ? 2 : 0);
+			double m = std::fabs(r.margin);
+			side(p.a, p.b, r.hp_a, r.stun_a, r.fatigue_a, stag_a, r.winner == -1 && r.knockback, rank_a, m);
+			side(p.b, p.a, r.hp_b, r.stun_b, r.fatigue_b, stag_b, r.winner == 1 && r.knockback, rank_b, m);
+			formations[form[p.a]].contact_age = 0;
+			formations[form[p.b]].contact_age = 0;
+		}
+	std::sort(ex_participants_.begin(), ex_participants_.end());
+	if (!ex_participants_.empty()) mark_combat(cfg.combat_grace); // exchange_batch_prepare: combat_event(10)
+	// Phase "prepare": costs and skills for every participant on the pre-death roster (fatigue divisor),
+	// cooldowns, rescue cancel. Phase "knockback" for every participant. Phase "contact" (HP / stun /
+	// death / KO) for every participant. (terrain_lab._resolve_exchanges batch phases)
+	for (int i : ex_participants_) {
+		ExAcc &e = ex_acc_[i];
+		if (e.fat > 0) charge(i, e.fat);
+		if (exch_cd[i] > 0.000000001) stats.cooldown_violations++;
+		exch_cd[i] = EXCHANGE_ROUND_SECONDS;
+		if (skill[i] != SK_NONE) { skill_cd[i] = EXCHANGE_SKILL_COOLDOWN; skill[i] = SK_NONE; stats.skills_used++; }
+		if (rescue_of[i] >= 0) cancel_actions_involving(i); // a draw / win also stops helping
+	}
+	for (int i : ex_participants_) {
+		ExAcc &e = ex_acc_[i];
+		int o = e.r_other;
+		if (o >= 0) face[i] = std::atan2(py[o] - py[i], px[o] - px[i]);
+		double prev = stagger[i]; // previous stagger survives a knockback (max(previous, new))
+		if (e.knock && o >= 0 && !is_aboard(i)) {  // big loss: pushed one cell away (never off a deck)
+			float dx = px[i] - px[o], dy = py[i] - py[o], d = std::sqrt(dx * dx + dy * dy);
+			if (d < 1e-4f) { dx = -std::cos(face[i]); dy = -std::sin(face[i]); d = 1; }
+			knock_dx[i] = dx / d * 4.0f; knock_dy[i] = dy / d * 4.0f; knock_t[i] = 0.25;
+			stats.knockbacks++;
+		}
+		if (e.stag > 0) stagger[i] = std::max(prev, e.stag);
+	}
+	for (int i : ex_participants_) {
+		ExAcc &e = ex_acc_[i];
+		// presentation (terrain_lab batch outcome): all won -> attack (big -> jump heavy); a single draw -> guard;
+		// otherwise loser -> hit (big loss -> knockback)
+		const bool all_won = e.losses == 0 && e.draws == 0;
+		if (all_won) set_visual(i, e.big_wins > 0 ? V_ATTACK_HEAVY : V_ATTACK);
+		else if (e.count == 1 && e.draws == 1) set_visual(i, V_GUARD);
+		else set_visual(i, e.big_losses > 0 || e.knock ? V_KNOCKBACK : V_HIT);
+		striker_person_ = e.r_other >= 0 ? person_id[e.r_other] : -1;
+		apply_contact(i, e.hp, e.stun);
+		striker_person_ = -1;
+		e.in = false;
+	}
+}
+
+// ---------------------------------------------------------------- ranged (terrain_lab._resolve_ranged_fire / arrival)
+bool World::begin_structure_strike(int i, int target_cell) {
+	if (i < 0 || i >= soldier_count() || target_cell < 0 || target_cell >= terrain.w * terrain.h || !exchange_ready(i) || escort_mode[i] != 0 || equip[i].family == F_NONE || equip[i].family == F_BOW || equip[i].family == F_CROSSBOW) return false;
+	const int dx = target_cell % terrain.w - int(px[i]), dy = target_cell / terrain.w - int(py[i]);
+	if (std::abs(dx) + std::abs(dy) != 1 || vx[i] * vx[i] + vy[i] * vy[i] > 1e-6f) return false;
+	face[i] = std::atan2(float(dy), float(dx));
+	exch_cd[i] = EXCHANGE_ROUND_SECONDS;
+	stagger[i] = std::max(stagger[i], EXCHANGE_ROUND_SECONDS);
+	charge(i, EXCHANGE_FATIGUE);
+	set_visual(i, V_ATTACK);
+	mark_combat(10.);
+	return true;
+}
+
+bool World::ranged_line_clear(Cell s, Cell g, std::vector<Cell> &cells) const {
+	if (!terrain.walkable(s.x, s.y) || !terrain.contains(g.x, g.y)) return false;
+	ranged_cells(s, g, cells);
+	if (cells.empty()) return false;
+	for (const auto &c : cells) {
+		if (!terrain.contains(c.x, c.y) || !terrain.shot_cell_clear(terrain.idx(s.x, s.y), terrain.idx(g.x, g.y), terrain.idx(c.x, c.y))) return false;
+	}
+	return true;
+}
+
+bool World::friendly_clear(Cell s, Cell g, int faction, std::vector<Cell> &cells) const {
+	ranged_cells(s, g, cells);
+	for (auto &c : cells) {
+		if (!terrain.contains(c.x, c.y)) continue;
+		int ci = terrain.idx(c.x, c.y);
+		double z = terrain.shot_height(terrain.idx(s.x, s.y), terrain.idx(g.x, g.y), ci);
+		if (z < terrain.height[ci] || z > terrain.height[ci] + 1.5) continue;
+		for (int k = hash_start_[ci]; k < hash_start_[ci + 1]; ++k)
+			if (hp[hash_items_[k]] > 0.0 && !hostile(faction, team[hash_items_[k]])) return false; // living or unconscious friend / ally (not those just killed)
+	}
+	return true;
+}
+
+void World::ranged_decide(int ch) {
+	const int n = soldier_count();
+	const int a = ch * cfg.chunk, b = std::min(n, a + cfg.chunk);
+	auto &out = fire_buf_[ch];
+	out.clear();
+	std::vector<Cell> tmp;
+	tmp.reserve(32);
+	for (int i = a; i < b; ++i) {
+		if (troop[i] == T_MELEE || ammo[i] == 0 || ranged_cd[i] > 0.0 || !exchange_ready(i)) continue;
+		if (!initiates(i, false)) continue;
+		RangedProfile prof = ranged_profile(equip[i]);
+		if (!prof.valid) continue;
+		const uint16_t *eb = enemy_blocks(team[i]);
+		Cell sc{(int)px[i], (int)py[i]};
+		int bx = sc.x >> 3, by = sc.y >> 3, br = (int)std::ceil(prof.range / 8.0) + 1;
+		bool any = false;
+		for (int yy = std::max(0, by - br); yy <= std::min(bh_ - 1, by + br) && !any; ++yy)
+			for (int xx = std::max(0, bx - br); xx <= std::min(bw_ - 1, bx + br); ++xx)
+				if (eb[yy * bw_ + xx]) { any = true; break; }
+		if (!any) { fire_blocked[i] = 0; continue; }
+		int ri = (int)std::ceil(prof.range);
+		double r2 = prof.range * prof.range;
+		int best = -1;
+		double nearest = 1e30;
+		bool close_threat = false, friend_blocked = false;
+		for (int yy = std::max(0, sc.y - ri); yy <= std::min(terrain.h - 1, sc.y + ri) && !close_threat; ++yy)
+			for (int xx = std::max(0, sc.x - ri); xx <= std::min(terrain.w - 1, sc.x + ri) && !close_threat; ++xx) {
+				int c = terrain.idx(xx, yy);
+				for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+					int j = hash_items_[k];
+					if (!hostile(team[i], team[j]) || !can_act(j)) continue;
+					int ox = xx - sc.x, oy = yy - sc.y;
+					double d2 = (double)(ox * ox + oy * oy);
+					if (d2 > std::max(1.0, r2)) continue;
+					float fx = px[j] - px[i], fy = py[j] - py[i];
+					bool cell_adjacent = std::abs(ox) + std::abs(oy) <= 1 && (d2 == 0 || terrain.attack_across(sc.x, sc.y, xx, yy));
+					if (cell_adjacent || (fx * fx + fy * fy <= cfg.reach * cfg.reach && los(px[i], py[i], px[j], py[j]))) {
+						close_threat = true; // a nearby opponent forces close combat
+						break;
+					}
+					if (d2 <= 1.0 || d2 > nearest || (d2 == nearest && best >= 0 && person_id[j] > person_id[best])) continue;
+					if (!friendly_clear(sc, {xx, yy}, team[i], tmp)) { friend_blocked = true; continue; }
+					if (ranged_line_clear(sc, {xx, yy}, tmp)) { best = j; nearest = d2; }
+				}
+			}
+		fire_blocked[i] = (uint8_t)(!close_threat && best < 0 && friend_blocked); // own-index write only
+		if (!close_threat && best >= 0) out.push_back({i, best});
+	}
+}
+
+void World::ranged_commit() {
+	if (host_ranged_delegate) return;
+	for (int ch = 0; ch < chunks_; ++ch)
+		for (auto &req : fire_buf_[ch]) {
+			int i = req.shooter, j = req.target;
+			if (!exchange_ready(i) || ammo[i] == 0 || ranged_cd[i] > 0.0) continue;
+			if (ability[i].has()) activate_skill(i, SK_POWER);
+			const Formation &f = formations[form[i]];
+			RangedProfile prof = ranged_profile(equip[i]);
+			Projectile p;
+			p.shooter = i; p.faction = team[i]; p.shooter_id = person_id[i];
+			p.source = {(int)px[i], (int)py[i]};
+			p.target = {(int)px[j], (int)py[j]};
+			p.source_eye = terrain.height[terrain.idx(p.source.x, p.source.y)] + 1.;
+			p.goal_eye = terrain.height[terrain.idx(p.target.x, p.target.y)] + 1.;
+			p.stats.ability = ranged_ability[i]; p.stats.training = f.training; p.stats.fatigue = f.fatigue; // 技能 K3
+			p.stats.skill = skill[i]; p.stats.equip = equip[i];
+			int ox = p.target.x - p.source.x, oy = p.target.y - p.source.y;
+			double dist = std::sqrt((double)(ox * ox + oy * oy));
+			p.left = dist / prof.speed;
+			p.shot_id = ++shot_serial;
+			ammo[i]--;                        // deducted at release, never refunded
+			charge(i, 1.0);                   // shot fatigue +1 (shared pool)
+			if (skill[i] == SK_POWER) { skill[i] = SK_NONE; skill_cd[i] = EXCHANGE_SKILL_COOLDOWN; stats.skills_used++; }
+			face[i] = std::atan2((float)oy, (float)ox);
+			stagger[i] = std::max(stagger[i], prof.hold);
+			ranged_cd[i] = prof.cooldown;
+			projectiles.push_back(p);
+			stats.shots++;
+			mark_combat(cfg.shot_grace); // ranged_fire: combat_event(12)
+			push_event(EV_SHOT, i, -1);
+			set_visual(i, V_SHOOT);
+		}
+}
+
+void World::projectiles_advance(float dt) {
+	if (host_ranged_delegate) return;
+	bool any_due = false;
+	for (auto &p : projectiles) { p.left = std::max(0.0, p.left - dt); if (p.left <= 1e-9) any_due = true; }
+	if (!any_due) return;
+	// one occupancy snapshot for every arrival of this step: the hash built after this step's movement
+	std::vector<Cell> cells;
+	size_t w = 0;
+	for (size_t k = 0; k < projectiles.size(); ++k) {
+		Projectile &p = projectiles[k];
+		if (p.left > 1e-9) { projectiles[w++] = p; continue; }
+		ranged_cells(p.source, p.target, cells);
+		bool blocked = false;
+		int tgt = -1;
+		const int source = terrain.idx(p.source.x, p.source.y), goal = terrain.idx(p.target.x, p.target.y);
+		for (const auto &c : cells) {
+			if (!terrain.contains(c.x, c.y)) { blocked = true; break; }
+			int ci = terrain.idx(c.x, c.y);
+			if (!terrain.shot_cell_clear(source, goal, ci, p.source_eye, p.goal_eye)) { blocked = true; break; }
+			double z = terrain.shot_height(source, goal, ci, p.source_eye, p.goal_eye);
+			if (z < terrain.height[ci] || z > terrain.height[ci] + 1.5) continue;
+			for (int q = hash_start_[ci]; q < hash_start_[ci + 1]; ++q) {
+				int j = hash_items_[q];
+				if (person_id[j] != p.shooter_id) { tgt = j; break; }
+			}
+			if (tgt >= 0) break;
+		}
+		if (tgt < 0) { if (blocked) stats.blocked++; else stats.empty++; continue; }
+		RangedDefense d;
+		d.moving = vx[tgt] * vx[tgt] + vy[tgt] * vy[tgt] > 0.25f;
+		d.shield = equip[tgt].shield;
+		d.armor_stab = armor_profile(equip[tgt]).stab;
+		d.facility = terrain.facility[terrain.idx((int)px[tgt], (int)py[tgt])] != 0;
+		d.skill = skill[tgt];
+		d.equip = equip[tgt];
+		int ox = p.target.x - p.source.x, oy = p.target.y - p.source.y;
+		double roll = ranged_roll(p.shooter_id, p.shot_id, person_id[tgt], cfg.seed);
+		RangedResult r = ranged_result(p.stats, d, std::sqrt((double)(ox * ox + oy * oy)), roll);
+		if (skill[tgt] == SK_BRACE) { skill[tgt] = SK_NONE; skill_cd[tgt] = EXCHANGE_SKILL_COOLDOWN; stats.skills_used++; }
+		if (r.kind == R_HIT) stats.hits++; else if (r.kind == R_GRAZE) stats.grazes++; else stats.misses++;
+		if (r.kind != R_MISS && !hostile(p.faction, team[tgt])) stats.friendly_hits++;
+		striker_person_ = p.shooter_id;
+		apply_contact(tgt, r.hp, r.stun);
+		striker_person_ = -1;
+		if (alive(tgt) && ko[tgt] <= 0.0 && getup[tgt] <= 0.0 && r.hp > 0.0) {
+			set_visual(tgt, V_HIT);
+			if (rescue_of[tgt] >= 0) cancel_actions_involving(tgt);
+			stagger[tgt] = std::max(stagger[tgt], r.stagger);
+		}
+	}
+	projectiles.resize(w);
+}
+
+// ---------------------------------------------------------------- actions: rescue / capture / escape (serial)
+bool World::order_capture(int g, int t) {
+	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_crewed(g)) || !capture_target(t) || !hostile(team[g], team[t])) return false;
+	if (capture_of[g] >= 0 || rescue_of[g] >= 0 || capturing_by_[t] >= 0) return false;
+	float dx = px[t] - px[g], dy = py[t] - py[g];
+	if (dx * dx + dy * dy > 1.3f * 1.3f) return false;
+	int held = 0;
+	for (int c : captives_) if (captive[c] && prison_id[c] == 0 && captor[c] == g) ++held;
+	if (held >= GUARD_CAPACITY) return false;
+	capture_of[g] = t; act_t[g] = 0; capturing_by_[t] = g;
+	capturers_.push_back(g);
+	stats.captures_started++;
+	return true;
+}
+
+// SiteCaptiveEscort supplies one edge of its original order. Native keeps the
+// position, collision resolution and committed movement; no host teleport.
+bool World::order_escort_step(int i, int g, int destination) {
+	const int n = soldier_count(), cells = terrain.w * terrain.h;
+	if (i < 0 || i >= n || g < 0 || g >= n || destination < 0 || destination >= cells || !can_act(g)) return false;
+	if (escort_mode[i] >= 3 || escort_mode[g] >= 3 || is_crewed(i) || is_crewed(g) || siege_group(i) >= 0 || siege_group(g) >= 0) return false;
+	if (!alive(i) || ko[i] > 0 || getup[i] > 0 || stagger[i] > 0 || prison_id[i] != 0) return false;
+	if ((captive[i] && captor[i] != g) || (!captive[i] && i != g) || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
+	if (escort_goal[i] >= 0) return escort_mode[i] == 1 && escort_goal[i] == destination;
+	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
+	const int gx = destination % terrain.w, gy = destination / terrain.w;
+	const int dx = gx - x, dy = gy - y;
+	if (!terrain.walkable(gx, gy) || !siege_person_cell(i,terrain.idx(x,y),destination) || std::abs(dx) + std::abs(dy) > 1) return false;
+	if ((dx || dy) && !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
+	if (captive[i]) {
+		const float rx = float(gx) + .5f - px[g], ry = float(gy) + .5f - py[g];
+		if (rx * rx + ry * ry > 16.f) return false;
+	}
+	for (int j = 0; j < n; ++j) {
+		if (j == i || !alive(j)) continue;
+		if ((int(std::floor(px[j])) == gx && int(std::floor(py[j])) == gy) || (escort_mode[j] && escort_goal[j] == destination)) return false;
+	}
+	escort_goal[i] = (dx == 0 && dy == 0 && vx[i] * vx[i] + vy[i] * vy[i] <= 1e-6f
+		&& std::abs(px[i] - (float(gx) + .5f)) <= 1e-5f && std::abs(py[i] - (float(gy) + .5f)) <= 1e-5f) ? -1 : destination;
+	escort_mode[i] = 1;
+	return true;
+}
+
+void World::cancel_escort(int i) {
+	if (i < 0 || i >= soldier_count()) return;
+	if (escort_mode[i] >= 3 || is_siege_crew(i) || siege_group(i) >= 0) return;
+	escort_mode[i] = escort_goal[i] >= 0 ? 2 : 0;
+}
+
+// One original adjacent commitment for Site person jobs. Housing and siege share
+// these existing goal/mode arrays and the ordinary soldier motion phase.
+bool World::order_controlled_step(int i, int destination, ControlledStepKind kind) {
+	const auto mode = static_cast<uint8_t>(kind);
+	const int n = soldier_count(), cells = terrain.w * terrain.h;
+	if ((mode != 3 && mode != 5) || i < 0 || i >= n || destination < 0 || destination >= cells || !can_act(i)) return false;
+	const Formation &f = formations[form[i]];
+	if ((mode == 3 ? f.order != Order::HOLD : f.order == Order::RETREAT) || f.garrisoned || f.routed || prison_id[i] != 0 || stagger[i] > 0 || knock_t[i] > 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
+	if (siege_group(i) >= 0 || siege_claims_cell(destination,i) || ((mode == 3 && is_siege_crew(i)) || is_convoy_crew(i))) return false;
+	if (escort_mode[i] != 0 && escort_mode[i] != mode) return false;
+	if (escort_goal[i] >= 0) return escort_mode[i] == mode && escort_goal[i] == destination;
+	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
+	const int gx = destination % terrain.w, gy = destination / terrain.w;
+	const int dx = gx - x, dy = gy - y;
+	if (!terrain.walkable(gx, gy) || !siege_person_cell(i,terrain.idx(x,y),destination) || std::abs(dx) + std::abs(dy) > 1) return false;
+	if ((dx || dy) && !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
+	for (int j = 0; j < n; ++j) {
+		if (j == i) continue;
+		if ((alive(j) && int(std::floor(px[j])) == gx && int(std::floor(py[j])) == gy) || (escort_mode[j] && escort_goal[j] == destination)) return false;
+	}
+	escort_goal[i] = (dx == 0 && dy == 0 && vx[i] * vx[i] + vy[i] * vy[i] <= 1e-6f
+		&& std::abs(px[i] - (float(gx) + .5f)) <= 1e-5f && std::abs(py[i] - (float(gy) + .5f)) <= 1e-5f) ? -1 : destination;
+	if(mode==5) { if(siege_step_source.size()!=px.size())siege_step_source.assign(px.size(),-1); siege_step_source[i]=escort_goal[i]<0?-1:terrain.idx(x,y); }
+	escort_mode[i] = mode;
+	return true;
+}
+
+void World::cancel_controlled_step(int i, ControlledStepKind kind) {
+	const auto mode = static_cast<uint8_t>(kind);
+	if ((mode != 3 && mode != 5) || i < 0 || i >= soldier_count() || (escort_mode[i] != mode && escort_mode[i] != mode + 1)) return;
+	if (siege_group(i)>=0) { cancel_siege_compound(siege_compounds[siege_group(i)].token); return; }
+	escort_mode[i] = escort_goal[i] >= 0 ? mode + 1 : 0;
+}
+
+bool World::admit_prison(int i, int g, int64_t prison, int slot_cell, int contact_cell) {
+	const int n = soldier_count(), cells = terrain.w * terrain.h;
+	if (i < 0 || i >= n || g < 0 || g >= n || i == g || prison <= 0 || prison > 2147483647) return false;
+	if (!captive[i] || prison_id[i] != 0 || captor[i] != g || !alive(i) || ko[i] > 0 || getup[i] > 0 || !can_act(g)) return false;
+	if (slot_cell < 0 || slot_cell >= cells || contact_cell < 0 || contact_cell >= cells || escort_goal[i] >= 0 || escort_goal[g] >= 0) return false;
+	const int x = slot_cell % terrain.w, y = slot_cell / terrain.w;
+	const int gx = contact_cell % terrain.w, gy = contact_cell / terrain.w, dx = gx - x, dy = gy - y;
+	if (std::abs(dx) + std::abs(dy) != 1 || !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
+	if (int(std::floor(px[i])) != x || int(std::floor(py[i])) != y || int(std::floor(px[g])) != gx || int(std::floor(py[g])) != gy) return false;
+	if (vx[i] * vx[i] + vy[i] * vy[i] > 1e-6f || vx[g] * vx[g] + vy[g] * vy[g] > 1e-6f) return false;
+	for (int j = 0; j < n; ++j) if (j != i && alive(j) && ((int(std::floor(px[j])) == x && int(std::floor(py[j])) == y) || (escort_mode[j] && escort_goal[j] == slot_cell))) return false;
+	prison_id[i] = prison; escape_t[i] = 0; escort_mode[i] = 0; escort_goal[i] = -1;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	return true;
+}
+
+bool World::release_prison(int i, int executor, int64_t prison, int contact_cell, int exit_cell) {
+	const int n = soldier_count(), cells = terrain.w * terrain.h;
+	if (i < 0 || i >= n || executor < 0 || executor >= n || i == executor || prison <= 0 || prison_id[i] != prison || !captive[i] || !alive(i) || !can_act(executor)) return false;
+	if (contact_cell < 0 || contact_cell >= cells || exit_cell < 0 || exit_cell >= cells || escort_goal[executor] >= 0) return false;
+	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
+	const int gx = contact_cell % terrain.w, gy = contact_cell / terrain.w, dx = gx - x, dy = gy - y;
+	if (std::abs(dx) + std::abs(dy) != 1 || !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
+	if (int(std::floor(px[executor])) != gx || int(std::floor(py[executor])) != gy || !terrain.walkable(exit_cell % terrain.w, exit_cell / terrain.w)) return false;
+	if (vx[executor] * vx[executor] + vy[executor] * vy[executor] > 1e-6f) return false;
+	for (int j = 0; j < n; ++j) if (j != i && j != executor && alive(j) && ((int(std::floor(px[j])) == exit_cell % terrain.w && int(std::floor(py[j])) == exit_cell / terrain.w) || (escort_mode[j] && escort_goal[j] == exit_cell))) return false;
+	// The synchronous Site action commits the original relationship and meals.
+	// Do not emit EV_ESCAPED and replay the same supply transfer a second time.
+	prison_id[i] = 0; captive[i] = 0; captor[i] = -1; escape_t[i] = 0;
+	escort_mode[i] = 0; escort_goal[i] = -1; target[i] = -1; enc_target[i] = -1;
+	captives_.erase(std::remove(captives_.begin(), captives_.end(), i), captives_.end());
+	formations[form[i]].command_dirty = true;
+	return true;
+}
+
+// Prefilter for rescue / auto-capture searches: where are the soldiers who could start one?
+// (same conditions as the searches below, minus the per-target checks)
+void World::build_idle_blocks() {
+	for (auto &b : idle_block_) std::fill(b.begin(), b.end(), 0);
+	for (auto &b : idle_ai_block_) std::fill(b.begin(), b.end(), 0);
+	const int n = soldier_count();
+	for (int r = 0; r < n; ++r) {
+		if (!can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 || target[r] >= 0 || state[r] != S_SLOT) continue;
+		const Formation &F = formations[form[r]];
+		if (F.order != Order::HOLD || F.routed) continue;
+		int s = faction_slot_[team[r]];
+		size_t b = (size_t)(((int)py[r] >> 3) * bw_ + ((int)px[r] >> 3));
+		idle_block_[s][b]++;
+		if (F.ai_enabled) idle_ai_block_[s][b]++;
+	}
+}
+
+bool World::idle_near(const std::vector<uint16_t> &blocks, float x, float y, float r) const {
+	int x0 = std::max(0, (int)(x - r) >> 3), x1 = std::min(bw_ - 1, (int)(x + r) >> 3);
+	int y0 = std::max(0, (int)(y - r) >> 3), y1 = std::min(bh_ - 1, (int)(y + r) >> 3);
+	for (int yy = y0; yy <= y1; ++yy)
+		for (int xx = x0; xx <= x1; ++xx)
+			if (blocks[(size_t)yy * bw_ + xx]) return true;
+	return false;
+}
+
+void World::rescue_stage(float dt) {
+	build_idle_blocks();
+	// rescue progress (D72: 4 action seconds, both stopped, adjacent; shortens the wait to <= 1 game hour)
+	size_t w = 0;
+	for (int r : rescuers_) {
+		int p = rescue_of[r];
+		if (p < 0) continue;
+		float dx = px[r] - px[p], dy = py[r] - py[p];
+		// "stopped": the rescuer holds still (S_RESCUE zeroes its own motion); only crowd pushes move it
+		float lim = std::max(1.5f, cfg.rescue_seek_cells + 2.f);
+		bool ok = can_act(r) && alive(p) && ko[p] > 0.0 && !captive[p] && dx * dx + dy * dy <= lim * lim;
+		if (!ok) { cancel_actions_involving(r); continue; }
+		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[r] += dt * rescue_rate[r]; // the 4 s count only while adjacent and stopped; 技能 K2b: at his medicine speed
+		if (act_t[r] >= RESCUE_SECONDS) {
+			ko[p] = std::min(ko[p], cfg.rescued_ko_seconds);
+			bandaged[p] = 1; // rescue stops the bleeding (2026-09-29)
+			stats.bandaged++;
+			rescue_of[r] = -1; act_t[r] = 0; rescued_by_[p] = -1;
+			stats.rescues_done++;
+			push_event(EV_RESCUED, p, r);
+			continue;
+		}
+		rescuers_[w++] = r;
+	}
+	rescuers_.resize(w);
+	// start rescues: HOLD, not routed, idle member with no enemy target; adjacent unconscious team-mate
+	for (size_t fi = 0; fi < formations.size(); ++fi) {
+		Formation &f = formations[fi];
+		if ((tick + (uint32_t)fi) % 15 != 0 || f.order != Order::HOLD || f.routed || f.garrisoned) continue;
+		for (int p : f.members) {
+			if (!alive(p) || ko[p] <= 0.0 || (bandaged[p] && ko[p] <= cfg.rescued_ko_seconds) || captive[p] || rescued_by_[p] >= 0) continue;
+			int best = -1;
+			float reach_r = std::max(1.3f, cfg.rescue_seek_cells);
+			if (!idle_near(idle_block_[faction_slot_[team[p]]], px[p], py[p], reach_r)) continue;
+			float bd = reach_r * reach_r;
+			int rr = (int)std::ceil(reach_r);
+			int cx = (int)px[p], cy = (int)py[p];
+			for (int yy = std::max(0, cy - rr); yy <= std::min(terrain.h - 1, cy + rr); ++yy)
+				for (int xx = std::max(0, cx - rr); xx <= std::min(terrain.w - 1, cx + rr); ++xx) {
+					int c = terrain.idx(xx, yy);
+					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+						int r = hash_items_[k];
+						if (form[r] != (int)fi || r == p || !can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
+						    target[r] >= 0 || state[r] != S_SLOT)
+							continue;
+						float dx = px[r] - px[p], dy = py[r] - py[p], d2 = dx * dx + dy * dy;
+						if (d2 > 1.3f * 1.3f && !los(px[r], py[r], px[p], py[p])) {
+							// Keep ordinary walking/LOS and capture admission unchanged.
+							// An original fallen occupant is already within the existing
+							// rescue reach; its own retained wreck is not a terrain wall.
+							const int rc = terrain.idx((int)px[r], (int)py[r]);
+							const int pc = terrain.idx((int)px[p], (int)py[p]);
+							if (d2 > 1.5f * 1.5f || !siege_route_cell(rc) || siege_route_cell(pc) ||
+							    terrain.height[rc] != terrain.height[pc] || (size_t)p >= siege_wreck_exit.size()) continue;
+							const auto &domain = siege_wreck_exit[p];
+							if (std::find(domain.begin(), domain.end(), pc) == domain.end() ||
+							    !los(px[r], py[r], px[p], py[p], &domain)) continue;
+						}
+						if (d2 < bd || (d2 == bd && r < best)) { bd = d2; best = r; }
+					}
+				}
+			if (best >= 0) {
+				rescue_of[best] = p; act_t[best] = 0; rescued_by_[p] = best;
+				rescuers_.push_back(best);
+				stats.rescues_started++;
+			}
+		}
+	}
+}
+
+// Person actions and captive escort run on game time at the sustain point (terrain_lab._advance_fatigue:
+// person_actions.advance(game_seconds), captive_escort.advance(game_seconds)).
+void World::person_actions_stage(double gdt) {
+	build_idle_blocks();
+	// auto-capture (2026-09-29 user decision): an idle member of an AI formation in HOLD (not routed, no
+	// enemy target) walks up to capture_seek_cells to an unconscious enemy that is not captive and not
+	// already being captured; the 4 s adjacent action is the same as an explicit order. Rescue of own
+	// wounded is decided first in the same step, so a free soldier helps friends before taking prisoners.
+	if (cfg.auto_capture && cfg.capture_seek_cells > 0.f) {
+		const int n = soldier_count();
+		bool held_built = false;
+		for (int t = (int)((15u - tick % 15u) % 15u); t < n; t += 15) {
+			if (!capture_target(t) || capturing_by_[t] >= 0) continue;
+			if (!held_built) {
+				held_.assign((size_t)n, 0);
+				for (int c : captives_) if (captive[c] && prison_id[c] == 0 && alive(c) && captor[c] >= 0) held_[captor[c]]++;
+				held_built = true;
+			}
+			const float reach_r = std::max(1.3f, cfg.capture_seek_cells);
+			bool any_guard = false;
+			for (size_t k = 0; k < slot_faction_.size() && !any_guard; ++k)
+				if (hostile(slot_faction_[k], team[t])) any_guard = idle_near(idle_ai_block_[k], px[t], py[t], reach_r);
+			if (!any_guard) continue;
+			float bd = reach_r * reach_r;
+			int best = -1, rr = (int)std::ceil(reach_r);
+			int cx = (int)px[t], cy = (int)py[t];
+			for (int yy = std::max(0, cy - rr); yy <= std::min(terrain.h - 1, cy + rr); ++yy)
+				for (int xx = std::max(0, cx - rr); xx <= std::min(terrain.w - 1, cx + rr); ++xx) {
+					int c = terrain.idx(xx, yy);
+					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+						int r = hash_items_[k];
+						if (!hostile(team[r], team[t]) || !can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
+						    target[r] >= 0 || state[r] != S_SLOT || held_[r] >= GUARD_CAPACITY)
+							continue;
+						const Formation &F = formations[form[r]];
+						if (!F.ai_enabled || F.order != Order::HOLD || F.routed) continue;
+						float dx = px[r] - px[t], dy = py[r] - py[t], d2 = dx * dx + dy * dy;
+						if (d2 > bd || (d2 == bd && r > best && best >= 0)) continue;
+						if (d2 > 1.3f * 1.3f && !los(px[r], py[r], px[t], py[t])) continue;
+						bd = d2; best = r;
+					}
+				}
+			if (best >= 0) {
+				capture_of[best] = t; act_t[best] = 0; capturing_by_[t] = best;
+				capturers_.push_back(best);
+				stats.captures_started++;
+				stats.captures_auto++;
+			}
+		}
+	}
+	// capture progress (inst. sec.6: 4 s, adjacent, stopped; the target stays unconscious)
+	size_t w = 0;
+	for (int g : capturers_) {
+		int t = capture_of[g];
+		if (t < 0) continue;
+		float dx = px[g] - px[t], dy = py[g] - py[t];
+		float lim = std::max(1.5f, cfg.capture_seek_cells + 2.f);
+		bool ok = can_act(g) && capture_target(t) && dx * dx + dy * dy <= lim * lim;
+		if (!ok) { cancel_actions_involving(g); continue; }
+		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[g] += gdt; // the 4 s count only while adjacent and stopped
+		if (act_t[g] >= CAPTURE_SECONDS) {
+			captive[t] = 1; captor[t] = g; escape_t[t] = 0; surrendered[t] = 0; // capture settles a surrender (G5 S4)
+			capture_of[g] = -1; act_t[g] = 0; capturing_by_[t] = -1;
+			if (rescued_by_[t] >= 0) cancel_actions_involving(rescued_by_[t]);
+			captives_.push_back(t);
+			formations[form[t]].command_dirty = true;
+			enc_target[t] = -1; target[t] = -1;
+			stats.captures_done++;
+			push_event(EV_CAPTURED, t, g);
+			continue;
+		}
+		capturers_[w++] = g;
+	}
+	capturers_.resize(w);
+	// escape: awake captive, no effective guard within 4 cells and no near threat for 30 s
+	w = 0;
+	for (int c : captives_) {
+		if (!captive[c] || !alive(c)) continue;
+		if (prison_id[c] > 0) { escape_t[c] = 0; captives_[w++] = c; continue; }
+		if (ko[c] > 0.0 || getup[c] > 0.0) { escape_t[c] = 0; captives_[w++] = c; continue; }
+		int g = captor[c];
+		bool guarded = false;
+		if (g >= 0 && can_act(g) && hostile(team[g], team[c])) {
+			float dx = px[g] - px[c], dy = py[g] - py[c];
+			guarded = dx * dx + dy * dy <= GUARD_CELLS * GUARD_CELLS;
+		}
+		bool threat = false;
+		const uint16_t *eb = enemy_blocks(team[c]);
+		int bx = (int)px[c] >> 3, by = (int)py[c] >> 3;
+		for (int yy = std::max(0, by - 1); yy <= std::min(bh_ - 1, by + 1) && !threat; ++yy)
+			for (int xx = std::max(0, bx - 1); xx <= std::min(bw_ - 1, bx + 1); ++xx)
+				if (eb[yy * bw_ + xx]) { threat = true; break; }
+		if (guarded || threat) escape_t[c] = 0;
+		else escape_t[c] += gdt; // 30 game seconds (captive_escort.advance(game_seconds))
+		if (escape_t[c] >= ESCAPE_SECONDS) {
+			captive[c] = 0; captor[c] = -1; escape_t[c] = 0;
+			escort_goal[c] = -1; escort_mode[c] = 0;
+			formations[form[c]].command_dirty = true;
+			stats.escapes++;
+			push_event(EV_ESCAPED, c, -1);
+			continue;
+		}
+		captives_[w++] = c;
+	}
+	captives_.resize(w);
+}
+
+// ---------------------------------------------------------------- bleeding (2026-09-29 user decision)
+// Unconscious, not rescued and not captive: -25 HP per game hour until death. Bleeding is not an
+// "effective hit": it does not cancel a rescue in progress or reset the KO wait. Death by bleeding is
+// a death for morale (-40 x n / living roster) like any other.
+void World::bleed_stage(double gdt) {
+	const double loss = cfg.bleed_per_game_hour / 3600.0 * gdt;
+	if (loss <= 0.0) return;
+	const int n = soldier_count();
+	for (int i = 0; i < n; ++i) {
+		if (!alive(i) || ko[i] <= 0.0 || captive[i] || bandaged[i]) continue;
+		if (hp[i] > loss) { hp[i] -= loss; continue; }
+		stats.bled_deaths++;
+		quiet_contact_ = true;
+		apply_contact(i, hp[i], 0.0);
+		quiet_contact_ = false;
+	}
+}
+
+// Candidate host bridge on the ORIGINAL World. No flight or fuel is created here.
+bool World::set_host_ranged_delegate(bool enabled) {
+	if (!projectiles.empty()) return false; // Existing paid legacy arrows must settle.
+	host_ranged_delegate = enabled;
+	for (auto &requests : fire_buf_) requests.clear(); // Derived decisions only.
+	return true;
+}
+
+bool World::host_ranged_ready(int i, int expected_ammo, int mode, int64_t release_id,
+		int target_x, int target_y) const {
+	// The caller owns its current mode/order/holder stamp and admission capacity.
+	// The selected original cargo item is projected into the existing ammo scalar.
+	if (work_point_finish_ready_ || !host_ranged_delegate || i < 0 || i >= soldier_count() || !projectiles.empty()
+	    || release_id <= host_last_release_id || release_id > INT32_MAX || mode < 0 || mode > 1
+	    || expected_ammo <= 0 || expected_ammo > 65535 || ammo[i] != expected_ammo
+	    || !terrain.contains(target_x,target_y) || !exchange_ready(i) || ranged_cd[i] > 1e-9)
+		return false;
+	const Formation &f = formations[form[i]];
+	const auto profile = rules::ranged_profile(equip[i]);
+	const int sx = int(std::floor(px[i])), sy = int(std::floor(py[i]));
+	if (!profile.valid || (mode == 1 && equip[i].family != rules::F_BOW)
+	    || f.routed || f.order == Order::MOVE || f.order == Order::RETREAT || f.order == Order::RETURN
+	    || !terrain.walkable(sx,sy)) return false; // A structure aim point may be blocked.
+	const int dx = target_x-sx, dy = target_y-sy;
+	const double distance = std::hypot(double(dx),double(dy));
+	if (distance <= 1.0 || distance > profile.range) return false;
+	return true;
+}
+
+std::vector<double> World::preview_host_ranged_batch(const std::vector<int64_t> &releases) const {
+	// The Lab's original bounded selector supplies the exact ordered releases.
+	// This is not a second selector or a promised commit. Revalidate source refs
+	// and these same scalar facts BEFORE the first real original BEGIN release.
+	if (work_point_active_ || releases.empty() || releases.size() % 6 != 0 ||
+		releases.size() / 6 > size_t(soldier_count())) return {};
+	std::vector<uint8_t> selected(size_t(soldier_count()), 0);
+	std::vector<double> projected_fatigue(formations.size()), projected_rest(formations.size());
+	for (size_t fi=0; fi<formations.size(); ++fi) {
+		const auto &f=formations[fi];
+		projected_fatigue[fi]=f.fatigue; projected_rest[fi]=f.fatigue_rest;
+	}
+	std::vector<double> out;
+	out.reserve(releases.size() / 6 * 10);
+	int64_t previous_release=host_last_release_id;
+	for (size_t k=0; k<releases.size(); k+=6) {
+		const auto i=releases[k], expected_ammo=releases[k+1], mode=releases[k+2];
+		const auto release_id=releases[k+3], x=releases[k+4], y=releases[k+5];
+		if (i<0 || i>=soldier_count() || expected_ammo<1 || expected_ammo>65535 ||
+			mode<0 || mode>1 || release_id<=previous_release || release_id>INT32_MAX ||
+			x<0 || x>=terrain.w || y<0 || y>=terrain.h || selected[size_t(i)] ||
+			!host_ranged_ready(int(i),int(expected_ammo),int(mode),release_id,int(x),int(y))) return {};
+		const int fi=form[size_t(i)]; const auto &f=formations[size_t(fi)];
+		const double start=projected_fatigue[size_t(fi)], rested=projected_rest[size_t(fi)];
+		if (f.fatigue_count<=0 || !std::isfinite(start) || !std::isfinite(rested) ||
+			start<0 || start>rules::FATIGUE_LIMIT || rested<0 || rested>rules::FATIGUE_REST_DELAY ||
+			!std::isfinite(cfg.shot_grace) || cfg.shot_grace<0) return {};
+		// EXACT original charge(1.0): original current living-pool denominator,
+		// clamped fatigue and rest reset. Auto power activates no extra charge.
+		const double finish=clampd(start+1.0/std::max(1,f.fatigue_count),0.0,rules::FATIGUE_LIMIT);
+		out.insert(out.end(),{double(i),double(fi),double(tick),double(f.fatigue_count),
+			start,rested,finish,0.0,double(expected_ammo-1),cfg.shot_grace});
+		projected_fatigue[size_t(fi)]=finish; projected_rest[size_t(fi)]=0.0;
+		selected[size_t(i)]=1; previous_release=release_id;
+	}
+	return out; // Call-local projection only. Original World remains byte-for-byte unchanged.
+}
+
+bool World::commit_host_ranged(int i, int expected_ammo, int mode, int64_t release_id,
+		int target_x, int target_y, bool auto_power, rules::RangedShooter &receipt) {
+	if (!host_ranged_ready(i,expected_ammo,mode,release_id,target_x,target_y)) return false;
+	const Formation &f=formations[form[i]];
+	const auto profile = rules::ranged_profile(equip[i]);
+	// Preserve the original post-admission facing calculation. Read-only readiness
+	// extracted the same source coordinates into its own local scope.
+	const int sx = int(std::floor(px[i])), sy = int(std::floor(py[i]));
+	const int dx = target_x-sx, dy = target_y-sy;
+	// Every rejection precedes original skill/fatigue/cooldown/ammo mutation.
+	if (auto_power && ability[i].has()) activate_skill(i,rules::SK_POWER);
+	receipt.ability = ranged_ability[i]; // 技能 K3: the shooter's own ranged ability (host input)
+	receipt.training = f.training; receipt.fatigue = f.fatigue;
+	receipt.skill = skill[i]; receipt.equip = equip[i];
+	--ammo[i];
+	charge(i,1.0);
+	if (skill[i] == rules::SK_POWER) { skill[i]=rules::SK_NONE; skill_cd[i]=rules::EXCHANGE_SKILL_COOLDOWN; ++stats.skills_used; }
+	face[i]=std::atan2(float(dy),float(dx));
+	stagger[i]=std::max(stagger[i],profile.hold); ranged_cd[i]=profile.cooldown;
+	host_last_release_id=release_id; // Receipt watermark supplied by the sole Lab sequence.
+	++stats.shots; mark_combat(cfg.shot_grace); push_event(EV_SHOT,i,-1); set_visual(i,V_SHOOT);
+	return true; // Host now publishes its matching cargo debit and ONE Lab paid flight.
+}
+
+bool World::apply_host_projectile_contact(int i, double hp_loss, double stun_add, double stagger_seconds) {
+	if (!host_ranged_delegate || i < 0 || i >= soldier_count() || !std::isfinite(hp_loss)
+	    || !std::isfinite(stun_add) || !std::isfinite(stagger_seconds)
+	    || hp_loss < 0 || stun_add < 0 || stagger_seconds < 0) return false;
+	if (!alive(i)) return true;
+	if (skill[i] == rules::SK_BRACE) { skill[i]=rules::SK_NONE; skill_cd[i]=rules::EXCHANGE_SKILL_COOLDOWN; ++stats.skills_used; }
+	// Reuse original hit revision, interruptions, KO/death and hit presentation.
+	return apply_siege_contact(i,hp_loss,stun_add,stagger_seconds);
+}
+
+bool World::apply_fire_exposure_damage(int i, double hp_loss) {
+	if (!host_ranged_delegate || i < 0 || i >= soldier_count() || !std::isfinite(hp_loss) || hp_loss < 0) return false;
+	if (!alive(i) || hp_loss == 0) return true;
+	apply_contact(i,hp_loss,0.0,true); // Original environmental semantics, combat casualty checkpoint retained.
+	return true;
+}
+
+bool World::set_fire_visual_rows(const std::vector<int> &indices, const std::vector<uint8_t> &flags) {
+	if (indices.size()!=flags.size() || indices.size()>size_t(soldier_count())) return false;
+	std::unordered_map<int,bool> seen;
+	for (size_t k=0;k<indices.size();++k)
+		if (indices[k]<0 || indices[k]>=soldier_count() || flags[k]>2 || !seen.emplace(indices[k],true).second) return false;
+	if (fire_visual.size()!=size_t(soldier_count())) fire_visual.assign(soldier_count(),0);
+	for (size_t k=0;k<indices.size();++k) fire_visual[indices[k]]=flags[k];
+	return true; // Derived original 12-float atlas channel; no material/Transform owner.
+}
+
+// ---------------------------------------------------------------- CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5)
+// Detection (4.2) is parallel and writes only the rider's own candidate slot. Outcomes (4.4) are settled serially in rider
+// index order after the motion, so the result never depends on the thread count.
+bool World::set_mounted(int i, bool on) {
+	if (i < 0 || i >= soldier_count()) return false;
+	if (!on) { mounted[i] = 0; cav_hits[i] = 0; cav_hold[i] = 0.0; return true; }
+	if (!alive(i) || captive[i] || is_aboard(i)) return false;
+	mounted[i] = 1; cav_hits[i] = 0; cav_hold[i] = 0.0;
+	return true;
+}
+
+// 4.1: the newest heading sits in the ring slot before the current tick; a slot holds the heading of its own step.
+bool World::cav_straight(int i) const {
+	if (cav_hold[i] < cav::STRAIGHT_SECONDS) return false;
+	const size_t base = (size_t)i * cav::HEADING_WINDOW;
+	const float now = cav_hist[base + (tick + cav::HEADING_WINDOW - 1) % cav::HEADING_WINDOW];
+	for (int k = 0; k < cav::HEADING_WINDOW; ++k)
+		if (std::fabs(cav::wrap_angle(cav_hist[base + k] - now)) > cav::HEADING_TOL) return false;
+	return true;
+}
+
+bool World::charge_state(int i) const {
+	if (!is_mounted(i) || !can_act(i)) return false;
+	const double sp = std::sqrt((double)vx[i] * vx[i] + (double)vy[i] * vy[i]);
+	return sp >= cav::CHARGE_SPEED && cav_straight(i) && cav_hits[i] < cav::MAX_HITS && stagger[i] <= 0.0 &&
+	       knock_t[i] <= 0.0 && !formations[form[i]].routed && rescue_of[i] < 0 && capture_of[i] < 0;
+}
+
+void World::charge_stats(int r, int v, double speed, ExStats &a, ExStats &b) const {
+	a = ex_stats(r);
+	b = ex_stats(v);
+	a.armorbonus += std::min(std::max(0.0, speed - cav::CHARGE_SPEED) * cav::SPEED_BONUS, (double)cav::SPEED_BONUS_CAP);
+	// angle at the victim between its facing and the direction toward the rider: 0 = met head on, 180 = rider from behind
+	double angle = 0.0;
+	const double tx = px[r] - px[v], ty = py[r] - py[v], td = std::sqrt(tx * tx + ty * ty);
+	if (td > 1e-6) {
+		const double c = (std::cos((double)face[v]) * tx + std::sin((double)face[v]) * ty) / td;
+		angle = std::acos(std::clamp(c, -1.0, 1.0)) * 180.0 / (double)kPi;
+	}
+	if (angle > 120.0) a.armorbonus += cav::BACK_BONUS;
+	else if (angle > 60.0) a.armorbonus += cav::SIDE_BONUS;
+	const double vs = std::sqrt((double)vx[v] * vx[v] + (double)vy[v] * vy[v]);
+	if (equip[v].family == rules::F_SPEAR && angle <= 60.0 && vs < (double)cav::POLE_SPEED) b.armorbonus += cav::POLE_BONUS;
+	if (cav_rear_support(v, r)) b.armorbonus += cav::REAR_BONUS;
+}
+
+rules::ExResult World::charge_result(int r, int v, double speed) const {
+	ExStats a, b;
+	charge_stats(r, v, speed, a, b);
+	return exchange_result(a, b, exchange_roll(person_id[r], person_id[v], exchange_round, cfg.seed));
+}
+
+int World::cav_distinct_victims(int i) const {
+	if (i < 0 || i >= soldier_count()) return 0;
+	std::vector<int32_t> seen;
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const int32_t w = cav_hit_who[(size_t)i * cav::RECENT_VICTIMS + k];
+		if (w >= 0 && std::find(seen.begin(), seen.end(), w) == seen.end()) seen.push_back(w);
+	}
+	return (int)seen.size();
+}
+
+bool World::cav_may_hit(int r, int v) const { return r >= 0 && r < soldier_count() && v >= 0 && v < soldier_count() && cav_hit_free(r, v); }
+
+bool World::cav_hit_free(int r, int v) const {
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		if (cav_hit_who[at] == v && time - cav_hit_t[at] < cav::RECHARGE_SECONDS) return false;
+	}
+	return true;
+}
+
+void World::cav_record(int r, int v) {
+	cav_hits[r] = (uint8_t)std::min<int>(cav::MAX_HITS, cav_hits[r] + 1);
+	size_t pick = (size_t)r * cav::RECENT_VICTIMS;
+	double oldest = 1e300;
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		if (cav_hit_who[at] == v) { pick = at; break; }
+		if (cav_hit_t[at] < oldest) { oldest = cav_hit_t[at]; pick = at; }
+	}
+	cav_hit_who[pick] = v;
+	cav_hit_t[pick] = time;
+}
+
+// Mirrors the crowd's hash query: a mounted body reaches two cells out, an infantry body one.
+bool World::cav_rear_support(int v, int r) const {
+	const float tx = px[v] - px[r], ty = py[v] - py[r], td = std::sqrt(tx * tx + ty * ty);
+	if (td < 1e-6f) return false;
+	const float ax = tx / td, ay = ty / td; // rider to victim: behind the victim lies further along this
+	const int cx = (int)std::floor(px[v]), cy = (int)std::floor(py[v]);
+	for (int yy = std::max(0, cy - 1); yy <= std::min(terrain.h - 1, cy + 1); ++yy)
+		for (int xx = std::max(0, cx - 1); xx <= std::min(terrain.w - 1, cx + 1); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == v || j == r || !can_act(j) || is_aboard(j) || team[j] != team[v]) continue;
+				const float dx = px[j] - px[v], dy = py[j] - py[v], d2 = dx * dx + dy * dy;
+				if (d2 > 1.f || d2 < 1e-10f) continue; // within one cell
+				if (dx * ax + dy * ay > 0.f) return true;
+			}
+		}
+	return false;
+}
+
+bool World::cav_clear_cell(int v, float x, float y) const {
+	const float rv = mounted[v] ? cav::RADIUS : cfg.radius;
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == v || !alive(j) || ko[j] > 0.0 || is_aboard(j)) continue;
+				const float Dj = rv + (mounted[j] ? cav::RADIUS : cfg.radius);
+				const float dx = x - px[j], dy = y - py[j];
+				if (dx * dx + dy * dy < Dj * Dj) return false;
+			}
+		}
+	return true;
+}
+
+void World::cav_fall(int i, double seconds) {
+	if (!alive(i) || ko[i] > 0.0 || captive[i]) return;
+	getup[i] = std::max(getup[i], seconds); // a fallen body cannot act, target or be hit (can_act)
+	cav_down[i] = std::max(cav_down[i], seconds);
+	formations[form[i]].command_dirty = true;
+}
+
+// 4.5 (Q5=A): a penetration costs the victim's formation MORALE_SHOCK morale when a living member other than the victim
+// stands within SHOCK_RADIUS of the impact. Native keeps morale per formation, so the shock is one -3 on that formation.
+// The same rider shocks the same formation at most once per SHOCK_SECONDS; the victim has just been recorded by cav_record,
+// so only other victims in the recent list count.
+void World::cav_morale_shock(int r, int v) {
+	if (v < 0 || v >= soldier_count() || form[v] < 0 || form[v] >= (int)formations.size()) return;
+	const int fv = form[v];
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		const int w = cav_hit_who[at];
+		if (w >= 0 && w != v && w < soldier_count() && form[w] == fv && time - cav_hit_t[at] < cav::SHOCK_SECONDS) return;
+	}
+	bool near = false;
+	for (int m : formations[fv].members) {
+		if (m == v || !alive(m)) continue;
+		const float dx = px[m] - px[v], dy = py[m] - py[v];
+		if (dx * dx + dy * dy <= cav::SHOCK_RADIUS * cav::SHOCK_RADIUS) { near = true; break; }
+	}
+	if (!near) return;
+	Formation &f = formations[fv];
+	f.morale = std::max(0.0, f.morale - cav::MORALE_SHOCK);
+	stats.cav_shocks++;
+}
+
+void World::cav_push(int i, float x, float y, float &kx, float &ky) const {
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	const uint8_t my_team = team[i];
+	const float ri = cav::RADIUS;
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == i || ko[j] > 0 || cav_down[j] > 0.0) continue; // a trampled body exerts no push on a rider (weight 0)
+				const bool big = mounted[j] != 0;
+				const float Dj = ri + (big ? cav::RADIUS : cfg.radius);
+				const float dx = x - px[j], dy = y - py[j], d2 = dx * dx + dy * dy;
+				if (d2 >= Dj * Dj) continue;
+				const float w = !hostile(my_team, team[j]) ? cfg.ally_push : cfg.enemy_push;
+				if (d2 < 1e-10f) { kx += (i < j ? 0.02f : -0.02f); continue; }
+				const float d = std::sqrt(d2), pen = Dj - d;
+				const float share = big ? 0.5f : 0.25f; // rider weight 3 against a mounted body 3 / 6, against infantry 3 / 4 share of 1
+				kx += dx / d * pen * w * share; ky += dy / d * pen * w * share;
+			}
+		}
+	const float kl = std::sqrt(kx * kx + ky * ky);
+	if (kl > cfg.push_clamp) { kx *= cfg.push_clamp / kl; ky *= cfg.push_clamp / kl; }
+}
+
+void World::cav_detect(int i, float x, float y, float vx_now, float vy_now) {
+	if (cav_cand[i] >= 0 || cav_hits[i] >= cav::MAX_HITS) return; // one candidate per rider per step
+	const float sp = std::sqrt(vx_now * vx_now + vy_now * vy_now);
+	if (sp < 1e-6f) return;
+	const float ux = vx_now / sp, uy = vy_now / sp;
+	const float cos45 = 0.70710678f; // the 45 degree forward sector
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	int best = -1;
+	float bestc = -2.f;
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == i || !can_act(j) || is_aboard(j) || !hostile(team[i], team[j])) continue;
+				const float Dj = cav::RADIUS + (mounted[j] ? cav::RADIUS : cfg.radius);
+				const float dx = px[j] - x, dy = py[j] - y, d2 = dx * dx + dy * dy;
+				if (d2 >= Dj * Dj || d2 < 1e-10f) continue; // the two bodies overlap
+				const float cs = (dx * ux + dy * uy) / std::sqrt(d2);
+				if (cs < cos45) continue;
+				if (best >= 0 && (cs < bestc || (cs == bestc && j > best))) continue; // nearest to dead ahead, ties to the lower index
+				if (!cav_hit_free(i, j) || !los(x, y, px[j], py[j])) continue;       // 2 s re-charge limit; legal ray
+				best = j; bestc = cs;
+			}
+		}
+	if (best >= 0) { cav_cand[i] = best; cav_cand_vx[i] = vx_now; cav_cand_vy[i] = vy_now; }
+}
+
+void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
+	const rules::ExResult res = charge_result(r, v, speed);
+	stats.cav_contacts++;
+	stats.cav_impact_speed += speed; // CAV-4a reporting: mean impact speed = cav_impact_speed / cav_contacts
+	cav_record(r, v);
+	auto stop = [&]() { vx[r] = vy[r] = 0.f; stats.cav_stops++; cav_spent[r] = 1; }; // 4.4 brake to zero; CAV-4a: the charge is spent
+	if (res.winner == 0) { // draw: both stunned, the horse is held up for 0.5 s
+		striker_person_ = person_id[r]; apply_contact(v, 0.0, res.stun_b);
+		striker_person_ = person_id[v]; apply_contact(r, 0.0, res.stun_a); striker_person_ = -1;
+		if (alive(r)) stagger[r] = std::max(stagger[r], cav::DRAW_STOP_SECONDS);
+		stop();
+		return;
+	}
+	if (res.winner == 1) { // the rider wins
+		striker_person_ = person_id[r]; apply_contact(v, res.hp_b, res.stun_b); striker_person_ = -1;
+		if (alive(v) && ko[v] <= 0.0) stagger[v] = std::max(stagger[v], res.stagger);
+		if (res.kind == rules::EX_BIG) {
+			// penetration: an impulse away from the rider's line on the side the victim stood, plus a little forward; 1.2 s down
+			const float dx = px[v] - px[r], dy = py[v] - py[r];
+			const float side = ux * dy - uy * dx >= 0.f ? 1.f : -1.f;
+			const float tx = px[v] + (-uy * side) * (float)cav::SIDE_LATERAL_CELLS + ux * (float)cav::SIDE_FORWARD_CELLS;
+			const float ty = py[v] + (ux * side) * (float)cav::SIDE_LATERAL_CELLS + uy * (float)cav::SIDE_FORWARD_CELLS;
+			if (alive(v)) {
+				float rx = tx, ry = ty;
+				resolve(px[v], py[v], rx, ry, cfg.wall_margin);
+				px[v] = rx; py[v] = ry;
+			}
+			cav_fall(v, cav::FALL_SECONDS);
+			stats.cav_penetrations++; // CAV-4a reporting: a penetration (4.4 big win)
+			if (cav_down[v] > 0.0) stats.cav_falls++;
+			cav_morale_shock(r, v);
+			const float sp = std::sqrt(vx[r] * vx[r] + vy[r] * vy[r]);
+			const float ns = std::max(0.f, sp - (float)cav::LOSS_SPEED);
+			if (sp > 1e-4f) { vx[r] *= ns / sp; vy[r] *= ns / sp; } // the charge goes on while the speed stays at or above 4.5
+		} else {
+			// small win: pushed back one cell along the rider's line; pinned against bodies it falls for 0.8 s instead
+			const float tx = px[v] + ux * (float)cav::PUSHBACK_CELLS, ty = py[v] + uy * (float)cav::PUSHBACK_CELLS;
+			float rx = tx, ry = ty;
+			resolve(px[v], py[v], rx, ry, cfg.wall_margin);
+			const bool clear_spot = alive(v) && std::fabs(rx - tx) + std::fabs(ry - ty) < 0.2f && cav_clear_cell(v, rx, ry);
+			if (clear_spot) { px[v] = rx; py[v] = ry; }
+			else { cav_fall(v, cav::SMALL_FALL_SECONDS); if (cav_down[v] > 0.0) stats.cav_falls++; }
+			stop();
+		}
+		return;
+	}
+	// the defender wins: the rider takes its exchange loss plus the recoil (1.5 x that loss), stops, and on a big loss dismounts
+	striker_person_ = person_id[v]; apply_contact(r, res.hp_a * (1.0 + cav::RECOIL), res.stun_a); striker_person_ = -1;
+	if (alive(r)) stagger[r] = std::max(stagger[r], res.stagger);
+	stop();
+	if (res.kind == rules::EX_BIG && alive(r)) {
+		mounted[r] = 0; cav_hits[r] = 0; cav_hold[r] = 0.0;
+		stats.cav_dismounts++;
+		cav_fall(r, cav::FALL_SECONDS);
+	}
+}
+
+void World::cav_settle() {
+	const int n = soldier_count();
+	bool any = false;
+	for (int i = 0; i < n && !any; ++i) any = cav_cand[i] >= 0;
+	if (!any) return;
+	build_hash(); // the outcomes read the bodies where this step left them
+	for (int i = 0; i < n; ++i) {
+		const int v = cav_cand[i];
+		if (v < 0) continue;
+		cav_cand[i] = -1;
+		if (!mounted[i] || !can_act(i) || !can_act(v) || cav_hits[i] >= cav::MAX_HITS || !cav_hit_free(i, v)) continue;
+		const float sp = std::sqrt(cav_cand_vx[i] * cav_cand_vx[i] + cav_cand_vy[i] * cav_cand_vy[i]);
+		if (sp < 1e-6f) continue;
+		cav_resolve(i, v, sp, cav_cand_vx[i] / sp, cav_cand_vy[i] / sp);
+	}
+}
+
+} // namespace wg

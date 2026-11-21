@@ -14,6 +14,7 @@ func _food_total(entry: Dictionary) -> float:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -106,7 +107,9 @@ func _run() -> void:
 	team.apply_unit_contact(1, {"result": {"hp": 1.0, "stun": 0.0, "guard_break": false}, "shield": false})
 	controller.settle_supply_deliveries()
 	assert(entry.delivery.is_empty() and sender.cargo.grain == 4)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.queue_free()
 	await process_frame
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE CONTROLLED FOOD DELIVERY PASS: original NPC cargo and Army row cargo, original sender identity/hit/holder guards, no self transfer, same-valued source replacement cancels, pause/post-contact commit, sender/receiver fatigue handled once, actual food plus meal-credit conservation; family selection and full UI separately verified")
 	quit(0)

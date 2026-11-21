@@ -1,4 +1,5 @@
 extends RefCounted
+const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 ## One non-rendering pose query source for actual soldier equipment, not a person.
 ## Original AnimationPlayer, mesh skinning, armor and aiming remain authoritative.
 
@@ -7,7 +8,7 @@ const SourceBounds = preload("res://scripts/terrain_lab/terrain_army_source_boun
 const ShapesDescriptor = preload("res://scripts/terrain_lab/terrain_army_shapes_descriptor.gd")
 const COMPILED_SHAPES_PATH := "res://scripts/terrain_lab/compiled_contact_shapes.cs"
 
-class ComponentQueryEditor extends HumanCharacter3DEditor:
+class ComponentQueryEditor extends RuntimeHumanCharacter3DEditor:
 	# Only this private query model has a fixed hierarchy after initialization.
 	# Cache original lookup results, never visibility, transforms or geometry.
 	# Any future same-root reparent/rename must explicitly clear this lookup.
@@ -458,6 +459,9 @@ func initialize(parent: Node, appearance: Dictionary, reference_source: HumanCha
 	editor.visual_state.combat_ready = true
 	editor.set_playing(false)
 	_copy_private_animations(raw_animation)
+	if not SiegeWorkClips.install(editor):
+		dispose()
+		return false
 	_baseline = appearance.duplicate(true)
 	_appearance = appearance.duplicate(true)
 	_baseline_key = _appearance_key(_baseline)
@@ -516,9 +520,11 @@ func _copy_private_animations(animation_reference: AnimationPlayer = null) -> vo
 				_compact_constant_morph_keys(animation)
 			if cape_track_omission_enabled:
 				_disable_private_cape_tracks(animation)
-			assert(library.add_animation(clip, animation) == OK)
+			var clip_added: Error = library.add_animation(clip, animation)
+			assert(clip_added == OK)
 		editor.animation_player.remove_animation_library(library_name)
-		assert(editor.animation_player.add_animation_library(library_name, library) == OK)
+		var library_added: Error = editor.animation_player.add_animation_library(library_name, library)
+		assert(library_added == OK)
 	_key.clear()
 
 func _disable_private_cape_tracks(animation: Animation) -> int:
@@ -562,17 +568,21 @@ func _compact_constant_morph_keys(animation: Animation) -> void:
 		if count <= 1 or animation.track_get_key_time(track, 0) != 0.0:
 			continue
 		var constant_positive_zero := true
+		var key_values: PackedFloat64Array = PackedFloat64Array()
+		key_values.resize(count)
 		var previous_time := -1.0
 		for index in range(count):
 			var time := animation.track_get_key_time(track, index)
 			var value: float = animation.track_get_key_value(track, index)
-			# Numeric equality alone admits -0. Native float -> float64 preserves
-			# its sign; all eight zero bytes are exclusively IEEE positive zero.
-			if not is_finite(time) or time <= previous_time or time > animation.length or animation.track_get_key_transition(track, index) != 1.0 or value != 0.0 or PackedFloat64Array([value]).to_byte_array().decode_u64(0) != 0:
+			if not is_finite(time) or time <= previous_time or time > animation.length or animation.track_get_key_transition(track, index) != 1.0 or value != 0.0:
 				constant_positive_zero = false
 				break
+			key_values[index] = value
 			previous_time = time
 		if constant_positive_zero:
+			# The same native float64 bits, batched once per track instead of per key.
+			var value_bytes: PackedByteArray = key_values.to_byte_array()
+			if value_bytes.count(0) != value_bytes.size(): continue # Retain negative zero too.
 			for index in range(count - 1, 0, -1):
 				animation.track_remove_key(track, index)
 
@@ -611,11 +621,14 @@ func clear_samples() -> void:
 	_nonattack_bound.clear()
 	_clear_compiled_geometry_views()
 
-func conservative_nonattack_radius(clip: StringName) -> float:
-	if not conservative_nonattack_bounds_enabled:
+func conservative_nonattack_radius(clip: StringName, appearance: Dictionary = {}) -> float:
+	if not conservative_nonattack_bounds_enabled or not supports_appearance(appearance):
 		return 256.0
 	if _nonattack_bound.is_empty():
 		_nonattack_bound = SourceBounds.build(self)
+	var recipe := _baseline if appearance.is_empty() else appearance
+	if str(recipe.parts.shield) != "none" and str(_nonattack_bound.get("shield_id", "")) != str(recipe.parts.shield):
+		return 256.0 # Other shields retain exact queries; none is the proven body subset.
 	return float(_nonattack_bound.radius) if _nonattack_bound.clips.has(clip) else 256.0
 
 func begin_contact_step() -> void:
@@ -722,10 +735,10 @@ func query_bounds(clip: StringName, time: float, direction: Vector2i, aim: Vecto
 			_nonattack_bound = SourceBounds.build(self)
 		# This proof is independent of the optional 128px anchor gate. Guard,
 		# custom aim, unknown curves and out-of-curve times retain exact queries.
-		if float(_nonattack_bound.radius) < 256.0 and _nonattack_bound.clips.has(clip):
+		var recipe := _baseline if appearance.is_empty() else appearance
+		if float(_nonattack_bound.radius) < 256.0 and _nonattack_bound.clips.has(clip) and (str(recipe.parts.shield) == "none" or str(_nonattack_bound.get("shield_id", "")) == str(recipe.parts.shield)):
 			var animation := editor.animation_player.get_animation(clip)
 			if animation != null and time <= animation.length:
-				var recipe := _baseline if appearance.is_empty() else appearance
 				var component: Dictionary = editor._component_definition(&"face", StringName(str(recipe.parts.face)))
 				var nodes: Array = editor._find_component_nodes(component.get("prefixes", []))
 				# Resolve the requested face, not the live visibility of another
@@ -799,11 +812,11 @@ func _sample(clip: StringName, time: float, direction: Vector2i, aim: Vector2, w
 		# Preserve native key types too: dot keys are StringName, explicit keys
 		# are String. Full Dictionary byte equality includes that metadata.
 		result["shoulder"] = compiled.shoulder
-		result.body = compiled.body
+		result["body"] = compiled.body
 		if include_weapon:
-			result.weapon = compiled.weapon
-		result.shield = compiled.shield
-		result.parry = compiled.parry
+			result["weapon"] = compiled.weapon
+		result["shield"] = compiled.shield
+		result["parry"] = compiled.parry
 		result["hurt_bounds"] = compiled.hurt_bounds
 		if include_weapon:
 			query_profile.weapon_fills += 1
@@ -830,26 +843,26 @@ func _fill_native_geometry(result: Dictionary, include_weapon: bool, partial: bo
 	if not partial:
 		result["shoulder"] = geometry.project(proxy, skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone("J_Bip_R_UpperArm")).origin)
 		started = Time.get_ticks_usec()
-		result.body = geometry.body_shapes(proxy)
+		result["body"] = geometry.body_shapes(proxy)
 		profile_usec.body += Time.get_ticks_usec() - started
 	var weapon_clip := editor._resolve_weapon_attack_animation()
 	if include_weapon:
 		started = Time.get_ticks_usec()
-		result.weapon = geometry.weapon_shapes(proxy, weapon_clip)
+		result["weapon"] = geometry.weapon_shapes(proxy, weapon_clip)
 		profile_usec.weapon += Time.get_ticks_usec() - started
 		query_profile.weapon_fills += 1
 	else:
 		query_profile.weapon_omissions += 1 # Absent is not a fabricated empty weapon.
 	if not partial:
 		started = Time.get_ticks_usec()
-		result.shield = geometry.shield_shapes(proxy)
+		result["shield"] = geometry.shield_shapes(proxy)
 		profile_usec.shield += Time.get_ticks_usec() - started
 		started = Time.get_ticks_usec()
-		result.parry = []
+		result["parry"] = []
 		# Shieldless melee parry remains a real weapon projection even when the
 		# damaging weapon field was not requested. Arrows still cannot use parry.
 		if result.shield.is_empty() and editor.selected_animation in [&"guard", &"guard_weapon", &"guard_polearm"] and weapon_clip not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]:
-			result.parry = geometry.weapon_shapes(proxy, weapon_clip, true)
+			result["parry"] = geometry.weapon_shapes(proxy, weapon_clip, true)
 		profile_usec.parry += Time.get_ticks_usec() - started
 		var points := PackedVector2Array()
 		for kind: String in ["body", "shield", "parry"]:
@@ -965,7 +978,7 @@ func _compiled_sample_geometry(include_weapon: bool) -> Dictionary:
 			continue
 		if field == "parry" and not (result.shield.is_empty() and bool(view.binding.descriptor.parrying)
 			and str(view.binding.descriptor.weapon_clip) not in ["attack_unarmed", "attack_bow", "attack_crossbow"]):
-			result.parry = [] # Original non-parrying branch is intentionally untyped.
+			result["parry"] = [] # Original non-parrying branch is intentionally untyped.
 			continue
 		var polygons: Array[PackedVector2Array] = []
 		polygons.assign(result[field])
@@ -1051,6 +1064,11 @@ func _pose(key: Array, appearance: Dictionary) -> bool:
 	query_profile.apply_appearance_usec += Time.get_ticks_usec() - pose_stage_started
 	pose_stage_started = Time.get_ticks_usec()
 	var pose: StringName = editor._normalize_animation_id(key[0])
+	var combat_ready := not SiegeWorkClips.DURATIONS.has(str(pose))
+	if editor.combat_ready != combat_ready:
+		editor.combat_ready = combat_ready
+		editor.visual_state.combat_ready = combat_ready
+		editor._update_weapon_sheath_state()
 	if pose == &"attack":
 		pose = editor._resolve_weapon_attack_animation()
 	if not editor.animation_player.has_animation(pose) or str(pose).begins_with("ride_"):

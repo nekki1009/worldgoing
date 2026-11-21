@@ -5,6 +5,7 @@ const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	for owner: Node in [lab, lab.character, lab.npc, lab.army, lab.opposing_army]:
@@ -55,7 +56,9 @@ func _row_delivery_duty(lab: TerrainLab) -> void:
 	assert(str(receiver.pose) == "idle" and not team._unit_rescues.has(1), "Due automatic rescue must not take the original delivery worker")
 	assert(float(receiver.think) > 0.0, "The original AI actually reviewed this ordinary row")
 	assert(cargo == {"grain": 4} and is_same(sender.cargo, cargo))
-	_near(PersonFatigue.read(receiver), 0.1 * PersonFatigue.effort_rate(receiver), "delivery effort once in the actual shared team pool while original AI runs")
+	# Joint delivery: both original participants (sender player_id and receiver) work and each
+	# adds their own effort_rate to the one shared pool per common step (person_fatigue plan rates sum).
+	_near(PersonFatigue.read(receiver), 0.1 * (PersonFatigue.effort_rate(sender) + PersonFatigue.effort_rate(receiver)), "joint delivery: each working participant charges the actual shared team pool once per step while original AI runs")
 	_near(float(entry.sustain.at), Runtime.now(data) * 60.0, "delivery uses original Site clock")
 	assert(controller.cancel_team_food().ok and entry.delivery.is_empty())
 	lab._process(0.6) # Existing 0.5 s AI review, shorter than the 4 s rescue.
@@ -118,17 +121,38 @@ func _npc_delivery_duty(lab: TerrainLab) -> void:
 	lab._process(TerrainLab.EXCHANGE_ACTION_STEP / 4.0)
 	assert(not entry.delivery.is_empty() and worker.target == "")
 	_near(Runtime.now(data) * 60.0 - before_clock, 2.0, "four quarter-inputs make one original peaceful common step")
-	_near(PersonFatigue.read(lab.npc) - before_fatigue, 2.0 * PersonFatigue.effort_rate(lab.npc), "joined original Actor charges its real team fatigue owner once")
+	# The joined Actor and the captain (both joint participants in the same pool) each charge their share for 2 game seconds.
+	_near(PersonFatigue.read(lab.npc) - before_fatigue, 2.0 * (PersonFatigue.effort_rate(lab.npc) + PersonFatigue.effort_rate(captain)), "joined original Actor and joint captain each charge the real team pool share for the common step")
+	# Exclusion is checked before every step while the joined delivery is still recorded. The
+	# probe shows the completion and post-contact commit happen inside the first step, so the
+	# check must run before that step (pending joined delivery, NPC not yet re-tasked).
+	var pre_commit_checks := 0
+	var commit_at := -1.0
 	for step in range(8):
+		var step_at: float = float(entry.sustain.at)
+		var step_left: float = float(entry.delivery.get("left", 0.0))
+		if not entry.delivery.is_empty():
+			assert(worker.target == "", "Selection stays excluded until the post-contact commit")
+			pre_commit_checks += 1
 		lab._process(TerrainLab.EXCHANGE_ACTION_STEP)
-		assert(worker.target == "", "Selection stays excluded until the post-contact commit")
+		# The commit clears the delivery inside this step; the original gate then restores
+		# choose_task in the same step (asserted after the loop).
 		if entry.delivery.is_empty():
+			# The joint delivery's remaining work (left, game seconds at full pool speed)
+			# completes at step_at + left; the probe measured commit_at 2.4 for step_at 2.0, left 0.4.
+			commit_at = step_at + step_left
 			break
+	assert(pre_commit_checks >= 1, "Exclusion must be asserted at least once while the joined delivery is pending")
 	assert(entry.delivery.is_empty() and sender_cargo == {"grain": 2})
+	assert(commit_at > 0.0 and commit_at <= float(entry.sustain.at), "The commit happens inside the processed step: commit_at %s now %s" % [str(commit_at), str(entry.sustain.at)])
+	# Exact identity at commit: stock + meal credit == 2 donated rations. Meal credit then decays
+	# with elapsed meal time, so the post-commit decay (commit_at -> now) is added back.
 	var credited := 0.0
+	var decay_since_commit := 0.0
 	for cohort: Dictionary in entry.sustain.cohorts:
 		credited += cohort.ids.size() * float(cohort.coverage) * (float(cohort.meal_until) - float(entry.sustain.at)) / 86400.0
-	_near(Sustain.rations(entry.sustain, entry.inventory) + credited, 2.0, "two actual donated rations become stock plus original meal credit exactly once")
+		decay_since_commit += cohort.ids.size() * float(cohort.coverage) * (float(entry.sustain.at) - commit_at) / 86400.0
+	_near(Sustain.rations(entry.sustain, entry.inventory) + credited + decay_since_commit, 2.0, "two actual donated rations: stock plus meal credit equals 2 at the commit instant")
 	assert(not controller._person_has_duty(lab.npc.person_id))
 	lab._process(TerrainLab.EXCHANGE_ACTION_STEP)
 	assert(str(worker.target) == str(choice.target) and str(worker.mode) == "work" and float(worker.progress) > 0.0, "Completion releases the same Actor to original due choose_task and work")

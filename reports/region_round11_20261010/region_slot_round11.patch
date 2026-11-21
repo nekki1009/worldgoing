@@ -1,0 +1,148 @@
+--- a/scripts/region_lab/region_save_slot.gd
++++ b/scripts/region_lab/region_save_slot.gd
+@@ -2148,7 +2148,8 @@
+ 
+ func _ground_destination(geography: TerrainData, seconds: float) -> Dictionary:
+ 	var data := geography
+-	if data.site.is_empty():
++	var fresh := data.site.is_empty()
++	if fresh:
+ 		if data.spawn_cell == Vector2i(-1, -1): return fail("NO_TARGET", "地面跨界目的地沒有原落腳點")
+ 		# This is an actual visit candidate, never the pure boundary query.
+ 		Env.initialize(data, str(data.parameters.fixed_base.site_id))
+@@ -2160,7 +2161,13 @@
+ 		Runtime.initialize_item_storage(data.site)
+ 		# Same as open_site: a new Site of this slot carries the slot's fixed world pin.
+ 		if not pin.is_empty(): data.site.world_pin = pin.duplicate(true)
+-	return _settle_cold_candidate(data, seconds)
++	var settled := _settle_cold_candidate(data, seconds)
++	# Same as open_site: a new Site starts its Fire settlement at this slot's
++	# current dual clock, so a later owner restores the true action cursor.
++	if fresh and settled.ok and not _marker.is_empty() and settled.data.site.get("fire_settlement", {}).is_empty() and _fire_history_empty(settled.data.site):
++		settled.data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": int(control.fire_clock.sequence),
++			"action_seconds": float(control.fire_clock.action_seconds), "game_seconds": float(control.logical_game_seconds)}
++	return settled
+ 
+ func _ground_surfaces(source_data: TerrainData, destination_data: TerrainData, request: Dictionary) -> Dictionary:
+ 	var from_data := Env.navigation_for_state(source_data, source_data.site)
+@@ -2720,6 +2727,9 @@
+ 	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+ 	# Ordinary original departure already refused unfinished death transfers.
+ 	extracted.party.upkeep.original_deaths = {}
++	# The origin candidate is a NEW body: a region_snapshot inherited from the
++	# live Site (e.g. its arrival bind) authenticated the old body only.
++	extracted.origin.erase("region_snapshot")
+ 	var candidate := Env.navigation_for_state(source_data, extracted.origin)
+ 	for hook: StringName in [&"siege_event_guard", &"fire_event_guard", &"fire_transport_snapshot", &"fire_owner_snapshot",
+ 		&"fire_owner_checkpoint", &"fire_pending_projectile_query", &"site_garrison_lab", &"ship_journey_active",
+@@ -3286,11 +3296,16 @@
+ 	if not transport.ok: return transport
+ 	var compiled := _region_npc_route_plan(token, steps, extracted.party)
+ 	if not compiled.ok: return compiled
++	# The origin candidate is a NEW body; an inherited region_snapshot authenticated the old one only.
++	extracted.origin.erase("region_snapshot")
+ 	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+ 	candidate.set_meta(&"region_bind_source", lab.terrain)
+ 	var prepared_bind: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(control.active_site_id) == str(candidate.site.id) else "cold_exact")
+-	if not prepared_bind.get("ok", false) or not prepared_bind.get("can_publish") is Callable or not prepared_bind.get("publish") is Callable or not prepared_bind.get("save_candidate") is Callable:
++	if not prepared_bind.get("ok", false): return prepared_bind # The original bind preflight names its own refusal.
++	if not prepared_bind.get("can_publish") is Callable or not prepared_bind.get("publish") is Callable or not prepared_bind.get("save_candidate") is Callable:
+ 		return fail("MISSING_REGION_ADAPTER", "缺原完整 bind 原子發布收據")
++	# The bind ticket authenticated its own prepared body (as player departure uses).
++	if prepared_bind.get("data") is TerrainData: candidate = prepared_bind.data
+ 	return {"ok": true, "token": token, "generation": int(_marker.get("generation", 0)),
+ 		"runtime_revision": int(region_registry().revision), "world": float(control.logical_game_seconds),
+ 		"coordinate": coordinate.site, "lab": lab, "candidate": candidate, "party": extracted.party,
+@@ -8328,6 +8343,22 @@
+ ## departure, party document and reports ledger together.
+ 
+ 
++## Original route duration of a courier party (game seconds): a stored player
++## plan keeps cumulative seconds; an NPC land plan keeps steps/metres and uses the
++## same party speed rule as set_region_travel_plan.
++func _region_courier_plan_seconds(plan: Dictionary, party: Dictionary) -> Dictionary:
++	if plan.get("seconds") is Array and not plan.seconds.is_empty(): return {"ok": true, "seconds": float(plan.seconds.back())}
++	if str(plan.get("mode", "land")) != "land": return fail("UNSUPPORTED_DELIVERY_ROUTE", "原海路信使的到達時間由航段 timeline 決定")
++	var transport := RegionTravel.prepare_transport(party)
++	if not transport.ok: return transport
++	var speed := RegionTravel.party_speed(party.content) * float(transport.get("carry_factor", 1.0))
++	if not is_finite(speed) or speed <= 0.0: return fail("INVALID", "原信使速度")
++	var total := 0.0
++	for step: Dictionary in plan.get("steps", []):
++		if not _seconds(step.get("metres")): return fail("INVALID", "路線距離")
++		total += float(step.metres) / (speed * maxf(0.000001, float(step.get("travel_factor", 1.0))))
++	return {"ok": true, "seconds": total}
++
+ func prepare_region_carried_report(dispatch: Dictionary, source_receipt_id: String,
+ 		receiver_scope: String, receiver_id: int, command: Dictionary = {}, courier_id: int = 0) -> Dictionary:
+ 	if not dispatch.get("ok", false) or dispatch.get("duplicate", false) or not dispatch.get("lab") is TerrainLab \
+@@ -8369,8 +8400,9 @@
+ 	receipt.receiver_scope = receiver_scope
+ 	receipt.receiver_ref = receiver_ref.duplicate(true)
+ 	receipt.erase("received_at")
+-	var forecast := float(control.logical_game_seconds)
+-	for seconds: Variant in dispatch.plan.seconds: forecast += float(seconds)
++	var duration := _region_courier_plan_seconds(dispatch.plan, dispatch.party)
++	if not duration.ok: return duration
++	var forecast := float(control.logical_game_seconds) + float(duration.seconds)
+ 	var delivery := {"version": RegionAI.DELIVERY_VERSION, "kind": "report", "phase": "in_transit", "source_scope": source_scope,
+ 		"source_game_seconds": float(control.logical_game_seconds), "source_action_seconds": float(control.fire_clock.action_seconds),
+ 		"source_receipt_sha256": RegionAI.delivery_hash(source_receipt), "issuer_ref": issuer_ref.duplicate(true), "team_ref": team_ref.duplicate(true),
+@@ -8423,8 +8455,9 @@
+ 	receipt.receiver_scope = destination
+ 	receipt.receiver_ref = issuer_ref.duplicate(true)
+ 	receipt.erase("received_at")
+-	var forecast := float(control.logical_game_seconds)
+-	for seconds: Variant in dispatch.plan.seconds: forecast += float(seconds)
++	var duration := _region_courier_plan_seconds(dispatch.plan, dispatch.party)
++	if not duration.ok: return duration
++	var forecast := float(control.logical_game_seconds) + float(duration.seconds)
+ 	var delivery := {"version": RegionAI.DELIVERY_VERSION, "kind": "army_command", "phase": "in_transit", "source_scope": source_scope,
+ 		"source_game_seconds": float(control.logical_game_seconds), "source_action_seconds": float(control.fire_clock.action_seconds),
+ 		"source_receipt_sha256": RegionAI.delivery_hash(original), "issuer_ref": issuer_ref.duplicate(true), "team_ref": team_ref.duplicate(true),
+@@ -9919,7 +9952,7 @@
+ 	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab:
+ 		return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+ 	var party_lab: TerrainLab = raw_proof.lab
+-	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
++	var traveller: Dictionary = party_lab.site_controller.person_actions._person(int(party.leader_person_id), false)
+ 	if traveller.is_empty(): return fail("INVALID_ORIGINAL_SIEGE_TRAVELLER")
+ 	var prepared: Dictionary = prepare_region_route_context(null, party)
+ 	if not prepared.ok: return prepared
+@@ -9994,7 +10027,7 @@
+ 	var raw_proof: Variant = call("region_original_party_runtime_proof", str(status.token), party)
+ 	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab: return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+ 	var party_lab: TerrainLab = raw_proof.lab
+-	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
++	var traveller: Dictionary = party_lab.site_controller.person_actions._person(int(party.leader_person_id), false)
+ 	var identity := int(witness.get("person_id", -1))
+ 	if not (battle.attackers + battle.defenders).has(identity): return {"ok": true, "valid": false, "reason": "SIEGE_ROSTER_CHANGED"}
+ 	var person: Dictionary = original.site_controller.person_actions._person(identity, false)
+@@ -10055,6 +10088,9 @@
+ 	if actual_people != selected.people: return fail("REGION_ACTIVE_DEPENDENCY", "原完整 closure 與受控選擇不一致")
+ 	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+ 	extracted.party.upkeep.original_deaths = {}
++	# The origin candidate is a NEW body: a region_snapshot inherited from the
++	# live Site (e.g. its arrival bind) authenticated the old body only.
++	extracted.origin.erase("region_snapshot")
+ 	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+ 	candidate.set_meta(&"region_bind_source", lab.terrain)
+ 	if not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER")
+@@ -10250,7 +10286,7 @@
+ 	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab:
+ 		return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+ 	var party_lab: TerrainLab = raw_proof.lab
+-	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
++	var traveller: Dictionary = party_lab.site_controller.person_actions._person(int(party.leader_person_id), false)
+ 	if traveller.is_empty() or not SiteSettlement._fit(traveller): return {"ok": true, "contact": false}
+ 	var prepared: Dictionary = prepare_region_route_context(null, party)
+ 	if not prepared.ok: return prepared
+@@ -10324,7 +10360,7 @@
+ 	if party.content.travel_identity.refs.person.get(str(int(party.leader_person_id))) != witness.party_reference: return {"ok": true, "valid": false, "reason": "NPC_REFERENCE_CHANGED"}
+ 	var runtime := region_original_party_runtime_proof(token, party)
+ 	if not runtime.ok: return runtime
+-	var traveller: Dictionary = runtime.lab._original_person_target(int(party.leader_person_id))
++	var traveller: Dictionary = runtime.lab.site_controller.person_actions._person(int(party.leader_person_id), false)
+ 	var identity := int(witness.get("person_id", -1))
+ 	if not (battle.attackers + battle.defenders).has(identity): return {"ok": true, "valid": false, "reason": "SIEGE_ROSTER_CHANGED"}
+ 	if original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(identity)) != witness.static_reference: return {"ok": true, "valid": false, "reason": "SIEGE_REFERENCE_CHANGED"}

@@ -5,6 +5,7 @@ const OUT := "res://output/npc_ai_acceptance_20260918/work"
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 45000
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

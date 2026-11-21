@@ -20,6 +20,8 @@ func run() -> void:
 	split.team_id = 3
 	first.training = 90.0
 	second.training = 30.0
+	first.formation_preset_id = "wedge"
+	second.formation_preset_id = "circle"
 	var cargo := {"grain": 3}
 	var equipment := {"item_ids": ["original-sword"], "equipped": {"weapon": "original-sword"}}
 	first.combat_units[1].cargo = cargo
@@ -27,6 +29,8 @@ func run() -> void:
 	first.combat_units[1].hp = 61.5
 	first.combat_units[1].fatigue = 72.25
 	first.command_abilities[1] = {"tactics": 6, "leadership": 7, "coach": 8}
+	assert(first.set_military_role(first.combat_identity(1), "officer").ok)
+	assert(first.set_military_role(first.combat_identity(2), "officer").ok)
 	first.officer_order.assign([1, 2])
 	first.officer_service.assign([1, 2])
 	first.combat_units[2].ko = 13.5
@@ -45,8 +49,13 @@ func run() -> void:
 	assert(not SiteStore._validate_armies(data, {"armies": [snapshot_before, duplicate_team]}).ok, "Team IDs must also be globally unique")
 	assert(not first.split_members_to(split, selected, 99).ok)
 	assert(first.capture_combat_state() == snapshot_before)
-	assert(first.split_members_to(split, selected, first.current_commander).ok)
+	# v2 plan 3.5: two officers move, so the new team's captain is named explicitly.
+	assert(str(first.split_members_to(split, selected, first.current_commander).code) == "NEEDS_CAPTAIN")
+	assert(first.capture_combat_state() == snapshot_before)
+	assert(first.split_members_to(split, selected, first.current_commander, first.combat_identity(1)).ok)
+	assert(split.combat_identity(split.formal_commander) == original_id and split.officer_service.is_empty() and split.officer_order.is_empty(), "Split team: named captain, no copied cadre lists")
 	assert(first.roster_size == 80 and split.roster_size == 20)
+	assert(first.formation_preset_id == "wedge" and split.formation_preset_id == "wedge", "A new split team inherits the source formation setting")
 	assert(first.combat_units.size() == 80 and split.combat_units.size() == 20)
 	assert(first.index_for_identity(original_id) == -1 and split.index_for_identity(original_id) == 0)
 	assert(is_same(split.combat_units[0], original_person), "Move original person rows, not restored clones")
@@ -60,11 +69,13 @@ func run() -> void:
 	assert(TerrainArmy.valid_combat_state(JSON.parse_string(JSON.stringify(split.capture_combat_state())), data))
 	assert(split.merge_into(first, split.current_commander, first.current_commander).ok)
 	assert(not split.has_army() and first.roster_size == 100 and first.training == 90.0)
+	assert(first.formation_preset_id == "wedge" and split.formation_preset_id == "auto", "Merge keeps the receiving setting and clears an emptied team")
 	assert(is_same(first.combat_units[first.index_for_identity(original_id)], original_person))
 	var before_ids := TerrainArmy.snapshot_person_ids(first.capture_combat_state())
 	before_ids.append_array(TerrainArmy.snapshot_person_ids(second.capture_combat_state()))
 	assert(second.merge_into(first, second.current_commander, first.current_commander).ok)
 	assert(first.roster_size == 200 and not second.has_army() and first.training == 60.0)
+	assert(first.formation_preset_id == "wedge" and second.formation_preset_id == "auto", "Reinforcement keeps the receiving formation setting")
 	var after_ids := TerrainArmy.snapshot_person_ids(first.capture_combat_state())
 	before_ids.sort()
 	after_ids.sort()
@@ -77,12 +88,13 @@ func run() -> void:
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(first.capture_combat_state()))
 	assert(TerrainArmy.valid_combat_state(saved, data))
 	assert(SiteStore._validate_armies(data, {"armies": [saved]}).ok, "Transferred 100 + 100 is one valid 200-member roster")
-	assert(not SiteStore._validate_armies(data, {"armies": [saved, snapshot_before]}).ok, "Two individually valid teams cannot exceed total Site capacity")
+	assert(not SiteStore._validate_armies(data, {"armies": [saved, snapshot_before]}).ok, "Two teams cannot reuse the same original people")
 	var restored := TerrainArmy.new()
 	root.add_child(restored)
 	restored.set_process(false)
 	restored.restore_combat_state(saved, data, null, null)
 	assert(restored.roster_size == 200 and TerrainArmy.snapshot_person_ids(restored.capture_combat_state()) == TerrainArmy.snapshot_person_ids(saved))
+	assert(restored.formation_preset_id == "wedge", "Save and restore retain the team formation setting")
 	var invalid := saved.duplicate(true)
 	invalid.units[1].person_id = invalid.units[0].person_id
 	assert(not TerrainArmy.valid_combat_state(invalid, data))

@@ -46,6 +46,7 @@ var requested_count: int = 0
 # Member mappings strictly keyed by member_id (int)
 var member_role_map: Dictionary = {}      # member_id -> Types.CombatDestinationRole
 var member_slot_map: Dictionary = {}      # member_id -> Vector2i
+var following_member_ids: Array[int] = [] # Original members without a fixed final slot.
 var queue_member_ids: Array[int] = []     # front to rear
 var pending_platform_member_ids: Array[int] = []
 var settled_platform_member_ids: Array[int] = []
@@ -118,10 +119,26 @@ func get_role_for_member(member_id: int) -> int:
 	return member_role_map.get(member_id, Types.CombatDestinationRole.PLATFORM)
 
 func is_platform_member(member_id: int) -> bool:
-	return get_role_for_member(member_id) == Types.CombatDestinationRole.PLATFORM
+	return member_role_map.has(member_id) and get_role_for_member(member_id) == Types.CombatDestinationRole.PLATFORM
 
 func is_queue_member(member_id: int) -> bool:
-	return get_role_for_member(member_id) == Types.CombatDestinationRole.APPROACH_QUEUE
+	return member_role_map.has(member_id) and get_role_for_member(member_id) == Types.CombatDestinationRole.APPROACH_QUEUE
+
+func is_following_member(member_id: int) -> bool:
+	return following_member_ids.has(member_id)
+
+func assign_following_member(member_id: int, slot: Vector2i) -> bool:
+	if not is_following_member(member_id) or member_slot_map.has(member_id) or slot_owner_map.has(slot) or slot_lease_timers.has(slot) or not platform_slots.has(slot):
+		return false
+	following_member_ids.erase(member_id)
+	member_role_map[member_id] = Types.CombatDestinationRole.PLATFORM
+	member_slot_map[member_id] = slot
+	slot_owner_map[slot] = member_id
+	pending_platform_member_ids.append(member_id)
+	queue_released = false
+	assignment_epoch += 1
+	promotion_count += 1
+	return true
 
 func is_slot_locked(member_id: int) -> bool:
 	return bool(member_slot_locked.get(member_id, false))
@@ -255,6 +272,7 @@ func exchange_queue_platform_roles(queue_id: int, platform_id: int) -> bool:
 func mark_platform_member_settled(member_id: int) -> void:
 	if not is_platform_member(member_id) or not member_slot_map.has(member_id):
 		return
+	ever_admitted_platform_member_ids[member_id] = true
 	pending_platform_member_ids.erase(member_id)
 	if not admitted_platform_member_ids.has(member_id):
 		admitted_platform_member_ids.append(member_id)
@@ -271,6 +289,7 @@ func _evaluate_ingress_gate() -> void:
 ## Handles casualty, retreat, or removal of a member from the deployment plan.
 ## If a platform member leaves, it frees a platform slot and immediately promotes the front queue member.
 func remove_member(member_id: int, reason: int = Types.SlotVacancyReason.MEMBER_DEAD) -> void:
+	following_member_ids.erase(member_id)
 	if reason != Types.SlotVacancyReason.TEMPORARY_ABSENCE:
 		ever_admitted_platform_member_ids.erase(member_id)
 	if not member_slot_map.has(member_id):
@@ -467,3 +486,78 @@ func _shift_queue_forward() -> void:
 			member_slot_map[mid] = new_slot
 			assignment_epoch += 1
 		slot_owner_map[new_slot] = mid
+
+# Transient P3 state on the original destination plan, guarded from save by P2.
+var fire_suspended_slots: Dictionary = {} # cell -> former member (UNSAFE_SUSPENDED)
+var fire_suspended_members: Dictionary = {} # member -> unsafe former cell
+var fire_safe_platform_capacity := 0
+
+func fire_suspend_slots(unsafe_cells: Array[Vector2i]) -> Array[int]:
+	var affected: Array[int] = []
+	for cell: Vector2i in unsafe_cells:
+		if fire_suspended_slots.has(cell): continue
+		var member := int(slot_owner_map.get(cell, slot_lease_owner_map.get(cell, 0)))
+		fire_suspended_slots[cell] = member
+		platform_slots.erase(cell)
+		approach_queue_slots.erase(cell)
+		slot_owner_map.erase(cell)
+		slot_lease_timers.erase(cell)
+		slot_lease_owner_map.erase(cell)
+		slot_lease_role_map.erase(cell)
+		slot_lease_queue_index_map.erase(cell)
+		if member <= 0: continue
+		fire_suspended_members[member] = cell
+		if member_slot_map.get(member, Vector2i(-1, -1)) == cell:
+			member_slot_map.erase(member)
+			member_role_map.erase(member)
+		member_slot_locked.erase(member)
+		admitted_platform_member_ids.erase(member)
+		pending_platform_member_ids.erase(member)
+		settled_platform_member_ids.erase(member)
+		settled_queue_member_ids.erase(member)
+		queue_member_ids.erase(member)
+		if not following_member_ids.has(member): following_member_ids.append(member)
+		if not affected.has(member): affected.append(member)
+	if not affected.is_empty(): assignment_epoch += 1
+	centered_platform_handoff = Vector2i(-1, -1)
+	return affected
+
+func can_publish_fire_assignments(assignments: Array) -> bool:
+	var members := {}
+	var cells := {}
+	for value: Dictionary in assignments:
+		var member := int(value.member_id)
+		var cell: Vector2i = value.cell
+		if member <= 0 or members.has(member) or cells.has(cell) or member_slot_map.has(member) \
+			or slot_owner_map.has(cell) or fire_suspended_slots.has(cell): return false
+		if int(value.role) not in [Types.CombatDestinationRole.PLATFORM, Types.CombatDestinationRole.APPROACH_QUEUE]: return false
+		members[member] = true
+		cells[cell] = true
+	return true
+
+func publish_fire_assignments(assignments: Array) -> void:
+	# Called synchronously after this plan's preflight and original Registry commit.
+	for value: Dictionary in assignments:
+		var member := int(value.member_id)
+		var cell: Vector2i = value.cell
+		var role := int(value.role)
+		member_slot_map[member] = cell
+		member_role_map[member] = role
+		slot_owner_map[cell] = member
+		following_member_ids.erase(member)
+		fire_suspended_members.erase(member)
+		if role == Types.CombatDestinationRole.PLATFORM:
+			if not platform_slots.has(cell): platform_slots.append(cell)
+			if not pending_platform_member_ids.has(member): pending_platform_member_ids.append(member)
+		else:
+			if not approach_queue_slots.has(cell): approach_queue_slots.append(cell)
+			if not queue_member_ids.has(member): queue_member_ids.append(member)
+	if not assignments.is_empty(): assignment_epoch += 1
+	queue_capacity = approach_queue_slots.size()
+	queue_released = pending_platform_member_ids.is_empty()
+
+func finish_fire_suspension() -> void:
+	# Cooling does not restore old per-member obligations. New safe assignments
+	# remain in this plan; its ordinary planner can consider capacity afresh.
+	fire_suspended_slots.clear()
+	fire_suspended_members.clear()

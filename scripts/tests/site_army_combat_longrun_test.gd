@@ -301,7 +301,8 @@ func _run() -> void:
 	assert(initial_save.ok, str(initial_save))
 	var initial_hash := FileAccess.get_sha256(baseline_path)
 	lab.get_node("SiteUI").hide()
-	lab.get_node("TerrainLabUI").hide()
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
+	if is_instance_valid(lab.site_test_window): lab.site_test_window.hide()
 	lab.camera.zoom = Vector2.ONE * 0.85
 	await process_frame
 	await RenderingServer.frame_post_draw

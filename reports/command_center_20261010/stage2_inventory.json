@@ -1,0 +1,1704 @@
+{
+ "files_only_epoch": [
+  "scripts/tests/region_direct_fixture_load_check.gd",
+  "scripts/tests/region_npc_duplicate_arrival_event_guard_original_test.gd",
+  "scripts/tests/site_audio_actual_party_flow_test.gd",
+  "scripts/tests/site_audio_actual_site_flow_test.gd",
+  "scripts/tests/site_audio_settings_restart_cold_test.gd",
+  "scripts/tests/site_audio_settings_save_failure_test.gd",
+  "scripts/tests/site_audio_settings_seed_phase1_test.gd"
+ ],
+ "files_only_d": [
+  "scripts/terrain_lab/person_social.gd",
+  "scripts/terrain_lab/site_political_adoption.gd",
+  "scripts/terrain_lab/site_social.gd",
+  "scripts/tests/region_slot_required_fire_clock_test.gd",
+  "scripts/tests/site_escort_crowd_prefix_regression_test.gd",
+  "scripts/tests/site_escort_gd_prefix_regression_test.gd",
+  "scripts/tests/site_garrison_governed_test.gd",
+  "scripts/tests/site_garrison_recruit_test.gd",
+  "scripts/tests/site_nation_later_duty_catalog_test.gd",
+  "scripts/tests/site_office_recruit_actor_test.gd",
+  "scripts/tests/site_office_recruit_cross_test.gd",
+  "scripts/tests/site_office_transfer_cadre_test.gd",
+  "scripts/tests/site_r3_adoption_test.gd",
+  "scripts/tests/site_r3_willingness_test.gd",
+  "scripts/tests/site_social_lab_latch_test.gd",
+  "scripts/tests/site_social_lab_test.gd",
+  "scripts/tests/site_social_r2_test.gd",
+  "scripts/tests/site_technology_g06_paired_source_test.gd"
+ ],
+ "files": {
+  "scripts/region_lab/region_data.gd": {
+   "missing": [],
+   "A": [
+    [
+     "load_manifest",
+     4,
+     0
+    ],
+    [
+     "_validate_manifest",
+     3,
+     0
+    ],
+    [
+     "make_terrain_data",
+     1,
+     0
+    ],
+    [
+     "clear_cache",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_read_resource_manifest",
+     5,
+     2
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/region_lab/region_route.gd": {
+   "missing": [
+    "_navigation_content_hash"
+   ],
+   "A": [
+    [
+     "clear_memory_cache",
+     1,
+     0
+    ],
+    [
+     "revalidate_land_entry",
+     3,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "table_from_terrain",
+     11,
+     5
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/region_lab/region_save_slot.gd": {
+   "missing": [
+    "_roundtrip_diag",
+    "_fire_index_diag",
+    "_initial_site_same"
+   ],
+   "A": [
+    [
+     "_publish",
+     1,
+     0
+    ],
+    [
+     "_settle_cold_candidate",
+     8,
+     0
+    ],
+    [
+     "validate_fire_clock",
+     4,
+     0
+    ],
+    [
+     "set_region_travel_plan",
+     1,
+     0
+    ],
+    [
+     "advance_region_travel",
+     3,
+     0
+    ],
+    [
+     "checkpoint_region_travel",
+     5,
+     0
+    ],
+    [
+     "_region_first_player_route_contact",
+     5,
+     0
+    ],
+    [
+     "advance_region_sea_travel",
+     2,
+     0
+    ],
+    [
+     "_region_player_land_candidate",
+     1,
+     0
+    ],
+    [
+     "_region_positive_player_death_ids",
+     3,
+     0
+    ],
+    [
+     "region_live_party_proof",
+     1,
+     0
+    ],
+    [
+     "_region_capture_party_graph",
+     4,
+     0
+    ],
+    [
+     "commit_region_live_party",
+     3,
+     0
+    ],
+    [
+     "_region_family_current_party_owner",
+     3,
+     0
+    ],
+    [
+     "region_original_party_runtime_proof",
+     3,
+     0
+    ],
+    [
+     "_region_live_party_candidate",
+     4,
+     0
+    ],
+    [
+     "_region_gameplay_family_life_complete",
+     4,
+     0
+    ],
+    [
+     "_region_family_new_generation",
+     3,
+     0
+    ],
+    [
+     "_region_land_physical_distance",
+     3,
+     0
+    ],
+    [
+     "_region_current_land_position",
+     3,
+     0
+    ],
+    [
+     "_region_publish_land_candidate",
+     4,
+     0
+    ],
+    [
+     "_region_revalidate_completed_land_outcome",
+     3,
+     0
+    ],
+    [
+     "_region_land_route_preview",
+     8,
+     0
+    ],
+    [
+     "_region_map_actual_world_target",
+     4,
+     0
+    ],
+    [
+     "_region_checkpoint_carried_delivery",
+     4,
+     0
+    ],
+    [
+     "_region_entered_npc_ship_unload_authorized",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "open_map",
+     5,
+     5
+    ],
+    [
+     "open_site",
+     1,
+     5
+    ],
+    [
+     "_save_checked",
+     7,
+     4
+    ],
+    [
+     "_read_document",
+     7,
+     2
+    ],
+    [
+     "_detached_cold_copy",
+     7,
+     11
+    ],
+    [
+     "checkpoint_region_site",
+     1,
+     1
+    ],
+    [
+     "_initial_complete_ok",
+     1,
+     1
+    ],
+    [
+     "_check_initial_record",
+     2,
+     1
+    ],
+    [
+     "prepare_initial_site",
+     1,
+     1
+    ],
+    [
+     "record_completed_region_travel_step",
+     11,
+     2
+    ],
+    [
+     "_region_player_down_settlement",
+     28,
+     9
+    ],
+    [
+     "_region_family_life_source",
+     1,
+     1
+    ]
+   ],
+   "C": [
+    [
+     "_recover_control_from_files",
+     0,
+     2
+    ],
+    [
+     "region_registry",
+     0,
+     3
+    ],
+    [
+     "pending_region_events",
+     0,
+     1
+    ],
+    [
+     "region_player_barrier",
+     0,
+     1
+    ],
+    [
+     "commit_npc_region_arrival",
+     0,
+     4
+    ]
+   ],
+   "d_only": [
+    "region_registry_view"
+   ]
+  },
+  "scripts/region_lab/region_terrain_adapter.gd": {
+   "missing": [],
+   "A": [
+    [
+     "build",
+     6,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/region_lab/region_travel.gd": {
+   "missing": [
+    "_identity_diag_fail"
+   ],
+   "A": [
+    [
+     "prepare_transport",
+     4,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "validate_identity",
+     11,
+     9
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/region_lab/region_travel_panel.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_ensure_original_adapter_host",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/region_lab/region_travel_site.gd": {
+   "missing": [],
+   "A": [
+    [
+     "depart",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/crowd_person_owner.gd": {
+   "missing": [],
+   "A": [
+    [
+     "publish_validated_host_ranged_release",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "publish_host_ranged_ammo_inputs",
+     1,
+     2
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/crowd_site.gd": {
+   "missing": [
+    "_audio_native_prepare",
+    "_audio_native_snapshot",
+    "_audio_native_deliver",
+    "_audio_mount_install",
+    "_audio_mount_update"
+   ],
+   "A": [
+    [
+     "apply_environment_damage",
+     1,
+     0
+    ],
+    [
+     "_append_actor",
+     1,
+     0
+    ],
+    [
+     "_append_actor_failed",
+     1,
+     0
+    ],
+    [
+     "_sample_prepared_actor_contact",
+     1,
+     0
+    ],
+    [
+     "_dispose",
+     1,
+     0
+    ],
+    [
+     "step",
+     2,
+     0
+    ],
+    [
+     "equipment_changed",
+     1,
+     0
+    ],
+    [
+     "_consume_events",
+     2,
+     0
+    ],
+    [
+     "_update_kit",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_refresh_kits",
+     3,
+     1
+    ],
+    [
+     "_register_kits",
+     2,
+     1
+    ],
+    [
+     "_commit_captivity",
+     1,
+     1
+    ],
+    [
+     "prepare_load",
+     4,
+     1
+    ]
+   ],
+   "C": [
+    [
+     "d5_prepare_existing",
+     0,
+     2
+    ],
+    [
+     "_consume_events_original",
+     0,
+     1
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_audio_view.gd": {
+   "missing": [
+    "native_step_watch_ids",
+    "invalidate_step_candidate",
+    "_audio_environment_sources",
+    "_audio_environment_refresh",
+    "_audio_vehicle_loop_ground"
+   ],
+   "A": [
+    [
+     "set_loops",
+     4,
+     0
+    ],
+    [
+     "_process",
+     5,
+     0
+    ],
+    [
+     "_clear_sound",
+     2,
+     0
+    ],
+    [
+     "_refresh_loops",
+     6,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_priority",
+     1,
+     1
+    ]
+   ],
+   "C": [
+    [
+     "_audio_fire_live_burning_part",
+     0,
+     1
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_captivity_supply.gd": {
+   "missing": [],
+   "A": [],
+   "B": [
+    [
+     "_prepare_change",
+     2,
+     2
+    ]
+   ],
+   "C": [
+    [
+     "discard",
+     0,
+     6
+    ]
+   ],
+   "d_only": [
+    "adoption_guard"
+   ]
+  },
+  "scripts/terrain_lab/site_combat_rules.gd": {
+   "missing": [],
+   "A": [
+    [
+     "fire_pot_profile",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_controller.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_observe_original_food_result",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_update_ecology_ui",
+     1,
+     19
+    ],
+    [
+     "_load_compatible_site",
+     6,
+     3
+    ],
+    [
+     "load_from",
+     17,
+     4
+    ],
+    [
+     "deposit_owned_equipment",
+     8,
+     2
+    ],
+    [
+     "_open_settlement",
+     2,
+     2
+    ],
+    [
+     "_office_orgs",
+     2,
+     3
+    ],
+    [
+     "_open_offices",
+     139,
+     3
+    ],
+    [
+     "ship_journey_active",
+     1,
+     1
+    ],
+    [
+     "ship_vehicle_in_journey",
+     1,
+     1
+    ],
+    [
+     "ship_person_in_journey",
+     1,
+     1
+    ],
+    [
+     "prepare_shared_native_training_requests",
+     1,
+     1
+    ]
+   ],
+   "C": [
+    [
+     "_audio_settings_changed",
+     0,
+     1
+    ]
+   ],
+   "d_only": [
+    "_ecology_person_signature",
+    "_recruit",
+    "_recruit_candidates",
+    "_social_summary"
+   ]
+  },
+  "scripts/terrain_lab/site_duty_ai.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_technology_native_work_consent",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "review",
+     1,
+     4
+    ],
+    [
+     "review_prison",
+     1,
+     17
+    ],
+    [
+     "_cadence_state",
+     1,
+     2
+    ]
+   ],
+   "C": [
+    [
+     "reset_site_state",
+     0,
+     1
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_equipment_orders.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_normalize_public_order",
+     3,
+     0
+    ],
+    [
+     "_valid_procurement_trial",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "nation_offices",
+     3,
+     3
+    ],
+    [
+     "_valid_public_order",
+     7,
+     3
+    ],
+    [
+     "_public_receipt_matches_order",
+     1,
+     1
+    ]
+   ],
+   "C": [
+    [
+     "_nation_person_ok",
+     0,
+     3
+    ],
+    [
+     "appoint_nation_head",
+     0,
+     1
+    ],
+    [
+     "military_work_preflight",
+     0,
+     9
+    ]
+   ],
+   "d_only": [
+    "_catalog_complete"
+   ]
+  },
+  "scripts/terrain_lab/site_family_continuity.gd": {
+   "missing": [],
+   "A": [],
+   "B": [],
+   "C": [
+    [
+     "family_offices",
+     0,
+     2
+    ],
+    [
+     "head_executor",
+     0,
+     2
+    ],
+    [
+     "duty_resolve",
+     0,
+     4
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_food_delivery.gd": {
+   "missing": [],
+   "A": [
+    [
+     "publish_prepared_completion",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_garrison.gd": {
+   "missing": [],
+   "A": [],
+   "B": [
+    [
+     "_authority",
+     2,
+     10
+    ]
+   ],
+   "C": [
+    [
+     "_transfer",
+     0,
+     7
+    ]
+   ],
+   "d_only": [
+    "_transfer_into",
+    "recruit"
+   ]
+  },
+  "scripts/terrain_lab/site_person_actions.gd": {
+   "missing": [
+    "new_capture_fields"
+   ],
+   "A": [
+    [
+     "_nation_n08_driver_context",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "admit_prison",
+     2,
+     5
+    ],
+    [
+     "_commit",
+     17,
+     3
+    ],
+    [
+     "begin_technology_lesson",
+     1,
+     1
+    ],
+    [
+     "_technology_lesson_context",
+     1,
+     1
+    ],
+    [
+     "technology_query",
+     1,
+     1
+    ],
+    [
+     "_technology_matching_original_task",
+     14,
+     1
+    ],
+    [
+     "scope_technology_query",
+     1,
+     1
+    ],
+    [
+     "publish_gd_custody_terminal",
+     1,
+     4
+    ]
+   ],
+   "C": [
+    [
+     "_commit_prison_release",
+     0,
+     1
+    ]
+   ],
+   "d_only": [
+    "_social_before_release",
+    "capture_fields"
+   ]
+  },
+  "scripts/terrain_lab/site_region_checkpoint.gd": {
+   "missing": [
+    "tag_corrupt",
+    "time_mark",
+    "hash_body_diff",
+    "_diff_walk"
+   ],
+   "A": [
+    [
+     "validate",
+     3,
+     0
+    ],
+    [
+     "_snapshot_failure",
+     3,
+     0
+    ],
+    [
+     "_hash_numbers",
+     2,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_region_owner_snapshot.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_valid_bind_value",
+     3,
+     0
+    ],
+    [
+     "_encode_bind_roots",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [
+    [
+     "capture_bind_roots",
+     0,
+     1
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_runtime.gd": {
+   "missing": [
+    "_audio_p3_lab",
+    "_audio_p3_work_progress_notice",
+    "_audio_p3_work_finished_notice"
+   ],
+   "A": [
+    [
+     "initialize_item_storage",
+     1,
+     0
+    ],
+    [
+     "cancel_feature",
+     1,
+     0
+    ],
+    [
+     "advance_gate_operations",
+     7,
+     0
+    ],
+    [
+     "_feature_work",
+     8,
+     0
+    ],
+    [
+     "publish_feature_output",
+     3,
+     0
+    ],
+    [
+     "prepare_fire_suppression_batch",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "harvest",
+     7,
+     1
+    ],
+    [
+     "validate_technology_target_storage",
+     1,
+     1
+    ],
+    [
+     "_technology_original_siege_stations",
+     1,
+     3
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_settlement.gd": {
+   "missing": [],
+   "A": [
+    [
+     "publish_technology_operations",
+     2,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "prison_governed",
+     1,
+     2
+    ]
+   ],
+   "C": [
+    [
+     "validate",
+     0,
+     2
+    ],
+    [
+     "normalize",
+     0,
+     3
+    ]
+   ],
+   "d_only": [
+    "garrison_authority",
+    "garrison_governed"
+   ]
+  },
+  "scripts/terrain_lab/site_store.gd": {
+   "missing": [],
+   "A": [
+    [
+     "save",
+     2,
+     0
+    ],
+    [
+     "_same_fixed_base",
+     2,
+     0
+    ],
+    [
+     "_validate_state",
+     2,
+     0
+    ],
+    [
+     "_validate_site_values",
+     2,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "load_site",
+     5,
+     1
+    ],
+    [
+     "_normalize_state",
+     7,
+     12
+    ],
+    [
+     "prepare_ecology_candidate",
+     1,
+     1
+    ],
+    [
+     "_validate_captivity",
+     4,
+     10
+    ],
+    [
+     "restore_region_snapshot",
+     1,
+     1
+    ],
+    [
+     "_validate_unadmitted_social_state",
+     4,
+     2
+    ]
+   ],
+   "C": [
+    [
+     "_validate_military",
+     0,
+     4
+    ],
+    [
+     "_validate_fs_targets",
+     0,
+     2
+    ],
+    [
+     "_validate_fire_pot_shot_record",
+     0,
+     2
+    ]
+   ],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_tech_window.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_productive_stop",
+     2,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_technology.gd": {
+   "missing": [
+    "prepare_holder_control_transition"
+   ],
+   "A": [
+    [
+     "prepare_holder_arrival",
+     3,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_training_ground.gd": {
+   "missing": [],
+   "A": [
+    [
+     "inspect",
+     1,
+     0
+    ],
+    [
+     "finish_native_work_prefix",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_vehicle_transport.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_claims",
+     1,
+     0
+    ],
+    [
+     "settle_operators",
+     1,
+     0
+    ],
+    [
+     "commit_ship_person",
+     4,
+     0
+    ],
+    [
+     "update_ships",
+     1,
+     0
+    ],
+    [
+     "cancel_native_siege_step",
+     3,
+     0
+    ],
+    [
+     "region_ship_person_position",
+     3,
+     0
+    ],
+    [
+     "_region_ship_geometry_origin",
+     3,
+     0
+    ],
+    [
+     "region_siege_action_remaining",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "transfer",
+     10,
+     1
+    ],
+    [
+     "ship_person_ground",
+     1,
+     1
+    ],
+    [
+     "ship_person_cell",
+     2,
+     1
+    ],
+    [
+     "ship_loot_ground",
+     1,
+     1
+    ],
+    [
+     "_transfer_ship",
+     7,
+     1
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_vehicle_view.gd": {
+   "missing": [],
+   "A": [],
+   "B": [
+    [
+     "_refresh_ship_loot",
+     1,
+     1
+    ],
+    [
+     "_ship_in_journey",
+     1,
+     1
+    ]
+   ],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/site_work_team.gd": {
+   "missing": [],
+   "A": [
+    [
+     "valid_checked_ladder_prefix",
+     1,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [],
+   "d_only": []
+  },
+  "scripts/terrain_lab/terrain_army.gd": {
+   "missing": [],
+   "A": [
+    [
+     "_hide_journey_person",
+     1,
+     0
+    ],
+    [
+     "duty_resolve_readonly",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_audio_begin_step",
+     1,
+     1
+    ],
+    [
+     "recruit_row",
+     1,
+     3
+    ],
+    [
+     "set_military_role",
+     1,
+     2
+    ],
+    [
+     "settle_combat_command",
+     6,
+     3
+    ],
+    [
+     "apply_office_plan",
+     1,
+     3
+    ],
+    [
+     "_install_roster",
+     1,
+     8
+    ],
+    [
+     "transfer_members_to",
+     8,
+     27
+    ],
+    [
+     "split_members_to",
+     2,
+     2
+    ],
+    [
+     "apply_unit_contact",
+     9,
+     2
+    ],
+    [
+     "technology_work_consent",
+     5,
+     2
+    ]
+   ],
+   "C": [
+    [
+     "capture_combat_state",
+     0,
+     1
+    ],
+    [
+     "valid_combat_state",
+     0,
+     6
+    ],
+    [
+     "restore_combat_state",
+     0,
+     4
+    ],
+    [
+     "clear",
+     0,
+     1
+    ]
+   ],
+   "d_only": [
+    "_record_dismissals",
+    "adopt_row_into",
+    "adoption_row_check",
+    "recruit_actor",
+    "recruit_from_team"
+   ]
+  },
+  "scripts/terrain_lab/terrain_lab.gd": {
+   "missing": [
+    "_audio_down_reset",
+    "_audio_down_completed",
+    "_audio_down_flush",
+    "_audio_p3_owner",
+    "_audio_p3_listener_ground",
+    "_audio_p3_resource_completed",
+    "_audio_p3_gate_completed",
+    "_audio_p3_success_short",
+    "_audio_p3_work_kind",
+    "_audio_p3_work_progress",
+    "_audio_p3_work_finished",
+    "_audio_p3_person_ground",
+    "_audio_p3_operation_completed",
+    "_audio_p3_transfer",
+    "_audio_vehicle_observed",
+    "_audio_ship_person_completed"
+   ],
+   "A": [
+    [
+     "_region_original_ready",
+     1,
+     0
+    ],
+    [
+     "_configure_combat_army",
+     1,
+     0
+    ],
+    [
+     "prepare_region_party_original_owner",
+     1,
+     0
+    ],
+    [
+     "_region_advance_original_travel_interval",
+     10,
+     0
+    ],
+    [
+     "advance_region_cold_actual_fixed",
+     2,
+     0
+    ],
+    [
+     "_region_cold_formal_admission",
+     1,
+     0
+    ],
+    [
+     "_region_completed_contact_capture",
+     3,
+     0
+    ],
+    [
+     "_region_validate_party_graph",
+     4,
+     0
+    ],
+    [
+     "_region_party_bind_admission",
+     3,
+     0
+    ],
+    [
+     "_region_discard_party_bind",
+     1,
+     0
+    ],
+    [
+     "_region_publish_party_owner_index",
+     3,
+     0
+    ],
+    [
+     "_region_prepare_party_family_bind",
+     3,
+     0
+    ],
+    [
+     "_region_publish_party_departure_bind",
+     3,
+     0
+    ],
+    [
+     "prepare_region_party_family_takeover_bind",
+     4,
+     0
+    ],
+    [
+     "_region_legacy_noise",
+     6,
+     0
+    ],
+    [
+     "_region_gameplay_live_party_materialize",
+     9,
+     0
+    ],
+    [
+     "_region_refresh_original_live_frame",
+     9,
+     0
+    ],
+    [
+     "_region_merge_original_party_values",
+     3,
+     0
+    ],
+    [
+     "_region_advance_original_party_body",
+     3,
+     0
+    ],
+    [
+     "_region_advance_live_party_host",
+     3,
+     0
+    ],
+    [
+     "_region_gameplay_finish_live_life",
+     2,
+     0
+    ],
+    [
+     "_audio_begin_site_replace",
+     2,
+     0
+    ],
+    [
+     "_audio_clear_sources",
+     2,
+     0
+    ],
+    [
+     "_finish_native_checked_body_prefixes",
+     3,
+     0
+    ],
+    [
+     "region_party_map_resume_guard",
+     4,
+     0
+    ],
+    [
+     "prepare_region_party_map_motion",
+     4,
+     0
+    ],
+    [
+     "_region_gameplay_npc_sea_materialize",
+     1,
+     0
+    ]
+   ],
+   "B": [
+    [
+     "_region_bind_original_terrain",
+     2,
+     2
+    ],
+    [
+     "replay_site_to",
+     2,
+     8
+    ],
+    [
+     "_advance_fatigue",
+     2,
+     6
+    ],
+    [
+     "_resolve_ranged_arrival",
+     1,
+     1
+    ],
+    [
+     "_region_advance_original_cold_site",
+     1,
+     4
+    ],
+    [
+     "_fire_save_guard_impl",
+     1,
+     1
+    ],
+    [
+     "_prepare_fire_transport_restore",
+     1,
+     1
+    ],
+    [
+     "_region_capture_original_owner_state",
+     9,
+     4
+    ],
+    [
+     "_restore_region_owners",
+     1,
+     1
+    ],
+    [
+     "validate_region_owner_bind_payload",
+     1,
+     1
+    ],
+    [
+     "_prepare_region_main_interval",
+     9,
+     1
+    ],
+    [
+     "_region_register_replayed_bind_source",
+     1,
+     1
+    ],
+    [
+     "_region_bootstrap_bind_child",
+     1,
+     1
+    ],
+    [
+     "_region_bind_ticket_admission",
+     4,
+     1
+    ],
+    [
+     "_region_verify_canonical_bind_source",
+     1,
+     1
+    ],
+    [
+     "_region_prepare_selected_owner_restore",
+     4,
+     2
+    ],
+    [
+     "_region_check_selected_restore_ticket",
+     5,
+     2
+    ],
+    [
+     "_audio_step_completed",
+     3,
+     2
+    ],
+    [
+     "_audio_exchange_add",
+     1,
+     1
+    ],
+    [
+     "_advance_original_shared_step",
+     9,
+     1
+    ],
+    [
+     "_prepare_native_begin_shared_window",
+     4,
+     7
+    ],
+    [
+     "prepare_native_begin_ranged",
+     3,
+     7
+    ]
+   ],
+   "C": [
+    [
+     "_audio_original_shared_step",
+     0,
+     1
+    ],
+    [
+     "_region_original_interval_guard",
+     0,
+     6
+    ],
+    [
+     "validate_native_begin_shared_window",
+     0,
+     2
+    ]
+   ],
+   "d_only": [
+    "_discard_pure_prefix_registrations",
+    "_fire_deployment_has_intent",
+    "_replay_pending_residue"
+   ]
+  },
+  "scripts/terrain_lab/terrain_test_character.gd": {
+   "missing": [],
+   "A": [
+    [
+     "apply_contact",
+     10,
+     0
+    ]
+   ],
+   "B": [],
+   "C": [
+    [
+     "capture_state",
+     0,
+     1
+    ],
+    [
+     "valid_state",
+     0,
+     2
+    ],
+    [
+     "restore_state",
+     0,
+     1
+    ]
+   ],
+   "d_only": []
+  }
+ },
+ "dead_on_d_called_in_epoch": [
+  [
+   "scripts/region_lab/region_save_slot.gd",
+   "_initial_technology_categories",
+   2
+  ],
+  [
+   "scripts/terrain_lab/terrain_lab.gd",
+   "_region_party_bind_admission",
+   2
+  ]
+ ],
+ "tests_only_epoch": [
+  "scripts/tests/region_direct_fixture_load_check.gd",
+  "scripts/tests/region_npc_duplicate_arrival_event_guard_original_test.gd",
+  "scripts/tests/site_audio_actual_party_flow_test.gd",
+  "scripts/tests/site_audio_actual_site_flow_test.gd",
+  "scripts/tests/site_audio_settings_restart_cold_test.gd",
+  "scripts/tests/site_audio_settings_save_failure_test.gd",
+  "scripts/tests/site_audio_settings_seed_phase1_test.gd"
+ ],
+ "tests_different": [
+  "scripts/tests/crowd_post_holder_test.gd",
+  "scripts/tests/region_cold_original_matrix_test.gd",
+  "scripts/tests/region_gameplay_ai_test.gd",
+  "scripts/tests/region_initial_world_transaction_test.gd",
+  "scripts/tests/region_travel_test.gd",
+  "scripts/tests/site_army_roster_test.gd",
+  "scripts/tests/site_audio_contract_test.gd",
+  "scripts/tests/site_building_ui_test.gd",
+  "scripts/tests/site_cape_role_policy_test.gd",
+  "scripts/tests/site_duty_axes_test.gd",
+  "scripts/tests/site_ecology_contract_test.gd",
+  "scripts/tests/site_ecology_governance_roundtrip_test.gd",
+  "scripts/tests/site_ecology_longrun_owner_test.gd",
+  "scripts/tests/site_ecology_longrun_test.gd",
+  "scripts/tests/site_ecology_region_owner_test.gd",
+  "scripts/tests/site_ecology_replay_test.gd",
+  "scripts/tests/site_office_cadre_test.gd",
+  "scripts/tests/site_office_class_test.gd",
+  "scripts/tests/site_office_r1b_command_test.gd",
+  "scripts/tests/site_office_recruit_test.gd",
+  "scripts/tests/site_office_roster_fix_test.gd",
+  "scripts/tests/site_office_vacant_claim_test.gd",
+  "scripts/tests/site_officer_service_test.gd",
+  "scripts/tests/site_offices_duty_test.gd",
+  "scripts/tests/site_offices_ui_test.gd",
+  "scripts/tests/site_person_actions_test.gd",
+  "scripts/tests/site_prison_actions_test.gd",
+  "scripts/tests/site_shared_step_fault_test.gd",
+  "scripts/tests/site_shared_step_replay_test.gd",
+  "scripts/tests/site_ship_journey_test.gd",
+  "scripts/tests/site_wildlife_capture_test.gd",
+  "scripts/tests/site_workflow_test.gd"
+ ]
+}
