@@ -10,7 +10,7 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/
   - oracle_calibration（--grid）和 oracle_stream（selfcheck）通過。
   - equipment_player_ui 和 equipment_trial_ui 載入正常，但都在跑格子軍隊時撞到 GRID_SIMULATION_RETIRED。
   - default_worker_removed 撞到 OLD_SAVE_UNSUPPORTED 和 CORRUPT_FIRE_OWNER，是舊存檔格式。
-  - 這 3 支是 Triage-C（只測格子軍隊）的候選，沒刪，先記在這裡。
+  - 這 3 支只用格子軍隊（combat_armies，沒有群眾部分），03:40 依 Triage-C（Nekki 11/14 A）退役刪除，沒有其他檔案引用它們。
 - mixed_equipment_live 要 GPU 加文化和體型參數，這次只做語法檢查。
 
 ## 2026-11-22 02:45（台北）土匪銷贓 B5b-2：NPC 銷贓隊
