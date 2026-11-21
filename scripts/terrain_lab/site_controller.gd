@@ -62,6 +62,7 @@ var _sleep_minute := -1
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents' civilian clothes
 const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
+const StartProgress = preload("res://scripts/terrain_lab/start_progress.gd") # 開始遊戲效能 P1-5 loading screen
 const CivilianActivity = preload("res://scripts/terrain_lab/crowd_civilian_activity.gd") # CIV-A4: the native civilian role
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
@@ -10495,6 +10496,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if _boot_request.is_empty() or str(result.get("code", "")) == "PENDING": return
 	var request: Dictionary = _boot_request
 	_boot_request = {}
+	StartProgress.finish() # The opening has settled (opened, or refused back to the menu).
 	# 時間與氣候 TC3: a world created from the menu has climate on (old saves and tests stay off).
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
 	# 技能 K1c: a world created from the menu seeds its people's starting proficiency by age (old saves stay at 50).

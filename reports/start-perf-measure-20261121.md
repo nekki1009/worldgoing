@@ -97,6 +97,13 @@
    - 只在有畫面模式的執行時角色上做，無畫面模式不變。
    - site_siege_work_clips.gd 有指紋，沒有改。
    - 轉群眾從約 14 秒降到約 12 秒。
+10. P1-5 載入畫面：`scripts/terrain_lab/start_progress.gd`。
+   - TerrainLab 收到開局請求時顯示，開局請求結算時（開好或退回主選單）移除。
+   - 每個 PerfTrace 階段都轉給它；不論有沒有 `--perf-trace`，都會用 RenderingServer.force_draw 重畫畫面，並讓視窗處理系統事件，所以視窗不會凍結或顯示「沒有回應」。
+   - 每建一個幹部的 3D 角色也算一步。
+   - 它用自己的 canvas item 畫，不用 Control，因為 Control 的重畫要等下一幀。它不執行任何節點處理，不讀也不改世界。無畫面模式不做事。
+   - 外部檔案卡頓是卡在系統呼叫裡，那段時間畫面仍會停住。
+   - 驗收：`start_progress_visual_test.gd`。
 
 ## 下一步（依大小）
 

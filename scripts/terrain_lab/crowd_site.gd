@@ -4568,6 +4568,7 @@ func _refresh_bodies(controlled: int = 0) -> void:
 
 
 func _gain_body(identity: int) -> bool:
+	PerfTrace.mark("crowd_body") # Also a loading-screen step: each body takes about 1.5 s.
 	var appearance := _appearance(identity)
 	if appearance.is_empty() or bool(appearance.get("mounted", false)): return false
 	var body := TerrainTestCharacter.new()

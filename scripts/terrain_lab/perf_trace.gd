@@ -8,6 +8,7 @@ const MONITORS := {"static_mb": Performance.MEMORY_STATIC, "video_mb": Performan
 	"texture_mb": Performance.RENDER_TEXTURE_MEM_USED, "buffer_mb": Performance.RENDER_BUFFER_MEM_USED}
 const COUNTS := {"objects": Performance.OBJECT_COUNT, "nodes": Performance.OBJECT_NODE_COUNT}
 const ROOT := "user://perf"
+const StartProgress = preload("res://scripts/terrain_lab/start_progress.gd")
 
 static var _marks: Array = []
 static var _origin := -1
@@ -16,6 +17,7 @@ static func enabled() -> bool:
 	return OS.get_cmdline_user_args().has("--perf-trace")
 
 static func mark(stage: String) -> void:
+	StartProgress.stage(stage) # The loading screen follows the same stages, with or without --perf-trace.
 	if not enabled(): return
 	var now := Time.get_ticks_usec()
 	if _origin < 0: _origin = now

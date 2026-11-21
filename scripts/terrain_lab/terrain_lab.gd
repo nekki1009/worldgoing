@@ -31,6 +31,7 @@ const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
 const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
+const StartProgress = preload("res://scripts/terrain_lab/start_progress.gd") # 開始遊戲效能 P1-5 loading screen
 const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents are born dressed
 const CombatMovementCoordinatorScript = preload("res://scripts/terrain_lab/site_combat_movement_coordinator.gd")
 const FireMovementTypes = preload("res://scripts/terrain_lab/combat_movement_types.gd")
@@ -343,6 +344,8 @@ func _region_original_ready() -> void:
 	if world_request.is_empty(): generate_terrain(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
 	PerfTrace.mark("placeholder_done")
 	if not world_request.is_empty():
+		# P1-5: a progress screen over the Lab while the world opens (finished when the boot request settles).
+		StartProgress.begin(self, "正在建立新世界…" if bool(world_request.get("create_new", false)) else "正在開啟世界…")
 		site_controller.enter_requested_world(world_request)
 	elif FileAccess.file_exists(site_controller.save_path):
 		await site_controller.load_current()
