@@ -1,7 +1,6 @@
 extends "res://scripts/tests/site_building_ui_test.gd"
 
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
-const HOUSE_SAVE := "res://.godot-temp/site_resources_contract/housing_close.json"
 
 func _arrive(lab: TerrainLab, identity: int, cell: int) -> void:
 	var actions: SitePersonActions = lab.site_controller.person_actions
@@ -33,7 +32,10 @@ func _run() -> void:
 			Runtime.rebuild_terrain_edges(layout_data)
 			Env.rebuild_indexes(layout_data)
 			assert(int(Runtime.house_layout(layout_data, key).capacity) < int(layout.capacity))
-	await _shared_army_and_store()
+	# 11/21 (Nekki 11/14 A, Triage-C): the GD-army part (_shared_army_and_store: a deployed GD TerrainArmy's shared fatigue
+	# pool, housing return and Store round trip) was removed; its grid combat tick is retired (GRID_SIMULATION_RETIRED).
+	# Crowd coverage: site_resident_home_crowd_test and site_civilian_household_visual_test (a residents' team walked home
+	# by the schedule, inside the house, saved and reopened).
 
 	var data := _building_fixture()
 	var lab := _building_lab(data)
@@ -111,65 +113,3 @@ func _run() -> void:
 	TerrainArmy.release_contact_source()
 	print("SITE_HOUSING_PASS: 16 geometry/door variants, solid original body, real Actor route/pause/save guard, remote vs at-home recovery/KO/combat, original holder/cargo/HP/supply, strict reference/structural guards, formal dialog")
 	quit(0)
-
-func _shared_army_and_store() -> void:
-	var data := _building_fixture()
-	var lab := _building_lab(data)
-	var controller: SiteController = lab.site_controller
-	var team: TerrainArmy = lab.army
-	var key := _formal_feature(data, "house", Vector2i(25, 25), Vector2i.ONE, {"variant": "large"})
-	team.roster_size = 2
-	team.faction_id = 1
-	assert(team.deploy_at(data, lab.character, lab.npc, [Vector2i(20, 28), Vector2i(21, 28)]) and team.enable_combat(false))
-	team.set_process(false)
-	team.settle_combat_command()
-	var captain := team.combat_identity(0)
-	var soldier := team.combat_identity(1)
-	assert(controller._control_family_person(null, captain).ok)
-	assert(not team.team_fatigue.is_empty())
-	var pool := team.team_fatigue
-	var first_holder: Dictionary = team.combat_units[0].item_state
-	var second_holder: Dictionary = team.combat_units[1].item_state
-	var first_row: Dictionary = team.combat_units[0]
-	var second_row: Dictionary = team.combat_units[1]
-	var first := Housing.assign(lab, captain, key, captain)
-	var second := Housing.assign(lab, soldier, key, captain)
-	assert(first.ok and second.ok and int(first.cell) != int(second.cell), str({"first": first, "second": second}))
-	assert(Housing.shared_multiplier(lab, team) == 1.0)
-	assert(controller.person_actions.begin_housing_return(captain, captain).ok)
-	assert(controller.person_actions.begin_housing_return(soldier, captain).ok)
-	_arrive(lab, captain, int(first.cell))
-	_arrive(lab, soldier, int(second.cell))
-	assert(Housing.shared_multiplier(lab, team) == 1.25)
-	assert(is_same(team.team_fatigue, pool) and is_same(team.combat_units[0], first_row) and is_same(team.combat_units[1], second_row))
-	assert(is_same(team.combat_units[0].item_state, first_holder) and is_same(team.combat_units[1].item_state, second_holder))
-	team.combat_hot_set(1, &"ko", 30.0)
-	assert(Housing.shared_multiplier(lab, team) == 1.0 and data.site.housing.has(str(soldier)), "One living KO member removes bonus from the original whole pool, retaining housing")
-	team.combat_hot_set(1, &"ko", 0.0)
-	assert(Housing.shared_multiplier(lab, team) == 1.25)
-	controller._capture_positions()
-	var saved: Dictionary = data.site.duplicate(true)
-	assert(Store._validate_state(data, saved).ok)
-	var result := Store.save(data, HOUSE_SAVE)
-	assert(result.ok, str(result))
-	var original_file := FileAccess.get_file_as_bytes(HOUSE_SAVE)
-	var loaded := Store.load_site(HOUSE_SAVE)
-	assert(loaded.ok and loaded.data.site.housing == data.site.housing, str(loaded))
-	var corrupt := saved.duplicate(true)
-	corrupt.housing[str(soldier)].cell = int(first.cell)
-	assert(not Store._validate_state(data, corrupt).ok)
-	assert(FileAccess.get_file_as_bytes(HOUSE_SAVE) == original_file and data.site.housing == saved.housing)
-	var missing := saved.duplicate(true)
-	missing.erase("housing")
-	assert(Store._validate_state(data, missing).ok, "Legacy missing housing remains an empty relation, never guessed from people positions")
-	var feature: Dictionary = data.site.features[key]
-	if int(feature.get("civil_version", 0)) == 1:
-		var registrations: Dictionary = data.site.housing.duplicate(true)
-		assert(Runtime.damage_structure_part(data, key, "body", float(feature.parts.body.hp)).ok)
-		assert(not Runtime.feature_usable(feature) and Housing.shared_multiplier(lab, team) == 1.0)
-		assert(data.site.housing == registrations)
-		controller._capture_positions()
-		assert(Store._validate_captivity(data, data.site).ok, "Destroyed body loses recovery but preserves registered geometry and valid refs")
-	for _frame: int in range(3): await process_frame
-	lab.free()
-	TerrainArmy.release_contact_source()
