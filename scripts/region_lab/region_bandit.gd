@@ -79,6 +79,7 @@ static func chief_score(chief_mind: Variant, official_mind: Variant, heat: int) 
 
 ## --- B4a: heat, lair moves and kind conversion (bandit spec §5.2, §9, §11, §12) ---
 const HEAT_RAID := 10
+const HEAT_FENCE := 5
 const HEAT_ATTACKED := 20
 const HEAT_DECAY := 5
 const HEAT_DECAY_DAYS := 10
@@ -91,10 +92,12 @@ const RISE_NPC_AMBITION := 60
 const FALL_NPC_DAYS := 30
 const DAY := 86400.0
 
-## Heat after an event: "raid" +10, "attacked" +20, or `days` of quiet (-5 per whole 10 days); 0..100.
+## Heat after an event: "raid" +10, "attacked" +20, "fence" +5 (one sale of stolen goods, B5b §7.1), or `days` of
+## quiet (-5 per whole 10 days); 0..100.
 static func heat_after(heat: int, event: String, days: int = 0) -> int:
 	match event:
 		"raid": heat += HEAT_RAID
+		"fence": heat += HEAT_FENCE
 		"attacked": heat += HEAT_ATTACKED
 		"quiet": heat -= HEAT_DECAY * int(maxi(0, days) / HEAT_DECAY_DAYS)
 	return clampi(heat, 0, RegionFactionQuery.BANDIT_HEAT_MAX)

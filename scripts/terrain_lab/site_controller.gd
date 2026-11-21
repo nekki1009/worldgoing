@@ -5237,6 +5237,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 	else:
 		run_daily_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
+	if has_meta(&"fence_heat_due"): TradeSession.Fence.flush(self) # 土匪 B5b: a fence sale's heat, saved at rest
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10981,6 +10982,16 @@ func open_trade_dialog(npc_id: int) -> Dictionary:
 	dialog.ok_button_text = "關閉"
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
+	# 土匪 B5b §7.1: a band member facing a settlement civilian trades under the counter (銷贓).
+	if source.is_empty() and _trade().hostile(me, them) and TradeSession.Fence.band_of(self, me) >= 0 \
+			and TradeSession.Fence.civilian_refusal(self, npc_id, them).is_empty():
+		dialog.title = "暗盤：與 #%d 交易" % npc_id
+		var hint := Label.new()
+		hint.name = "TradeFenceHint"
+		hint.text = "銷贓：只賣不買，對方只付糧或錢、只出半價；聚落官員或士兵看得到時對方不收。"
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD
+		hint.custom_minimum_size = Vector2(320, 0)
+		column.add_child(hint)
 	var spins := {"give": {}, "want": {}}
 	for side: String in ["give", "want"]:
 		var heading := Label.new()

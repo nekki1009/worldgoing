@@ -21,6 +21,7 @@ const SETTLEMENT_FOOD_DAYS := 14
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Market = preload("res://scripts/terrain_lab/site_market.gd")
+const Fence = preload("res://scripts/terrain_lab/site_bandit_fence.gd") # 土匪 B5b §7.1 銷贓
 const REACH := 2.0 # cells between the two representatives (face to face; crowd bodies keep about one cell apart)
 
 var controller: Variant
@@ -122,7 +123,13 @@ func _check_pair(player: int, npc: int, npc_holder: String = "", player_holder: 
 	if not _able(a) or not _able(b): return Runtime.fail("BUSY", "交易雙方須清醒、自由")
 	if not _face_to_face(a, b): return Runtime.fail("TOO_FAR", "須當面交易（兩格內）")
 	if controller.person_actions.is_busy(player) or controller.person_actions.is_busy(npc): return Runtime.fail("BUSY", "交易雙方須空閒")
-	if hostile(a, b): return Runtime.fail("HOSTILE", "敵對勢力之間不能交易")
+	# 土匪 B5b §7.1: across hostile sides only a band member selling his own goods to an unwatched settlement civilian
+	# trades (銷贓); `fence` is that band, else -1.
+	var fence := -1
+	if hostile(a, b):
+		var dark: Dictionary = Fence.admit(controller, a, b, npc, npc_holder, player_holder)
+		if not dark.ok: return dark
+		fence = int(dark.band)
 	var own := player_side(player, player_holder)
 	if not own.ok: return own
 	for holder: String in [str(own.holder), npc_holder if not npc_holder.is_empty() else _holder_id(npc)]:
@@ -133,7 +140,7 @@ func _check_pair(player: int, npc: int, npc_holder: String = "", player_holder: 
 		if not party.ok: return party
 		if int(party.decider) != npc: return Runtime.fail("NO_AUTHORITY", "此貨由「%s」負責交易" % str(party.position_name))
 		if Vector2(b.cell).distance_to(Vector2(party.cell)) > REACH: return Runtime.fail("TOO_FAR", "代表須站在倉庫門口或車旁")
-	return Runtime.ok("", {"a": a, "b": b, "own": own})
+	return Runtime.ok("", {"a": a, "b": b, "own": own, "fence": fence})
 
 ## 貿易 T4 TR-40: the player's side of a trade: himself (""), or his own team's stopped cart or wagon ("vehicle:<id>")
 ## whose hold trades directly, when he is the team's current commander and stands beside it (TR-27's rule for the
@@ -366,6 +373,9 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 	var pair := _check_pair(player, npc, npc_holder, player_holder)
 	if not pair.ok: return pair
 	if Trade._unit_count(player_gives) == 0 or Trade._unit_count(npc_gives) == 0: return Runtime.fail("EMPTY", "雙方都要有付出的東西")
+	if int(pair.fence) >= 0:
+		var refusal := Fence.goods_refusal(player_gives, npc_gives)
+		if not refusal.is_empty(): return Runtime.fail("FENCE_GOODS", refusal)
 	var holder := npc_holder if not npc_holder.is_empty() else _holder_id(npc)
 	if npc_holder.begins_with("feature:") and not Stockpiles.family_estate(_lab().terrain, npc_holder.trim_prefix("feature:")):
 		var quota := Settlement.trade_quota_refusal(_lab().terrain, npc_holder.trim_prefix("feature:"), npc_gives.resources)
@@ -386,13 +396,13 @@ func _propose(player: int, npc: int, npc_holder: String, player_gives: Dictionar
 		else:
 			terms["targets"] = {"food": float(Settlement.residents(_lab()).size() * SETTLEMENT_FOOD_DAYS)}
 	var answer: Dictionary = Trade.counter_offer(player_gives, npc_gives, terms.stock, terms.targets, pair.own.cargo, _legal(player, holder, player_holder, npc),
-		float(terms.thrift), used, _lab().terrain.site)
+		float(terms.thrift), used, _lab().terrain.site, {}, Fence.PRICE_FACTOR if int(pair.fence) >= 0 else 1.0)
 	if not answer.ok: return answer
 	var decision := str(answer.decision)
 	if decision == "ACCEPT" and (answer.receive != player_gives or answer.give != npc_gives): decision = "COUNTER"
 	if decision != "ACCEPT": _concede(holder, _holder_id(player))
 	_drop_offers_of([player, npc])
-	var result := {"decision": decision, "concessions": holder_concessions(holder, _holder_id(player))}
+	var result := {"decision": decision, "concessions": holder_concessions(holder, _holder_id(player)), "fence": int(pair.fence) >= 0}
 	if decision == "REJECT":
 		var last := used >= MAX_CONCESSIONS
 		return Runtime.ok("對方拒絕%s" % ("；今日議價已到底" if last else ""), result)
@@ -473,7 +483,15 @@ func advance() -> Array[Dictionary]:
 			elif int(person.hit) != int(job[side + "_hit"]): reason = "交易一方受擊"
 			elif _holder_version(str(offer[side].holder)) != int(offer[side].expected_version): reason = "持物已改變"
 			if not reason.is_empty(): break
-		if reason.is_empty() and hostile(_person(int(offer.a_representative)), _person(int(offer.b_representative))): reason = "雙方勢力已敵對"
+		# 土匪 B5b §7.1: a fence deal stays admitted only while nobody of the settlement watches.
+		var fence := -1
+		if reason.is_empty() and hostile(_person(int(offer.a_representative)), _person(int(offer.b_representative))):
+			var a_id := int(offer.a_representative)
+			var b_id := int(offer.b_representative)
+			var dark: Dictionary = Fence.admit(controller, _person(a_id), _person(b_id), b_id,
+				str(offer.b.holder) if str(offer.b.holder) != _holder_id(b_id) else "", str(offer.a.holder) if str(offer.a.holder) != _holder_id(a_id) else "")
+			if dark.ok: fence = int(dark.band)
+			else: reason = Fence.WATCHED_TEXT if str(dark.code) == "WATCHED" else "雙方勢力已敵對"
 		if reason.is_empty() and (str(offer.b.holder).begins_with("feature:") or str(offer.b.holder).begins_with("vehicle:")):
 			var party := source_party(str(offer.b.holder))
 			if not party.ok or int(party.decider) != int(offer.b_representative): reason = "組織交易負責人已變更"
@@ -502,6 +520,11 @@ func advance() -> Array[Dictionary]:
 		var committed: Dictionary = exchange(offer.a, offer.b, offer.a_gives, offer.b_gives, false, str(key), [int(offer.a_representative), int(offer.b_representative)])
 		if committed.ok and not source.is_empty(): Settlement.record_trade_payout(_lab().terrain, source, offer.b_gives.resources)
 		if committed.ok: Market.commit(_lab().terrain, str(job.offer_id)) # a listed delivery counts its lots for the day
+		if committed.ok and fence >= 0:
+			# The band's heat is queued and saved between steps (SiteBanditFence.flush).
+			Fence.queue_heat(controller, fence)
+			results.append(_end(str(key), Runtime.ok("暗盤交易完成", {"fence": fence})))
+			continue
 		results.append(_end(str(key), Runtime.ok("交易完成") if committed.ok else committed))
 	if not results.is_empty(): last_results = results.duplicate()
 	return results

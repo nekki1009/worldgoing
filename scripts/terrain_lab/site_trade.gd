@@ -100,16 +100,19 @@ static func _can_give(goods: Dictionary, stock: Dictionary, state: Dictionary) -
 		if _amount(stock, category) < int(totals[category]): return false
 	return true
 
-static func accept(receive: Dictionary, give: Dictionary, stock: Dictionary, targets: Dictionary, thrift: float = 50.0, concessions: int = 0, state: Dictionary = {}, construction: Dictionary = {}) -> Dictionary:
+## `price_factor` scales what the NPC must receive (1 = the original haggling; 土匪 B5b §7.1: a civilian buying stolen
+## goods wants twice the value he pays, SiteBanditFence.PRICE_FACTOR).
+static func accept(receive: Dictionary, give: Dictionary, stock: Dictionary, targets: Dictionary, thrift: float = 50.0, concessions: int = 0, state: Dictionary = {}, construction: Dictionary = {}, price_factor: float = 1.0) -> Dictionary:
 	if not _goods_valid(receive, state) or not _goods_valid(give, state) or not _counts_valid(stock) or not _targets_valid(targets) \
-		or not Runtime._resource_stack(construction) or not is_finite(margin(thrift, concessions)) or concessions > 4: return Runtime.fail("INVALID")
+		or not Runtime._resource_stack(construction) or not is_finite(margin(thrift, concessions)) or concessions > 4 \
+		or not is_finite(price_factor) or price_factor < 1.0: return Runtime.fail("INVALID")
 	if _unit_count(receive) == 0 or _unit_count(give) == 0: return Runtime.fail("EMPTY")
 	if not _can_give(give, stock, state) or not _floor_ok(receive, give, stock, targets, construction): return Runtime.ok("", {"decision": "REJECT", "reason": "RESERVE"})
 	var received: Dictionary = side_value(receive, stock, targets, true, state)
 	if not received.ok: return received
 	var paid: Dictionary = side_value(give, stock, targets, false, state)
 	if not paid.ok: return paid
-	var required: float = float(paid.value) * (1.0 + margin(thrift, concessions))
+	var required: float = float(paid.value) * (1.0 + margin(thrift, concessions)) * price_factor
 	return Runtime.ok("", {"decision": "ACCEPT" if float(received.value) >= required else "REJECT", "reason": "VALUE",
 		"received_value": received.value, "given_value": paid.value, "required_value": required})
 
@@ -140,8 +143,8 @@ static func _limit(evaluations: int) -> Dictionary:
 	return rejected
 
 static func counter_offer(receive: Dictionary, give: Dictionary, stock: Dictionary, targets: Dictionary, available: Dictionary, legal: Callable,
-		thrift: float = 50.0, concessions: int = 0, state: Dictionary = {}, construction: Dictionary = {}) -> Dictionary:
-	var initial: Dictionary = accept(receive, give, stock, targets, thrift, concessions, state, construction)
+		thrift: float = 50.0, concessions: int = 0, state: Dictionary = {}, construction: Dictionary = {}, price_factor: float = 1.0) -> Dictionary:
+	var initial: Dictionary = accept(receive, give, stock, targets, thrift, concessions, state, construction, price_factor)
 	if not initial.ok: return initial
 	if not Runtime._resource_stack(available) or not legal.is_valid(): return Runtime.fail("INVALID")
 	if str(initial.get("reason", "")) == "RESERVE" or not Runtime.can_pay(available, receive.resources): return Runtime.ok("", {"decision": "REJECT", "evaluations": 0})
@@ -167,7 +170,7 @@ static func counter_offer(receive: Dictionary, give: Dictionary, stock: Dictiona
 					trial.resources[choice.resource] = int(trial.resources[choice.resource]) - 1
 					if int(trial.resources[choice.resource]) == 0: trial.resources.erase(choice.resource)
 				if _floor_ok(incoming, trial, stock, targets, construction) and _legal(legal, incoming, trial):
-					var response: Dictionary = accept(incoming, trial, stock, targets, thrift, concessions, state, construction)
+					var response: Dictionary = accept(incoming, trial, stock, targets, thrift, concessions, state, construction, price_factor)
 					if not response.ok: return response
 					outgoing = trial
 					if response.decision == "ACCEPT": return Runtime.ok("", {"decision": "ACCEPT", "receive": incoming, "give": outgoing, "evaluations": evaluations})
@@ -182,7 +185,7 @@ static func counter_offer(receive: Dictionary, give: Dictionary, stock: Dictiona
 			var trial: Dictionary = incoming.duplicate(true)
 			trial.resources[choice.resource] = int(trial.resources[choice.resource]) + 1
 			if _floor_ok(trial, outgoing, stock, targets, construction) and _legal(legal, trial, outgoing):
-				var response: Dictionary = accept(trial, outgoing, stock, targets, thrift, concessions, state, construction)
+				var response: Dictionary = accept(trial, outgoing, stock, targets, thrift, concessions, state, construction, price_factor)
 				if not response.ok: return response
 				incoming = trial
 				if response.decision == "ACCEPT": return Runtime.ok("", {"decision": "ACCEPT", "receive": incoming, "give": outgoing, "evaluations": evaluations})

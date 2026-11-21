@@ -12339,6 +12339,8 @@ func _region_run_due_daily_hooks() -> void:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null or restore_only or str(slot.control.active_site_id) != str(terrain.site.get("id", "")): return
 	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
+	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
+	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
