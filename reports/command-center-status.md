@@ -1,7 +1,13 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 03:20（台北）
+更新：2026-11-22 08:30（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 08:30（台北）里程碑全套回歸 229/229
+- 土匪 B5（含銷贓）做完，跑全套回歸 FULL_20261122：11/14 全套，加上 11/17 新測試和兩支銷贓驗收，共 229 項，2 個並行。
+- 結果：並行 226 項通過；銷贓隊驗收單獨重跑通過。
+- 攻城工位兩支沿用了 11/14 的測試編號，換新編號（full1122cn／cg）後都通過。
+- 銷贓隊驗收在重負載下，回寨等 Region 點關閉的時間不夠，重試上限從 600 幀改為 3600 幀。
 
 ## 2026-11-22 03:20（台北）舊測試改載 TerrainLab 場景
 - 主場景現在是主選單。6 支舊測試還把主場景當 Site 載入（或檢查它），已改成直接用 TerrainLab 場景：army oracle 兩支、default_worker_removed、equipment_player_ui、equipment_trial_ui、mixed_equipment_live。

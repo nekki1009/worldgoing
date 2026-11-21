@@ -246,7 +246,7 @@ func _run() -> void:
 	# The band's daily turn runs between steps; called here directly it may meet a Region point still open
 	# (REGION_EFFECTS_PENDING: nothing moves, the trip stays on the ledger), so it is asked again a frame later.
 	var returned: Dictionary = FenceTeam.home(controller, band)
-	for _frame: int in range(600):
+	for _frame: int in range(3600):
 		if not returned.refusals.is_empty() and str(returned.refusals[0].code) in ["REGION_EFFECTS_PENDING", "REGION_EFFECT_RUNNING"]:
 			await process_frame
 			returned = FenceTeam.home(controller, band)
