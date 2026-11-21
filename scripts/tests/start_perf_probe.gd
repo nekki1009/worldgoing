@@ -16,6 +16,13 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var resume := OS.get_cmdline_user_args().has("--perf-resume")
+	if OS.get_cmdline_user_args().has("--perf-menu"):
+		# As the main menu does: the body models are parsed on worker threads while the player is in the menu.
+		var menu_started := Time.get_ticks_msec()
+		RuntimeHumanCharacter3DEditor.prewarm_raw_bodies()
+		while RuntimeHumanCharacter3DEditor.prewarm_pending() > 0 and Time.get_ticks_msec() - menu_started < 30000:
+			await process_frame
+		print("PERF_PROBE_MENU prewarm_ms=%d pending=%d" % [Time.get_ticks_msec() - menu_started, RuntimeHumanCharacter3DEditor.prewarm_pending()])
 	var requested := RegionEntry.request_resume() if resume else RegionEntry.request_new_world(START, {"name": "計時者", "body": 0}, "計時世界", "", RegionData.DEFAULT_MANIFEST, {"mode": "neutral"})
 	if not requested:
 		printerr("PERF_PROBE_FAIL: request ", RegionEntry.menu_message)
@@ -28,6 +35,11 @@ func _run() -> void:
 		var lab := current_scene as TerrainLab
 		if lab != null and lab.site_controller != null and lab.site_controller.region_slot != null and lab.site_controller._boot_request.is_empty() and lab.crowd_site != null and lab.crowd_site.active:
 			for _settle: int in range(5): await process_frame
+			var settle_ms := 0
+			for arg: String in OS.get_cmdline_user_args():
+				if arg.begins_with("--perf-settle-ms="): settle_ms = int(arg.get_slice("=", 1))
+			var settle_until := Time.get_ticks_msec() + settle_ms
+			while Time.get_ticks_msec() < settle_until: await process_frame
 			print("PERF_PROBE_DONE")
 			quit(0)
 			return

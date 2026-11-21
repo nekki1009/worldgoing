@@ -212,6 +212,9 @@ func _perf_first_frame(create_new: bool) -> void:
 	PerfTrace.mark("ready_done")
 	await get_tree().process_frame
 	PerfTrace.mark("first_frame")
+	# The frame after it: work queued behind the first frame (deferred calls, process_frame handlers) lands here.
+	await get_tree().process_frame
+	PerfTrace.mark("second_frame")
 	PerfTrace.flush("new_game" if create_new else "resume")
 
 func _region_original_ready() -> void:
@@ -398,6 +401,10 @@ var _army_warmup_step := 0
 
 func _start_army_visual_warmup() -> void:
 	if DisplayServer.get_name() == "headless" or army == null:
+		return
+	# 開始遊戲效能: on a live crowd Site the grid slots are hidden roster containers; a grid team deployed later builds its
+	# presentation on demand. The warmup's captain source (its own body parse, about 6 s) is not built for nothing.
+	if crowd_site != null and crowd_site.active:
 		return
 	army.warmup_visual_step(0)
 	# A connected method (unlike an await) is dropped when this lab is freed
@@ -691,6 +698,11 @@ func relabel_team_faction(team_id: int, faction: int) -> Dictionary:
 		if row is Dictionary and int(row.get("team_id", -1)) == team_id: row["faction_id"] = faction
 	return SiteRuntime.ok("", {"changed": true})
 
+## 開始遊戲效能: the grid teams bind_terrain restored without presentation stay grid; build their presentation now.
+func _resume_army_presentation() -> void:
+	for team: TerrainArmy in combat_armies:
+		if is_instance_valid(team): team.resume_presentation()
+
 func _has_active_grid_team() -> bool:
 	for team: TerrainArmy in combat_armies:
 		if is_instance_valid(team) and team.combat_enabled and team.has_army(): return true
@@ -890,6 +902,20 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		if not bool(roster.get("crowd", false)): active_army_count += 1
 	_ensure_army_slots(army_states.size())
 	_configure_army_blockers(active_army_count > 2)
+	# Option C: any crowd-requested Site (new game start, ordinary save, legacy save) opens as crowd; only --grid keeps grid teams.
+	# Nekki 2026-11-03: Region keeps the grid. A road-map live party Lab is never converted to crowd; its teams stay
+	# GD rosters there, and a road battle becomes a Site.
+	var party_bind: bool = str(_region_owner_bind_tickets.get(str(prepared.get("region_bind_token", "")), {}).get("kind", "")).begins_with("party") \
+		or not _region_party_token.is_empty() or terrain.has_meta(&"region_party_owner")
+	# Nekki 2026-11-10 (A): a travelling party's live contact frame converts later, before its first planned interval
+	# (_region_party_frame_native), after its complete GD owner graph is restored here.
+	var legacy_convert: bool = crowd_startup_requested and not party_bind
+	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested() and not party_bind
+	# 開始遊戲效能: a grid team the crowd conversion below replaces is restored without presentation; a conversion that
+	# does not happen or is refused builds it afterwards (_resume_army_presentation).
+	var conversion_expected := (legacy_convert or arrival_convert) and not terrain.site.has("crowd")
+	for index in range(combat_armies.size()):
+		combat_armies[index].presentation_off = conversion_expected and index < army_states.size() and not bool(army_states[index].get("crowd", false))
 	for index in range(army_states.size()):
 		if bool(army_states[index].get("crowd", false)):
 			combat_armies[index].restore_crowd_command_source(army_states[index], terrain, combat_actors)
@@ -898,6 +924,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	if not restore_only: PerfTrace.mark("bind_armies")
 	var prepared_fire_transport := _prepare_fire_transport_restore()
 	if not prepared_fire_transport.ok:
+		_resume_army_presentation()
 		if site_controller != null: site_controller.show_result(prepared_fire_transport)
 		return
 	if not actor_states.is_empty():
@@ -933,10 +960,12 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# Fire work snapshots use the original ranged-order serials stored by transport.
 	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
 	if not restored_fire_transport.ok:
+		_resume_army_presentation()
 		site_controller.show_result(restored_fire_transport)
 		return
 	var restored_fire_owners := _restore_fire_owners()
 	if not restored_fire_owners.ok:
+		_resume_army_presentation()
 		site_controller.show_result(restored_fire_owners)
 		return
 	# Conversion runs after the grid fire transport/owners restore, so they are converted with the teams.
@@ -944,15 +973,8 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# RegionTravel.insert, becomes live here after its grid armies were restored. A cold owner (restore_only) has no
 	# CrowdSite under --crowd, so one is attached for the arrival mark only. A refusal keeps the grid Site and is shown
 	# (never on a cold owner). This conversion never writes the save file; the mark clears only on success.
-	# Option C: any crowd-requested Site (new game start, ordinary save, legacy save) opens as crowd; only --grid keeps grid teams.
-	# Nekki 2026-11-03: Region keeps the grid. A road-map live party Lab is never converted to crowd; its teams stay
-	# GD rosters there, and a road battle becomes a Site.
-	var party_bind: bool = str(_region_owner_bind_tickets.get(str(prepared.get("region_bind_token", "")), {}).get("kind", "")).begins_with("party") \
-		or not _region_party_token.is_empty() or terrain.has_meta(&"region_party_owner")
-	# Nekki 2026-11-10 (A): a travelling party's live contact frame converts later, before its first planned interval
-	# (_region_party_frame_native), after its complete GD owner graph is restored here.
-	var legacy_convert: bool = crowd_startup_requested and not party_bind
-	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested() and not party_bind
+	# (party_bind, legacy_convert and arrival_convert are decided before the army restore above.)
+	var converted_now := false
 	if arrival_convert and (terrain.site.has("crowd") or not _has_active_grid_team()):
 		terrain.site.erase("crowd_convert_pending") # Nothing grid is left to convert.
 	elif (legacy_convert or arrival_convert) and not terrain.site.has("crowd") and _has_active_grid_team():
@@ -963,11 +985,16 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 			crowd_site.setup(self)
 		if not crowd_site.active:
 			var converted: Dictionary = crowd_site.convert_existing()
+			converted_now = converted.ok and crowd_site.active
 			if converted.ok: converted = _region_write_converted_crowd_section()
 			if converted.ok:
 				if arrival_convert: terrain.site.erase("crowd_convert_pending")
 			elif not restore_only:
 				site_controller.show_result(converted)
+	if converted_now:
+		for team: TerrainArmy in combat_armies: team.presentation_off = false # Converted: hidden roster containers now.
+	else:
+		_resume_army_presentation()
 	# Restore the original cadence before applying the complete owner graph;
 	# graph restoration may legitimately restore its exact in-progress counter.
 	_duty_ai_elapsed = DutyAI.restore_cadence(self)
@@ -11712,6 +11739,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	team.role = "combat"
 	team.roster_size = 1 + INITIAL_CADRES
 	team.exchange_enabled = exchange_enabled
+	team.presentation_off = true # Captured into the Site, then replaced by the crowd conversion; never drawn.
 	var player_ids: Array = [starter.person_id]
 	player_ids.append_array(_allocate_army_person_ids_for(INITIAL_CADRES, candidate, [starter], []))
 	if player_ids.size() != 1 + INITIAL_CADRES: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("PERSON_ID_EXHAUSTED"))

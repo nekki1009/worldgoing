@@ -10176,6 +10176,9 @@ var _live_presenters: Dictionary = {} # Stable person ID -> original female pres
 var _live_anchors: Dictionary = {}
 var _sprites: Array[Sprite2D] = []
 var defer_captain_presenter := false # TerrainLab's dynamic team slots only; visual role stays live.
+## 開始遊戲效能: a team that is only built to be captured and thrown away (the new world's birth team, which the crowd
+## conversion replaces) never draws, so it builds no 3D sources or sprites, exactly as a headless run does.
+var presentation_off := false
 var _captain_presenter_selected := false
 var _deferred_captain_ready := false
 var batch_render_enabled := true # Sprite reference path remains available for A/B and small rosters.
@@ -10452,7 +10455,7 @@ func _all_visual_sources() -> Array:
 	return sources
 
 func _ensure_live_presenters() -> void:
-	if DisplayServer.get_name() == "headless" or combat_units.is_empty():
+	if DisplayServer.get_name() == "headless" or presentation_off or combat_units.is_empty():
 		return
 	var current_people := {}
 	for index in range(combat_units.size()):
@@ -10501,8 +10504,22 @@ func _transfer_presenters(recipient: TerrainArmy, identities: Array[int]) -> voi
 		recipient._live_presenters[identity] = editor
 		recipient._visual_sources_owned = true
 
+## Builds the presentation a presentation_off team skipped, as deployment does (a team the crowd conversion kept).
+func resume_presentation() -> void:
+	if not presentation_off: return
+	presentation_off = false
+	if DisplayServer.get_name() == "headless" or not has_army(): return
+	initialize_visual()
+	_refresh_deferred_captain()
+	_rebuild_visual_instances()
+	_visual_sources_active = false
+	_set_visual_sources_active(true)
+	_visual_warmup_frames = 2
+	_visual_dirty = true
+	queue_redraw()
+
 func initialize_visual() -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or presentation_off:
 		return
 	if _captain_editor != null and (_soldier_baked_ready or _soldier_editor != null):
 		return
@@ -10595,7 +10612,7 @@ static func reset_static_soldier_atlas() -> void:
 	_static_soldier_baked_ready = false
 
 func prepare_captain_source() -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or presentation_off:
 		return
 	if _captain_editor != null:
 		return
@@ -10604,7 +10621,7 @@ func prepare_captain_source() -> void:
 	_visual_sources_active = true
 
 func prepare_sprite_pool(count: int = SOLDIER_COUNT) -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or presentation_off:
 		return
 	if _sprites.size() >= count:
 		return
@@ -10614,7 +10631,7 @@ func prepare_sprite_pool(count: int = SOLDIER_COUNT) -> void:
 		_sprites.append(sprite)
 
 func warmup_visual_step(step: int) -> bool:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or presentation_off:
 		return true
 	match step:
 		0:
@@ -17097,6 +17114,7 @@ func _finish_move_state(index: int, old_cell: Vector2i, next: Vector2i, consume_
 	_audio_emit_step(audio_candidate)
 
 func _rebuild_visual_instances() -> void:
+	if presentation_off: return
 	if (_captain_editor == null and not defer_captain_presenter) or not _soldier_baked_ready:
 		initialize_visual()
 	# The simulation is deliberately independent of render targets.

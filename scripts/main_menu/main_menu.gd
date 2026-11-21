@@ -137,6 +137,8 @@ func _ready() -> void:
 	else:
 		RegionEntry.draft = {}
 		show_page("main")
+	# 開始遊戲效能: the body models are parsed on worker threads while the player is in the menu (real renderer only).
+	RuntimeHumanCharacter3DEditor.prewarm_raw_bodies()
 
 func show_page(page: String) -> void:
 	for id: String in _pages:
