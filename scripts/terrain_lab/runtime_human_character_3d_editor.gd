@@ -1,6 +1,8 @@
 class_name RuntimeHumanCharacter3DEditor
 extends HumanCharacter3DEditor
 ## Runtime presenter only. The atlas author keeps its exact fingerprinted source.
+const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
+static var _siege_clip_cache: Dictionary = {} # raw cache key -> {clip: Animation}, the first build per body model
 var runtime_raw_cache := true
 static var _runtime_raw_scenes: Dictionary = {}
 static var runtime_raw_cache_enabled := true
@@ -12,6 +14,7 @@ static var _prewarm_mutex := Mutex.new()
 static func release_runtime_raw_cache() -> void:
 	_finish_prewarm_tasks()
 	_runtime_raw_scenes.clear()
+	_siege_clip_cache.clear()
 
 ## 開始遊戲效能: parses the raw body GLBs on worker threads while the main menu idles, so the first presenter of each body
 ## instantiates from the packed parse instead of parsing it on the main thread (about 4 s per body). The packed result is
@@ -185,4 +188,24 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	_prepare_combat_cloth()
 	_prepare_equipment_dyes()
 	_prepare_animation_loop_defaults()
+	if _runtime_raw_cache_active() and not use_imported_model and preview_model_path.is_empty():
+		_seed_siege_work_clips("%s:%d" % [absolute_path, FileAccess.get_modified_time(absolute_path)])
 
+## 開始遊戲效能: SiegeWorkClips.install builds three presentation clips from this rig's own walk and idle on every
+## presenter (about 0.39 s each). They depend only on the body model's original walk and idle, so the first build per
+## model is kept, and every presenter of that model gets its own deep copy in its private library before install runs.
+## install then finds them by their original resource names and only extends this editor's selectors, as before.
+func _seed_siege_work_clips(cache_key: String) -> void:
+	if animation_player == null or model_root == null or is_mounted: return
+	var library := animation_player.get_animation_library(&"")
+	if library == null or not library.has_animation(&"idle") or not library.has_animation(&"walk"): return
+	var cached: Dictionary = _siege_clip_cache.get(cache_key, {})
+	if cached.is_empty():
+		for clip: String in SiegeWorkClips.DURATIONS:
+			var built: Animation = SiegeWorkClips._build(self, clip)
+			if built == null: return # install builds (or refuses) on its own, as before.
+			cached[clip] = built
+		_siege_clip_cache[cache_key] = cached
+	for clip: String in cached:
+		if library.has_animation(StringName(clip)): continue
+		if library.add_animation(StringName(clip), (cached[clip] as Animation).duplicate(true)) != OK: return
