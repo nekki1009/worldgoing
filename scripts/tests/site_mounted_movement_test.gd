@@ -304,7 +304,8 @@ func _roundtrip_and_legacy() -> bool:
 func _store_roundtrip() -> bool:
 	# Separate real entrypoint: never serialize the deliberately modified terrain
 	# used by the contracts above, and never move a person to manufacture a route.
-	formal_lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate() as TerrainLab
+	# The main scene is the main menu now (開局流程); the formal Site entry is the TerrainLab scene itself.
+	formal_lab = (load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene).instantiate() as TerrainLab
 	formal_lab.pause_when_unfocused = false
 	root.add_child(formal_lab)
 	formal_lab.set_process(false)
