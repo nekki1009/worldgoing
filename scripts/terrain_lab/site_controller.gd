@@ -61,6 +61,7 @@ var sleep_record: Dictionary = {}
 var _sleep_minute := -1
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents' civilian clothes
+const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const CivilianActivity = preload("res://scripts/terrain_lab/crowd_civilian_activity.gd") # CIV-A4: the native civilian role
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
 ## 平民 C1a: the last ten-minute schedule check run (runtime only; a reload re-runs the current check, which is idempotent).
@@ -10350,8 +10351,10 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		if create_new or region_slot == null or world_id != str(region_slot.pin.world_instance_id) or slot_id != str(region_slot.pin.slot_id) or FileAccess.get_file_as_string(manifest_path).sha256_text() != str(region_slot.pin.manifest_sha256): return region_replacement_guard()
 		var checkpoint := _checkpoint_ship_journey()
 		if not checkpoint.ok: return checkpoint
+	PerfTrace.mark("manifest_begin")
 	var source := RegionData.new()
 	var loaded: Dictionary = source.load_manifest(manifest_path)
+	PerfTrace.mark("manifest_done")
 	if not loaded.ok: return loaded
 	var request := _initial_world_request(manifest_path, world_id, slot_id, starting_site, create_new, initial_scenario_id)
 	var location := "user://region_lab/worlds/%s/slots/%s" % [world_id, slot_id]
@@ -10374,22 +10377,26 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	# P5C-S2B test seam: forwards the default-invalid Callable to the slot before birth.
 	if create_new: candidate.initial_write_fault = initial_write_fault
 	var opened: Dictionary = candidate.open_map(source, world_id, slot_id, create_new, context)
+	PerfTrace.mark("open_map")
 	if not opened.ok: return _remember_initial_world_pending(opened, request, candidate)
 	candidate.ship_site_initialize = _initialize_ship_destination
 	if lab.has_method("advance_cold_site"): candidate.cold_site_advance = Callable(lab, "advance_cold_site")
 	if create_new:
 		if not candidate.initialization_pending(): return Runtime.fail("CONFLICT", "此世界已完成建立")
 		var prepared: Dictionary = _prepare_initial_world(candidate, starting_site, initial_scenario_id)
+		PerfTrace.mark("prepared")
 		if not prepared.ok: return _remember_initial_world_pending(prepared, request, candidate)
 		# All original born bodies/items/allocator/placement and actual bind guards
 		# have passed BEFORE archiving the old graph or publishing the first marker.
 		var preflight: Dictionary = _journey_arrival_preflight(prepared.data)
+		PerfTrace.mark("preflight")
 		if not preflight.ok: return preflight
 		if _initial_world_archive.is_empty():
 			var archived := Runtime.ok() if not _boot_request.is_empty() else _archive_live_site()
 			if not archived.ok: return archived
 			_initial_world_archive = archived
 		var committed: Dictionary = candidate.commit_initial_site()
+		PerfTrace.mark("committed")
 		if not committed.ok: return _remember_initial_world_pending(committed, request, candidate)
 		# The exact checked original first-generation body may have been reloaded.
 		# Produce a bind ticket for that exact object; population is already born.
@@ -10398,10 +10405,14 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 			if not preflight.ok: return _remember_initial_world_pending(Runtime.fail("COMMITTED_UNBOUND", str(preflight.get("message", "原首代待綁定"))), request, candidate)
 		region_slot = candidate
 		_ship_journey.clear()
+		PerfTrace.mark("bind_begin")
 		lab.bind_terrain(committed.data, preflight)
+		PerfTrace.mark("bound")
 		var bound: Dictionary = lab.region_bind_receipt(committed.data)
+		PerfTrace.mark("receipt")
 		if not bound.get("complete", false): return _remember_initial_world_pending(Runtime.fail("COMMITTED_UNBOUND", "原首代已提交，原人物／物品／租約待同槽綁定"), request, candidate)
 		var finished: Dictionary = candidate.finish_initial_birth(bound)
+		PerfTrace.mark("finished")
 		if not finished.ok: return _remember_initial_world_pending(finished, request, candidate)
 		_region_manifest_path = manifest_path
 		save_path = candidate.site_path(starting_site)
@@ -10421,10 +10432,12 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	if parts.size() != 3 or not parts[1].is_valid_int() or not parts[2].is_valid_int(): return Runtime.fail("NO_TARGET", "尚無活動地點；明示建立新固定地圖世界")
 	var coordinate := Vector2i(int(parts[1]), int(parts[2]))
 	var site: Dictionary = candidate.open_site(coordinate)
+	PerfTrace.mark("site_opened")
 	if not site.ok: return _remember_initial_world_pending(site, request, candidate)
 	if not site.get("interactive", true) or site.data.site.is_empty(): return Runtime.fail("NO_TARGET", "原活動地點沒有合法落腳点")
 	var selected_restore: bool = site.data.site.has("region_snapshot")
 	var preflight: Dictionary = lab.prepare_selected_region_owner_restore(site.data, candidate) if selected_restore else _journey_arrival_preflight(site.data)
+	PerfTrace.mark("preflight")
 	if not preflight.ok: return preflight
 	if selected_restore: site["data"] = preflight.data # Exact selected readback/private nonce pair.
 	# Reopening the slot that is already active resumes its last commit (the
@@ -10440,8 +10453,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	# its registry revision unchanged until the original bind acknowledgement.
 	region_slot = candidate
 	_ship_journey.clear()
+	PerfTrace.mark("bind_begin")
 	lab.bind_terrain(site.data, preflight)
+	PerfTrace.mark("bound")
 	var bound: Dictionary = lab.region_bind_receipt(site.data)
+	PerfTrace.mark("receipt")
 	if not bound.get("complete", false): return _remember_initial_world_pending(Runtime.fail("LOAD_RETRY", "固定地點待原完整綁定；原存檔保留"), request, candidate)
 	_region_manifest_path = manifest_path
 	if candidate.initialization_pending():
@@ -10465,8 +10481,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 func enter_requested_world(request: Dictionary) -> Dictionary:
 	_boot_request = request.duplicate(true)
 	_auto_save_blocked = true
+	PerfTrace.mark("open_begin")
 	var result := open_fixed_world(str(request.manifest), str(request.world_id), str(request.slot_id), Vector2i(request.site), bool(request.create_new), str(request.get("initial_scenario_id", "")))
+	PerfTrace.mark("open_done")
 	_settle_boot_request(result)
+	PerfTrace.mark("settled")
 	_update_region_travel_status()
 	return result
 
@@ -12379,7 +12398,9 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 	if not candidate._marker.is_empty() or not str(candidate.control.active_site_id).is_empty() or float(candidate.control.logical_game_seconds) != 0.0 or not candidate.control.fire_clock.get("index", {}).is_empty() or int(candidate.control.fire_clock.sequence) != 0 or float(candidate.control.fire_clock.action_seconds) != 0.0:
 		return Runtime.fail("INVALID_INITIAL_GENERATION")
 	if _initial_world_birth_data == null:
+		PerfTrace.mark("init_open_site_begin")
 		var opened: Dictionary = candidate.open_site(starting_site)
+		PerfTrace.mark("init_site_opened")
 		if not opened.ok: return opened
 		if not opened.get("created", false) or not opened.get("interactive", true) or opened.data.site.is_empty():
 			return Runtime.fail("NO_BIRTH_GROUND", "新世界須從真正全新的合法陸地落腳")
@@ -12397,8 +12418,10 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			birth = Runtime.ok("", {"data": opened.data})
 		elif initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
+			PerfTrace.mark("init_population")
 			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
 			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)
+			PerfTrace.mark("init_residents")
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
@@ -12409,13 +12432,16 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 		# It is never a second saved body and never captures the previous world.
 		# P5C-S3: populate authored companions with the original roster rule, ids continuing from the start.
 		var companions: Dictionary = _author_companion_population(candidate, birth.data)
+		PerfTrace.mark("init_companions")
 		if not companions.ok: return companions
 		_initial_companion_births = companions.births
 		_initial_world_birth_data = birth.data
 	for companion_site: Vector2i in _initial_companion_births:
 		var supplied: Dictionary = candidate.set_companion_birth(companion_site, _initial_companion_births[companion_site])
 		if not supplied.ok: return supplied
-	return candidate.prepare_initial_site(_initial_world_birth_data)
+	var prepared_site: Dictionary = candidate.prepare_initial_site(_initial_world_birth_data)
+	PerfTrace.mark("init_site_prepared")
+	return prepared_site
 
 
 # Original resident births use the pending World allocator; Site counters are mirrors only.

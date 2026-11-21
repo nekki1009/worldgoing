@@ -29,6 +29,7 @@ const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.
 const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K5: the start template's points
 const Templates = preload("res://scripts/main_menu/character_templates.gd") # 開局流程規劃 §2: the template library
+const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const DEFAULT_HAIR_DYE := "9b775dff"
 ## The project renders at 2560×1440 and scales to the window; size UI for that.
 const UI := 1.6
@@ -130,6 +131,7 @@ func _ready() -> void:
 	_build_confirm_page(column)
 	_build_templates_page(column)
 	_build_pick_character_page(column)
+	_build_loading_page(column)
 	var step := str(RegionEntry.draft.get("step", ""))
 	if step == "character" and RegionEntry.draft.get("site") is Vector2i: show_page(_character_entry_page())
 	else:
@@ -251,7 +253,10 @@ func _refresh_continue() -> void:
 	_continue_note.text = "尚無世界" if meta.is_empty() else _world_line(meta)
 
 func _continue_game() -> void:
-	if RegionEntry.request_resume(): get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+	if RegionEntry.request_resume():
+		PerfTrace.mark("start_pressed")
+		await _show_loading("正在開啟世界…")
+		get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
 
 func _world_line(meta: Dictionary) -> String:
 	var site: Array = meta.get("active_site", [])
@@ -313,6 +318,7 @@ func _load_selected() -> void:
 	var selected := _world_list.get_selected_items()
 	if selected.is_empty() or selected[0] >= _worlds.size(): return
 	if RegionEntry.request_world(str(_worlds[selected[0]].world_id)):
+		await _show_loading("正在開啟世界…")
 		get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
 
 # --- New Game: map choice.
@@ -792,6 +798,24 @@ func _new_game_character() -> void:
 	_reset_character_form()
 	show_page("character")
 
+# --- 開局流程規劃 §8 step 6 / 開始遊戲效能 P1-5 (first step): opening a world blocks the main thread for a while, so
+# the menu first draws a loading page and the window holds that page instead of the frozen menu.
+var _loading_label: Label
+
+func _build_loading_page(parent: Node) -> void:
+	var page := _page(parent, "loading")
+	_loading_label = _label(page, "", 24)
+	_loading_label.name = "LoadingText"
+	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var note := _label(page, "第一次開啟要比較久，視窗暫時不會回應，請稍候。", 15)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+func _show_loading(text: String) -> void:
+	_loading_label.text = text
+	show_page("loading")
+	await get_tree().process_frame
+	await get_tree().process_frame # drawn before the blocking scene change
+
 static func _select_metadata(select: OptionButton, id: String) -> void:
 	for index: int in range(select.item_count):
 		if str(select.get_item_metadata(index)) == id:
@@ -938,6 +962,8 @@ func start_new_game() -> void:
 		_message.visible = true
 		return
 	RegionEntry.draft = {}
+	PerfTrace.mark("start_pressed")
+	await _show_loading("正在建立新世界…")
 	get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
 
 

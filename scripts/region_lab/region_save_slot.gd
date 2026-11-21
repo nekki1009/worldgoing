@@ -3,6 +3,7 @@ extends RefCounted
 
 # Save-slot metadata pins the immutable geography used by both visited and
 # unvisited Sites. SiteStore remains the owner of mutable Site snapshots.
+const PerfTraceSlot = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Grid = preload("res://scripts/region_lab/region_grid.gd")
@@ -541,10 +542,13 @@ func _save_checked_owner_capture(data: TerrainData, site: Vector2i, path: String
 			return captured
 		saved = Store.save_region_snapshot(data, path, captured.context, captured.owners)
 	else:
+		PerfTraceSlot.mark("store_save_begin")
 		saved = Store.save(data, path)
+		PerfTraceSlot.mark("store_saved")
 	if not saved.ok: return saved
 	var source_checksum: String = _faction_file_sha256(path) if not source_context.is_empty() else ""
 	var readback := _load_checked(path, site)
+	PerfTraceSlot.mark("store_read_back")
 	if not readback.ok: return readback
 	if not source_context.is_empty():
 		var remembered: Dictionary = _faction_remember_captured_source(path, site, source_checksum, readback.data, source_context)
@@ -6603,12 +6607,15 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 			if not companion.ok: return companion
 			companions.append(companion)
 	var original_control := control.duplicate(true)
+	PerfTraceSlot.mark("slot_attach_begin")
 	var attached := attach_active_site(data)
+	PerfTraceSlot.mark("slot_attached")
 	if not attached.ok:
 		control = original_control
 		return attached
 	var path := _generation_path(1, coordinate.site)
 	var saved := _save_checked(data, coordinate.site, path)
+	PerfTraceSlot.mark("slot_saved")
 	if not saved.ok:
 		control = original_control
 		return saved
@@ -6633,6 +6640,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 	var record: Dictionary = {"format": 1, "generation": 1, "pin": pin.duplicate(true), "sites": sites,
 		"control": control.duplicate(true), "transfer_token": "", "journey": {}}
 	var checked := _check_initial_record(record)
+	PerfTraceSlot.mark("slot_record_checked")
 	if not checked.ok:
 		control = original_control
 		return checked

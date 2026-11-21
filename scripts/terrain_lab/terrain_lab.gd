@@ -30,6 +30,7 @@ const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
+const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const CivilianDress = preload("res://scripts/terrain_lab/civilian_dress.gd") # CIV-A4: residents are born dressed
 const CombatMovementCoordinatorScript = preload("res://scripts/terrain_lab/site_combat_movement_coordinator.gd")
 const FireMovementTypes = preload("res://scripts/terrain_lab/combat_movement_types.gd")
@@ -206,7 +207,15 @@ func _ready() -> void:
 	_region_original_ready()
 	_region_duty_leave(duty_scope)
 
+## 開始遊戲效能計畫 P0: the start chain ends at the first frame drawn after the world opened.
+func _perf_first_frame(create_new: bool) -> void:
+	PerfTrace.mark("ready_done")
+	await get_tree().process_frame
+	PerfTrace.mark("first_frame")
+	PerfTrace.flush("new_game" if create_new else "resume")
+
 func _region_original_ready() -> void:
+	if not restore_only: PerfTrace.mark("lab_ready")
 	if not restore_only and OS.get_cmdline_user_args().has("--site-fire-lab"):
 		restore_only = true
 		set_meta(&"fire_lab_fixture", {"version": FIRE_LAB_FIXTURE_VERSION, "seed": 12345})
@@ -326,12 +335,16 @@ func _region_original_ready() -> void:
 	# a direct scene run keeps the original default Site and save. An isolated --crowd-test run
 	# leaves a pending request alone, as before; the default crowd start (no arg) consumes it.
 	var world_request: Dictionary = {} if crowd_startup_requested and OS.get_cmdline_user_args().has("--crowd-test") else RegionEntry.take_pending()
-	generate_terrain(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
+	# 開始遊戲效能 S1 (perf/static-opt-report-01 §S1): a world request opens its fixed world at once; the placeholder
+	# terrain is generated only for a direct scene run (a failed open returns to the main menu).
+	if world_request.is_empty(): generate_terrain(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
+	PerfTrace.mark("placeholder_done")
 	if not world_request.is_empty():
 		site_controller.enter_requested_world(world_request)
 	elif FileAccess.file_exists(site_controller.save_path):
 		await site_controller.load_current()
 	site_controller.focus_camp()
+	if PerfTrace.enabled() and not world_request.is_empty(): _perf_first_frame.call_deferred(bool(world_request.get("create_new", false)))
 	if OS.get_cmdline_user_args().has("--site-test-ui"):
 		var test_path := "res://scripts/terrain_lab/site_test_window.gd"
 		if ResourceLoader.exists(test_path):
@@ -832,7 +845,9 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	_region_point_consuming = false
 	var actor_states: Dictionary = terrain.site.get("actors", {})
 	_bind_actor_presence(terrain, actor_states)
+	if not restore_only: PerfTrace.mark("bind_display_begin")
 	renderer.display(terrain)
+	if not restore_only: PerfTrace.mark("bind_displayed")
 	if actor_present(character):
 		character.terrain_cell = Vector2i(-1, -1)
 		character.place(terrain.cell_from_index(int(terrain.site.get("player_cell", terrain.index(terrain.spawn_cell)))), true)
@@ -880,6 +895,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 			combat_armies[index].restore_crowd_command_source(army_states[index], terrain, combat_actors)
 		else:
 			combat_armies[index].restore_combat_state(army_states[index], terrain, character, npc)
+	if not restore_only: PerfTrace.mark("bind_armies")
 	var prepared_fire_transport := _prepare_fire_transport_restore()
 	if not prepared_fire_transport.ok:
 		if site_controller != null: site_controller.show_result(prepared_fire_transport)
@@ -911,7 +927,9 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		crowd_site.name = "CrowdSite"
 		add_child(crowd_site)
 		crowd_site.setup(self)
+	if not restore_only: PerfTrace.mark("bind_controller_begin")
 	site_controller.bind()
+	if not restore_only: PerfTrace.mark("bind_controller")
 	# Fire work snapshots use the original ranged-order serials stored by transport.
 	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
 	if not restored_fire_transport.ok:
@@ -953,7 +971,9 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	# Restore the original cadence before applying the complete owner graph;
 	# graph restoration may legitimately restore its exact in-progress counter.
 	_duty_ai_elapsed = DutyAI.restore_cadence(self)
+	if not restore_only: PerfTrace.mark("bind_owners_begin")
 	var region_restored := _region_finish_bind_ticket(region_admission) if trusted_region else _restore_region_owners()
+	if not restore_only: PerfTrace.mark("bind_owners")
 	if not region_restored.ok:
 		site_controller.show_result(region_restored)
 		return
@@ -973,6 +993,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 			_region_bind_receipt_value = rehydrated
 			site_controller.show_result(rehydrated)
 			return
+	if not restore_only: PerfTrace.mark("bind_crowd_live")
 	_wire_region_point_owners()
 	_region_bound_data = terrain
 	if _region_owner_restore_receipt.is_empty():
@@ -11061,7 +11082,8 @@ func prepare_initial_artisan_birth(new_data: TerrainData, scenario_id: String, a
 	starter.data = candidate
 	staging.add_child(starter)
 	starter.set_process(false)
-	starter.initialize_visual()
+	# 開始遊戲效能: the starter is only the source of the look and personal fields and is freed with staging; it never
+	# needs its own 3D editor window (headless births already run without one).
 	if not starter.place(start, true): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND"))
 	var starter_state := starter.capture_state()
 	# This newly born civilian has no military appointment. Choose lawful
@@ -11671,7 +11693,8 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	starter.data = candidate
 	staging.add_child(starter)
 	starter.set_process(false)
-	starter.initialize_visual()
+	# 開始遊戲效能: the starter is only the source of the look and personal fields and is freed with staging; it never
+	# needs its own 3D editor window (headless births already run without one).
 	if not starter.place(start, true): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND"))
 	var snapshot := starter.capture_state()
 	# Lawful starting clothes (no cape) before the original owner creates any equipment.

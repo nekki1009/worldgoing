@@ -32,6 +32,7 @@ const SiegeWorkAppend := preload("res://scripts/terrain_lab/site_siege_work_appe
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const Atlas := preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 const CivilianActivity := preload("res://scripts/terrain_lab/crowd_civilian_activity.gd")
+const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const ExchangeTimings := preload("res://scripts/terrain_lab/character_exchange_timings.gd")
 const Site := preload("res://scripts/terrain_lab/site_controller.gd")
 const PersonOwner := preload("res://scripts/terrain_lab/crowd_person_owner.gd")
@@ -4154,10 +4155,13 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 	# the bind passes its region context, so a mid-action siege vehicle validates as the bind's own capture admits it
 	# (found 2026-11-10: it read CORRUPT_SAVE "攻城作業尚未收束" under the ordinary save rule).
 	if snapshot is Dictionary and snapshot.get("context") is Dictionary: region_context = snapshot.context
+	PerfTrace.mark("crowd_validate_begin")
 	var checked := SiteStore._validate_state(data, data.site, clampi(OS.get_processor_count(), 1, 8), native_candidate, region_context)
+	PerfTrace.mark("crowd_validated")
 	if not checked.ok: return checked
 	if not TerrainArmy.load_combat_bake() or not TerrainArmy.prewarm_soldier_atlas():
 		return SiteRuntime.fail("MISSING_ASSET", "士兵圖集不可用")
+	PerfTrace.mark("crowd_atlas_ready")
 	var candidate_host_fire := false
 	var candidate_crowd: Variant = checked.crowd_native
 	# S5: every convoy record must name the native convoy that the blob restored (same anchor cell, same operator as its only crew).
@@ -4215,8 +4219,10 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 			else:
 				appearances.append(appearance)
 			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
+	PerfTrace.mark("crowd_contacts_ready")
 	_headless_unadmitted_bodied(appearances, crowd.person_ids())
 	if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
+	PerfTrace.mark("crowd_kits_ready")
 	_host_fire_active = candidate_host_fire
 	return SiteRuntime.ok()
 
