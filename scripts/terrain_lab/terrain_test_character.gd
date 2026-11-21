@@ -812,7 +812,9 @@ func _start_exchange_visual(clip: StringName, merge_reaction: bool = false) -> v
 	if clip in [&"attack_jump_heavy", &"ride_heavy", &"ride_guard_break"] and editor != null:
 		var jump := editor.animation_player.get_animation(clip)
 		if jump != null and jump.loop_mode != Animation.LOOP_NONE:
-			jump.loop_mode = Animation.LOOP_NONE
+			# A runtime presenter may share this clip with other presenters (copy on write): change its own copy.
+			if editor.has_method("ensure_private_animation"): jump = editor.ensure_private_animation(clip)
+			if jump != null: jump.loop_mode = Animation.LOOP_NONE
 	var timing_clip := _exchange_timing_clip(clip)
 	_exchange_visual_left = ExchangeTimings.duration(timing_clip)
 	_exchange_visual_active = _exchange_visual_left > 0.0

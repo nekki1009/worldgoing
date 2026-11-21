@@ -3,6 +3,15 @@ extends HumanCharacter3DEditor
 ## Runtime presenter only. The atlas author keeps its exact fingerprinted source.
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 static var _siege_clip_cache: Dictionary = {} # raw cache key -> {clip: Animation}, the first build per body model
+## 開始遊戲效能 (copy on write): a presenter built from the raw cache keeps the cached model's own clips and copies one
+## only before it changes it. The three runtime writes to a presenter's clips are loop modes: the selected clip in
+## _play_selected_animation, the defaults in _prepare_animation_loop_defaults, and a resolved jump in
+## TerrainTestCharacter (ensure_private_animation). Every other change builds a new Animation (walk, reduced jump,
+## siege and civilian work clips). Deep-copying all 64 clips cost about 0.74 s per presenter.
+static var copy_on_write_enabled := true
+static var _loop_defaults_applied: Dictionary = {} # raw cache key -> true once a presenter set the shared defaults
+var _shared_clips: Dictionary = {} # instance id of a clip still shared with the cache -> true
+var _raw_key := ""
 var runtime_raw_cache := true
 static var _runtime_raw_scenes: Dictionary = {}
 static var runtime_raw_cache_enabled := true
@@ -15,6 +24,7 @@ static func release_runtime_raw_cache() -> void:
 	_finish_prewarm_tasks()
 	_runtime_raw_scenes.clear()
 	_siege_clip_cache.clear()
+	_loop_defaults_applied.clear()
 
 ## 開始遊戲效能: parses the raw body GLBs on worker threads while the main menu idles, so the first presenter of each body
 ## instantiates from the packed parse instead of parsing it on the main thread (about 4 s per body). The packed result is
@@ -103,6 +113,8 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 		model_root.queue_free()
 		model_root = null
 	animation_player = null
+	_shared_clips.clear()
+	_raw_key = ""
 	var model_path: String = str(BODY_MODELS[index]["path"])
 	if not preview_model_path.is_empty():
 		model_path = preview_model_path
@@ -163,11 +175,24 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	if not players.is_empty():
 		animation_player = players[0] as AnimationPlayer
 		if _runtime_raw_cache_active() and not use_imported_model:
-			# The cached scene shares its libraries; each instance edits a private copy.
+			var shared_key := "%s:%d" % [absolute_path, FileAccess.get_modified_time(absolute_path)]
+			var shareable := copy_on_write_enabled and preview_model_path.is_empty() and animation_player.get_animation_library_list() == [&""]
+			# The cached scene shares its libraries. With copy on write each instance gets its own library container over
+			# the shared clips (a clip is copied before its first change); otherwise each instance edits a private copy.
 			for library_name: StringName in animation_player.get_animation_library_list():
-				var private_library := animation_player.get_animation_library(library_name).duplicate(true) as AnimationLibrary
+				var shared_library := animation_player.get_animation_library(library_name)
+				var private_library: AnimationLibrary
+				if shareable:
+					private_library = AnimationLibrary.new()
+					for clip: StringName in shared_library.get_animation_list():
+						var clip_resource := shared_library.get_animation(clip)
+						if private_library.add_animation(clip, clip_resource) != OK: push_error("HumanCharacter3DEditor: failed to share a clip")
+						_shared_clips[clip_resource.get_instance_id()] = true
+				else:
+					private_library = shared_library.duplicate(true) as AnimationLibrary
 				animation_player.remove_animation_library(library_name)
 				if animation_player.add_animation_library(library_name, private_library) != OK: push_error("HumanCharacter3DEditor: failed to privatize animation library")
+			if shareable: _raw_key = shared_key
 		if _body_index == 0:
 			_ensure_male_full_body()
 			_ensure_editor_walk_animation()
@@ -209,3 +234,52 @@ func _seed_siege_work_clips(cache_key: String) -> void:
 	for clip: String in cached:
 		if library.has_animation(StringName(clip)): continue
 		if library.add_animation(StringName(clip), (cached[clip] as Animation).duplicate(true)) != OK: return
+
+## True while this presenter still shares `clip` with the raw cache (diagnostics and tests).
+func shares_animation(clip: StringName) -> bool:
+	return animation_player != null and animation_player.has_animation(clip) and _shared_clips.has(animation_player.get_animation(clip).get_instance_id())
+
+## Copy on write: this presenter's own copy of `clip`, replacing the shared one in its library under the same name
+## before a caller changes it. Playback keeps its place: AnimationPlayer keeps the assigned name and position when the
+## clip under that name is replaced (checked 2026-11-21).
+func ensure_private_animation(clip: StringName) -> Animation:
+	if animation_player == null or not animation_player.has_animation(clip): return null
+	var animation := animation_player.get_animation(clip)
+	if _shared_clips.is_empty() or not _shared_clips.has(animation.get_instance_id()): return animation
+	var library := animation_player.get_animation_library(&"")
+	if library == null or not library.has_animation(clip) or library.get_animation(clip) != animation:
+		push_error("HumanCharacter3DEditor: a shared clip outside the default library cannot be copied: %s" % clip)
+		return animation
+	var own := animation.duplicate(true) as Animation
+	library.remove_animation(clip)
+	if library.add_animation(clip, own) != OK:
+		push_error("HumanCharacter3DEditor: failed to install the private copy of %s" % clip)
+		return null
+	_shared_clips.erase(animation.get_instance_id())
+	return own
+
+func _play_selected_animation() -> void:
+	if not _shared_clips.is_empty() and animation_player != null and _selected_animation != &"" and animation_player.has_animation(_selected_animation):
+		var requested := Animation.LOOP_LINEAR if loop_toggle == null or loop_toggle.button_pressed else Animation.LOOP_NONE
+		if animation_player.get_animation(_selected_animation).loop_mode != requested: ensure_private_animation(_selected_animation)
+	super()
+
+func _prepare_animation_loop_defaults() -> void:
+	if _shared_clips.is_empty() or animation_player == null or loop_toggle == null:
+		super()
+		return
+	if not _loop_defaults_applied.has(_raw_key):
+		# The first presenter of this raw model sets the shared clips to the editor's loop defaults (the same rule, the
+		# same untouched toggle, for every presenter), so later presenters find nothing to change and copy nothing.
+		_loop_defaults_applied[_raw_key] = true
+		super()
+		return
+	var assigned := animation_player.assigned_animation
+	var current: Animation = animation_player.get_animation(assigned) if animation_player.has_animation(assigned) else null
+	for animation_id: StringName in _available_animation_ids:
+		if not animation_player.has_animation(animation_id): continue
+		var animation := animation_player.get_animation(animation_id)
+		if animation == current: continue
+		var requested := Animation.LOOP_LINEAR if _animation_loop_default(animation_id, loop_toggle.button_pressed) else Animation.LOOP_NONE
+		if animation.loop_mode != requested: ensure_private_animation(animation_id)
+	super()
