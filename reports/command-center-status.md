@@ -1,7 +1,16 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-21 22:20（台北）
+更新：2026-11-22 00:00（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 00:00（台北）推送、地圖編輯器多 Site 世界改群眾、銷贓待選
+- 23:30 依 Nekki「可push」推送到 master（24eaf20..848976b）。
+- 地圖編輯器多 Site 世界（P5C）修好，協調者指定「誕生時就把同伴 Site 轉成群眾」：
+  - RegionSaveSlot._author_companion_candidate：有作者居民、還沒有群眾段的同伴 Site，出生時標 crowd_convert_pending；冷補算第一次綁定就轉群眾，不再走已退役的格子模擬。
+  - 對照組（拿掉這個標記）測試本身印 PASS，但 stderr 有 2 個 GRID_SIMULATION_RETIRED，驗證器判失敗，所以標記是必要的。
+  - 測試兩處：restore_only 關掉後打開群眾（正式入口本來就跑群眾）；抵達同伴時冷補算有預算，回 PENDING 就用 resume_region_operation 接續同一請求（重新開會回 BUSY）。
+  - P5C 通過（302 秒）；回歸 P5C_REG 19 項全過（8 個作者世界測試、8 個群眾區域核心、3 個冒煙）。
+- 土匪銷贓：查過，11/18 的 B5 只做了風險折價、raided_by、市集拒絕；規格把銷贓寫成可延後，沒有規則，貿易計畫也排除黑市。已請 Nekki 選 A 市集暗盤（建議）、B 山寨抽象換糧、C 只給玩家。
 
 ## 2026-11-21 22:20（台北）開局效能第三輪：動畫庫用到才複製
 - 已提交，尚未推送：

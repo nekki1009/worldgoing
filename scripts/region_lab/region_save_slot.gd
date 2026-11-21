@@ -6712,6 +6712,11 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 		data.site.actor_presence_version = 1
 		data.site.actors = {}
 	data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": 0, "action_seconds": 0.0, "game_seconds": float(control.logical_game_seconds)}
+	# Off-screen crowd (Nekki 11/01 A; the grid simulation is retired): a populated companion is born with grid team rows.
+	# The mark makes its first bind convert them to a native crowd team, as a crowd-less NPC arrival is (RegionTravel.insert):
+	# the cold owner or the cold catch-up replay binds it restore_only and converts before any step (found 2026-11-21: the
+	# catch-up replayed the companion's authored residents through the retired grid simulation).
+	if supplied and not data.site.get("armies", []).is_empty() and not data.site.has("crowd"): data.site["crowd_convert_pending"] = true
 	return {"ok": true, "coordinate": site, "data": data}
 
 

@@ -215,6 +215,10 @@ func _run() -> void:
 	var old_capture: Dictionary = lab.site_controller._capture_for_save()
 	if not _pass("original old graph capture", old_capture.ok): return
 	lab.restore_only = false
+	# The formal entry runs the crowd (Option C, grid simulation retired). This Lab was built restore_only (no default
+	# load), which left crowd_startup_requested off; the start Site then stayed grid and its cold owner stepped a grid team
+	# on the D2 travel (GRID_SIMULATION_RETIRED, 2026-11-21).
+	lab.crowd_startup_requested = TerrainLab.CrowdSiteScript.requested()
 	lab.site_controller.save_root = folder.path_join("archives")
 	_freeze(lab)
 	var fault_state: Array = [0]
@@ -294,6 +298,12 @@ func _run() -> void:
 	if not _d2_complete(travel_slot, Time.get_ticks_msec() + 360000): return
 	travel_slot.checkpoint_region_travel()
 	var d2_arrived: Dictionary = travel_controller.open_fixed_world(str(exported.path), world, "main", Vector2i(-1, -1), false)
+	# The companion's cold catch-up is budgeted (crowd replay): PENDING parks the same request, and the caller resumes
+	# it (a fresh open returns BUSY), as P5CS3B does for the parked birth.
+	var d2_until := Time.get_ticks_msec() + 180000
+	while not d2_arrived.ok and str(d2_arrived.get("code", "")) == "PENDING" and Time.get_ticks_msec() < d2_until:
+		await process_frame
+		d2_arrived = travel_controller.resume_region_operation()
 	if not d2_arrived.ok:
 		# P5CS4E diagnostic: which layer returns the code. open_site is the layer the arrival calls for a saved destination.
 		var d2_probe: Dictionary = travel_slot.open_site(companion)
