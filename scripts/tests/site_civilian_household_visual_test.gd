@@ -8,8 +8,10 @@ extends SceneTree
 ## - the residents are under the daily schedule (no captain), dressed with the straw hat on civilian kits, no live body;
 ## - a work phase: the schedule itself (resident_schedule_tick) hands both to the household's work; walking to the farm
 ##   they carry, standing at the work they lift; the native presentation takes it (screenshots carry.png, lift.png);
-## The evening walk home (the schedule's housing return) is left out: one resident's native housing step stalled in the
-## 11/21 runs (under investigation); the night, the morning and the save are site_civilian_life_visual_test's.
+## - the evening: the schedule takes them off the work and walks them home, inside the house (native absent): nothing
+##   plays, and the crowd and the Site clock keep running with them inside;
+## - save and reopen (the stand-in settlement taken out first): each keeps his civilian look on a
+##   civilian kit, hp and fatigue unchanged by the presentation, still home and under the schedule.
 ## Output: SITE_CIVILIAN_HOUSEHOLD_VISUAL_PASS on success; quit(1) on any failure or the deadline.
 
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
@@ -261,6 +263,68 @@ func _run() -> void:
 	var image := lab.get_viewport().get_texture().get_image()
 	image.save_png("user://civilian_household_visual/lift.png")
 	print("SITE_CIVILIAN_HOUSEHOLD_VISUAL SHOT ", ProjectSettings.globalize_path("user://civilian_household_visual"))
+	# Evening: the schedule takes them off the work and walks them home; at their doors they go in (native absent).
+	var evening_minute := _common_minute(controller, residents, "evening")
+	if not _check(evening_minute >= 0, "a minute when both are in their evening"): return
+	data.site.minute = Calendar.day_start_minute(day) + evening_minute
+	# The walk home is a real walk, step by step; the player's own speed control (4×) shortens the wait.
+	for _press: int in range(3): lab.change_simulation_speed(1)
+	var evening_until := Time.get_ticks_msec() + 150000
+	while Time.get_ticks_msec() < evening_until:
+		controller._resident_check = -1
+		controller.resident_schedule_tick()
+		for _frame: int in range(30): await process_frame
+		if _finished: return
+		if residents.all(func(person: int) -> bool: return crowd.is_at_home(person)): break
+	if not _check(residents.all(func(person: int) -> bool: return not controller.work_team.is_assigned(person) and crowd.is_at_home(person)),
+		"in the evening the schedule takes them off the work and home, inside the house", [controller.last_resident_schedule, residents.map(func(person: int) -> Dictionary:
+			var body: Dictionary = controller.person_actions._person(person, false)
+			var registered: Dictionary = Housing.relation(lab, person)
+			return {"id": person, "home": crowd.is_at_home(person), "assigned": controller.work_team.is_assigned(person), "attends": Housing._attends(lab, person),
+				"busy": controller.person_actions.is_busy(person), "job": {"paused": controller.person_actions._jobs.get(str(person), {}).get("paused", ""), "route_elapsed": controller.person_actions._jobs.get(str(person), {}).get("route_elapsed", -1), "from": controller.person_actions._jobs.get(str(person), {}).get("executor_cell", -1)},
+				"native": crowd.soldier_state(int(crowd._index_by_id[person])),
+				"others": crowd._index_by_id.keys().map(func(other: int) -> Array:
+					var other_state: Dictionary = crowd.soldier_state(int(crowd._index_by_id[other]))
+					return [other, snappedf(float(other_state.get("px", -1.0)), 0.01), snappedf(float(other_state.get("py", -1.0)), 0.01)]),
+				"worker": data.site.get("worker", {}).get("cell", -1),
+				"near": [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN].map(func(step: Vector2i) -> Array:
+					return [Vector2i(body.cell) + step, data.is_walkable(Vector2i(body.cell) + step)]),
+				"route": data.path_between(body.cell, data.cell_from_index(int(registered.get("cell", -1))), func(cell: Vector2i) -> bool: return controller.person_actions.prison_blocked(cell, [person])),
+				"moving": bool(body.get("moving", false)), "cell": data.index(body.cell), "door": int(registered.get("cell", -1)),
+				"order": Housing._formation(lab, body).get("order"), "return": controller.person_actions.begin_housing_return(person, Housing.SCHEDULE_REQUESTER, false)})]): return
+	for _press: int in range(3): lab.change_simulation_speed(-1)
+	activity._decide(crowd)
+	if not _check(residents.all(func(person: int) -> bool: return _choice_of(activity, person).is_empty()), "inside the house nothing plays", activity._choice): return
+	# With them inside, the Site keeps running: the housing attendance input skips people inside their houses (the native
+	# refused an attendance row for them, and that refusal stopped every crowd step and the Site clock; found 2026-11-21).
+	var tick_before := int(crowd.crowd.stats()[36])
+	var minute_before := float(data.site.minute)
+	for _frame: int in range(90): await process_frame
+	if not _check(int(crowd.crowd.stats()[36]) > tick_before and float(data.site.minute) > minute_before and str(crowd.last_event_error.get("code", "")) != "INVALID_HOUSING",
+		"with both inside, the crowd and the Site clock keep running", [tick_before, int(crowd.crowd.stats()[36]), minute_before, data.site.minute, crowd.last_event_error]): return
+	# The save and reopen: the stand-in settlement out first; the house, the farm and the team are real.
+	var before := {}
+	for person: int in residents:
+		var body: Dictionary = controller.person_actions._person(person, false)
+		before[person] = {"hp": float(body.hp), "fatigue": float(crowd.soldier_state(int(crowd._index_by_id[person])).get("fatigue", 0.0)), "parts": crowd._records[person].appearance.parts.duplicate(true)}
+	data.site.erase("settlement")
+	var synced: Dictionary = crowd.sync_to_site()
+	var saved: Dictionary = controller.save_to(controller.save_path)
+	if not _check(synced.get("ok", true) and saved.ok, "the residents' team in the real house passes the Site save rules", [synced, saved]): return
+	var reopened: Dictionary = await controller.load_from(controller.save_path)
+	for _frame: int in range(10): await process_frame
+	crowd = lab.crowd_site
+	if not _check(reopened.get("ok", false) and crowd != null and crowd.active, "the Site reopens from the save", reopened): return
+	activity = crowd._civilian_activity
+	for person: int in residents:
+		var index := int(crowd._index_by_id.get(person, -1))
+		var kit := int(crowd._kit_ids[index]) if index >= 0 else -1
+		var body: Dictionary = controller.person_actions._person(person, false)
+		if not _check(index >= 0 and kit >= 0 and activity._tracks.has(kit) and crowd._records[person].appearance.parts == before[person].parts and not crowd._bodies.has(person),
+			"after reopening resident %d keeps his civilian look on a civilian kit" % person, [index, kit, crowd._records.get(person, {}).get("appearance", {})]): return
+		if not _check(is_equal_approx(float(body.hp), float(before[person].hp)) and is_equal_approx(float(crowd.soldier_state(index).get("fatigue", 0.0)), float(before[person].fatigue)),
+			"the presentation changed nothing of resident %d (hp, fatigue)" % person, [body.hp, before[person]]): return
+		if not _check(crowd.is_at_home(person) and Housing.schedule_authority(lab, body), "resident %d is still home and under the schedule" % person, Housing._formation(lab, body)): return
 	print("SITE_CIVILIAN_HOUSEHOLD_VISUAL_PASS: ", checks, " checks (team %d)" % residents_team)
 	_finished = true
 	quit(0)

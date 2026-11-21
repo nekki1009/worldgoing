@@ -160,7 +160,12 @@ static func attendance_input(lab: Variant) -> Array[Dictionary]:
 	for identity: String in lab.terrain.site.get("housing", {}):
 		if not _attends(lab, int(identity)): continue
 		var person: Dictionary = lab.site_controller.person_actions._person(int(identity), false)
-		if person.owner is CrowdOwner: rows.append({"unit": int(person.unit), "cell": int(relation(lab, int(identity)).cell)})
+		if person.owner is CrowdOwner:
+			# 平民 C1c: a resident inside his house (natively absent "at home", or any other absence) is off the field. The
+			# native refuses an attendance row for him (can_act), and that refusal stopped every crowd step of the Site, its
+			# clock included, from the moment the first resident went in (found 2026-11-21, CA-05 household test).
+			if int(person.owner.crowd_site._absent_kind(int(person.unit))) != 0: continue
+			rows.append({"unit": int(person.unit), "cell": int(relation(lab, int(identity)).cell)})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.unit) < int(b.unit))
 	return rows
 
