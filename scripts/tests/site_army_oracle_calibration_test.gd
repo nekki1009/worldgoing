@@ -24,8 +24,9 @@ func _run() -> void:
 		"oracle_sha256": FileAccess.get_sha256("res://scripts/tests/fixtures/site_army_logical_state_oracle.gd"),
 		"setup_usec": 0, "a_process_usec": 0, "b_process_usec": 0,
 		"snapshot_assembly_usec": 0, "compare_usec": 0, "snapshots_compared": 0}
-	if str(ProjectSettings.get_setting("application/run/main_scene")) != MAIN:
-		_finish(report, "Main scene changed", 1)
+	# The main scene is the main menu now (開局流程); MAIN is the formal Site entry, the TerrainLab scene itself.
+	if not ResourceLoader.exists(MAIN):
+		_finish(report, "Site scene missing", 1)
 		return
 	# Match the formal 5k fixture's deployment-only, in-memory capacity override.
 	if TerrainArmy.MAX_ROSTER_SIZE < PER_TEAM:

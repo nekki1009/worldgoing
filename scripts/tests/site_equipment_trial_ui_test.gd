@@ -46,8 +46,8 @@ func _items() -> Array:
 
 func _run() -> void:
 	if not _check(OS.get_cmdline_user_args().has("--site-test-ui"), "Run this explicit developer UI contract with --site-test-ui"): return
-	var scene: String = ProjectSettings.get_setting("application/run/main_scene")
-	if not _check(scene == "res://scenes/terrain_lab/TerrainLab.tscn", "Unexpected formal main scene"): return
+	# The main scene is the main menu now (開局流程); the formal Site entry is the TerrainLab scene itself.
+	var scene := "res://scenes/terrain_lab/TerrainLab.tscn"
 	lab = (load(scene) as PackedScene).instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)

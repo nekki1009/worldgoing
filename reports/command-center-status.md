@@ -1,7 +1,17 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 02:45（台北）
+更新：2026-11-22 03:20（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 03:20（台北）舊測試改載 TerrainLab 場景
+- 主場景現在是主選單。6 支舊測試還把主場景當 Site 載入（或檢查它），已改成直接用 TerrainLab 場景：army oracle 兩支、default_worker_removed、equipment_player_ui、equipment_trial_ui、mixed_equipment_live。
+- 另外兩支 knockout_visual 和 logistics_ai_acceptance 之前已經改好。
+- 重跑結果：
+  - oracle_calibration（--grid）和 oracle_stream（selfcheck）通過。
+  - equipment_player_ui 和 equipment_trial_ui 載入正常，但都在跑格子軍隊時撞到 GRID_SIMULATION_RETIRED。
+  - default_worker_removed 撞到 OLD_SAVE_UNSUPPORTED 和 CORRUPT_FIRE_OWNER，是舊存檔格式。
+  - 這 3 支是 Triage-C（只測格子軍隊）的候選，沒刪，先記在這裡。
+- mixed_equipment_live 要 GPU 加文化和體型參數，這次只做語法檢查。
 
 ## 2026-11-22 02:45（台北）土匪銷贓 B5b-2：NPC 銷贓隊
 - 頭目在場、當天沒別的事時，如果存貨非糧值 ≥ 60 糧且存糧不足全伙 7 日，又知道 2 個 Site 內有別勢力聚落，就從山寨派一支多人隊伍（不含頭目和玩家）帶貨出門。

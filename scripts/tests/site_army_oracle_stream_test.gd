@@ -91,8 +91,9 @@ func _run_stream() -> void:
 	if not source_capture.errors.is_empty():
 		_finish_stream(report, report_path, "source_manifest_incomplete", 1)
 		return
-	if str(ProjectSettings.get_setting("application/run/main_scene")) != MAIN:
-		_finish_stream(report, report_path, "wrong_main_scene", 1)
+	# The main scene is the main menu now (開局流程); MAIN is the formal Site entry, the TerrainLab scene itself.
+	if not ResourceLoader.exists(MAIN):
+		_finish_stream(report, report_path, "missing_site_scene", 1)
 		return
 	# Keep the formal harness's deployment-only in-memory limit, without
 	# changing production roster admission or the on-disk source fingerprint.

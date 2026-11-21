@@ -70,7 +70,8 @@ func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(folder)
 	Atlas._mixed_root = OUT + "/cache"
 	Atlas.refresh_female_sources()
-	var scene: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	# The main scene is the main menu now (開局流程); the formal Site entry is the TerrainLab scene itself.
+	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	lab = scene.instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)

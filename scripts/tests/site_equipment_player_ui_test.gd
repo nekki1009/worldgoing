@@ -104,8 +104,8 @@ func _scenario_equipment(captain: int) -> void:
 		assert(current == old, "Only the actual holder may change when original gear moves to ground cargo")
 
 func _run() -> void:
-	var scene: String = ProjectSettings.get_setting("application/run/main_scene")
-	assert(scene == "res://scenes/terrain_lab/TerrainLab.tscn")
+	# The main scene is the main menu now (開局流程); the formal Site entry is the TerrainLab scene itself.
+	var scene := "res://scenes/terrain_lab/TerrainLab.tscn"
 	lab = (load(scene) as PackedScene).instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
