@@ -1,7 +1,20 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-21 18:20（台北）
+更新：2026-11-21 20:05（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-21 20:05（台北）CIV-A5／CA-06 平民圖集收尾
+- 已提交，尚未推送：
+  - 5982dbf：平民壓測腳本 crowd10k_civilian_bench.gd，驗收報告 reports/civilian-ca06-20261121.md。
+  - 2cc970b：site_mounted_movement_test 改載 TerrainLab 場景，因為主場景已經是主選單；現在通過。
+- 壓測結果（ABBA，暖機 20 秒加取樣 60 秒）：
+  - 4,900 兵加 100 居民：四款比單款慢約 8%，在 10% 門檻內。貼圖 720 MB，在 768 MiB 內，但已接近上限。
+  - 5,000 居民：四款 3.65 毫秒，單款 1.43 毫秒，慢約 155%。原因是一款一頁，繪製次數從 98 變 381。
+  - 已問 Nekki 要 A 接受（建議）還是 B 重新排頁，尚未回覆。
+- 回歸 CA06_REG 18 項：12 項通過。
+  - 攻城工位兩項並行時崩潰在 GLTF 產生場景，引擎層 signal 11，單獨跑時通過。
+  - 另外 4 項失敗：凍結的舊圖集、9 月的編輯器快照比對、騎乘測試。騎乘測試已修。
+- 其他還在讀主場景當 Lab 的舊測試：army oracle 三支、default_worker_removed、equipment_player_ui／trial_ui、knockout_visual、logistics_ai_acceptance、mixed_equipment_live。都不在目前的回歸集合裡，這次沒動。
 
 ## 2026-11-21 18:20（台北）載入畫面、平民派工、居民進屋 Site 停住
 - 推送：Nekki 11/21 16:07「Push」。已推到 da7b6f0（草稿 PR nekki1009/worldgoing#2），目前沒有未推送的提交。
