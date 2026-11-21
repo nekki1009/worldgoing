@@ -5,6 +5,7 @@ extends RefCounted
 ## mission: {id, token, faction, from_site, warehouse, to_site, captain_ref, goods {item: n}, phase "out"|"back", day,
 ##   sold {item: n} (optional: what the destination paid, set once when the caravan traded there)}
 ##   risk (optional, 1..100: the route risk in percent the head reckoned with, 土匪 B5)
+##   fence (optional, true: a band's fence trip, 土匪 B5b; warehouse is "hoard", SiteBanditFenceTeam)
 ## lost (optional): the last MAX_LOST caravans that never came home, oldest first (TR-55, 土匪 B5):
 ##   {id, faction, from_site, at_site, day, raided_by (the band's faction id, or -1 when nobody is known)}
 ## At most MAX_ACTIVE missions in the world (the plan's initial cap: loading, on the road, at the destination, returning).
@@ -47,6 +48,9 @@ static func validate(value: Variant) -> Dictionary:
 		if mission is Dictionary and mission.has("risk"):
 			fields.append("risk")
 			if not RegionFactionQuery.whole(mission.risk, 1, 100): return _fail("caravan risk")
+		if mission is Dictionary and mission.has("fence"):
+			fields.append("fence")
+			if mission.fence != true: return _fail("caravan fence")
 		if not mission is Dictionary or not RegionFactionQuery.keys(mission, fields): return _fail("caravan fields")
 		if mission.has("sold"):
 			if not mission.sold is Dictionary or mission.sold.size() > 32: return _fail("caravan sale")

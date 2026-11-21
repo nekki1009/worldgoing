@@ -19,6 +19,7 @@ const Famine = preload("res://scripts/terrain_lab/site_famine_refugees.gd")
 const Desertion = preload("res://scripts/terrain_lab/site_desertion.gd")
 const Drifters = preload("res://scripts/terrain_lab/site_bandit_drifters.gd")
 const FarRaid = preload("res://scripts/terrain_lab/site_bandit_far_raid.gd") # B4d-3c: raids on another Site.
+const FenceTeam = preload("res://scripts/terrain_lab/site_bandit_fence_team.gd") # B5b-2: fence trips (銷贓隊).
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
@@ -67,6 +68,12 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			if cooled.ok and controller._commit_diplomacy(cooled, "").ok:
 				registry = slot.control.faction_registry
 				heat = int(RegionFactionQuery.bandit_of(registry, band).heat)
+		# B5b-2: a fence team back at the lair unloads into the hoard (one commit per trip).
+		var fenced_home: Dictionary = FenceTeam.home(controller, band)
+		if not fenced_home.home.is_empty() or not fenced_home.refusals.is_empty():
+			result.actions.append({"band": band, "action": "fence_home", "ok": fenced_home.refusals.is_empty(), "code": "", "home": fenced_home.home, "refusals": fenced_home.refusals})
+			registry = slot.control.faction_registry
+			entry = registry.entries[str(band)]
 		# B4d-3b: teams away from the lair (after a raid) go home first, one team a day.
 		if controller.lab.crowd_site != null and controller.lab.crowd_site.active and not Aftermath.away_teams(controller, band).is_empty():
 			var home: Dictionary = Aftermath.go_home(controller, band)
@@ -91,8 +98,14 @@ static func run(controller: Variant, today: int) -> Dictionary:
 				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
 			"raid": done = FarRaid.raid(controller, band, decision.target) if bool(decision.target.get("far", false)) else raid(controller, band, decision.target)
-			_: continue
+			_:
+				# B5b-2: with nothing else to do today, a chief whose hoard holds goods and too little food sends them to a fence.
+				var fence_target: Dictionary = FenceTeam.want(controller, band, chief) if here else {}
+				if fence_target.is_empty(): continue
+				done = FenceTeam.send(controller, band, fence_target)
+				decision = {"action": "fence", "target": fence_target}
 		var row := {"band": band, "action": str(decision.action), "ok": bool(done.get("ok", false)), "code": str(done.get("code", ""))}
+		if str(decision.action) == "fence": row.merge({"target": str(decision.target.get("site_id", "")), "goods": done.get("goods", {}), "token": str(done.get("token", ""))})
 		if str(decision.action) == "raid": row.merge({"orders": done.get("orders", []), "sent": done.get("sent", []), "refusals": done.get("refusals", []), "target": str(decision.target.get("site_id", "")), "heat_saved": bool(done.get("heat_saved", false))})
 		result.actions.append(row)
 	return result

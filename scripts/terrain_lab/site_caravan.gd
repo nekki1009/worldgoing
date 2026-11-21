@@ -29,6 +29,7 @@ const TradeSession = preload("res://scripts/terrain_lab/site_trade_session.gd")
 const Risk = preload("res://scripts/region_lab/region_caravan_risk.gd")
 const CartDriver = preload("res://scripts/terrain_lab/site_cart_driver.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
+const FenceTeam = preload("res://scripts/terrain_lab/site_bandit_fence_team.gd") # 土匪 B5b-2: a band's fence trip
 
 const REACH_SITES := 3
 ## The last evaluation that changed or refused something (read by tests and diagnostics only; never saved).
@@ -295,7 +296,8 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 			var home := _send_home(slot, lab, controller, mission, captain)
 			if home.ok: result.turned.append(int(mission.id))
 			else: result["refused"] = {"mission": int(mission.id), "code": str(home.get("code", "")), "message": str(home.get("message", ""))}
-		elif str(mission.phase) == "back" and str(mission.from_site) == scope:
+		elif str(mission.phase) == "back" and str(mission.from_site) == scope and not bool(mission.get("fence", false)):
+			# A fence trip ends in its band's daily turn at the lair (SiteBanditFenceTeam.home), not into a warehouse.
 			if _unload(slot, lab, controller, mission, captain).ok: result.home.append(int(mission.id))
 	if not result.turned.is_empty() or not result.home.is_empty() or result.has("refused") or result.has("lost"): last_evaluation = result.duplicate(true)
 	return result
@@ -303,6 +305,8 @@ static func evaluate(slot: Variant, lab: Variant) -> Dictionary:
 ## Slice 2: the caravan's best-loaded member barters his share of the mission's goods with this settlement. Returns
 ## {ok, decision, gave {item: n}, got {item: n}, warehouse} or {ok false, code, tried}.
 static func sell_here(lab: Variant, controller: Variant, mission: Dictionary, captain: int) -> Dictionary:
+	# 土匪 B5b-2 (bandit spec §7.1): a band's fence trip never deals with the settlement; it sells to one unwatched civilian.
+	if bool(mission.get("fence", false)): return FenceTeam.sell(lab, controller, mission, captain)
 	var data: TerrainData = lab.terrain
 	var settlement: Dictionary = Settlement.record(data)
 	if settlement.is_empty() or (settlement.get("trade_sources", {}) as Dictionary).is_empty(): return {"ok": false, "code": "NO_MARKET"}
