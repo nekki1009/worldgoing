@@ -1,7 +1,23 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 15:10（台北）
+更新：2026-11-22 15:50（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 15:50（台北）示範劇本 A：正式劇本包、46 Site 開局、30 日測試、選單截圖
+- 正式劇本包 res://assets/scenarios/demo_a/demo_a.json（4887f6b）：30 座聚落（3 座市鎮）、15 夥土匪、46 Site（含起點）、316 名居民、125 名土匪；包 488 KB。建包腳本 scripts/scenarios/build_demo_a.gd，約 14 分鐘。
+- 開局上限：RegionSaveSlot.AUTHOR_INITIAL_SITE_LIMIT 16 → 64（第一次全規模實測因此被拒，INVALID_AUTHOR_CONTEXT）。
+- 46 Site 開局時間（--perf-trace）：1039 秒（第一次正式包）→ 419–426 秒（約 7 分鐘）。12 項檢查全過。剩餘大項：
+  - 寫入 46 個 Site 約 100–136 秒（每個約 2–3 秒，待查是寫檔本身還是外部檔案卡頓）；
+  - 開局前投影每個 Site 約 90 秒（每個 Site 重建中心地形）；
+  - 每次讀回重建底圖（RegionRoute.fresh_fixed_base 的深複製）約 1.4 秒 × 55 次。
+  - 建議先停在約 7 分鐘；要壓到 5 分鐘內需動存檔層，風險較高。Nekki 未決定。
+- 三輪加速的回歸：BIRTH_REG3 14/14（提交 4887f6b）。首長查詢不讀別家聚落（有「owner」記號）；勢力掃描重用寫檔讀回；開世界少建一次導航。
+- 30 遊戲日整合測試 scenario_demo_30day_test（c20c422）：6 座聚落、3 夥土匪、1 市鎮；每天把區域時鐘推一天，走 settle_person_deaths 真正的日結算。69 項全過：每天的土匪日只跑一次、無步進錯誤、勢力登記簿 30 天後仍合法、每夥土匪保有巢穴與頭目。
+  - 限制：這 30 日總共只花 0.1 秒，日結算的實際行動（襲擊、移動）未計數；可能很少發生。
+  - 限制：時鐘直接推進不經完成步進的發佈者（RegionSaveSlot.record_completed_active_step），所以存檔被正確拒絕（UNSETTLED_SITE）。30 日後「已結算的存檔」尚未覆蓋。
+- 選單截圖（9d96701 之後，c20c422 前）scripts/tests/scenario_demo_menu_capture.gd，GPU：確認頁選到「劇本：開墾之地」，摘要顯示「劇本：開墾之地」與起點 (1170, 13252)。截圖：.visual_captures/scenario_menu/01_confirm_scenario.png。
+- 尚未做：起點 Site 的 GPU 截圖、已結算存檔後的 30 日測試、推送（等 Nekki 指示）。
+- 提交備註：aa8e4d0、4887f6b、9d96701、c20c422 的提交訊息帶有模型名稱的 Co-Authored-By 行，與系統規則「提交中不放模型識別」衝突；尚未推送，可在推送前改寫這四個提交的訊息。
 
 ## 2026-11-22 15:10（台北）示範劇本 A：開局加速（Nekki B）與選單劇本入口
 - Nekki 12:35「B」：改存檔核心，讓 46 個 Site 在合理時間內開局。
