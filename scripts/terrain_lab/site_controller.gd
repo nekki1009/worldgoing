@@ -10506,6 +10506,10 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
+	# 隊伍範本: the cadre cards (each card checked as its cadre is written; nothing else changes on a refusal).
+	if result.ok and bool(request.get("create_new", false)) and request.get("cadres") is Array and not request.cadres.is_empty():
+		var cadres_applied := apply_created_cadres(request.cadres)
+		if not cadres_applied.ok: result = cadres_applied
 	# 開局流程規劃 §2 家族 (v1): the template's family blueprint, the player alone as head under the family name.
 	if result.ok and bool(request.get("create_new", false)):
 		var blueprint: Dictionary = request.get("family", {}) if request.get("family") is Dictionary else {}
@@ -11541,12 +11545,20 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 ## Neutral part 2: main-menu character creation written onto the controlled crowd roster person (its CrowdPersonOwner record:
 ## name, combat_ability, command_abilities, personality, appearance) and native (abilities, equip/kit). Every check runs first.
 func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
+	var written := _write_created_crowd_person(identity, data)
+	return save_to(save_path) if written.ok else written
+
+## The checks and the writes of _apply_created_crowd_person, without the save (隊伍範本: five cadres, one save).
+func _write_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	var crowd: Variant = lab.crowd_site
 	var record: Dictionary = crowd._records[identity]
 	var index := int(crowd._index_by_id.get(identity, -1))
 	if index < 0 or not record.get("appearance") is Dictionary or not record.get("item_state") is Dictionary: return Runtime.fail("NO_TARGET", "新世界沒有玩家人物")
 	var appearance: Dictionary = record.appearance.duplicate(true)
-	appearance["body"] = int(data.get("body", appearance.body))
+	# The body keeps the stored number's type: a record read from a save holds 0.0, and the crowd atlas describes a look by
+	# its values with their types, so an int body would be a look it has never seen (隊伍範本, 2026-11-22).
+	var body_value := int(data.get("body", appearance.body))
+	appearance["body"] = float(body_value) if appearance.get("body") is float else body_value
 	appearance.parts.face = str(data.get("face", appearance.parts.face))
 	appearance.parts.hair = str(data.get("hair", appearance.parts.hair))
 	appearance["hair_dye"] = str(data.get("hair_dye", appearance.get("hair_dye", "")))
@@ -11590,6 +11602,31 @@ func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	if packet.is_empty(): record.erase("personality")
 	else: record["personality"] = packet.duplicate(true)
 	crowd.equipment_changed(identity)
+	return Runtime.ok()
+
+## 隊伍範本（幹部卡, 開局流程規劃 §2, Nekki 2026-11-22）: the start cadres take the request's cards, in birth order (the
+## player's team without the player, by person id; the last one is the 文武兼備 cadre). A card writes name, look,
+## 武力, the command abilities and personality as a created person does; it carries no skills, so the cadre keeps the
+## start seeding. An empty card leaves its cadre as generated. Every card is checked before anything is written; one save.
+func apply_created_cadres(cards: Array) -> Dictionary:
+	if cards.is_empty() or cards.all(func(card: Variant) -> bool: return card is Dictionary and card.is_empty()): return Runtime.ok()
+	if lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "隊伍範本須在群眾開局套用")
+	var player := int(lab.controlled_person_id())
+	var team: Dictionary = {}
+	for candidate: Dictionary in lab.crowd_site.teams:
+		if not bool(candidate.get("departed", false)) and candidate.get("person_ids", []).has(player): team = candidate
+	var cadres: Array[int] = []
+	for person: Variant in team.get("person_ids", []):
+		if int(person) != player: cadres.append(int(person))
+	cadres.sort()
+	if cards.size() > cadres.size(): return Runtime.fail("INVALID", "隊伍範本的幹部卡多於開局幹部")
+	for at: int in range(cards.size()):
+		var card: Variant = cards[at]
+		if not card is Dictionary: return Runtime.fail("INVALID", "幹部卡格式不合法")
+		if card.is_empty(): continue
+		if card.has("skills") or card.has("learning"): return Runtime.fail("INVALID", "幹部卡不帶熟練或學業")
+		var written := _write_created_crowd_person(cadres[at], card)
+		if not written.ok: return written
 	return save_to(save_path)
 
 ## 技能 K5 (reports/skill-system-plan.md §5.5): the created person's start template. {ok, apply, packet, learning}: apply

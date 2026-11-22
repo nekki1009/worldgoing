@@ -29,6 +29,7 @@ const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.
 const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K5: the start template's points
 const Templates = preload("res://scripts/main_menu/character_templates.gd") # 開局流程規劃 §2: the template library
+const TeamTemplates = preload("res://scripts/main_menu/team_templates.gd") # 隊伍範本（幹部卡）, Nekki 11/22
 const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const DEFAULT_HAIR_DYE := "9b775dff"
 ## The project renders at 2560×1440 and scales to the window; size UI for that.
@@ -88,6 +89,19 @@ var _initial_scenario: OptionButton
 var _start_faction: OptionButton
 var _start_faction_name: LineEdit
 var _summary: Label
+# 隊伍範本: the list on the templates page, its editor page and the New Game choice.
+var _team_list: ItemList
+var _team_rows: Array = []
+var _team_note: Label
+var _team_delete: Button
+var _team_delete_armed := ""
+var _editing_team_id := ""
+var _team_title: LineEdit
+var _team_slots: Array[OptionButton] = []
+var _team_slot_rows: Array = [] # the usable character templates the slot menus list, in item order after 自動產生
+var _team_error: Label
+var _start_team: OptionButton
+var _start_team_rows: Array = []
 
 func _ready() -> void:
 	get_tree().paused = false
@@ -131,6 +145,7 @@ func _ready() -> void:
 	_build_confirm_page(column)
 	_build_templates_page(column)
 	_build_pick_character_page(column)
+	_build_team_template_page(column)
 	_build_loading_page(column)
 	var step := str(RegionEntry.draft.get("step", ""))
 	if step == "character" and RegionEntry.draft.get("site") is Vector2i: show_page(_character_entry_page())
@@ -148,7 +163,10 @@ func show_page(page: String) -> void:
 	elif page == "character":
 		_refresh_character_mode()
 		if _character_mode == "new_game": _restore_character_draft()
-	elif page == "templates": _refresh_templates()
+	elif page == "templates":
+		_refresh_templates()
+		_refresh_team_templates()
+	elif page == "team_template": _refresh_team_editor()
 	elif page == "pick_character": _refresh_pick()
 	elif page == "confirm": _refresh_summary()
 	_set_preview_active(page == "character")
@@ -690,6 +708,20 @@ func _build_templates_page(parent: Node) -> void:
 	row.add_child(_template_rename)
 	_button(row, "改名", "TemplateRename", _rename_template)
 	_template_delete = _button(row, "刪除", "TemplateDelete", _delete_template)
+	# 隊伍範本（幹部卡）: each card is one of the character templates above.
+	_label(page, "隊伍範本（%d 名開局幹部；空位照舊自動產生，第 %d 位是文武兼備）" % [TeamTemplates.SLOTS, TeamTemplates.SLOTS], 20)
+	_team_list = ItemList.new()
+	_team_list.name = "TeamTemplateList"
+	_team_list.custom_minimum_size = Vector2(620, 140) * UI
+	_team_list.item_selected.connect(func(_index: int) -> void: _team_selected())
+	_team_list.item_activated.connect(func(_index: int) -> void: _open_team_editor(_selected_team_id()))
+	page.add_child(_team_list)
+	_team_note = _label(page, "", 14)
+	_team_note.name = "TeamTemplateNote"
+	row = _row(page)
+	_button(row, "新建隊伍", "TeamTemplateNew", func() -> void: _open_team_editor(""))
+	_button(row, "編輯隊伍", "TeamTemplateEdit", func() -> void: _open_team_editor(_selected_team_id()))
+	_team_delete = _button(row, "刪除隊伍", "TeamTemplateDelete", _delete_team_template)
 	_button(page, "返回", "TemplatesBack", func() -> void: show_page("main"))
 
 func _refresh_templates() -> void:
@@ -761,6 +793,126 @@ func _delete_template() -> void:
 	var deleted := Templates.delete_template(id)
 	_refresh_templates()
 	_template_note.text = "已刪除。" if deleted.ok else "無法刪除：" + "；".join(deleted.problems)
+
+func _refresh_team_templates() -> void:
+	_team_rows = TeamTemplates.list()
+	_team_list.clear()
+	for row: Dictionary in _team_rows:
+		var filled := 0
+		for card: Variant in row.template.get("cadres", []) if row.template.get("cadres") is Array else []:
+			if card is Dictionary and not card.is_empty(): filled += 1
+		var line := "%s · %d 張幹部卡" % [str(row.title), filled]
+		if not row.problems.is_empty(): line += "（無法使用）"
+		_team_list.add_item(line)
+	if _team_rows.is_empty(): _team_list.add_item("尚無隊伍範本；按「新建隊伍」開始", null, false)
+	_team_note.text = ""
+	_team_delete_armed = ""
+	_team_delete.text = "刪除隊伍"
+
+func _selected_team_id() -> String:
+	var selected := _team_list.get_selected_items()
+	return str(_team_rows[selected[0]].id) if not selected.is_empty() and selected[0] < _team_rows.size() else ""
+
+func _team_selected() -> void:
+	_team_delete_armed = ""
+	_team_delete.text = "刪除隊伍"
+	var selected := _team_list.get_selected_items()
+	if selected.is_empty() or selected[0] >= _team_rows.size(): return
+	var row: Dictionary = _team_rows[selected[0]]
+	_team_note.text = "可以用來開新遊戲。" if row.problems.is_empty() else "問題：" + "；".join(row.problems)
+
+## Deleted only on a second press for the same team template.
+func _delete_team_template() -> void:
+	var id := _selected_team_id()
+	if id.is_empty(): return
+	if _team_delete_armed != id:
+		_team_delete_armed = id
+		_team_delete.text = "確定刪除？再按一次"
+		return
+	var deleted := TeamTemplates.delete_template(id)
+	_refresh_team_templates()
+	_team_note.text = "已刪除。" if deleted.ok else "無法刪除：" + "；".join(deleted.problems)
+
+func _build_team_template_page(parent: Node) -> void:
+	var page := _page(parent, "team_template")
+	_label(page, "隊伍範本", 24)
+	_label(page, "每位幹部選一個人物範本當幹部卡，或留「自動產生」。幹部卡帶名字、外觀、武力、戰術、統御、教練與性格；熟練照年齡與主武器推，不用玩家的 200 點。", 14)
+	var row := _row(page)
+	_label(row, "名稱", 16).custom_minimum_size.x = 96 * UI
+	_team_title = LineEdit.new()
+	_team_title.name = "TeamTemplateTitle"
+	_team_title.max_length = Templates.MAX_TITLE
+	_team_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_team_title)
+	_team_slots.clear()
+	for at: int in range(TeamTemplates.SLOTS):
+		var slot := _option_row(page, "第 %d 位%s" % [at + 1, "（文武兼備）" if at == TeamTemplates.SLOTS - 1 else ""], "TeamSlot%d" % (at + 1))
+		_team_slots.append(slot)
+	_team_error = _label(page, "", 14)
+	_team_error.name = "TeamTemplateError"
+	var buttons := _row(page)
+	_button(buttons, "返回", "TeamTemplateBack", func() -> void: show_page("templates"))
+	_button(buttons, "儲存隊伍範本", "TeamTemplateSave", _save_team_template)
+
+## Opens the team editor on one team template (id "" = a new one).
+func _open_team_editor(id: String) -> void:
+	_editing_team_id = id
+	_team_error.text = ""
+	show_page("team_template")
+	if id.is_empty():
+		_team_title.text = ""
+		return
+	var loaded := TeamTemplates.load_template(id)
+	if not loaded.ok:
+		_team_error.text = "；".join(loaded.problems)
+		return
+	_team_title.text = str(loaded.template.get("title", ""))
+	var cards := TeamTemplates.cards_of(loaded.template)
+	for at: int in range(TeamTemplates.SLOTS):
+		_select_card(_team_slots[at], cards[at])
+
+## Fills every slot menu with 自動產生 and the usable character templates.
+func _refresh_team_editor() -> void:
+	_team_slot_rows = _usable_templates()
+	for slot: OptionButton in _team_slots:
+		slot.clear()
+		slot.add_item("自動產生")
+		for row: Dictionary in _team_slot_rows:
+			slot.add_item("%s · %s" % [str(row.title), str(row.template.character.get("name", "—"))])
+		slot.select(0)
+
+## Selects the character template whose card equals `card` ({} or no match: 自動產生; a card whose template is gone is
+## kept as an extra item so saving does not lose it).
+func _select_card(slot: OptionButton, card: Dictionary) -> void:
+	if card.is_empty():
+		slot.select(0)
+		return
+	for at: int in range(_team_slot_rows.size()):
+		if TeamTemplates.card_of(_team_slot_rows[at].template.character) == card:
+			slot.select(at + 1)
+			return
+	slot.add_item("（原有幹部卡）%s" % str(card.get("name", "—")))
+	slot.set_item_metadata(slot.item_count - 1, card)
+	slot.select(slot.item_count - 1)
+
+## The cards on the editor page, one per slot ({} = generated).
+func team_cards() -> Array:
+	var cards: Array = []
+	for slot: OptionButton in _team_slots:
+		var at := slot.selected
+		if at <= 0: cards.append({})
+		elif at - 1 < _team_slot_rows.size(): cards.append(TeamTemplates.card_of(_team_slot_rows[at - 1].template.character))
+		else: cards.append(slot.get_item_metadata(at) if slot.get_item_metadata(at) is Dictionary else {})
+	return cards
+
+func _save_team_template() -> void:
+	var saved := TeamTemplates.save_template(TeamTemplates.make(_team_title.text, team_cards()), _editing_team_id)
+	if not saved.ok:
+		_team_error.text = "無法儲存：" + "；".join(saved.problems)
+		return
+	_editing_team_id = str(saved.id)
+	show_page("templates")
+	_team_note.text = "已儲存隊伍範本。"
 
 func _build_pick_character_page(parent: Node) -> void:
 	var page := _page(parent, "pick_character")
@@ -897,6 +1049,13 @@ func _build_confirm_page(parent: Node) -> void:
 	_world_name.custom_minimum_size.x = 360 * UI
 	row.add_child(_world_name)
 	_build_initial_scenario_choice(page)
+	# 隊伍範本: the start cadres from a team template, or generated as before.
+	_label(page, "開局幹部", 16)
+	_start_team = OptionButton.new()
+	_start_team.name = "StartTeam"
+	_start_team.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.add_child(_start_team)
+	_start_team.item_selected.connect(func(_index: int) -> void: _refresh_summary())
 	_summary = _label(page, "", 16)
 	_summary.name = "NewGameSummary"
 	_summary.custom_minimum_size.x = 560 * UI
@@ -904,7 +1063,25 @@ func _build_confirm_page(parent: Node) -> void:
 	_button(buttons, "上一步", "ConfirmBack", func() -> void: show_page("character"))
 	_button(buttons, "開始", "StartGame", start_new_game)
 
+## The usable team templates in the New Game choice (item 0 = 自動產生), keeping the current pick.
+func _refresh_start_team() -> void:
+	var picked := str(_start_team_rows[_start_team.selected - 1].id) if _start_team.selected > 0 and _start_team.selected - 1 < _start_team_rows.size() else ""
+	_start_team_rows = TeamTemplates.list().filter(func(row: Dictionary) -> bool: return row.problems.is_empty())
+	_start_team.clear()
+	_start_team.add_item("自動產生 %d 名幹部" % TeamTemplates.SLOTS)
+	for row: Dictionary in _start_team_rows: _start_team.add_item("隊伍範本：%s" % str(row.title))
+	_start_team.select(0)
+	for at: int in range(_start_team_rows.size()):
+		if str(_start_team_rows[at].id) == picked: _start_team.select(at + 1)
+
+## The picked team template's cards for RegionEntry.request_new_world ([] = all generated) and its title.
+func start_team_choice() -> Dictionary:
+	if _start_team == null or _start_team.selected <= 0 or _start_team.selected - 1 >= _start_team_rows.size(): return {"cards": [], "title": ""}
+	var row: Dictionary = _start_team_rows[_start_team.selected - 1]
+	return {"cards": TeamTemplates.cards_of(row.template), "title": str(row.title)}
+
 func _refresh_summary() -> void:
+	if _start_team != null: _refresh_start_team() # keeps the current pick
 	var data: Dictionary = RegionEntry.draft.get("character", {})
 	var site: Vector2i = RegionEntry.draft.get("site", Vector2i(-1, -1))
 	if _world_name.text.is_empty():
@@ -932,6 +1109,11 @@ func _refresh_summary() -> void:
 	var template_title := str(RegionEntry.draft.get("template_title", ""))
 	if not template_title.is_empty(): _summary.text += "\n範本：%s" % template_title
 	if bool(data.get("free_points", false)): _summary.text += "\n開局：自由分配（不設能力點上限）"
+	var team := start_team_choice()
+	if not str(team.title).is_empty():
+		var names: Array[String] = []
+		for card: Dictionary in team.cards: names.append(str(card.get("name", "自動")) if not card.is_empty() else "自動")
+		_summary.text += "\n幹部：%s（%s）" % [str(team.title), "、".join(names)]
 
 ## The selected start faction for RegionEntry.request_new_world.
 func start_faction_choice() -> Dictionary:
@@ -959,7 +1141,7 @@ func start_new_game() -> void:
 	var start_record := {"free_points": bool(data.get("free_points", false)), "template": str(RegionEntry.draft.get("template_title", "")),
 		"scenario": RegionEntry.scenario_record(scenario_id)}
 	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction,
-		RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}, start_record):
+		RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}, start_record, start_team_choice().cards):
 		_message.text = RegionEntry.menu_message
 		_message.visible = true
 		return

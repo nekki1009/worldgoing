@@ -44,7 +44,8 @@ static func bandit_start_allowed(initial_scenario_id: String) -> bool:
 
 ## `family` is the template's family blueprint {surname, name} (開局流程規劃 §2) and `start_record` what world.json keeps
 ## about the start ({free_points, template}).
-static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}, family: Dictionary = {}, start_record: Dictionary = {}) -> bool:
+## `cadres` (隊伍範本, TeamTemplates.cards_of): one card per start cadre, {} = generated as before; [] = all generated.
+static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}, family: Dictionary = {}, start_record: Dictionary = {}, cadres: Array = []) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
 		return false
@@ -70,7 +71,7 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true),
 		"family": {"surname": str(family.get("surname", "")).strip_edges(), "name": str(family.get("name", "")).strip_edges()},
 		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", "")),
-			"scenario": scenario_record(initial_scenario_id)}}
+			"scenario": scenario_record(initial_scenario_id)}, "cadres": cadres.duplicate(true)}
 	return true
 
 
