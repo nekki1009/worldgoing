@@ -5,7 +5,9 @@ extends RefCounted
 ## FORCE times the band's people at its lair, and at most one expedition per faction every COOLDOWN_DAYS days (the day is
 ## kept in the band's table, `pursued` {faction: day}, saved before the team leaves). The team leaves on its captain's word
 ## (captain:suppress) toward the lair Site; the battle there is an official attack on the band (site_bandit_attacked.gd).
-## Live crowd Sites only (as the band AI); the way home and off-screen battles at a cold lair are later stages.
+## Stage 2: the faction's teams standing away from the home of its latest expedition (pursued {day, home}, within
+## COOLDOWN_DAYS) go home on the same word, one team a day, once no band person stands there (go_home, before the
+## expedition choice). Live crowd Sites only (as the band AI); off-screen battles at a cold lair are a later stage.
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd")
@@ -22,8 +24,22 @@ static func last_expedition(registry: Dictionary, faction: int) -> int:
 		var entry: Dictionary = registry.entries[key]
 		if entry.get("kind") != "bandit" or not entry.get("bandit") is Dictionary: continue
 		var pursued: Variant = entry.bandit.get("pursued", {})
-		if pursued is Dictionary: last = maxi(last, int(pursued.get(str(faction), -1)))
+		var row: Variant = pursued.get(str(faction)) if pursued is Dictionary else null
+		if row is Dictionary: last = maxi(last, int(row.get("day", -1)))
 	return last
+
+## The home Site of `faction`'s latest expedition in the last COOLDOWN_DAYS days ("" when none). Pure.
+static func home_of(registry: Dictionary, faction: int, today: int) -> String:
+	var best := -1
+	var home := ""
+	for key: Variant in registry.get("entries", {}):
+		var entry: Dictionary = registry.entries[key]
+		if entry.get("kind") != "bandit" or not entry.get("bandit") is Dictionary or not entry.bandit.get("pursued") is Dictionary: continue
+		var row: Variant = entry.bandit.pursued.get(str(faction))
+		if row is Dictionary and int(row.get("day", -1)) > best and today - int(row.get("day", -1)) <= COOLDOWN_DAYS:
+			best = int(row.day)
+			home = str(row.get("home", ""))
+	return home
 
 ## The expedition to send today, or {} with `reason`. `teams` = [{team_id, size}] of the faction's combat teams here;
 ## `bands` = [{band, heat, lair_site, members}]. Pure: the hottest band in reach (then the nearest, then the lowest id),
@@ -33,7 +49,8 @@ static func choose(here_site: String, teams: Array, bands: Array, last_day: int,
 	var candidates: Array = []
 	for row: Dictionary in bands:
 		var distance := Bandit.site_distance(here_site, str(row.lair_site))
-		if int(row.heat) >= HEAT_PURSUE and distance >= 0 and distance <= REACH and int(row.members) > 0:
+		# A lair on this very Site is no expedition: its people stand here and any fight is local.
+		if int(row.heat) >= HEAT_PURSUE and distance >= 1 and distance <= REACH and int(row.members) > 0:
 			candidates.append({"band": int(row.band), "heat": int(row.heat), "distance": distance, "members": int(row.members), "lair_site": str(row.lair_site)})
 	if candidates.is_empty(): return {"reason": "NO_BAND"}
 	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -86,9 +103,16 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	if lab.crowd_site == null or not lab.crowd_site.active: return _with_reason(result, "NOT_LIVE")
 	var registry: Dictionary = slot.control.get("faction_registry", {})
 	if registry.get("version") != RegionFactionQuery.VERSION: return _with_reason(result, "NO_REGISTRY")
+	# Stage 2 first: an expedition standing here (a lair Site has no settlement of its own) goes home.
+	var homeward: Dictionary = go_home(controller, today)
+	if homeward.has("sent"):
+		result["home"] = homeward.sent
+		return result
 	var settlement: Dictionary = Settlement.record(lab.terrain)
 	var faction := int(settlement.get("owner_faction", -1))
 	if settlement.is_empty() or not Attacked.official(registry, faction): return _with_reason(result, "NO_OFFICIAL_SETTLEMENT")
+	# The player's own faction (kind player) sends troops on the player's word, never on the AI's.
+	if str(registry.entries[str(faction)].get("kind", "")) == "player": return _with_reason(result, "PLAYER_FACTION")
 	var here := str(lab.terrain.site.get("id", ""))
 	var player := int(lab.controlled_person_id())
 	var teams: Array = []
@@ -105,12 +129,12 @@ static func run(controller: Variant, today: int) -> Dictionary:
 		var lair: Variant = table.get("lair")
 		if not lair is Dictionary or int(table.get("heat", 0)) < HEAT_PURSUE: continue
 		var distance := Bandit.site_distance(here, str(lair.site_id))
-		if distance < 0 or distance > REACH: continue
+		if distance < 1 or distance > REACH: continue # a lair here is a local fight, not an expedition
 		bands.append({"band": int(entry.faction_id), "heat": int(table.get("heat", 0)), "lair_site": str(lair.site_id), "members": band_members(controller, int(entry.faction_id), str(lair.site_id))})
 	var chosen := choose(here, teams, bands, last_expedition(registry, faction), today)
 	if chosen.has("reason"): return _with_reason(result, str(chosen.reason))
 	# The expedition day is saved first (the cooldown holds even if the departure is refused below).
-	var marked: Dictionary = Bandit.pursued(registry, int(chosen.band), faction, today, float(slot.control.logical_game_seconds))
+	var marked: Dictionary = Bandit.pursued(registry, int(chosen.band), faction, today, here, float(slot.control.logical_game_seconds))
 	if not marked.ok: return _with_reason(result, str(marked.get("code", "PURSUED_REFUSED")))
 	var saved: Dictionary = controller._commit_diplomacy(marked, "")
 	if not saved.ok: return _with_reason(result, str(saved.get("code", "PURSUED_REFUSED")))
@@ -128,6 +152,52 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵出發剿匪")
 	result["sent"] = {"band": int(chosen.band), "faction": faction, "team": int(chosen.team_id), "token": token, "lair_site": str(chosen.lair_site), "members": int(chosen.members), "size": int(chosen.size)}
 	return result
+
+## Stage 2: one of the expedition teams standing here goes home ({sent: {faction, team, home, token}} or {reason}). Not while
+## any living band person stands here; only teams of official non-player factions whose latest expedition's home is
+## another Site.
+static func go_home(controller: Variant, today: int) -> Dictionary:
+	var lab: Variant = controller.lab
+	var slot: Variant = controller.region_slot
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	var here := str(lab.terrain.site.get("id", ""))
+	var player := int(lab.controlled_person_id())
+	var by_faction := {}
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)): continue
+		var faction := int(team.get("faction", -1))
+		var living := 0
+		for person: Variant in team.get("person_ids", []):
+			var target: Dictionary = lab._original_person_target(int(person))
+			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: living += 1
+		if RegionFactionQuery.is_bandit(registry, faction) and living > 0: return {"reason": "BAND_HERE"}
+		if bool(team.get("solo", false)) or living < 2 or team.get("person_ids", []).has(player) or not Attacked.official(registry, faction): continue
+		if str(registry.entries[str(faction)].get("kind", "")) == "player" or int(controller.team_captain_of_team(int(team.team_id))) <= 0: continue
+		var rows: Array = by_faction.get(faction, [])
+		rows.append({"team_id": int(team.team_id), "size": living})
+		by_faction[faction] = rows
+	var factions: Array = by_faction.keys()
+	factions.sort()
+	for faction: int in factions:
+		var home := home_of(registry, faction, today)
+		if home.is_empty() or home == here: continue
+		var rows: Array = by_faction[faction]
+		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.size) > int(b.size) or int(a.size) == int(b.size) and int(a.team_id) < int(b.team_id))
+		var team_id := int(rows[0].team_id)
+		var captain := int(controller.team_captain_of_team(team_id))
+		var person: Dictionary = lab.crowd_site.combat_target(captain) if captain > 0 else {}
+		if person.is_empty(): continue
+		var at: Dictionary = slot._coordinate(lab.terrain)
+		if not at.ok: return {"reason": str(at.get("code", ""))}
+		var component: int = RegionTravelSite.start_component(slot, at.site, person.cell, lab.terrain)
+		var token := "suppress_home_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+		var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:suppress", team_id, _coordinate(home), component, [], token)
+		if not prepared.ok: return {"reason": str(prepared.get("code", "DISPATCH_REFUSED"))}
+		var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
+		if not committed.ok: return {"reason": str(committed.get("code", "DISPATCH_REFUSED"))}
+		if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵剿匪收兵回營")
+		return {"sent": {"faction": faction, "team": team_id, "home": home, "token": token}}
+	return {"reason": "NONE"}
 
 static func _with_reason(result: Dictionary, reason: String) -> Dictionary:
 	result["reason"] = reason

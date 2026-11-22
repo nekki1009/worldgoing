@@ -123,11 +123,12 @@ static func attacked(registry: Dictionary, band: int, day: int, now: float) -> D
 		table["heat"] = heat
 		table["attacked_day"] = maxi(int(table.get("attacked_day", -1)), maxi(0, day)), now) # String keys: the validator refuses StringName keys
 
-## 官方剿匪 (Nekki 2026-11-22 B): `faction` sent an expedition against the band on `day` (its 30-day cooldown reads this).
-static func pursued(registry: Dictionary, band: int, faction: int, day: int, now: float) -> Dictionary:
+## 官方剿匪 (Nekki 2026-11-22 B): `faction` sent an expedition from `home` (a Site id) against the band on `day` (its
+## 30-day cooldown and the way home read this).
+static func pursued(registry: Dictionary, band: int, faction: int, day: int, home: String, now: float) -> Dictionary:
 	return _with_table(registry, band, func(table: Dictionary) -> void:
-		var rows: Dictionary = table.get("pursued", {}).duplicate() if table.get("pursued") is Dictionary else {}
-		rows[str(faction)] = maxi(0, day)
+		var rows: Dictionary = table.get("pursued", {}).duplicate(true) if table.get("pursued") is Dictionary else {}
+		rows[str(faction)] = {"day": maxi(0, day), "home": home}
 		table["pursued"] = rows, now)
 
 static func set_heat(registry: Dictionary, band: int, heat: int, now: float) -> Dictionary:

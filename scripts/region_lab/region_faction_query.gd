@@ -114,11 +114,14 @@ static func _bandit_valid(entry: Dictionary, now: float) -> Dictionary:
 	if table.has("heat") and not whole(table.heat, 0, BANDIT_HEAT_MAX): return fail("CORRUPT_SAVE", "bandit heat")
 	# Nekki 2026-11-22 B: the game day of the latest official attack on the band (optional).
 	if table.has("attacked_day") and not whole(table.attacked_day, 0, 2147483646): return fail("CORRUPT_SAVE", "bandit attacked day")
-	# 官方剿匪 (Nekki 2026-11-22 B): {official faction id: the day it last sent an expedition against the band}.
+	# 官方剿匪 (Nekki 2026-11-22 B): {official faction id: {day, home}}: its latest expedition against the band and the
+	# Site it left from.
 	if table.has("pursued"):
 		if not table.pursued is Dictionary or table.pursued.size() > 64: return fail("CORRUPT_SAVE", "bandit pursued")
 		for faction: Variant in table.pursued:
-			if not faction is String or not str(faction).is_valid_int() or not whole(table.pursued[faction], 0, 2147483646): return fail("CORRUPT_SAVE", "bandit pursued")
+			var row: Variant = table.pursued[faction]
+			if not faction is String or not str(faction).is_valid_int() or not row is Dictionary or not keys(row, ["day", "home"]) or not whole(row.day, 0, 2147483646) \
+					or not row.home is String or str(row.home).is_empty(): return fail("CORRUPT_SAVE", "bandit pursued")
 	var lair: Variant = table.get("lair")
 	if lair != null and not (lair is Dictionary and keys(lair, ["site_id", "cell"]) and lair.site_id is String and not str(lair.site_id).is_empty() and lair.cell is Array and lair.cell.size() == 2 and whole(lair.cell[0], 0, 2147483647) and whole(lair.cell[1], 0, 2147483647)): return fail("CORRUPT_SAVE", "bandit lair")
 	if table.has("hoard"):
@@ -157,7 +160,9 @@ static func canonical_bandit(value: Dictionary) -> Dictionary:
 	if table.heat is int or table.heat is float: table.heat = int(table.heat)
 	if table.get("attacked_day") is float: table["attacked_day"] = int(table["attacked_day"])
 	if table.get("pursued") is Dictionary:
-		for faction: Variant in table.pursued: table.pursued[faction] = int(table.pursued[faction])
+		for faction: Variant in table.pursued:
+			var row: Variant = table.pursued[faction]
+			if row is Dictionary and (row.get("day") is float or row.get("day") is int): row["day"] = int(row["day"])
 	if table.lair is Dictionary and table.lair.get("cell") is Array:
 		var cell: Array = []
 		for axis: Variant in table.lair.cell: cell.append(int(axis) if (axis is int or axis is float) else axis)

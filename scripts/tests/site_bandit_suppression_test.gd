@@ -3,8 +3,8 @@ extends SceneTree
 ## - the expedition choice: a band at heat >= 50 whose lair is within 2 Sites; the hottest, then the nearest, then the lowest
 ##   id; the largest team of two or more; refused when the team is under 1.5x the band's people, when no band is in
 ##   reach or hot enough, when the faction sent one in the last 30 days;
-## - the band table keeps `pursued` {faction: day} and `attacked_day` through validated registry commits (String keys),
-##   the faction's last expedition is read across bands, and a broken `pursued` row is refused;
+## - the band table keeps `pursued` {faction: {day, home}} and `attacked_day` through validated registry commits (String
+##   keys); the faction's last expedition and its home (for 30 days) are read across bands; a broken row is refused;
 ## - an official attack raises heat by 20 and keeps the latest day.
 ## Output: SITE_BANDIT_SUPPRESSION_PASS on success; quit(1) on any failure.
 const Suppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd")
@@ -39,6 +39,7 @@ func _run() -> void:
 	var tie := Suppression.choose(here, teams, [near, {"band": 19, "heat": 60, "lair_site": "atlas:10:12", "members": 2}], -1, 100)
 	if not _ok(int(tie.get("band", -1)) == 20, "on equal heat the nearer lair wins", tie): return
 	if not _ok(str(Suppression.choose(here, teams, [far, cool], -1, 100).get("reason", "")) == "NO_BAND", "a lair 3 Sites away or a band under heat 50 is never pursued"): return
+	if not _ok(str(Suppression.choose(here, teams, [{"band": 24, "heat": 90, "lair_site": here, "members": 2}], -1, 100).get("reason", "")) == "NO_BAND", "a lair on this very Site is no expedition (a local fight)"): return
 	var weak := Suppression.choose(here, [{"team_id": 4, "size": 8}], [{"band": 20, "heat": 60, "lair_site": "atlas:11:10", "members": 6}], -1, 100)
 	if not _ok(str(weak.get("reason", "")) == "TOO_WEAK", "8 people do not go against 6 (needs 1.5x = 9)", weak): return
 	if not _ok(int(Suppression.choose(here, [{"team_id": 4, "size": 9}], [near], -1, 100).get("team_id", -1)) == 4, "9 people go against 6"): return
@@ -57,17 +58,21 @@ func _run() -> void:
 	reg = made.registry
 	var other := int(made.faction_id)
 	if not _ok(Suppression.last_expedition(reg, lawful) == -1, "no expedition yet"): return
-	var marked: Dictionary = Bandit.pursued(reg, band, lawful, 40, 10.0)
-	if not _ok(marked.ok and int(RegionFactionQuery.bandit_of(marked.registry, band).pursued[str(lawful)]) == 40, "an expedition day is kept in the band's table", marked): return
-	marked = Bandit.pursued(marked.registry, other, lawful, 75, 10.0)
+	var marked: Dictionary = Bandit.pursued(reg, band, lawful, 40, "atlas:1:1", 10.0)
+	if not _ok(marked.ok and RegionFactionQuery.bandit_of(marked.registry, band).pursued[str(lawful)] == {"day": 40, "home": "atlas:1:1"}, "an expedition day and its home are kept in the band's table", marked): return
+	marked = Bandit.pursued(marked.registry, other, lawful, 75, "atlas:2:2", 10.0)
 	if not _ok(marked.ok and Suppression.last_expedition(marked.registry, lawful) == 75, "the faction's last expedition is the latest over all bands", marked): return
+	if not _ok(Suppression.home_of(marked.registry, lawful, 80) == "atlas:2:2" and Suppression.home_of(marked.registry, lawful, 75 + Suppression.COOLDOWN_DAYS + 1).is_empty()
+		and Suppression.home_of(marked.registry, band, 80).is_empty(), "the way home leads to the latest expedition's home, for 30 days"): return
 	if not _ok(RegionFactionQuery.validate(marked.registry, 10.0).ok, "the registry with pursued rows validates", RegionFactionQuery.validate(marked.registry, 10.0)): return
 	var hit: Dictionary = Bandit.attacked(marked.registry, band, 41, 10.0)
 	if not _ok(hit.ok and int(RegionFactionQuery.bandit_of(hit.registry, band).heat) == 80 and int(RegionFactionQuery.bandit_of(hit.registry, band).attacked_day) == 41, "an official attack: heat 60 -> 80, attacked day 41", hit): return
 	hit = Bandit.attacked(hit.registry, band, 39, 10.0)
 	if not _ok(hit.ok and int(RegionFactionQuery.bandit_of(hit.registry, band).attacked_day) == 41 and int(RegionFactionQuery.bandit_of(hit.registry, band).heat) == 100, "an older attack day never replaces a later one (heat still rises)", hit): return
 	var broken: Dictionary = hit.registry.duplicate(true)
-	broken.entries[str(band)].bandit["pursued"] = {"x": 3}
+	broken.entries[str(band)].bandit["pursued"] = {"x": {"day": 3, "home": "atlas:1:1"}}
 	if not _ok(not RegionFactionQuery.validate(broken, 10.0).ok, "a pursued row with a non-numeric faction is refused"): return
+	broken.entries[str(band)].bandit["pursued"] = {str(lawful): {"day": 3}}
+	if not _ok(not RegionFactionQuery.validate(broken, 10.0).ok, "a pursued row without its home is refused"): return
 	print("SITE_BANDIT_SUPPRESSION_PASS: ", checks, " checks")
 	quit(0)
