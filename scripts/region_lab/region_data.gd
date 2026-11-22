@@ -43,6 +43,8 @@ var _author_document: Dictionary = {}
 var _author_scenario: Dictionary = {}
 
 const AUTHOR_MANIFEST_BYTES := 256 * 1024
+## 示範劇本 A (46 Sites, an initial and a static file each, plus the scenario): raised from 64.
+const AUTHOR_MAX_FILES := 128
 const AUTHOR_FILE_BYTES := 32 * 1024 * 1024
 const AUTHOR_PACKAGE_BYTES := 64 * 1024 * 1024
 const AUTHOR_DEPENDENCY_BYTES := 64 * 1024 * 1024
@@ -73,9 +75,10 @@ func author_scenario() -> Dictionary:
 ##     bandit (only for kind bandit): {lair: {site: [x, y], cell: [x, y]}, heat 0..100, raid_ai bool, hoard {item: 1..100000000}}}.
 ## The ids are the faction ids the package's Sites use (settlement owner_faction, residents' faction_id); a new world
 ## names and types those factions after its birth (SiteController.apply_scenario_factions).
-const MAX_SCENARIO_FACTIONS := 16
-const MAX_SCENARIO_TEAMS := 16
+const MAX_SCENARIO_FACTIONS := 32 # 示範劇本 A: 15 village factions and 15 bands
+const MAX_SCENARIO_TEAMS := 64 # 30 militia teams and the bands' teams
 const MAX_TEAM_MEMBERS := 20
+const MAX_SCENARIO_OFFICES := 64 # one per settlement Site
 static func author_scenario_valid(document: Variant) -> bool:
 	if not document is Dictionary or not Adapter.author_integer(document.get("format"), 1, 1) or not document.get("factions") is Array: return false
 	for key: Variant in document:
@@ -114,7 +117,7 @@ static func author_scenario_valid(document: Variant) -> bool:
 	return not _scenario_bandits(document).values().has(false)
 
 static func _scenario_offices_valid(rows: Variant) -> bool:
-	if not rows is Array or rows.size() > MAX_SCENARIO_TEAMS: return false
+	if not rows is Array or rows.size() > MAX_SCENARIO_OFFICES: return false
 	var sites := {}
 	for row: Variant in rows:
 		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not _author_text_valid(row.get("head"), 16, true) or not row.get("duties") is Dictionary: return false
@@ -172,7 +175,7 @@ static func _author_manifest_shape(raw: Variant) -> bool:
 	if not Adapter.author_integer(raw.format, 1, 1) or raw.source_kind != "fixed_tw_author" or raw.atlas_id != Grid.ATLAS_ID or not Adapter.author_integer(raw.grid_contract_version, Grid.CONTRACT_VERSION, Grid.CONTRACT_VERSION): return false
 	if not Adapter.author_id_valid(raw.scenario_id) or not Adapter.author_integer(raw.revision, 1, 2147483647) or not Adapter.author_digest_valid(raw.package_digest) or not Adapter.author_start_valid(raw.start): return false
 	if not _author_text_valid(raw.name, 64, true) or not _author_text_valid(raw.description, 4096): return false
-	if not Adapter.author_id_valid(raw.natural_source) or not raw.dependencies is Array or raw.dependencies.is_empty() or raw.dependencies.size() > 32 or not raw.files is Array or raw.files.size() > 64: return false
+	if not Adapter.author_id_valid(raw.natural_source) or not raw.dependencies is Array or raw.dependencies.is_empty() or raw.dependencies.size() > 32 or not raw.files is Array or raw.files.size() > AUTHOR_MAX_FILES: return false
 	var ids := {}
 	var paths := {}
 	var total := 0
@@ -400,6 +403,7 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	_author_scenario = {}
 	_author_static = {}
 	_author_initial = {}
+	_author_neighbour_bodies = {}
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
 
 func _read_resource_manifest(geography_hash: String) -> Dictionary:
@@ -1018,6 +1022,11 @@ const AUTHOR_BODY_MIN := 1000000000
 const AUTHOR_LAND_FIELDS := ["fertility", "moisture", "drainage", "foundation", "groundwater"]
 var _author_static: Dictionary = {}
 var _author_initial: Dictionary = {}
+## 示範劇本 birth speed: an author package's neighbour bodies, built once per package load. project_terrain reads a
+## neighbour only for its boundary heights and water (never changes it), and every Site of a birth projects its eight
+## neighbours, so a 46-Site birth rebuilt and revalidated the same bodies more than ten times each. The projected Site
+## itself is always built fresh (refresh_boundary changes it and the caller keeps it). Failures are not kept.
+var _author_neighbour_bodies: Dictionary = {}
 
 static func author_cell_key(value: Variant) -> bool:
 	return value is String and value.is_valid_int() and str(int(value)) == value and Adapter.author_integer(int(value), 0, 9999)
@@ -1170,6 +1179,20 @@ func _initial_body(site: Vector2i) -> Dictionary:
 	var navigation: TerrainData = SiteEnvironment.navigation_for_state(data, state)
 	return {"ok": true, "data": navigation, "base": built.base, "metadata": built.metadata}
 
+## 示範劇本 birth speed: an authored Site body (its state validated by _initial_body), read only and shared, for checks
+## that never change it (RegionSaveSlot.open_map's resident-house check). {ok, data, base, metadata} or a refusal.
+func author_initial_body(site: Vector2i) -> Dictionary:
+	if _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "initial須有作者來源")
+	return _initial_neighbour_body(site)
+
+## A read-only neighbour body for project_terrain, built once per package load (_author_neighbour_bodies).
+func _initial_neighbour_body(site: Vector2i) -> Dictionary:
+	var key := "%d:%d" % [site.x, site.y]
+	if _author_neighbour_bodies.has(key): return _author_neighbour_bodies[key]
+	var built: Dictionary = _initial_body(site)
+	if bool(built.get("ok", false)): _author_neighbour_bodies[key] = built
+	return built
+
 func project_terrain(site: Vector2i, mode: String = "base") -> Dictionary:
 	if mode == "base": return make_terrain_data(site.x, site.y)
 	if mode != "author_initial" or _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "current必須由原Slot provider提供；initial須有作者來源")
@@ -1177,7 +1200,7 @@ func project_terrain(site: Vector2i, mode: String = "base") -> Dictionary:
 	var neighbours := {}
 	for offset: Vector2i in [Vector2i.ZERO, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN, Vector2i(-1,-1), Vector2i(-1,1), Vector2i(1,-1), Vector2i(1,1)]:
 		var coordinate: Vector2i = site + offset
-		var built: Dictionary = _initial_body(coordinate)
+		var built: Dictionary = _initial_body(coordinate) if offset == Vector2i.ZERO else _initial_neighbour_body(coordinate)
 		if not bool(built.get("ok", false)): return built
 		neighbours[coordinate] = built
 	var result: Dictionary = neighbours[site]

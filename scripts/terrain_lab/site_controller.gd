@@ -11663,12 +11663,31 @@ func _scenario_rows_of(candidate: RegionSaveSlot, field: String, site: Vector2i)
 		if int(row.site[0]) == site.x and int(row.site[1]) == site.y: result.append(row)
 	return result
 
+## 示範劇本 birth speed: who leads what on each Site the birth populated, noted from the born data (no Site is read back
+## later): "<x>:<y>:captain:<faction>" = the formal commander of that faction's first combat team there,
+## "<x>:<y>:head:<faction>" = the head of that Site's settlement owned by that faction. Kept for the boot settle only.
+var _scenario_birth_leaders: Dictionary = {}
+
+func _note_scenario_leaders(site: Vector2i, data: TerrainData) -> void:
+	for army: Variant in data.site.get("armies", []):
+		if not army is Dictionary or str(army.get("role", "")) != "combat": continue
+		var key := "%d:%d:captain:%d" % [site.x, site.y, int(army.get("faction_id", -1))]
+		var commander := int(army.get("formal_commander", -1))
+		var units: Array = army.get("units", [])
+		if not _scenario_birth_leaders.has(key) and commander >= 0 and commander < units.size(): _scenario_birth_leaders[key] = int(units[commander].get("person_id", -1))
+	var settlement: Variant = data.site.get("settlement", {})
+	if settlement is Dictionary and not settlement.is_empty():
+		var holder := int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", -1))
+		if holder > 0: _scenario_birth_leaders["%d:%d:head:%d" % [site.x, site.y, int(settlement.get("owner_faction", -1))]] = holder
+
 ## 示範劇本 step 2: a band's chief, the captain of its first scenario team: the formal commander of that faction's first
-## combat team on the team's Site (the active Site or its saved first generation). -1 when not found.
+## combat team on the team's Site (noted at birth; else the active Site or its saved first generation). -1 when not found.
 func _scenario_chief(faction_id: int, teams: Array) -> int:
 	for team: Dictionary in teams:
 		if int(team.faction_id) != faction_id: continue
 		var site := Vector2i(int(team.site[0]), int(team.site[1]))
+		var noted := int(_scenario_birth_leaders.get("%d:%d:captain:%d" % [site.x, site.y, faction_id], -1))
+		if noted > 0: return noted
 		var state: Dictionary = {}
 		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
 		else:
@@ -11696,6 +11715,8 @@ func _scenario_chief(faction_id: int, teams: Array) -> int:
 func _scenario_head(faction_id: int, offices: Array) -> int:
 	for row: Dictionary in offices:
 		var site := Vector2i(int(row.site[0]), int(row.site[1]))
+		var noted := int(_scenario_birth_leaders.get("%d:%d:head:%d" % [site.x, site.y, faction_id], -1))
+		if noted > 0: return noted
 		var state: Dictionary = {}
 		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
 		else:
@@ -12576,6 +12597,7 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			var start_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
 			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, start_site))
 			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", start_site), _scenario_rows_of(candidate, "stock", start_site))
+			if birth.ok: _note_scenario_leaders(start_site, birth.data)
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
@@ -12618,6 +12640,8 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock)
 		if not populated.ok: return populated
 		births[companion] = populated.data
+		_note_scenario_leaders(companion, populated.data)
+		PerfTrace.mark("init_companion_site") # 示範劇本: one populated companion (the loading screen keeps its stage)
 	var next_id: int = int(candidate.person_allocator_view().get("next_person_id", start_data.site.get("next_person_id", 1)))
 	start_data.site["next_person_id"] = next_id
 	for companion: Vector2i in births: births[companion].site["next_person_id"] = next_id

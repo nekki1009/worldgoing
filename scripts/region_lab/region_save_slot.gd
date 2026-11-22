@@ -78,7 +78,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		# P5C-S2: every expected initial Site projects before any file IO, so a
 		# damaged companion never leaves a partial birth behind.
 		for coordinate: Vector2i in author_initial_site_order(author_context):
-			var projected: Dictionary = map_data.project_terrain(coordinate, "author_initial")
+			# 示範劇本 birth speed: the check reads each authored body once (validated, read only) instead of projecting it
+			# with its eight neighbours; the birth projects every Site again before it writes anything.
+			var projected: Dictionary = map_data.author_initial_body(coordinate)
 			if not projected.ok: return projected
 			# P5C-S3C: every authored resident must name a house that exists on its own Site, refused before any IO.
 			var residents: Array = projected.data.site.get("residents", [])
