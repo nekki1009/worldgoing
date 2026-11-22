@@ -885,7 +885,9 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		for value: Dictionary in next_clock.region_gameplay.modes.values():
 			value.generation = generation
 			if not value.activation.is_empty(): value.activation.generation = generation
+	PerfTraceSlot.mark("publish_scan_begin")
 	var faction_scan: Dictionary = _faction_scan(sites, next_clock, journey, next_clock.get("faction_registry", {}), [], true, person_allocator_enabled() or control.has("person_allocator"))
+	PerfTraceSlot.mark("publish_scanned")
 	if not faction_scan.ok: return faction_scan
 	next_clock.faction_registry = faction_scan.registry
 	if person_allocator_enabled() or control.has("person_allocator"):
@@ -6637,6 +6639,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 			return companion_saved
 		var companion_entry: Dictionary = _file_entry(companion_path)
 		sites[_site_key(prepared_companion.coordinate)] = companion_entry
+		_initial_readbacks[companion_path] = {"sha256": str(companion_entry.sha256), "data": companion_saved.data}
 		written.append({"coordinate": prepared_companion.coordinate, "path": companion_path, "sha256": str(companion_entry.sha256),
 			"id": str(prepared_companion.data.site.id), "fire": prepared_companion.data.site.fire_settlement.duplicate(true)})
 	var record: Dictionary = {"format": 1, "generation": 1, "pin": pin.duplicate(true), "sites": sites,
@@ -6723,13 +6726,32 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 
 
 # P5C-S2: checks one companion file of the generation-1 record.
+## 示範劇本 birth speed (Nekki 11/22 B): a birth's companion checks, by file path. _check_initial_record runs four or five
+## times in one birth (publish guard, commit, manifest, finish) and each run loaded and validated every companion file
+## again; a passed check of the same bytes (same path and sha256, checked again each call) is not repeated. Its data is
+## only read (person ids). Cleared when the birth finishes.
+var _initial_companion_checks: Dictionary = {}
+## The read-back body of each companion file this birth wrote (_save_checked already loads every written file back
+## through _load_checked), by path with its sha256: the first companion check reads it instead of loading the same
+## bytes again. Cleared when the birth finishes.
+var _initial_readbacks: Dictionary = {}
+
 func _check_author_companion_state(record: Dictionary, coordinate: Vector2i) -> Dictionary:
 	var key: String = _site_key(coordinate)
 	if not record.sites.has(key): return fail("INVALID_INITIAL_GENERATION")
 	var entry: Dictionary = record.sites[key]
 	var path: String = folder.path_join(str(entry.get("path", "")))
 	if not str(entry.get("path", "")).begins_with("generations/") or FileAccess.get_sha256(path) != str(entry.get("sha256", "")): return fail("INVALID_INITIAL_GENERATION")
-	var loaded: Dictionary = _load_checked(path, coordinate)
+	var cached: Dictionary = _initial_companion_checks.get(path, {})
+	if str(cached.get("sha256", "")) == str(entry.sha256) and str(cached.get("control", "")) == JSON.stringify(record.control.get("fire_clock", {})): return cached.result
+	var checked := _check_author_companion_file(record, coordinate, path)
+	if checked.ok: _initial_companion_checks[path] = {"sha256": str(entry.sha256), "control": JSON.stringify(record.control.get("fire_clock", {})), "result": checked}
+	return checked
+
+func _check_author_companion_file(record: Dictionary, coordinate: Vector2i, path: String) -> Dictionary:
+	var readback: Dictionary = _initial_readbacks.get(path, {})
+	var same_bytes: bool = not readback.is_empty() and str(readback.sha256) == str(record.sites[_site_key(coordinate)].get("sha256", ""))
+	var loaded: Dictionary = {"ok": true, "data": readback.data} if same_bytes else _load_checked(path, coordinate)
 	if not loaded.ok: return loaded
 	var state: Dictionary = loaded.data.site
 	if state.has("initial_scenario") or state.has("crowd") or state.has("family") or int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0: return fail("INVALID_INITIAL_POPULATION")
@@ -6759,7 +6781,9 @@ func commit_initial_site() -> Dictionary:
 		var fire: Dictionary = companion.fire
 		clock.fire_clock.index[str(companion.id)] = {"coordinate": [companion.coordinate.x, companion.coordinate.y], "active": false, "fire_active": false,
 			"sequence": int(fire.sequence), "action_seconds": float(fire.action_seconds), "game_seconds": float(fire.game_seconds)}
+	PerfTraceSlot.mark("commit_hashed")
 	var committed: Dictionary = _publish(sites, clock)
+	PerfTraceSlot.mark("commit_published")
 	if not committed.ok: return committed
 	return _check_initial_record(_marker)
 
@@ -6785,6 +6809,8 @@ func finish_initial_birth(receipt: Dictionary) -> Dictionary:
 		if not completed.ok: return completed
 	_initialization = {}
 	_initial_candidate = {}
+	_initial_companion_checks = {}
+	_initial_readbacks = {}
 	return {"ok": true, "generation": 1}
 
 # _publish anchor edits, AFTER constructing record and BEFORE _write_new_document:

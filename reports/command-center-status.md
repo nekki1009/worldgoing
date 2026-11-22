@@ -1,7 +1,18 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 13:10（台北）
+更新：2026-11-22 15:10（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 15:10（台北）示範劇本 A：開局加速（Nekki B）與選單劇本入口
+- Nekki 12:35「B」：改存檔核心，讓 46 個 Site 在合理時間內開局。
+- 10 個 Site 開局：279 → 166 → 140 秒（最早 350 秒）。這一輪：
+  - 同一次開局裡，伴隨 Site 的檔案檢查通過一次就記下（路徑、sha256、火災時鐘不變就不重驗）；_check_initial_record 每次開局要跑 4–5 次。
+  - 寫檔後讀回的內容直接拿來做第一次檢查，不再從磁碟重讀一次。
+  - 寫檔後的總檢查 32 → 6 秒。
+  - 兩個暫存在開局收尾時清掉。
+- 選單劇本入口：RegionEntry.scenario_packages 列出 res://assets/scenarios/<id>/<id>.json；確認頁的劇本選單會列出它，選了就用劇本的起點 Site 和開局包。
+- 回歸 BIRTH_REG 11/11、BIRTH_REG2 6/6、SCEN6 4/4。
+- 全規模實測（30 座聚落、15 夥土匪，共 46 個 Site）進行中。
 
 ## 2026-11-22 13:10（台北）示範劇本 A：產生器、小規模試生、出生速度
 - 上限放寬：

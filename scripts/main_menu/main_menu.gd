@@ -1097,7 +1097,9 @@ func _refresh_summary() -> void:
 	for line: String in PersonSkills.LINES:
 		if PersonSkills.level_milli(packet, line) != PersonSkills.NEUTRAL: lines.append("%s %d" % [str(PersonSkills.LINE_LABELS[line]), int(PersonSkills.level(packet, line))])
 	var aptitude: Dictionary = packet.get("aptitude", {}) if packet.get("aptitude") is Dictionary else {}
-	_summary.text = "地圖：台灣\n起點 Site：(%d, %d)\n人物：%s（%s）\n能力：武力 %d・戰術 %d・統御 %d・教練 %d・學業 %d\n熟練：%s\n資質：根骨 %d・悟性 %d\n性格：%s" % [
+	var package := picked_package()
+	if not package.is_empty(): site = package.start # the scenario's start replaces the picked Site
+	_summary.text = ("劇本：%s\n" % str(package.name) if not package.is_empty() else "") + "地圖：台灣\n起點 Site：(%d, %d)\n人物：%s（%s）\n能力：武力 %d・戰術 %d・統御 %d・教練 %d・學業 %d\n熟練：%s\n資質：根骨 %d・悟性 %d\n性格：%s" % [
 		site.x, site.y, str(data.name), "男" if int(data.body) == 0 else "女", int(data.combat_ability),
 		int(data.command_abilities.tactics), int(data.command_abilities.leadership), int(data.command_abilities.coach),
 		int(data.get("learning", 0)), "八行皆 50" if lines.is_empty() else "、".join(lines),
@@ -1130,6 +1132,14 @@ func _refresh_bandit_start() -> void:
 		_start_faction.select(0)
 		_start_faction_name.visible = false
 
+## 示範劇本: the packaged scenario picked on the confirm page, or {} (the empty scenario).
+func picked_package() -> Dictionary:
+	var picked := str(_initial_scenario.get_item_metadata(_initial_scenario.selected)) if _initial_scenario != null and _initial_scenario.selected >= 0 else ""
+	if not picked.begins_with("pkg:"): return {}
+	for package: Dictionary in RegionEntry.scenario_packages():
+		if str(package.path) == picked.trim_prefix("pkg:"): return package
+	return {}
+
 func start_new_game() -> void:
 	var data: Dictionary = RegionEntry.draft.get("character", {})
 	var site: Variant = RegionEntry.draft.get("site")
@@ -1140,7 +1150,14 @@ func start_new_game() -> void:
 	var start_faction := start_faction_choice()
 	var start_record := {"free_points": bool(data.get("free_points", false)), "template": str(RegionEntry.draft.get("template_title", "")),
 		"scenario": RegionEntry.scenario_record(scenario_id)}
-	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST)), start_faction,
+	var manifest := str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST))
+	var package := picked_package()
+	if not package.is_empty():
+		site = package.start
+		manifest = str(package.path)
+		scenario_id = ""
+		start_record.scenario = package.record.duplicate(true)
+	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, manifest, start_faction,
 		RegionEntry.draft.get("family", {}) if RegionEntry.draft.get("family") is Dictionary else {}, start_record, start_team_choice().cards):
 		_message.text = RegionEntry.menu_message
 		_message.visible = true
@@ -1160,6 +1177,10 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	# TerrainLab.INITIAL_CADRES cadres. The artisan scenarios stay available to tests only, not in the menu.
 	_initial_scenario.add_item("空劇本：玩家與 %d 名幹部" % TerrainLab.INITIAL_CADRES)
 	_initial_scenario.set_item_metadata(0, "")
+	# 示範劇本: packaged scenarios (author packages with a scenario file); their start Site replaces the picked one.
+	for package: Dictionary in RegionEntry.scenario_packages():
+		_initial_scenario.add_item("劇本：%s（%s）" % [str(package.name), str(package.description)])
+		_initial_scenario.set_item_metadata(_initial_scenario.item_count - 1, "pkg:" + str(package.path))
 	parent.add_child(_initial_scenario)
 	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))
 	for index: int in _initial_scenario.item_count:
@@ -1196,3 +1217,4 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 		_start_faction_name.visible = str(_start_faction.get_item_metadata(index)) in ["found", "bandit"])
 	_refresh_bandit_start()
 	_initial_scenario.item_selected.connect(func(_index: int) -> void: _refresh_bandit_start())
+	_initial_scenario.item_selected.connect(func(_index: int) -> void: _refresh_summary())

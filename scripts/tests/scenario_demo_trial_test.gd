@@ -1,7 +1,7 @@
 extends SceneTree
 ## 示範劇本 A step 4: a small trial of the generator on the real Taiwan source (default -- --settlements=6 --bands=3
 ## --towns=1), born through the real boot path. Checks:
-## - the generator builds and exports the package; the loader reads it (Sites, scenario);
+## - the generator builds and exports the package; the loader reads it (Sites, scenario); the menu's scenario list finds it;
 ## - the world is born (timed) and opens on the start Site; every faction of the scenario is in the registry with its
 ##   name and kind, every band has a chief, every settlement faction's main head leads it;
 ## - every settlement Site's first generation has its residents housed, its militia team, its head, its stocked
@@ -46,7 +46,8 @@ func _run() -> void:
 	if not _ok(DirAccess.make_dir_recursive_absolute(folder) == OK, "scratch folder"): return
 	var natural := RegionData.new()
 	if not _ok(bool(natural.load_manifest(RegionData.DEFAULT_MANIFEST).ok), "the Taiwan source loads"): return
-	var built: Dictionary = Generator.generate(natural, folder, "demo_a.json", settlements, bands, towns, 20261122)
+	if not _ok(DirAccess.make_dir_recursive_absolute(folder.path_join("demo_a")) == OK, "package folder"): return
+	var built: Dictionary = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", settlements, bands, towns, 20261122)
 	if not _ok(built.get("ok", false), "the generator builds %d settlements and %d bands" % [settlements, bands], built): return
 	var package := RegionData.new()
 	var loaded: Dictionary = package.load_manifest(str(built.path))
@@ -54,6 +55,9 @@ func _run() -> void:
 	if not _ok(loaded.ok and scenario.get("factions", []).size() == settlements / 2 + settlements % 2 + bands and package.author_initial_context().expected_initial_sites.size() == 1 + settlements + bands,
 		"the package loads with every Site and the scenario", [loaded, package.author_initial_context().get("expected_initial_sites", []).size()]): return
 	var start: Vector2i = built.start
+	# Step 6: the menu's scenario list reads the package (<root>/<id>/<id>.json with a scenario file).
+	var listed: Array = RegionEntry.scenario_packages(folder)
+	if not _ok(listed.size() == 1 and str(listed[0].id) == "demo_a" and listed[0].start == start and str(listed[0].name) == "開墾之地" and str(listed[0].record.id) == "demo_a_kaiken", "the scenario list finds the package with its start", listed): return
 	if not _ok(RegionEntry.request_new_world(start, {}, "開墾試生", "", str(built.path)), "a new world is requested", RegionEntry.menu_message): return
 	var birth_started := Time.get_ticks_msec()
 	change_scene_to_file(SITE)

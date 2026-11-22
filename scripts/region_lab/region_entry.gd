@@ -71,7 +71,7 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true),
 		"family": {"surname": str(family.get("surname", "")).strip_edges(), "name": str(family.get("name", "")).strip_edges()},
 		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", "")),
-			"scenario": scenario_record(initial_scenario_id)}, "cadres": cadres.duplicate(true)}
+			"scenario": start_record.scenario.duplicate(true) if start_record.get("scenario") is Dictionary else scenario_record(initial_scenario_id)}, "cadres": cadres.duplicate(true)}
 	return true
 
 
@@ -147,6 +147,27 @@ static func _remove_tree(path: String) -> bool:
 
 ## 開局流程規劃 §3: the scenario a world started from, as world.json keeps it. The empty scenario (the menu's only one
 ## today: the player and his cadres) is {id: "empty", version: 1}; a test-only artisan scenario keeps its own id.
+## 示範劇本: the packaged scenarios, each an author package <root>/<id>/<id>.json carrying a scenario file. Only the
+## manifest is read here (name, description, start, scenario id and revision); the package is verified when a world is
+## requested from it (request_new_world loads it). [{id, name, description, path, start: Vector2i, record}], by id.
+const SCENARIO_ROOT := "res://assets/scenarios"
+static func scenario_packages(root: String = SCENARIO_ROOT) -> Array:
+	var result: Array = []
+	var directory := DirAccess.open(root)
+	if directory == null: return result
+	var folders: Array = directory.get_directories()
+	folders.sort()
+	for folder: String in folders:
+		var path := root.path_join(folder).path_join(folder + ".json")
+		var manifest: Variant = _read_json(path)
+		if not manifest is Dictionary or manifest.get("source_kind") != "fixed_tw_author" or not manifest.get("start") is Dictionary or not manifest.start.get("site") is Array: continue
+		var has_scenario := false
+		for entry: Variant in manifest.get("files", []): has_scenario = has_scenario or entry is Dictionary and entry.get("kind") == "scenario"
+		if not has_scenario: continue
+		result.append({"id": folder, "name": str(manifest.get("name", folder)), "description": str(manifest.get("description", "")), "path": path,
+			"start": Vector2i(int(manifest.start.site[0]), int(manifest.start.site[1])), "record": {"id": str(manifest.get("scenario_id", folder)), "version": int(manifest.get("revision", 1))}})
+	return result
+
 static func scenario_record(initial_scenario_id: String) -> Dictionary:
 	return {"id": "empty" if initial_scenario_id.is_empty() else initial_scenario_id, "version": 1}
 
