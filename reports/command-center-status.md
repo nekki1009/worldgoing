@@ -1,7 +1,22 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 17:05（台北）
+更新：2026-11-22 18:30（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 18:30（台北）暫停交接（Nekki 10:25Z「額度用完了暫停吧」）
+- 已推送到 PR #3 分支：到 e542834（Nekki 09:16Z「好 push」）。之後本機未推送：市鎮官兵＋重建劇本包（本條提交）。
+- Nekki 09:15Z「A」：3 座市鎮各一隊 12 人官兵（產生器 GARRISON）。劇本包重建：46 Site、土匪 121 人；46 Site 開局 392 秒、12 項全過；小規模試生、30 日測試通過。
+- 未提交（驗證中）：
+  - scripts/terrain_lab/site_bandit_suppression.gd：出兵拆成 send()（先讀隊長與起點，再存出兵紀錄、再出發）。
+  - scripts/tests/site_bandit_suppression_live_test.gd（新）：活世界出兵＋回家測試。
+- 活世界測試的歷程：
+  - NO_COMMANDER：新編隊伍要等原生下一步才坐上隊長 → 等畫面。
+  - NOT_READY「隊員不在可出發狀態」：原生狀態 S_FIGHT。官方勢力隊伍貼著中立小隊就開打 → 測試先把玩家小隊 relabel 成勢力 1，第二隊也用勢力 1（回家地點用勢力 1 第二座聚落）。
+  - 最後一輪 LIVE8 在暫停時仍在跑（無法由我停止，最長 25 分鐘自己結束）；結果見 output/project_command_center/CONTINUOUS_SWITCH/LIVE8.log。
+- 恢復後的下一步：
+  1. 看 LIVE8；過了就跑土匪群回歸（BANDIT_B2.json＋live 測試）後提交 send() 與 live 測試。
+  2. 第三階段：NPC 隊伍抵達無人 Site 會以 cold_exact 載入（prepare_npc_region_arrival），可能已會開打；做端到端測試（出兵→行軍→抵達→close_battle→熱度 +20→隔天搬寨）。
+  3. 推送等 Nekki 本人。
 
 ## 2026-11-22 17:05（台北）土匪：被打才搬寨（BQ7）、官方剿匪第一、二階段（BQ8）
 - 推送：Nekki 07:14Z「Push」→ claude/project-thread-r6d8n4 快轉到 94297da，草稿 PR #3（https://github.com/nekki1009/worldgoing/pull/3）。之後的 2f5515e、f64cb43 未推送。
