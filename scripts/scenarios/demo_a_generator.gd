@@ -5,12 +5,15 @@ extends RefCounted
 ##   Sites, each with 2–4 settlements within 2 Sites and not on a settlement;
 ## - each settlement: a centre, houses (5, a town 10), a warehouse with opening stock, a well; residents (each house's beds) with a
 ##   head and a 度支 by name; a militia team; factions 1..N own them two by two (the first of each pair is the main one,
-##   whose head leads the faction); the first `towns` factions' main settlement has more houses;
+##   whose head leads the faction); the first `towns` factions' main settlement has more houses and a garrison of
+##   GARRISON 官兵 (an officer and soldiers) besides its militia, strong enough to put down a small band (Nekki 11/22 A for
+##   官方剿匪: an expedition needs 1.5x the band's people);
 ## - each lair: one band team (a chief and its men) of its own bandit faction, with a hoard and heat.
 ## Everything is deterministic from `seed`. generate() returns {ok, path, sites, residents, bandits, seconds} or a refusal.
 const Builder = preload("res://scripts/scenarios/scenario_builder.gd")
 const Data = preload("res://scripts/region_lab/region_data.gd")
 const START := Vector2i(1170, 13252)
+const GARRISON := 12
 const SURNAMES := ["陳", "林", "黃", "張", "李", "王", "吳", "劉", "蔡", "楊", "許", "鄭", "謝", "郭", "洪", "曾", "邱", "廖", "賴", "周"]
 const GIVEN := ["阿", "水", "土", "金", "木", "春", "秋", "福", "旺", "順", "明", "清", "德", "成", "興", "財", "來", "生", "發", "義"]
 const PLACE_A := ["溪", "林", "石", "竹", "田", "埔", "坑", "崙", "寮", "湖", "港", "山", "社", "厝", "圳"]
@@ -135,6 +138,10 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 		var militia: Array = [{"name": _name(rng, taken), "role": "officer"}]
 		for _man: int in range(5 if town else 1): militia.append({"name": _name(rng, taken), "role": "soldier"})
 		teams.append({"site": [site.x, site.y], "faction_id": faction, "cell": [origin_c.x + 2, origin_c.y + 10], "members": militia})
+		if town:
+			var garrison: Array = [{"name": _name(rng, taken), "role": "officer"}]
+			for _man: int in range(GARRISON - 1): garrison.append({"name": _name(rng, taken), "role": "soldier"})
+			teams.append({"site": [site.x, site.y], "faction_id": faction, "cell": [origin_c.x - 4, origin_c.y + 10], "members": garrison})
 	# Bands.
 	var bandits_total := 0
 	for index: int in range(bands):
