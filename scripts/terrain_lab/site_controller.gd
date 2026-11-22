@@ -11665,7 +11665,9 @@ func _scenario_rows_of(candidate: RegionSaveSlot, field: String, site: Vector2i)
 
 ## 示範劇本 birth speed: who leads what on each Site the birth populated, noted from the born data (no Site is read back
 ## later): "<x>:<y>:captain:<faction>" = the formal commander of that faction's first combat team there,
-## "<x>:<y>:head:<faction>" = the head of that Site's settlement owned by that faction. Kept for the boot settle only.
+## "<x>:<y>:head:<faction>" = the head of that Site's settlement owned by that faction, "<x>:<y>:owner" = that settlement's
+## owner faction (a head lookup for another faction skips the Site instead of reading it back: with 30 settlements the
+## read-backs took 8 minutes). Kept for the boot settle only.
 var _scenario_birth_leaders: Dictionary = {}
 
 func _note_scenario_leaders(site: Vector2i, data: TerrainData) -> void:
@@ -11679,6 +11681,7 @@ func _note_scenario_leaders(site: Vector2i, data: TerrainData) -> void:
 	if settlement is Dictionary and not settlement.is_empty():
 		var holder := int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", -1))
 		if holder > 0: _scenario_birth_leaders["%d:%d:head:%d" % [site.x, site.y, int(settlement.get("owner_faction", -1))]] = holder
+		_scenario_birth_leaders["%d:%d:owner" % [site.x, site.y]] = int(settlement.get("owner_faction", -1))
 
 ## 示範劇本 step 2: a band's chief, the captain of its first scenario team: the formal commander of that faction's first
 ## combat team on the team's Site (noted at birth; else the active Site or its saved first generation). -1 when not found.
@@ -11717,6 +11720,8 @@ func _scenario_head(faction_id: int, offices: Array) -> int:
 		var site := Vector2i(int(row.site[0]), int(row.site[1]))
 		var noted := int(_scenario_birth_leaders.get("%d:%d:head:%d" % [site.x, site.y, faction_id], -1))
 		if noted > 0: return noted
+		var owner_key := "%d:%d:owner" % [site.x, site.y]
+		if _scenario_birth_leaders.has(owner_key) and int(_scenario_birth_leaders[owner_key]) != faction_id: continue # born for another faction
 		var state: Dictionary = {}
 		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
 		else:

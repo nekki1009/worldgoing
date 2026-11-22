@@ -81,14 +81,17 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			# 示範劇本 birth speed: the check reads each authored body once (validated, read only) instead of projecting it
 			# with its eight neighbours; the birth projects every Site again before it writes anything.
 			var projected: Dictionary = map_data.author_initial_body(coordinate)
+			PerfTraceSlot.mark("open_body")
 			if not projected.ok: return projected
 			# P5C-S3C: every authored resident must name a house that exists on its own Site, refused before any IO.
 			var residents: Array = projected.data.site.get("residents", [])
 			if not residents.is_empty():
-				# Same view the birth roster uses: navigation rebuilds the indexes that house_layout reads.
-				var housed: TerrainData = Env.navigation_for_state(projected.data, projected.data.site.duplicate(true))
+				# Same view the birth roster uses: the authored body is already the navigation view of its state
+				# (RegionData._initial_body ends with navigation_for_state), whose indexes house_layout reads; it is
+				# only read here.
 				for row: Variant in residents:
-					if not row is Dictionary or not Runtime.house_layout(housed, str(row.get("house", ""))).ok: return fail("AUTHOR_RESIDENT_HOUSE_MISSING", "居民住宅不存在；未寫入")
+					if not row is Dictionary or not Runtime.house_layout(projected.data, str(row.get("house", ""))).ok: return fail("AUTHOR_RESIDENT_HOUSE_MISSING", "居民住宅不存在；未寫入")
+				PerfTraceSlot.mark("open_housed")
 		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
 		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
 		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
@@ -494,12 +497,15 @@ func _coordinate(data: TerrainData) -> Dictionary:
 
 func _load_checked(path: String, site: Vector2i) -> Dictionary:
 	var loaded := Store.load_site(path, func(base: Dictionary) -> Dictionary:
+		PerfTraceSlot.mark("load_parsed") # 示範劇本 birth speed (--perf-trace only): parse / base rebuild / state checks
 		if not _matches_base(base, site): return fail("SAVE_VERSION", "提交候選使用另一固定地圖")
 		var rebuilt: Dictionary = RegionRoute.fresh_fixed_base(source, site)
+		PerfTraceSlot.mark("load_base_rebuilt")
 		if not bool(rebuilt.get("ok", false)) or not _matches_base(rebuilt.get("base", {}), site) \
 				or str(rebuilt.base.terrain_fingerprint) != str(base.get("terrain_fingerprint", "")):
 			return fail("SAVE_VERSION", "提交候選的固定來源不可重建")
 		return rebuilt, 1, true)
+	PerfTraceSlot.mark("load_done")
 	if not loaded.ok: return loaded
 	var policy_guard := _admit_world_pin(loaded.data)
 	return loaded if policy_guard.ok else policy_guard
@@ -6409,9 +6415,10 @@ static func _initial_context_ok(context: Variant) -> bool:
 	if author_initial_context_valid(context): return true
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
 
-# P5C-S1: schema cap for one authored birth package. open_map still admits
-# exactly one Site until the P5C-S2 birth transaction lands.
-const AUTHOR_INITIAL_SITE_LIMIT := 16
+# P5C-S1: schema cap for one authored birth package. 示範劇本 A (Nekki 11/22: 30 settlements and 15 bands, 46 Sites
+# with the start) raised it from 16 to 64; a package's files (a static and an initial file per Site) stay within
+# RegionData.AUTHOR_MAX_FILES (128).
+const AUTHOR_INITIAL_SITE_LIMIT := 64
 
 static func author_initial_context_valid(context: Variant) -> bool:
 	# This schema is admitted only with the same loaded package identity and start.
@@ -12595,7 +12602,10 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String, with_p
 			if Store.faction_summary_serial() == int(shared_record.serial):
 				if with_persons: _remember_person_source(key, shared.persons)
 				return _faction_remember(key, shared.summary)
-	var loaded: Dictionary = _load_checked(path, site)
+	# 示範劇本 birth speed: the birth's commit scans every companion file it has just written and read back
+	# (_initial_readbacks, the same bytes by sha256); the scan summarises that read-back instead of loading it again.
+	var readback: Dictionary = _initial_readbacks.get(path, {})
+	var loaded: Dictionary = {"ok": true, "data": readback.data} if not readback.is_empty() and str(readback.sha256) == checksum else _load_checked(path, site)
 	if _faction_file_sha256(path) != checksum:
 		Store.invalidate_faction_summary_path(path)
 		return fail("CORRUPT_SAVE", "faction source changed during validation")

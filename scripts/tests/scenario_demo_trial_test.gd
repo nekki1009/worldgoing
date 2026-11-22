@@ -8,6 +8,8 @@ extends SceneTree
 ##   warehouse; every lair Site has its band team;
 ## - the world saves (timed).
 ## Prints SCENARIO_TRIAL_TIMES generate=… birth=… save=… and SCENARIO_TRIAL_PASS; quit(1) on any failure or the deadline.
+## -- --package=<path> skips the generator and births the built package there (step 5: build_demo_a.gd builds
+## res://assets/scenarios/demo_a/demo_a.json in about 16 minutes); --settlements/--bands/--towns must then match it.
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Generator = preload("res://scripts/scenarios/demo_a_generator.gd")
@@ -38,6 +40,32 @@ func _arg(name: String, fallback: int) -> int:
 		if argument.begins_with("--" + name + "="): return int(argument.get_slice("=", 1))
 	return fallback
 
+func _text_arg(name: String) -> String:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--" + name + "="): return argument.get_slice("=", 1)
+	return ""
+
+## A built package's generator summary, read from the package itself: the start, the settlement Sites (each has its
+## office row), the lair Sites, the residents of the settlements' authored states, the band members.
+func _built_from(path: String) -> Dictionary:
+	var package := RegionData.new()
+	if not package.load_manifest(path).get("ok", false): return {"ok": false, "path": path}
+	var scenario: Dictionary = package.author_scenario()
+	var start: Array = package.author_initial_context().starting_site
+	var settlements: Array = []
+	var residents := 0
+	for row: Dictionary in scenario.get("offices", []):
+		var site := Vector2i(int(row.site[0]), int(row.site[1]))
+		settlements.append(site)
+		residents += package._author_initial.get("%d:%d" % [site.x, site.y], {}).get("residents", []).size()
+	var lairs: Array = []
+	var bandits := 0
+	for faction: Dictionary in scenario.get("factions", []):
+		if str(faction.kind) == "bandit": lairs.append(Vector2i(int(faction.bandit.lair.site[0]), int(faction.bandit.lair.site[1])))
+	for team: Dictionary in scenario.get("teams", []):
+		if int(team.faction_id) > 100: bandits += team.members.size()
+	return {"ok": true, "path": path, "start": Vector2i(int(start[0]), int(start[1])), "settlements": settlements, "lairs": lairs, "residents": residents, "bandits": bandits, "seconds": 0.0}
+
 func _run() -> void:
 	var settlements := _arg("settlements", 6)
 	var bands := _arg("bands", 3)
@@ -47,7 +75,8 @@ func _run() -> void:
 	var natural := RegionData.new()
 	if not _ok(bool(natural.load_manifest(RegionData.DEFAULT_MANIFEST).ok), "the Taiwan source loads"): return
 	if not _ok(DirAccess.make_dir_recursive_absolute(folder.path_join("demo_a")) == OK, "package folder"): return
-	var built: Dictionary = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", settlements, bands, towns, 20261122)
+	var package_path := _text_arg("package")
+	var built: Dictionary = _built_from(package_path) if not package_path.is_empty() else Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", settlements, bands, towns, 20261122)
 	if not _ok(built.get("ok", false), "the generator builds %d settlements and %d bands" % [settlements, bands], built): return
 	var package := RegionData.new()
 	var loaded: Dictionary = package.load_manifest(str(built.path))
@@ -56,7 +85,7 @@ func _run() -> void:
 		"the package loads with every Site and the scenario", [loaded, package.author_initial_context().get("expected_initial_sites", []).size()]): return
 	var start: Vector2i = built.start
 	# Step 6: the menu's scenario list reads the package (<root>/<id>/<id>.json with a scenario file).
-	var listed: Array = RegionEntry.scenario_packages(folder)
+	var listed: Array = RegionEntry.scenario_packages(folder if package_path.is_empty() else package_path.get_base_dir().get_base_dir())
 	if not _ok(listed.size() == 1 and str(listed[0].id) == "demo_a" and listed[0].start == start and str(listed[0].name) == "開墾之地" and str(listed[0].record.id) == "demo_a_kaiken", "the scenario list finds the package with its start", listed): return
 	if not _ok(RegionEntry.request_new_world(start, {}, "開墾試生", "", str(built.path)), "a new world is requested", RegionEntry.menu_message): return
 	var birth_started := Time.get_ticks_msec()
