@@ -1,7 +1,18 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 10:10（台北）
+更新：2026-11-22 10:50（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 10:50（台北）示範劇本 A：補缺口 1、2（勢力表、隊伍）
+- Nekki 10:08「先做A」。規劃文件：示範劇本 A：開墾之地（Claude Doc）。Nekki 10:44：缺口補完後重寫規劃，村莊 30 座、土匪 15 夥，其餘照建議。
+- 作者開局包可以多帶一個劇本檔（kind scenario，scenario.json），格式由 RegionData.author_scenario_valid 檢查：
+  - factions：編號、名稱、種類 npc 或 bandit。bandit 另帶山寨（Site、格）、熱度、劫掠 AI、存貨。
+  - teams：所在 Site、勢力、站的格、成員名字與職別；第一位是軍官，也就是隊長。土匪的第一隊隊長就是頭目，每夥土匪至少要有一隊。
+- 世界出生時：
+  - TerrainLab.prepare_initial_author_teams 讓劇本隊伍在起點和同伴 Site 出生，帶標準裝備和名字。只有隊伍的同伴 Site 也會生出來。
+  - SiteController.apply_scenario_factions 把勢力改名、改種類，土匪補上頭目，一次存檔。
+- 修正：隊長（第 0 位）不能列在 officer_order，否則隊伍快照非法。
+- 驗收 scenario_factions_test 30 項；回歸 SCEN12_REG 16/16。
 
 ## 2026-11-22 10:10（台北）隊伍範本（幹部卡）
 - Nekki 09:26「好」照建議做。推送：09:20 Nekki「Push」，已推到 11b7ea0。

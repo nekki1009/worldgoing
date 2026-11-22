@@ -39,6 +39,8 @@ var _cache_bytes := 0
 var peak_cache_bytes := 0
 var _author_pin: Dictionary = {}
 var _author_document: Dictionary = {}
+## 示範劇本 (reports: 示範劇本 A 開墾之地): the package's scenario document, {} when it has none (author_scenario_valid).
+var _author_scenario: Dictionary = {}
 
 const AUTHOR_MANIFEST_BYTES := 256 * 1024
 const AUTHOR_FILE_BYTES := 32 * 1024 * 1024
@@ -54,6 +56,67 @@ func author_identity_matches(value: Variant) -> bool:
 
 func author_document() -> Dictionary:
 	return _author_document.duplicate(true)
+
+func author_scenario() -> Dictionary:
+	return _author_scenario.duplicate(true)
+
+## 示範劇本: one optional "scenario" file per package (kind "scenario", site = the start Site):
+##   {format: 1, factions: [faction], teams?: [team]} with at most MAX_SCENARIO_FACTIONS factions (ids unique) and at
+##   most MAX_SCENARIO_TEAMS teams;
+##   team (step 2): {site: [x, y], faction_id (a scenario faction), cell: [x, y] (where it stands), members: [{name,
+##     role "officer" | "soldier"}] (1..MAX_TEAM_MEMBERS, the first an officer: the captain)}; a bandit faction's
+##     first team captain is its chief;
+##   faction: {id (1..MAX_ID, never the neutral 255), name (1–32 characters), kind "npc" | "bandit",
+##     bandit (only for kind bandit): {lair: {site: [x, y], cell: [x, y]}, heat 0..100, raid_ai bool, hoard {item: 1..100000000}}}.
+## The ids are the faction ids the package's Sites use (settlement owner_faction, residents' faction_id); a new world
+## names and types those factions after its birth (SiteController.apply_scenario_factions).
+const MAX_SCENARIO_FACTIONS := 16
+const MAX_SCENARIO_TEAMS := 16
+const MAX_TEAM_MEMBERS := 20
+static func author_scenario_valid(document: Variant) -> bool:
+	if not document is Dictionary or not Adapter.author_integer(document.get("format"), 1, 1) or not document.get("factions") is Array: return false
+	for key: Variant in document:
+		if not str(key) in ["format", "factions", "teams"]: return false
+	if document.factions.size() > MAX_SCENARIO_FACTIONS: return false
+	var ids := {}
+	for faction: Variant in document.factions:
+		if not faction is Dictionary or not Adapter.author_integer(faction.get("id"), 1, RegionFactionQuery.MAX_ID) or int(faction.id) == RegionFactionQuery.NEUTRAL_FACTION_ID: return false
+		if ids.has(int(faction.id)): return false
+		ids[int(faction.id)] = true
+		if not _author_text_valid(faction.get("name"), 32, true) or faction.get("kind") not in ["npc", "bandit"]: return false
+		var allowed := ["id", "name", "kind"] + (["bandit"] if faction.kind == "bandit" else [])
+		for key: Variant in faction:
+			if not str(key) in allowed: return false
+		if faction.kind != "bandit": continue
+		var band: Variant = faction.get("bandit")
+		if not band is Dictionary or not band.get("lair") is Dictionary or not Adapter.author_pair_valid(band.lair.get("site"), -10000000, 10000000) \
+			or not Adapter.author_pair_valid(band.lair.get("cell"), 0, Adapter.SIDE - 1) or band.lair.size() != 2: return false
+		if not Adapter.author_integer(band.get("heat"), 0, 100) or not band.get("raid_ai") is bool or not band.get("hoard") is Dictionary or band.hoard.size() > 64: return false
+		for key: Variant in band:
+			if not str(key) in ["lair", "heat", "raid_ai", "hoard"]: return false
+		for item: Variant in band.hoard:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(band.hoard[item], 1, 100000000): return false
+	if not document.has("teams"):
+		return not _scenario_bandits(document).values().has(false)
+	if not document.teams is Array or document.teams.size() > MAX_SCENARIO_TEAMS: return false
+	for team: Variant in document.teams:
+		if not team is Dictionary or team.size() != 4 or not Adapter.author_pair_valid(team.get("site"), -10000000, 10000000) or not Adapter.author_pair_valid(team.get("cell"), 0, Adapter.SIDE - 1): return false
+		if not Adapter.author_integer(team.get("faction_id"), 1, RegionFactionQuery.MAX_ID) or not ids.has(int(team.faction_id)): return false
+		if not team.get("members") is Array or team.members.is_empty() or team.members.size() > MAX_TEAM_MEMBERS: return false
+		for at: int in range(team.members.size()):
+			var member: Variant = team.members[at]
+			if not member is Dictionary or member.size() != 2 or not _author_text_valid(member.get("name"), 16, true) or member.get("role") not in ["officer", "soldier"]: return false
+			if at == 0 and member.role != "officer": return false
+	return not _scenario_bandits(document).values().has(false)
+
+## Every bandit faction of a scenario: {id: has a team (its chief)}.
+static func _scenario_bandits(document: Dictionary) -> Dictionary:
+	var result := {}
+	for faction: Dictionary in document.get("factions", []):
+		if faction.get("kind") == "bandit": result[int(faction.id)] = false
+	for team: Variant in document.get("teams", []):
+		if team is Dictionary and result.has(int(team.get("faction_id", 0))): result[int(team.faction_id)] = true
+	return result
 
 static func _author_path_valid(path: Variant) -> bool:
 	if not path is String or path.is_empty() or path.length() > 512 or path.is_absolute_path() or path.contains(":") or path.contains("\\"): return false
@@ -98,7 +161,7 @@ static func _author_manifest_shape(raw: Variant) -> bool:
 	var roles := {}
 	total = 0
 	for entry: Variant in raw.files:
-		if not _author_file_shape(entry, AUTHOR_FILE_BYTES) or entry.size() != 5 or entry.get("kind") not in ["static", "initial"] or not _author_path_valid(entry.path) or not Adapter.author_pair_valid(entry.get("site"), -10000000, 10000000): return false
+		if not _author_file_shape(entry, AUTHOR_FILE_BYTES) or entry.size() != 5 or entry.get("kind") not in ["static", "initial", "scenario"] or not _author_path_valid(entry.path) or not Adapter.author_pair_valid(entry.get("site"), -10000000, 10000000): return false
 		var role := "%s:%d:%d" % [entry.kind, int(entry.site[0]), int(entry.site[1])]
 		if paths.has(str(entry.path).to_lower()) or roles.has(role): return false
 		paths[str(entry.path).to_lower()] = true; roles[role] = true
@@ -200,6 +263,9 @@ func load_author_package(path: String) -> Dictionary:
 				if bodies.has(identity) and bodies[identity] != body or body_ids.has(body.id) and body_ids[body.id] != identity: return fail("AUTHOR_WATER_ID_CONFLICT", "跨Site水體映射不同")
 				bodies[identity] = body; body_ids[body.id] = identity
 			candidate._author_static[key] = author_static_normalized(content)
+		elif entry.kind == "scenario":
+			if not candidate._author_scenario.is_empty() or not author_scenario_valid(content): return fail("INVALID_AUTHOR_SCENARIO", "劇本資料格式非法")
+			candidate._author_scenario = content.duplicate(true)
 		else: candidate._author_initial[key] = content.duplicate(true)
 	candidate._author_pin = {"scenario_id": str(parsed.scenario_id), "scenario_revision": int(parsed.revision), "scenario_package_sha256": str(parsed.package_digest)}
 	candidate._author_document = parsed.duplicate(true)
@@ -306,6 +372,7 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 				_tile_index[key].append(tile)
 	_author_pin = {}
 	_author_document = {}
+	_author_scenario = {}
 	_author_static = {}
 	_author_initial = {}
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
@@ -1146,7 +1213,8 @@ static func author_static_normalized(raw: Dictionary) -> Dictionary:
 ## Initial world admission is completed by the original Slot transaction, after full state validation.
 ## `dependencies`: [{path, id}] (res:// or user://); `initial_states`: {"x:y": state} with state.id a String and no
 ## world_pin, region_snapshot, initial_scenario or crowd (the guards in _initial_body).
-static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary, static_states: Dictionary = {}) -> Dictionary:
+## `scenario` (示範劇本): the optional scenario document (author_scenario_valid), written as "scenario.json" on the start Site.
+static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary, static_states: Dictionary = {}, scenario: Dictionary = {}) -> Dictionary:
 	if not DirAccess.dir_exists_absolute(folder) or not _author_path_valid(package_name): return fail("EXPORT_FOLDER", folder)
 	var dependency_rows: Array = []
 	for dependency: Variant in dependencies:
@@ -1181,6 +1249,14 @@ static func export_author_initial_package(folder: String, package_name: String, 
 		hash.update(bytes)
 		file_rows.append({"path": file_name, "site": [int(pair[0]), int(pair[1])], "kind": "initial", "sha256": hash.finish().hex_encode(), "bytes": bytes.size()})
 		file_texts.append({"path": file_name, "bytes": bytes})
+	if not scenario.is_empty():
+		if not author_scenario_valid(scenario) or not start.get("site") is Array: return fail("INVALID_AUTHOR_SCENARIO", "劇本資料格式非法")
+		var scenario_bytes := JSON.stringify(scenario, "", true, true).to_utf8_buffer()
+		var scenario_hash := HashingContext.new()
+		if scenario_hash.start(HashingContext.HASH_SHA256) != OK: return fail("AUTHOR_HASH_ERROR", "scenario.json")
+		scenario_hash.update(scenario_bytes)
+		file_rows.append({"path": "scenario.json", "site": [int(start.site[0]), int(start.site[1])], "kind": "scenario", "sha256": scenario_hash.finish().hex_encode(), "bytes": scenario_bytes.size()})
+		file_texts.append({"path": "scenario.json", "bytes": scenario_bytes})
 	var manifest := {"format": 1, "source_kind": "fixed_tw_author", "scenario_id": scenario_id, "revision": revision,
 		"name": name_text, "description": description, "atlas_id": Grid.ATLAS_ID, "grid_contract_version": Grid.CONTRACT_VERSION,
 		"natural_source": natural_id, "dependencies": dependency_rows, "files": file_rows, "start": start, "package_digest": "0".repeat(64)}

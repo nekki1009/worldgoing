@@ -10506,6 +10506,12 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
+	# 示範劇本 step 1: a scenario package names and types its factions (before any start faction is founded).
+	if result.ok and bool(request.get("create_new", false)) and region_slot != null and region_slot.source != null and region_slot.source.has_method("author_scenario"):
+		var scenario: Dictionary = region_slot.source.author_scenario()
+		if not scenario.is_empty():
+			var named := apply_scenario_factions(scenario.get("factions", []), scenario.get("teams", []))
+			if not named.ok: result = named
 	# 隊伍範本: the cadre cards (each card checked as its cadre is written; nothing else changes on a refusal).
 	if result.ok and bool(request.get("create_new", false)) and request.get("cadres") is Array and not request.cadres.is_empty():
 		var cadres_applied := apply_created_cadres(request.cadres)
@@ -11645,6 +11651,76 @@ func _created_skills(data: Dictionary, ability: float, abilities: Dictionary) ->
 	stored["start"] = 1
 	return {"ok": true, "apply": true, "packet": PersonSkills.saved(stored), "learning": int(learning)}
 
+## 示範劇本 step 2: the scenario teams standing on `site` (the slot's author source), in scenario order.
+func _scenario_teams_of(candidate: RegionSaveSlot, site: Vector2i) -> Array:
+	if candidate == null or candidate.source == null or not candidate.source.has_method("author_scenario"): return []
+	var result: Array = []
+	for team: Dictionary in candidate.source.author_scenario().get("teams", []):
+		if int(team.site[0]) == site.x and int(team.site[1]) == site.y: result.append(team)
+	return result
+
+## 示範劇本 step 2: a band's chief, the captain of its first scenario team: the formal commander of that faction's first
+## combat team on the team's Site (the active Site or its saved first generation). -1 when not found.
+func _scenario_chief(faction_id: int, teams: Array) -> int:
+	for team: Dictionary in teams:
+		if int(team.faction_id) != faction_id: continue
+		var site := Vector2i(int(team.site[0]), int(team.site[1]))
+		var state: Dictionary = {}
+		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
+		else:
+			var loaded: Dictionary = region_slot._load_checked(region_slot.site_path(site), site)
+			if not loaded.get("ok", false): return -1
+			state = loaded.data.site
+		if lab.crowd_site != null and lab.crowd_site.active and state == lab.terrain.site:
+			for crowd_team: Dictionary in lab.crowd_site.teams:
+				if bool(crowd_team.get("departed", false)) or int(crowd_team.get("faction", -1)) != faction_id: continue
+				var captain := int(team_captain_of_team(int(crowd_team.team_id)))
+				if captain > 0: return captain
+		for army: Dictionary in state.get("armies", []):
+			if str(army.get("role", "")) != "combat" or int(army.get("faction_id", -1)) != faction_id: continue
+			var commander := int(army.get("formal_commander", -1))
+			var units: Array = army.get("units", [])
+			if commander >= 0 and commander < units.size(): return int(units[commander].get("person_id", -1))
+		return -1
+	return -1
+
+## 示範劇本 step 1 (RegionData.author_scenario_valid): each scenario faction's registry entry takes its name and kind; a
+## bandit gets its band table (origin scenario, lair as a Site id and cell, heat, raid AI, hoard) and the band colour. An id
+## no Site uses yet gets a fresh entry. One validated registry commit; nothing changes on a refusal.
+func apply_scenario_factions(factions: Array, teams: Array = []) -> Dictionary:
+	if factions.is_empty(): return Runtime.ok()
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "劇本勢力須在台灣地圖世界中建立")
+	var now := float(region_slot.control.logical_game_seconds)
+	var candidate: Dictionary = region_slot.control.get("faction_registry", {}).duplicate(true)
+	if candidate.get("version") != RegionFactionQuery.VERSION or not candidate.get("entries") is Dictionary: return Runtime.fail("CORRUPT_SAVE", "勢力登記")
+	for faction: Variant in factions:
+		if not faction is Dictionary: return Runtime.fail("INVALID", "劇本勢力格式不合法")
+		var id := int(faction.get("id", 0))
+		if not candidate.entries.has(str(id)):
+			candidate.entries[str(id)] = RegionFactionQuery.legacy_entry(id)
+			if int(candidate.get("next_faction_id", 1)) <= id: candidate["next_faction_id"] = id + 1
+		var entry: Dictionary = candidate.entries[str(id)]
+		entry["name"] = str(faction.get("name", ""))
+		entry["kind"] = str(faction.get("kind", "npc"))
+		if entry.kind == "bandit":
+			var band: Dictionary = faction.get("bandit", {})
+			var lair_site: Array = band.get("lair", {}).get("site", [0, 0])
+			var lair_cell: Array = band.get("lair", {}).get("cell", [0, 0])
+			entry["color"] = RegionFactionQuery.BANDIT_COLOR
+			entry["duty_ai"] = false
+			var table := {"origin": "scenario", "raid_ai": bool(band.get("raid_ai", true)), "heat": int(band.get("heat", 0)),
+				"lair": {"site_id": RegionGrid.site_id(str(region_slot.pin.atlas_id), Vector2i(int(lair_site[0]), int(lair_site[1]))), "cell": [int(lair_cell[0]), int(lair_cell[1])]}}
+			if not band.get("hoard", {}).is_empty(): table["hoard"] = band.hoard.duplicate(true)
+			entry["bandit"] = RegionFactionQuery.canonical_bandit(table)
+			# Step 2: its chief is the captain of its first scenario team.
+			var chief := _scenario_chief(id, teams)
+			if chief <= 0: return Runtime.fail("NO_TARGET", "劇本土匪找不到頭目")
+			entry["leader_ref"] = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), chief)
+	candidate["revision"] = int(candidate.get("revision", 0)) + 1
+	var checked: Dictionary = RegionFactionQuery.validate(candidate, now)
+	if not checked.ok: return checked
+	return _commit_diplomacy({"ok": true, "registry": candidate}, "")
+
 ## 開局流程規劃 §2 家族 (v1): registers the player's family with himself as its only member (not marked complete, so no
 ## Game Over is read from it), makes him its head and gives it `family_name`. Each step is the family owner's own.
 func apply_family_blueprint(family_name: String) -> Dictionary:
@@ -12472,6 +12548,8 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
 			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)
 			PerfTrace.mark("init_residents")
+			# 示範劇本 step 2: the scenario's armed teams of the start Site.
+			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))))
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
@@ -12502,9 +12580,12 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 		if not projected.ok: return projected
 		var data: TerrainData = projected.data
 		var rows: Array = data.site.get("residents", [])
-		if data.site.is_empty() or rows.is_empty(): continue
+		var teams: Array = _scenario_teams_of(candidate, companion) # 示範劇本 step 2
+		if data.site.is_empty() or rows.is_empty() and teams.is_empty(): continue
 		candidate.attach_person_allocator(data)
-		var populated: Dictionary = lab.prepare_initial_resident_roster(data)
+		var populated: Dictionary = lab.prepare_initial_resident_roster(data) if not rows.is_empty() else Runtime.ok("", {"data": data})
+		if not populated.ok: return populated
+		if not teams.is_empty(): populated = lab.prepare_initial_author_teams(populated.data, teams)
 		if not populated.ok: return populated
 		births[companion] = populated.data
 	var next_id: int = int(candidate.person_allocator_view().get("next_person_id", start_data.site.get("next_person_id", 1)))

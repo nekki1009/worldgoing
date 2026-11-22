@@ -11835,6 +11835,76 @@ func _resident_army_present(site: Dictionary) -> bool:
 			if unit is Dictionary and housing.has(str(int(unit.get("person_id", -1)))): return true
 	return false
 
+## 示範劇本 step 2 (RegionData.author_scenario_valid "teams"): the scenario's armed teams of this Site are born, each a
+## combat team of its faction standing at its cell (the nearest free cells, as the start team): the first member is the
+## captain (officer), every member has standard gear and his name. Fresh births only, after the residents; the candidate
+## is changed only when every team deploys. `rows` = the scenario teams whose site is this Site.
+func prepare_initial_author_teams(new_data: TerrainData, rows: Array) -> Dictionary:
+	if rows.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
+	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
+	if new_data.site.has("crowd") or int(new_data.site.get("minute", -1)) != 0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO", "原已進行世界不補發劇本隊伍")
+	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	var staging := Node2D.new()
+	staging.name = "InitialScenarioTeams"
+	staging.visible = false
+	staging.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(staging)
+	var claimed := {}
+	for army_row: Variant in candidate.site.get("armies", []):
+		if not army_row is Dictionary: continue
+		for unit: Variant in army_row.get("units", []):
+			if unit is Dictionary and unit.get("cell") is Array: claimed[candidate.index(Vector2i(int(unit.cell[0]), int(unit.cell[1])))] = true
+	claimed[int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell)))] = true
+	for row: Dictionary in rows:
+		var members: Array = row.members
+		var team_floor := 1
+		for army_row: Variant in candidate.site.get("armies", []):
+			if army_row is Dictionary: team_floor = maxi(team_floor, int(army_row.get("team_id", 0)) + 1)
+		var wanted := Vector2i(int(row.cell[0]), int(row.cell[1]))
+		var cells: Array[Vector2i] = []
+		for cell: Vector2i in _initial_team_cells(candidate, wanted, members.size() * 4 + 8):
+			if claimed.has(candidate.index(cell)): continue
+			cells.append(cell)
+			if cells.size() == members.size(): break
+		if cells.size() != members.size(): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND", "劇本隊伍出生格不足；未改變"))
+		for cell: Vector2i in cells: claimed[candidate.index(cell)] = true
+		var team := TerrainArmy.new()
+		team.name = "scenario_team"
+		team.team_id = maxi(int(candidate.site.get("army_next_team", 1)), team_floor)
+		team.faction_id = int(row.faction_id)
+		team.role = "combat"
+		team.roster_size = members.size()
+		team.exchange_enabled = exchange_enabled
+		team.presentation_off = true # captured into the Site; the crowd conversion draws it
+		team.person_id_allocator = _allocate_army_person_ids_for.bind(candidate, [], [])
+		staging.add_child(team)
+		team.set_process(false)
+		if not team.deploy_at(candidate, null, null, cells) or not team.enable_combat(false) or team.combat_units.size() != members.size() or team.formal_commander != 0:
+			return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "劇本隊伍無法出生；未改變"))
+		for index: int in range(team.combat_units.size()):
+			var body: Dictionary = team.combat_units[index]
+			body["military_role"] = str(members[index].role)
+			body["name"] = str(members[index].name)
+			# A further officer serves under the captain, as a start cadre does; the captain (unit 0) holds the command seat.
+			if str(members[index].role) == "officer" and index > 0:
+				if not team.officer_service.has(index): team.officer_service.append(index)
+				if not team.officer_order.has(index): team.officer_order.append(index)
+			body["cargo"] = {}
+			body["item_state"] = {}
+			var items: Dictionary = SiteRuntime.seed_person_equipment(candidate, body.item_state, team.combat_identity(index), body.appearance)
+			if not items.ok: return _initial_artisan_birth_dispose(staging, items)
+		var state: Dictionary = team.capture_combat_state()
+		if not candidate.site.get("armies") is Array: candidate.site["armies"] = []
+		candidate.site.armies.append(state)
+		candidate.site["army_next_team"] = team.team_id + 1
+		var highest := 0
+		for unit: Dictionary in state.units: highest = maxi(highest, int(unit.person_id))
+		candidate.site["next_person_id"] = maxi(int(candidate.site.get("next_person_id", 1)), highest + 1)
+		if not TerrainArmy.valid_combat_state(state, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_ARMY", "劇本隊伍快照非法；未改變"))
+	for checked: Dictionary in [SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_armies(candidate, candidate.site, true), SiteStore._validate_items(candidate, candidate.site)]:
+		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
+	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))
+
 func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
 	if not ResidentRoster.valid_state(new_data.site): return SiteRuntime.fail("INVALID_RESIDENT_ROSTER", "居民名冊格式或人數不合法；未改變")
