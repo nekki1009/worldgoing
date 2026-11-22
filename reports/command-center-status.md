@@ -1,7 +1,15 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 15:50（台北）
+更新：2026-11-22 17:05（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-22 17:05（台北）土匪：被打才搬寨（BQ7）、官方剿匪第一、二階段（BQ8）
+- 推送：Nekki 07:14Z「Push」→ claude/project-thread-r6d8n4 快轉到 94297da，草稿 PR #3（https://github.com/nekki1009/worldgoing/pull/3）。之後的 2f5515e、f64cb43 未推送。
+- Nekki 07:36Z「B」：熱度 ≥ 70 只在 10 日內被官方攻打過才搬寨，否則蟄伏。site_bandit_attacked.gd：活動 Site 的仗結束時，和正式勢力（非土匪、非叛軍、非中立）打過且不是自己去搶的那場，熱度 +20、記 `attacked_day`，靜止時存檔。
+- Nekki 08:17Z「B」：官方剿匪熱度驅動。site_bandit_suppression.gd：聚落的正式擁有者每日一次，對熱度 ≥ 50、山寨 2 Site 內的土匪派最大戰鬥隊（≥ 1.5 倍）出征，30 日冷卻（`pursued` {勢力: {day, home}}），captain:suppress；剿完回家。玩家勢力不由 AI 出兵。
+- 回歸：BANDIT_B2 29/29（銷贓隊測試並行偶發，單獨通過）、SUPPRESS2 11/11、SUPPRESS3 1/1。30 日測試：被打的那夥搬寨 1 次、另一夥蟄伏 19 天。
+- 30 日測試原本跳時鐘：跳過 Site 消化區域「評估」事件的步進點（evaluation 事件 at 3600），之後登記簿提交一律 REGION_EFFECTS_PENDING。改成不跳時鐘的 30 次土匪日結算。
+- 缺口：剿匪的實際出兵與回家沒有活世界測試（只有純資料測試）；第三階段畫面外戰鬥未做，官兵到沒人在的山寨不會開打。
 
 ## 2026-11-22 15:50（台北）示範劇本 A：正式劇本包、46 Site 開局、30 日測試、選單截圖
 - 正式劇本包 res://assets/scenarios/demo_a/demo_a.json（4887f6b）：30 座聚落（3 座市鎮）、15 夥土匪、46 Site（含起點）、316 名居民、125 名土匪；包 488 KB。建包腳本 scripts/scenarios/build_demo_a.gd，約 14 分鐘。
