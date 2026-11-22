@@ -95,9 +95,11 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
 		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
 		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
+		PerfTraceSlot.mark("open_start_projected")
 		if not initial.ok: return initial
 		if not initial.data.site.is_empty():
 			var buildings: Dictionary = Runtime.validate_author_buildings(initial.data)
+			PerfTraceSlot.mark("open_start_buildings")
 			if not buildings.ok: return buildings
 		if not initial.data.contains(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))) or not initial.data.is_walkable(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))): return fail("NO_BIRTH_GROUND")
 	elif initial_context.get("mode") == "author": return fail("INITIAL_PIN_CONFLICT")
