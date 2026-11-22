@@ -11905,6 +11905,38 @@ func prepare_initial_author_teams(new_data: TerrainData, rows: Array) -> Diction
 		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
 	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))
 
+## 示範劇本 step 3: this Site's scenario offices and warehouse stock (RegionData.author_scenario_valid "offices",
+## "stock"), after its residents are born. The head seat and the named duties' seats take the residents of those names;
+## each stocked warehouse gets its storage and items. Fresh births only; unchanged on any refusal.
+func prepare_initial_scenario_settlement(new_data: TerrainData, offices: Array, stock: Array) -> Dictionary:
+	if offices.is_empty() and stock.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
+	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	var named := {}
+	for army: Variant in candidate.site.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and unit.has("name"): named[str(unit.name)] = int(unit.person_id)
+	for row: Dictionary in offices:
+		var settlement: Variant = candidate.site.get("settlement", {})
+		if not settlement is Dictionary or settlement.is_empty() or not settlement.get("offices") is Dictionary: return SiteRuntime.fail("NO_TARGET", "劇本職位所在 Site 沒有聚落")
+		var head: Dictionary = SiteOffices.head_position(settlement.offices)
+		if head.is_empty() or not named.has(str(row.head)): return SiteRuntime.fail("NO_TARGET", "劇本首長「%s」不是這個 Site 的居民" % str(row.head))
+		head["holder"] = int(named[str(row.head)])
+		for duty: String in row.duties:
+			var seat_id := str(settlement.offices.get("duties", {}).get(duty, ""))
+			var seat: Dictionary = SiteOffices.position(settlement.offices, seat_id)
+			if seat.is_empty() or bool(seat.get("head", false)) or not named.has(str(row.duties[duty])): return SiteRuntime.fail("NO_TARGET", "劇本職位「%s」無法安排" % duty)
+			seat["holder"] = int(named[str(row.duties[duty])])
+		if not SiteOffices.validate(settlement.offices, "settlement", true): return SiteRuntime.fail("INVALID", "劇本聚落職位不合法")
+	for row: Dictionary in stock:
+		var feature: Dictionary = candidate.site.get("features", {}).get(str(row.feature), {})
+		var stored: Dictionary = SiteStockpiles.ensure_storage(candidate, str(row.feature), int(feature.get("owner_faction", -1)))
+		if not stored.ok: return SiteRuntime.fail("NO_TARGET", "劇本倉庫「%s」無法存貨" % str(row.feature))
+		SiteRuntime.add_items(stored.stock.cargo, row.items)
+		var endpoint: Dictionary = SiteStockpiles.stock_endpoint(candidate, str(row.feature))
+		if endpoint.is_empty() or int(endpoint.get("capacity", 0)) >= 0 and SiteRuntime.inventory_size(stored.stock.cargo) > int(endpoint.capacity): return SiteRuntime.fail("STORAGE_FULL", "劇本倉庫「%s」存貨超過容量" % str(row.feature))
+	return SiteRuntime.ok("", {"data": candidate, "changed": true})
+
 func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
 	if not ResidentRoster.valid_state(new_data.site): return SiteRuntime.fail("INVALID_RESIDENT_ROSTER", "居民名冊格式或人數不合法；未改變")

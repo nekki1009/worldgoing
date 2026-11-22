@@ -10510,7 +10510,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and bool(request.get("create_new", false)) and region_slot != null and region_slot.source != null and region_slot.source.has_method("author_scenario"):
 		var scenario: Dictionary = region_slot.source.author_scenario()
 		if not scenario.is_empty():
-			var named := apply_scenario_factions(scenario.get("factions", []), scenario.get("teams", []))
+			var named := apply_scenario_factions(scenario.get("factions", []), scenario.get("teams", []), scenario.get("offices", []))
 			if not named.ok: result = named
 	# 隊伍範本: the cadre cards (each card checked as its cadre is written; nothing else changes on a refusal).
 	if result.ok and bool(request.get("create_new", false)) and request.get("cadres") is Array and not request.cadres.is_empty():
@@ -11653,10 +11653,14 @@ func _created_skills(data: Dictionary, ability: float, abilities: Dictionary) ->
 
 ## 示範劇本 step 2: the scenario teams standing on `site` (the slot's author source), in scenario order.
 func _scenario_teams_of(candidate: RegionSaveSlot, site: Vector2i) -> Array:
+	return _scenario_rows_of(candidate, "teams", site)
+
+## 示範劇本: the rows of scenario list `field` (teams, offices, stock) whose site is `site`, in scenario order.
+func _scenario_rows_of(candidate: RegionSaveSlot, field: String, site: Vector2i) -> Array:
 	if candidate == null or candidate.source == null or not candidate.source.has_method("author_scenario"): return []
 	var result: Array = []
-	for team: Dictionary in candidate.source.author_scenario().get("teams", []):
-		if int(team.site[0]) == site.x and int(team.site[1]) == site.y: result.append(team)
+	for row: Dictionary in candidate.source.author_scenario().get(field, []):
+		if int(row.site[0]) == site.x and int(row.site[1]) == site.y: result.append(row)
 	return result
 
 ## 示範劇本 step 2: a band's chief, the captain of its first scenario team: the formal commander of that faction's first
@@ -11687,7 +11691,23 @@ func _scenario_chief(faction_id: int, teams: Array) -> int:
 ## 示範劇本 step 1 (RegionData.author_scenario_valid): each scenario faction's registry entry takes its name and kind; a
 ## bandit gets its band table (origin scenario, lair as a Site id and cell, heat, raid AI, hoard) and the band colour. An id
 ## no Site uses yet gets a fresh entry. One validated registry commit; nothing changes on a refusal.
-func apply_scenario_factions(factions: Array, teams: Array = []) -> Dictionary:
+## 示範劇本 step 3: the head of `faction_id`'s settlement on a scenario offices Site (the active Site or its saved first
+## generation), or -1.
+func _scenario_head(faction_id: int, offices: Array) -> int:
+	for row: Dictionary in offices:
+		var site := Vector2i(int(row.site[0]), int(row.site[1]))
+		var state: Dictionary = {}
+		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
+		else:
+			var loaded: Dictionary = region_slot._load_checked(region_slot.site_path(site), site)
+			if not loaded.get("ok", false): continue
+			state = loaded.data.site
+		var settlement: Dictionary = state.get("settlement", {}) if state.get("settlement") is Dictionary else {}
+		if int(settlement.get("owner_faction", -1)) != faction_id: continue
+		return int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", -1))
+	return -1
+
+func apply_scenario_factions(factions: Array, teams: Array = [], offices: Array = []) -> Dictionary:
 	if factions.is_empty(): return Runtime.ok()
 	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "劇本勢力須在台灣地圖世界中建立")
 	var now := float(region_slot.control.logical_game_seconds)
@@ -11716,6 +11736,10 @@ func apply_scenario_factions(factions: Array, teams: Array = []) -> Dictionary:
 			var chief := _scenario_chief(id, teams)
 			if chief <= 0: return Runtime.fail("NO_TARGET", "劇本土匪找不到頭目")
 			entry["leader_ref"] = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), chief)
+		else:
+			# Step 3: a faction whose scenario settlement has a head is led by him.
+			var head := _scenario_head(id, offices)
+			if head > 0: entry["leader_ref"] = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), head)
 	candidate["revision"] = int(candidate.get("revision", 0)) + 1
 	var checked: Dictionary = RegionFactionQuery.validate(candidate, now)
 	if not checked.ok: return checked
@@ -12548,8 +12572,10 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
 			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)
 			PerfTrace.mark("init_residents")
-			# 示範劇本 step 2: the scenario's armed teams of the start Site.
-			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))))
+			# 示範劇本 steps 2-3: the scenario's armed teams, offices and stock of the start Site.
+			var start_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
+			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, start_site))
+			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", start_site), _scenario_rows_of(candidate, "stock", start_site))
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
@@ -12581,11 +12607,15 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 		var data: TerrainData = projected.data
 		var rows: Array = data.site.get("residents", [])
 		var teams: Array = _scenario_teams_of(candidate, companion) # 示範劇本 step 2
-		if data.site.is_empty() or rows.is_empty() and teams.is_empty(): continue
+		var offices: Array = _scenario_rows_of(candidate, "offices", companion) # step 3
+		var stock: Array = _scenario_rows_of(candidate, "stock", companion)
+		if data.site.is_empty() or rows.is_empty() and teams.is_empty() and stock.is_empty(): continue
 		candidate.attach_person_allocator(data)
 		var populated: Dictionary = lab.prepare_initial_resident_roster(data) if not rows.is_empty() else Runtime.ok("", {"data": data})
 		if not populated.ok: return populated
 		if not teams.is_empty(): populated = lab.prepare_initial_author_teams(populated.data, teams)
+		if not populated.ok: return populated
+		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock)
 		if not populated.ok: return populated
 		births[companion] = populated.data
 	var next_id: int = int(candidate.person_allocator_view().get("next_person_id", start_data.site.get("next_person_id", 1)))

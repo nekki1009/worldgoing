@@ -66,6 +66,9 @@ func author_scenario() -> Dictionary:
 ##   team (step 2): {site: [x, y], faction_id (a scenario faction), cell: [x, y] (where it stands), members: [{name,
 ##     role "officer" | "soldier"}] (1..MAX_TEAM_MEMBERS, the first an officer: the captain)}; a bandit faction's
 ##     first team captain is its chief;
+##   offices? (step 3): [{site: [x, y], head: resident name, duties: {duty_id: resident name}}], one per Site: the
+##     settlement's head seat and the seats of those duties take those residents of that Site; a head is his faction's leader;
+##   stock? (step 3): [{site: [x, y], feature: feature key, items: {resource: 1..1000000}}]: a warehouse's opening stock;
 ##   faction: {id (1..MAX_ID, never the neutral 255), name (1–32 characters), kind "npc" | "bandit",
 ##     bandit (only for kind bandit): {lair: {site: [x, y], cell: [x, y]}, heat 0..100, raid_ai bool, hoard {item: 1..100000000}}}.
 ## The ids are the faction ids the package's Sites use (settlement owner_faction, residents' faction_id); a new world
@@ -76,7 +79,8 @@ const MAX_TEAM_MEMBERS := 20
 static func author_scenario_valid(document: Variant) -> bool:
 	if not document is Dictionary or not Adapter.author_integer(document.get("format"), 1, 1) or not document.get("factions") is Array: return false
 	for key: Variant in document:
-		if not str(key) in ["format", "factions", "teams"]: return false
+		if not str(key) in ["format", "factions", "teams", "offices", "stock"]: return false
+	if not _scenario_offices_valid(document.get("offices", [])) or not _scenario_stock_valid(document.get("stock", [])): return false
 	if document.factions.size() > MAX_SCENARIO_FACTIONS: return false
 	var ids := {}
 	for faction: Variant in document.factions:
@@ -108,6 +112,27 @@ static func author_scenario_valid(document: Variant) -> bool:
 			if not member is Dictionary or member.size() != 2 or not _author_text_valid(member.get("name"), 16, true) or member.get("role") not in ["officer", "soldier"]: return false
 			if at == 0 and member.role != "officer": return false
 	return not _scenario_bandits(document).values().has(false)
+
+static func _scenario_offices_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > MAX_SCENARIO_TEAMS: return false
+	var sites := {}
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not _author_text_valid(row.get("head"), 16, true) or not row.get("duties") is Dictionary: return false
+		var key := "%d:%d" % [int(row.site[0]), int(row.site[1])]
+		if sites.has(key) or row.duties.size() > 16: return false
+		sites[key] = true
+		for duty: Variant in row.duties:
+			if not duty is String or not SiteOffices.duty_ids("settlement").has(str(duty)) or not _author_text_valid(row.duties[duty], 16, true): return false
+	return true
+
+static func _scenario_stock_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > 64: return false
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not _author_text_valid(row.get("feature"), 64, true) or not row.get("items") is Dictionary: return false
+		if row.items.is_empty() or row.items.size() > 32: return false
+		for item: Variant in row.items:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(row.items[item], 1, 1000000): return false
+	return true
 
 ## Every bandit faction of a scenario: {id: has a team (its chief)}.
 static func _scenario_bandits(document: Dictionary) -> Dictionary:

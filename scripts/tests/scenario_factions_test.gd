@@ -7,7 +7,9 @@ extends "res://scripts/tests/map_editor_undo_contract_test.gd"
 ## - the real boot settle (SiteController._settle_boot_request after open_fixed_world) gives faction 1 its name and kind
 ##   npc and makes faction 2 the band 黑石寨 (lair Site id, cell, heat, raid AI, hoard), hostile to the village;
 ## - step 2: the scenario teams are born armed and named (the band of three, the militia of two), and the band's chief is
-##   its first team's captain; the world saves and reopens with the registry.
+##   its first team's captain;
+## - step 3: the scenario offices seat the named residents (head, 市正), the head leads faction 1, the warehouse opens
+##   with its stock; the world saves and reopens with the registry.
 ## Output: SCENARIO_FACTIONS_PASS on success; quit(1) on any failure or the deadline.
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const BaseFixture = preload("res://scripts/tests/map_editor_undo_contract_test.gd")
@@ -46,7 +48,7 @@ func _run() -> void:
 	var land: Dictionary = editor.draft.duplicate(true)
 	land.format = 2
 	land["terrain_static"] = editor.empty_terrain_static()
-	for rectangle: Rect2i in [Rect2i(12, 12, 3, 3), Rect2i(20, 20, 5, 5)]:
+	for rectangle: Rect2i in [Rect2i(12, 12, 3, 3), Rect2i(20, 20, 5, 5), Rect2i(32, 10, 10, 10)]:
 		for y: int in range(rectangle.position.y, rectangle.end.y):
 			for x: int in range(rectangle.position.x, rectangle.end.x): land.terrain_static.terrain[str(editor.terrain.index(Vector2i(x, y)))] = {"foundation": 100}
 	land.revision = int(land.revision) + 1
@@ -59,6 +61,19 @@ func _run() -> void:
 	cells.assign(center_cells.cells)
 	var center: Dictionary = editor.edit_building("place", "", "settlement_center", cells, center_cells.options)
 	if not _check(house.ok and center.ok, "a house and a settlement centre of faction 1"): return
+	var warehouse := ""
+	var store_settings := {"layout_version": 1, "quarter": 0, "owner_faction": 1}
+	for y: int in range(10, 19):
+		for x: int in range(32, 41):
+			var placement: Dictionary = SiteRuntime.building_cells(editor.terrain, "warehouse", Vector2i(x, y), Vector2i.ONE, store_settings)
+			if not placement.ok: continue
+			cells.assign(placement.cells)
+			var placed: Dictionary = editor.edit_building("place", "", "warehouse", cells, placement.options)
+			if placed.ok:
+				warehouse = str(placed.feature)
+				break
+		if not warehouse.is_empty(): break
+	if not _check(not warehouse.is_empty(), "a warehouse of faction 1"): return
 	editor._residents_text.text = JSON.stringify([{"name": "甲", "faction_id": 1, "house": house.feature}, {"name": "乙", "faction_id": 1, "house": house.feature}])
 	editor.get_node("AuthorColumn").find_child("ApplyResidents", true, false).pressed.emit()
 	if not _check(editor.draft.initial_state.get("residents", []).size() == 2, "two residents"): return
@@ -69,7 +84,9 @@ func _run() -> void:
 	var band := {"id": 2, "name": "黑石寨", "kind": "bandit", "bandit": {"lair": {"site": [at.x, at.y], "cell": [80, 80]}, "heat": 20, "raid_ai": true, "hoard": {"iron": 12, "cloth": 30}}}
 	var teams := [{"site": [at.x, at.y], "faction_id": 2, "cell": [80, 80], "members": [{"name": "黑虎", "role": "officer"}, {"name": "甲匪", "role": "soldier"}, {"name": "乙匪", "role": "soldier"}]},
 		{"site": [at.x, at.y], "faction_id": 1, "cell": [30, 70], "members": [{"name": "鄉勇長", "role": "officer"}, {"name": "鄉勇甲", "role": "soldier"}]}]
-	var scenario := {"format": 1, "factions": [{"id": 1, "name": "溪口莊", "kind": "npc"}, band], "teams": teams}
+	var offices := [{"site": [at.x, at.y], "head": "甲", "duties": {"settlement.trade": "乙"}}]
+	var stock := [{"site": [at.x, at.y], "feature": warehouse, "items": {"grain": 50, "wood": 20}}]
+	var scenario := {"format": 1, "factions": [{"id": 1, "name": "溪口莊", "kind": "npc"}, band], "teams": teams, "offices": offices, "stock": stock}
 	if not _check(Data.author_scenario_valid(scenario), "the scenario document is valid"): return
 	var bad: Array = []
 	bad.append({"format": 1, "factions": [{"id": 255, "name": "中立", "kind": "npc"}]})
@@ -77,6 +94,8 @@ func _run() -> void:
 	bad.append({"format": 1, "factions": [{"id": 1, "name": "甲", "kind": "npc", "bandit": band.bandit}]})
 	bad.append({"format": 1, "factions": [{"id": 2, "name": "寨", "kind": "bandit", "bandit": {"heat": 0, "raid_ai": true, "hoard": {}}}]})
 	bad.append({"format": 1, "factions": [], "start": {}})
+	bad.append({"format": 1, "factions": [], "offices": [{"site": [at.x, at.y], "head": "甲", "duties": {"no.such.duty": "乙"}}]}) # an unknown duty
+	bad.append({"format": 1, "factions": [], "stock": [{"site": [at.x, at.y], "feature": warehouse, "items": {"grain": 0}}]}) # an empty stock row
 	bad.append({"format": 1, "factions": [band]}) # a band without a team has no chief
 	bad.append({"format": 1, "factions": [band], "teams": [{"site": [at.x, at.y], "faction_id": 2, "cell": [80, 80], "members": [{"name": "甲匪", "role": "soldier"}]}]}) # the captain must be an officer
 	bad.append({"format": 1, "factions": [band], "teams": [{"site": [at.x, at.y], "faction_id": 9, "cell": [80, 80], "members": [{"name": "黑虎", "role": "officer"}]}]}) # an unknown faction
@@ -128,6 +147,16 @@ func _run() -> void:
 	var band_names: Array = band_people.map(func(person: Variant) -> String: return str(lab.crowd_site._records[int(person)].get("name", "")))
 	if not _check(band_people.size() == 3 and band_names.has("黑虎") and band_names.has("甲匪"), "the band's team of three is born with its names: " + str(band_names)): return
 	if not _check(militia_people.size() == 2, "the village's militia of two is born armed: " + str(militia_people)): return
+	# Step 3: the village head and the 市正 are the named residents; the head leads faction 1; the warehouse is stocked.
+	var settlement: Dictionary = lab.terrain.site.settlement
+	var head_id := int(SiteOffices.head_position(settlement.offices).get("holder", -1))
+	var trade_seat: Dictionary = SiteOffices.position(settlement.offices, str(settlement.offices.duties.get("settlement.trade", "")))
+	var head_name := str(lab.crowd_site._records.get(head_id, {}).get("name", ""))
+	var trade_name := str(lab.crowd_site._records.get(int(trade_seat.get("holder", -1)), {}).get("name", ""))
+	if not _check(head_name == "甲" and trade_name == "乙", "the head is 甲 and the 市正 is 乙: " + str([head_name, trade_name])): return
+	if not _check(RegionPeerage.world_person_id(registry.entries["1"].leader_ref) == head_id, "the head leads faction 1"): return
+	var stored: Dictionary = SiteStockpiles.storage(lab.terrain, warehouse)
+	if not _check(int(stored.get("cargo", {}).get("grain", 0)) == 50 and int(stored.cargo.get("wood", 0)) == 20, "the warehouse opens with 50 grain and 20 wood: " + str(stored.get("cargo", {}))): return
 	var chief: int = RegionPeerage.world_person_id(registry.entries["2"].leader_ref)
 	if not _check(chief > 0 and str(lab.crowd_site._records.get(chief, {}).get("name", "")) == "黑虎", "the band's chief is 黑虎, its team's captain"): return
 	var saved: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)
