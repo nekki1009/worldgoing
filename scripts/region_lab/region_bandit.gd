@@ -85,6 +85,8 @@ const HEAT_DECAY := 5
 const HEAT_DECAY_DAYS := 10
 const HEAT_MOVE := 70
 const HEAT_AFTER_MOVE := 30
+## Nekki 2026-11-22 B: a hot band moves only when an official faction attacked it in the last ATTACK_MEMORY_DAYS days.
+const ATTACK_MEMORY_DAYS := 10
 const RISE_PRESTIGE := 30
 const RISE_MEMBERS := 30
 const RISE_MAX_HEAT := 50
@@ -112,6 +114,21 @@ static func _with_table(registry: Dictionary, band: int, change: Callable, now: 
 	change.call(table)
 	entry.bandit = table
 	return _finish(candidate, now)
+
+## Nekki 2026-11-22 B: an official faction attacked the band on `day` (site_bandit_attacked.gd): heat +20 (HEAT_ATTACKED)
+## and the latest attack day is kept in the band's table (`attacked_day`).
+static func attacked(registry: Dictionary, band: int, day: int, now: float) -> Dictionary:
+	var heat := heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "attacked")
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		table["heat"] = heat
+		table["attacked_day"] = maxi(int(table.get("attacked_day", -1)), maxi(0, day)), now) # String keys: the validator refuses StringName keys
+
+## 官方剿匪 (Nekki 2026-11-22 B): `faction` sent an expedition against the band on `day` (its 30-day cooldown reads this).
+static func pursued(registry: Dictionary, band: int, faction: int, day: int, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		var rows: Dictionary = table.get("pursued", {}).duplicate() if table.get("pursued") is Dictionary else {}
+		rows[str(faction)] = maxi(0, day)
+		table["pursued"] = rows, now)
 
 static func set_heat(registry: Dictionary, band: int, heat: int, now: float) -> Dictionary:
 	return _with_table(registry, band, func(table: Dictionary) -> void: table.heat = clampi(heat, 0, RegionFactionQuery.BANDIT_HEAT_MAX), now)
@@ -378,9 +395,14 @@ static func pick_raid(registry: Dictionary, band: int, targets: Array, band_stre
 ##  targets ([target]), strength (float)}. Returns {action, ...}.
 static func daily_decision(registry: Dictionary, band: int, facts: Dictionary) -> Dictionary:
 	var day := int(facts.get("day", 0))
-	if int(facts.get("heat", 0)) >= HEAT_MOVE: return {"action": "move_lair"}
+	# Nekki 2026-11-22 B: a hot band moves only after an official attack in the last ATTACK_MEMORY_DAYS days (facts
+	# attacked_day); a hot band nobody attacked lies low (no protection demand, no raid) until its heat cools.
+	var hot := int(facts.get("heat", 0)) >= HEAT_MOVE
+	var attacked_day := int(facts.get("attacked_day", -1))
+	if hot and attacked_day >= 0 and day - attacked_day <= ATTACK_MEMORY_DAYS: return {"action": "move_lair"}
 	if bool(facts.get("can_rise", false)): return {"action": "rise"}
 	if float(facts.get("amnesty_score", -1.0)) >= 0.0 and float(facts.amnesty_score) >= float(facts.get("amnesty_gate", 55.0)): return {"action": "accept_amnesty"}
+	if hot: return {"action": "lie_low"}
 	var due: Array = facts.get("protection_due", [])
 	if not due.is_empty():
 		var sites: Array = due.duplicate()

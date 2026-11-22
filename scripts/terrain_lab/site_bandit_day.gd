@@ -23,6 +23,7 @@ const FenceTeam = preload("res://scripts/terrain_lab/site_bandit_fence_team.gd")
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
+const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B
 const NEIGHBOURS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 
 ## Runs the day once per controller; returns {day, actions: [{band, action, ...}]} or {} when already run today.
@@ -89,7 +90,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			can_rise = Bandit.may_rise(registry, band, prestige, BanditAmnesty._members(controller.lab, band).size(), int(mind.get("ambition", 50))).ok
 		var seen := raid_facts(controller, band) if here else {"targets": [], "strength": 0.0}
 		if here: seen.targets.append_array(FarRaid.targets(controller, band, chief))
-		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "can_rise": can_rise,
+		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "attacked_day": int(RegionFactionQuery.bandit_of(registry, band).get("attacked_day", -1)), "can_rise": can_rise,
 			"amnesty_score": -1.0, "protection_due": [], "targets": seen.targets, "strength": float(seen.strength)})
 		var done := {}
 		match str(decision.action):
@@ -97,7 +98,12 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			"rise":
 				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
-			"raid": done = FarRaid.raid(controller, band, decision.target) if bool(decision.target.get("far", false)) else raid(controller, band, decision.target)
+			"raid":
+				var far := bool(decision.target.get("far", false))
+				done = FarRaid.raid(controller, band, decision.target) if far else raid(controller, band, decision.target)
+				# The battle this raid starts there is the band's own, not an official attack on it (site_bandit_attacked.gd).
+				if bool(done.get("ok", false)): Attacked.note_raid(controller, band, str(decision.target.get("site_id", "")) if far else str(controller.lab.terrain.site.get("id", "")), today)
+			"lie_low": done = {"ok": true} # Nekki 2026-11-22 B: hot, nobody attacked it: no raid, no fence today
 			_:
 				# B5b-2: with nothing else to do today, a chief whose hoard holds goods and too little food sends them to a fence.
 				var fence_target: Dictionary = FenceTeam.want(controller, band, chief) if here else {}

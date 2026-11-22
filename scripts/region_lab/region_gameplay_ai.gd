@@ -127,7 +127,7 @@ static func reports_due(ledger: Dictionary, game_time: float) -> Array[Dictionar
 ## emigrates). The captain is the team's current NPC commander; the player's team, a routed team or one without a
 ## commander cannot. `reason` names the cause in the request (band, emigrate). No known-target receipt is needed: the
 ## caller names a neighbouring Site from public geography. Returns the same {request, owner_preview} as prepare_dispatch.
-const CAPTAIN_DISPATCH_REASONS := ["band", "emigrate", "trade", "tax"] # tax: 軍餉與稅收 P3b, a tax team on its round
+const CAPTAIN_DISPATCH_REASONS := ["band", "emigrate", "trade", "tax", "suppress"] # tax: 軍餉與稅收 P3b, a tax team on its round; suppress: 官方剿匪 (Nekki 2026-11-22 B)
 static func prepare_captain_dispatch(lab: TerrainLab, team_id: int, target_site: String, transfer_token: String, preflight: Callable, reason: String) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null or not preflight.is_valid(): return _fail("MISSING_DISPATCH_OWNER")
 	if reason not in CAPTAIN_DISPATCH_REASONS: return _fail("INVALID_DISPATCH")

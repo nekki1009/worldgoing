@@ -16,7 +16,7 @@ const KINDS := ["player", "npc", "rebel", "bandit"]
 ## The `bandit` sub-table (only on kind bandit). Missing keys read as BANDIT_DEFAULTS (bandit spec §3.3).
 ## B4b adds two optional keys: `hoard` {item: n} (goods kept at the lair) and `protection` {site_id: {asked, until}} (the
 ## day a settlement was last asked for protection money and the day its protection lasts to, -1 when it refused).
-const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from", "hoard", "protection", "passes"]
+const BANDIT_FIELDS := ["origin", "lair", "raid_ai", "heat", "converted_from", "hoard", "protection", "passes", "attacked_day", "pursued"]
 const BANDIT_ORIGINS := ["scenario", "rout", "desertion", "escaped_captive", "refugee", "fallen_rebel"]
 const BANDIT_DEFAULTS := {"origin": "scenario", "lair": null, "raid_ai": true, "heat": 0, "converted_from": null}
 const BANDIT_HEAT_MAX := 100
@@ -112,6 +112,13 @@ static func _bandit_valid(entry: Dictionary, now: float) -> Dictionary:
 	if table.has("origin") and table.origin not in BANDIT_ORIGINS: return fail("CORRUPT_SAVE", "bandit origin")
 	if table.has("raid_ai") and not table.raid_ai is bool: return fail("CORRUPT_SAVE", "bandit raid switch")
 	if table.has("heat") and not whole(table.heat, 0, BANDIT_HEAT_MAX): return fail("CORRUPT_SAVE", "bandit heat")
+	# Nekki 2026-11-22 B: the game day of the latest official attack on the band (optional).
+	if table.has("attacked_day") and not whole(table.attacked_day, 0, 2147483646): return fail("CORRUPT_SAVE", "bandit attacked day")
+	# 官方剿匪 (Nekki 2026-11-22 B): {official faction id: the day it last sent an expedition against the band}.
+	if table.has("pursued"):
+		if not table.pursued is Dictionary or table.pursued.size() > 64: return fail("CORRUPT_SAVE", "bandit pursued")
+		for faction: Variant in table.pursued:
+			if not faction is String or not str(faction).is_valid_int() or not whole(table.pursued[faction], 0, 2147483646): return fail("CORRUPT_SAVE", "bandit pursued")
 	var lair: Variant = table.get("lair")
 	if lair != null and not (lair is Dictionary and keys(lair, ["site_id", "cell"]) and lair.site_id is String and not str(lair.site_id).is_empty() and lair.cell is Array and lair.cell.size() == 2 and whole(lair.cell[0], 0, 2147483647) and whole(lair.cell[1], 0, 2147483647)): return fail("CORRUPT_SAVE", "bandit lair")
 	if table.has("hoard"):
@@ -148,6 +155,9 @@ static func canonical_bandit(value: Dictionary) -> Dictionary:
 	var table: Dictionary = BANDIT_DEFAULTS.duplicate(true)
 	table.merge(value.duplicate(true), true)
 	if table.heat is int or table.heat is float: table.heat = int(table.heat)
+	if table.get("attacked_day") is float: table["attacked_day"] = int(table["attacked_day"])
+	if table.get("pursued") is Dictionary:
+		for faction: Variant in table.pursued: table.pursued[faction] = int(table.pursued[faction])
 	if table.lair is Dictionary and table.lair.get("cell") is Array:
 		var cell: Array = []
 		for axis: Variant in table.lair.cell: cell.append(int(axis) if (axis is int or axis is float) else axis)

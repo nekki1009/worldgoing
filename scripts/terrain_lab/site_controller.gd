@@ -38,6 +38,8 @@ const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.g
 const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
 const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
 const Typhoon = preload("res://scripts/terrain_lab/site_typhoon.gd") # 時間與氣候 TC11
+const BanditAttacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B: official attacks raise heat.
+const BanditSuppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd") # 官方剿匪 (Nekki 2026-11-22 B)
 const BanditAftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: plunder and the way home. # 平民 C4c: a migrant household moves in.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
@@ -5220,6 +5222,7 @@ var daily_hooks_due := false
 func run_daily_hooks() -> void:
 	daily_hooks_due = false
 	BanditDay.day(self)
+	BanditSuppression.day(self) # 官方剿匪: the settlement's official owner may send an expedition against a hot band
 	resident_exodus_day()
 	skills_day()
 	civilian_dress_day()
@@ -5238,6 +5241,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 		run_daily_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	if has_meta(&"fence_heat_due"): TradeSession.Fence.flush(self) # 土匪 B5b: a fence sale's heat, saved at rest
+	if has_meta(&"bandit_attacked_due"): BanditAttacked.flush(self) # Nekki 2026-11-22 B: an official attack's heat, saved at rest
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -10716,6 +10720,7 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
 	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
+	closed["bandits_attacked"] = BanditAttacked.note_battle(self, closed) # Nekki 2026-11-22 B: queued, saved at rest
 	closed["caravans_lost"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab) # 土匪 B5: TR-55
 	closed["tax_teams_lost"] = (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab) # 軍餉與稅收 P3b: PT-17
 	for person: Variant in closed.deltas:

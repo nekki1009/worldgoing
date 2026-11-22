@@ -2,7 +2,9 @@ extends SceneTree
 ## 土匪 B4d-1 in a live world (reports/bandit-faction-spec.md §5.2, §11, §12): the daily band decision.
 ## A neutral world opens; an NPC band (chief not present here, lair at this Site) is registered. Checks:
 ## - heat cools by 5 on every 10th day only;
-## - at heat >= 70 the band moves its lair to a land neighbour Site (same cell) and its heat drops to 30, saved;
+## - at heat >= 70 a band nobody attacked lies low (no move); an official attack (queued, saved at rest: heat +20 and the
+##   day kept) makes the hot band move its lair to a land neighbour Site (same cell) and its heat drop to 30, saved
+##   (Nekki 2026-11-22 B);
 ## - the daily entry point runs once a day;
 ## - a band the player chiefs (落草 mid-game) is never moved by the AI.
 ## Output: SITE_BANDIT_DAY_PASS on success; quit(1) on any failure or the deadline.
@@ -11,6 +13,7 @@ const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd")
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
+const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const START := Vector2i(1170, 13252)
 
@@ -70,13 +73,20 @@ func _run() -> void:
 	ran = BanditDay.run(controller, 10)
 	if not _check(int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).heat) == 35 and ran.actions.is_empty(), "day 10: heat cools to 35, the band rests", ran): return
 
-	# A hot band moves its lair to a land neighbour.
+	# A hot band nobody attacked lies low; after an official attack it moves its lair to a land neighbour.
 	if not _check(_commit(controller, Bandit.set_heat(slot.control.faction_registry, band, 75, now)), "heat is set to 75"): return
-	var generation := int(slot._marker.generation)
 	ran = BanditDay.run(controller, 11)
+	if not _check(ran.actions.size() == 1 and ran.actions[0].action == "lie_low" and str(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).lair.site_id) == site_id
+		and int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).heat) == 75, "day 11: the hot band nobody attacked lies low and stays", ran): return
+	Attacked.queue(controller, band, 11)
+	var flushed: Dictionary = Attacked.flush(controller)
+	var attacked_table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
+	if not _check(flushed.ok and int(attacked_table.heat) == 95 and int(attacked_table.get("attacked_day", -1)) == 11 and not controller.has_meta(&"bandit_attacked_due"), "an official attack on day 11 is saved: heat 75 -> 95, attacked_day 11", [flushed, attacked_table]): return
+	var generation := int(slot._marker.generation)
+	ran = BanditDay.run(controller, 12)
 	var table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
 	var moved_to := str(table.lair.site_id)
-	if not _check(ran.actions.size() == 1 and ran.actions[0].action == "move_lair" and ran.actions[0].ok, "day 11: the hot band moves its lair", ran): return
+	if not _check(ran.actions.size() == 1 and ran.actions[0].action == "move_lair" and ran.actions[0].ok, "day 12: the attacked hot band moves its lair", ran): return
 	if not _check(moved_to != site_id and Bandit.site_distance(moved_to, site_id) == 1 and table.lair.cell == [12, 34] and int(table.heat) == Bandit.HEAT_AFTER_MOVE, "the new lair is next door, same cell, heat 30", table): return
 	var parts := moved_to.split(":")
 	var summary: Dictionary = slot.source.get_site_summary(int(parts[parts.size() - 2]), int(parts[parts.size() - 1]))
@@ -97,9 +107,9 @@ func _run() -> void:
 	if not _check(own != band and RegionFactionQuery.is_bandit(slot.control.faction_registry, own), "the player's team is a band", own): return
 	if not _check(_commit(controller, Bandit.set_heat(slot.control.faction_registry, own, 90, now)), "the player's band is hot"): return
 	var own_lair: Variant = RegionFactionQuery.bandit_of(slot.control.faction_registry, own).lair
-	ran = BanditDay.run(controller, 12)
+	ran = BanditDay.run(controller, 13)
 	if not _check(RegionFactionQuery.bandit_of(slot.control.faction_registry, own).lair == own_lair and int(RegionFactionQuery.bandit_of(slot.control.faction_registry, own).heat) == 90
 		and not ran.actions.any(func(a: Dictionary) -> bool: return int(a.band) == own), "the AI never moves the player's band", ran): return
 	_finished = true
-	print("SITE_BANDIT_DAY_PASS: ", checks, " checks; heat cools, hot bands move lair, the player's band is left alone")
+	print("SITE_BANDIT_DAY_PASS: ", checks, " checks; heat cools, a hot band lies low until attacked, then moves its lair, the player's band is left alone")
 	quit(0)

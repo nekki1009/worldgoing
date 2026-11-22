@@ -12443,6 +12443,7 @@ func _region_run_due_daily_hooks() -> void:
 	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
 	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
+	if site_controller.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
