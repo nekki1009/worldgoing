@@ -65,6 +65,9 @@ func _run() -> void:
 	if not _ok(Suppression.home_of(marked.registry, lawful, 80) == "atlas:2:2" and Suppression.home_of(marked.registry, lawful, 75 + Suppression.COOLDOWN_DAYS + 1).is_empty()
 		and Suppression.home_of(marked.registry, band, 80).is_empty(), "the way home leads to the latest expedition's home, for 30 days"): return
 	if not _ok(RegionFactionQuery.validate(marked.registry, 10.0).ok, "the registry with pursued rows validates", RegionFactionQuery.validate(marked.registry, 10.0)): return
+	if not _ok(Suppression.pursued_band(marked.registry, lawful, [band, other], 80) == other and Suppression.pursued_band(marked.registry, lawful, [band], 60) == band
+		and Suppression.pursued_band(marked.registry, lawful, [band], 40 + Suppression.COOLDOWN_DAYS + 1) == -1 and Suppression.pursued_band(marked.registry, other, [band, other], 80) == -1,
+		"an expedition attacks the band it was sent against (the latest one here, for 30 days); nobody else's"): return
 	var hit: Dictionary = Bandit.attacked(marked.registry, band, 41, 10.0)
 	if not _ok(hit.ok and int(RegionFactionQuery.bandit_of(hit.registry, band).heat) == 80 and int(RegionFactionQuery.bandit_of(hit.registry, band).attacked_day) == 41, "an official attack: heat 60 -> 80, attacked day 41", hit): return
 	hit = Bandit.attacked(hit.registry, band, 39, 10.0)
