@@ -1,7 +1,7 @@
 extends SceneTree
 ## 土匪 B4d-1 in a live world (reports/bandit-faction-spec.md §5.2, §11, §12): the daily band decision.
 ## A neutral world opens; an NPC band (chief not present here, lair at this Site) is registered. Checks:
-## - heat cools by 5 on every 10th day only;
+## - heat cools by 5 on every 10th day only, once for the whole world however many Sites run the day's pass;
 ## - at heat >= 70 a band nobody attacked lies low (no move); an official attack (queued, saved at rest: heat +20 and the
 ##   day kept) makes the hot band move its lair to a land neighbour Site (same cell) and its heat drop to 30, saved
 ##   (Nekki 2026-11-22 B);
@@ -72,6 +72,9 @@ func _run() -> void:
 	if not _check(int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).heat) == 40 and ran.actions.is_empty(), "day 9: no cooling, no action", ran): return
 	ran = BanditDay.run(controller, 10)
 	if not _check(int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).heat) == 35 and ran.actions.is_empty(), "day 10: heat cools to 35, the band rests", ran): return
+	# Another Site's owner runs the same day's pass (every bound Site does): the world cools once a day.
+	ran = BanditDay.run(controller, 10)
+	if not _check(int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).heat) == 35, "day 10 again (another Site's pass): no second cooling", ran): return
 
 	# A hot band nobody attacked lies low; after an official attack it moves its lair to a land neighbour.
 	if not _check(_commit(controller, Bandit.set_heat(slot.control.faction_registry, band, 75, now)), "heat is set to 75"): return

@@ -50,6 +50,10 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	bands.sort()
 	var player_ref: Dictionary = JoinFaction._world_ref(controller, int(controller.lab.controlled_person_id()))
 	var now := float(slot.control.logical_game_seconds)
+	# Heat cools once a day for the whole world: every bound Site's owner (the live Site and each cold original Lab) runs
+	# this pass once a day, and each run used to cool every band again (found 2026-11-24). The day is kept on the slot.
+	var cooling: bool = today > 0 and today % COOL_EVERY_DAYS == 0 and int(slot.get_meta(&"bandit_cooled_day", -1)) != today
+	if cooling: slot.set_meta(&"bandit_cooled_day", today)
 	for band: int in bands:
 		registry = slot.control.faction_registry
 		var entry: Dictionary = registry.entries[str(band)]
@@ -64,7 +68,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			table = RegionFactionQuery.bandit_of(registry, band)
 			result.actions.append({"band": band, "action": "npc_takes_over", "ok": true, "code": ""})
 		var heat := int(table.get("heat", 0))
-		if heat > 0 and today > 0 and today % COOL_EVERY_DAYS == 0:
+		if cooling and heat > 0:
 			var cooled := Bandit.set_heat(registry, band, Bandit.heat_after(heat, "quiet", COOL_EVERY_DAYS), now)
 			if cooled.ok and controller._commit_diplomacy(cooled, "").ok:
 				registry = slot.control.faction_registry

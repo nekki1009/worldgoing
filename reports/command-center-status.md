@@ -1,7 +1,18 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 18:30（台北）
+更新：2026-11-24 04:25（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-24 04:25（台北）額度用完暫停：剿匪全程測試卡在冷 Site 接上線
+- 已推送到 PR #3：到 1c9cd69（市鎮官兵、劇本包、剿匪第三階段、活世界測試；回歸 BANDIT_B3 30/30）。
+- 本次提交（未推送）：土匪熱度每 10 日 −5 改成全世界一天一次（原本每個步進中的 Site 各降一次；slot meta bandit_cooled_day）；活世界測試的開局等待改看時間。COOL1 2/2、LIVE9 通過。
+- 未提交：
+  - scripts/region_lab/region_save_slot.gd prepare_npc_region_arrival：目的地冷補算回 PENDING（含 cold_replay）時原樣上傳，不再變成 COMMITTED_UNBOUND 步進錯誤。已確認不再鎖錯；尚未跑 NPC 抵達回歸。
+  - scripts/tests/site_bandit_suppression_e2e_test.gd（新，診斷用，尚未通過）。
+- 全程測試的發現（遊戲本身的問題，劇本裡任何 NPC 走進開局後沒人去過的 Site 都會中）：
+  1. 補算 PENDING 被當失敗（上面已修）。
+  2. 補算做完後，冷 owner 接上線失敗：terrain_lab.gd:10512 REGION_CHILD_BIND_FAILED「群眾原生內容未在冷補算中啟用」（crowd_saved 但 child.crowd_site 未 active）。這個失敗在步進前的 consume_region_point 路徑（terrain_lab.gd:1804）不鎖錯、只默默重試，所以每個畫面從頭補算（約 10 秒一輪），官兵永遠進不去。
+- 下一步：讀 terrain_lab.gd 10480–10515（冷 child bind 的 crowd 啟用條件；開局伴隨 Site 是 crowd_convert_pending，補算時轉成 crowd 並寫了 crowd 區段，重新 bind 時 crowd 未啟用），修好後重跑 E2E（output/project_command_center/CONTINUOUS_SWITCH/E2E_DIAG.json），再跑 NPC 抵達回歸與土匪群回歸，通過才提交推送。
 
 ## 2026-11-22 18:30（台北）暫停交接（Nekki 10:25Z「額度用完了暫停吧」）
 - 已推送到 PR #3 分支：到 e542834（Nekki 09:16Z「好 push」）。之後本機未推送：市鎮官兵＋重建劇本包（本條提交）。

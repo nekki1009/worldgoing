@@ -72,7 +72,8 @@ func _run() -> void:
 	if not _ok(RegionEntry.request_new_world(built.start, {}, "剿匪", "", str(built.path)), "a new world is requested", RegionEntry.menu_message): return
 	change_scene_to_file(SITE)
 	var lab: TerrainLab = null
-	for _frame: int in range(36000):
+	var open_deadline := Time.get_ticks_msec() + 1200000 # by the clock: beside another run the birth takes more frames
+	while Time.get_ticks_msec() < open_deadline:
 		await process_frame
 		if _finished: return
 		var scene := current_scene as TerrainLab
