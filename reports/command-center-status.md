@@ -1,7 +1,19 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-24 04:25（台北）
+更新：2026-11-24 10:20（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-24 10:20（台北）額度用完暫停：NPC 進冷 Site 四層已修，剿匪全程測試差最後一段
+- Nekki 02:05Z「要補，先排程」：畫面外戰報。計畫 reports/offscreen-battle-log-plan.md（O0–O4，已提交），待決 OQ1–OQ3。
+- 未提交、已在工作目錄（全部未跑回歸）：
+  - region_save_slot.gd prepare_npc_region_arrival：(1) 冷補算 PENDING 原樣上傳；(3) 剛補算完的冷 owner（選定檔落後或是開局的純存檔）先聯合存檔；(4) 聯合存檔前先收尾活動 Site 的區域點與冷點。
+  - terrain_lab.gd：(2) 補算用 Lab 綁定後帶上世界氣候開關（不碰來源）；冷 child bind 失敗帶出 cause／crowd_cause；**臨時診斷碼 `--cold-bind-diag`（COLD_BIND_DIAG）要在提交前移除**（補算完成區、_region_bootstrap_bind_child、_region_original_cold_pending）。
+  - site_region_checkpoint.gd：臨時診斷 push_error（`--cold-bind-diag`），提交前移除。
+  - site_bandit_suppression.gd：新隊伍進 Site 立刻再檢查攻擊令、被拒絕會重試；site_bandit_attacked.gd：watch（每遊戲分鐘看現場減員）＋每伙每日每 Site 一次；劫掠記號改放 slot。
+  - scripts/tests/site_bandit_suppression_e2e_test.gd（新）。
+- 全程測試現況：出兵 → 行軍 → 抵達山寨（已通過，土匪 9、官兵 5 在線）→ 下攻擊令 → 開打（官兵全滅土匪）都確認；「被官方攻打 → 熱度 +20 → 隔天搬寨」用 watch 的版本排在 E2E22，尚未看到結果（output/project_command_center/CONTINUOUS_SWITCH/E2E22.log）。
+- 已知：冷 Site 戰報追蹤器不開（共用戰鬥時鐘）；全滅的土匪仍 active。
+- 下一步：看 E2E22 → 移除臨時診斷碼 → 回歸（BANDIT_B3.json＋e2e＋NPC 抵達相關：region_two_npc_sea、region_food_reinforcement、region_siege_center_original、region_npc_static_siege_entry、region_carried_intel、site_ecology_longrun_owner）→ 提交推送（Nekki：全部沒問題就可以推）→ 畫面外戰報 O1。
 
 ## 2026-11-24 04:25（台北）額度用完暫停：剿匪全程測試卡在冷 Site 接上線
 - 已推送到 PR #3：到 1c9cd69（市鎮官兵、劇本包、剿匪第三階段、活世界測試；回歸 BANDIT_B3 30/30）。
