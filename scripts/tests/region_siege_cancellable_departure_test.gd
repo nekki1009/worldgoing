@@ -746,9 +746,15 @@ func _departure_captain_genesis_at_peace() -> bool:
 		var crowd_rosters: Array = []
 		for army: Variant in lab.terrain.site.get("armies", []):
 			if army is Dictionary: crowd_rosters.append({"team": army.get("team_id"), "crowd": army.get("crowd", false), "units": army.get("units", []).size()})
+		for army: Variant in lab.combat_armies:
+			if not army is TerrainArmy or not army.has_army(): continue
+			var people: Array = []
+			for index: int in army.combat_units.size(): people.append({"id": army.combat_identity(index), "role": army.military_role(index), "gone": army.member_gone(index), "hp": army.combat_hot_get(index, &"hp")})
+			crowd_rosters.append({"live_team": army.team_id, "people": people, "service": army.officer_service.duplicate(), "pending": army.pending_cadre(), "formal": army.formal_commander})
 		if not _check(lab.crowd_site != null and lab.crowd_site.active, "the visited peace neighbour opens as a crowd Site",
 			{"site": lab.terrain.site.get("id"), "has_crowd_section": lab.terrain.site.has("crowd"), "crowd_site": lab.crowd_site != null,
-				"requested": lab.crowd_startup_requested, "restore_only": lab.restore_only, "armies": crowd_rosters, "controlled": lab.controlled_person_id()}): return false
+				"requested": lab.crowd_startup_requested, "restore_only": lab.restore_only, "armies": crowd_rosters, "controlled": lab.controlled_person_id(), "convert_pending": lab.terrain.site.get("crowd_convert_pending"), "grid_team": lab._has_active_grid_team(),
+				"combat_left": lab.terrain.site.get("combat_left"), "refused": lab.get_meta(&"last_refused_result", {})}): return false
 	var controlled: Dictionary = _departure_controlled_body()
 	if controlled.is_empty(): return false
 	if _crowd_body(controlled):

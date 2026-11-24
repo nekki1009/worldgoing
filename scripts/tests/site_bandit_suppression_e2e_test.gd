@@ -223,19 +223,50 @@ func _run() -> void:
 		var original: Variant = slot._region_original_labs.get(lair)
 		if original != null and is_instance_valid(original) and original.crowd_site != null and original.crowd_site.active:
 			print("SITE_BANDIT_SUPPRESSION_E2E PROBE attack=", JSON.stringify(Suppression.attack(original.site_controller, int(float(slot.control.logical_game_seconds) / Bandit.DAY))))
-	if destroyed:
-		# The expedition wiped the band out before the battle closed: the band is ended, which is the suppression's own goal.
-		var ended: Dictionary = slot.control.faction_registry.entries.get(str(band), {})
-		if not _ok(str(ended.get("status", "")) != "active", "the expedition destroyed the band (status %s) after %.1f game hours" % [str(ended.get("status", "")), (float(slot.control.logical_game_seconds) - started_clock) / 3600.0], ended): return
+	if not destroyed and not _ok(attacked, "the band is recorded as attacked by an official faction after %.1f game hours" % ((float(slot.control.logical_game_seconds) - started_clock) / 3600.0)): return
+	var table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
+	if not destroyed and not _ok(int(table.heat) == 95 and str(table.lair.site_id) == lair, "its heat rose from 75 to 95; it still holds its lair", table): return
+	# The fight on the unwatched Site runs to its end: its battle closes after a quiet minute and is in the battle log.
+	var log_entry: Dictionary = {}
+	for frame: int in range(120000):
+		await process_frame
+		if _finished: return
+		lab._process(1.0 / 30.0)
+		controller.person_actions.settle_after_contacts()
+		if not controller._original_step_fault.is_empty():
+			_fail("a frame fault after the fight", controller._original_step_fault)
+			return
+		for battle: Dictionary in slot.pending_battles + RegionBattleLog.table(slot.control.faction_registry).records:
+			if str(battle.site_id) == lair and battle.sides.has(str(band)) and battle.sides.has("1"): log_entry = battle
+		if not log_entry.is_empty(): break
+		if frame % 6000 == 0: print("SITE_BANDIT_SUPPRESSION_E2E CLOSING frame=%d %s" % [frame, _lair_report(slot, lair, token, band)])
+	if not _ok(not log_entry.is_empty(), "the battle on the unwatched lair is in the battle log"): return
+	if not _ok(int(log_entry.winner) in [-1, 1, band] and int(log_entry.sides["1"].people) > 0 and int(log_entry.sides[str(band)].people) > 0, "it names both sides and their people", log_entry): return
+	for _frame: int in range(120):
+		await process_frame
+		lab._process(1.0 / 30.0)
+		controller.person_actions.settle_after_contacts()
+	var field: Variant = slot._region_original_labs.get(lair)
+	if not _ok(field != null and is_instance_valid(field) and field.site_controller.battle_effects_due.is_empty(), "what the battle saves was flushed between two steps"): return
+	var fought := 0
+	for team: Dictionary in field.crowd_site.teams:
+		if int(team.get("faction", -1)) != 1: continue
+		for person: Variant in team.get("person_ids", []):
+			var found: Dictionary = field.site_controller.person_actions._person(int(person), false)
+			if not found.is_empty() and int(preload("res://scripts/terrain_lab/person_social.gd").combat_record(found.body).get("battles", 0)) >= 1: fought += 1
+	if not _ok(fought >= 1, "%d official people carry the battle in their records" % fought): return
+	var ended: Dictionary = slot.control.faction_registry.entries.get(str(band), {})
+	if not preload("res://scripts/terrain_lab/site_bandit_ended.gd").members_left(field, band):
+		# Nobody of the band is left: it ended (extinct, no lair) with the battle.
+		if not _ok(str(ended.get("status", "")) == "extinct" and RegionFactionQuery.canonical_bandit(ended.get("bandit", {})).get("lair") == null, "the wiped-out band ended (status %s)" % str(ended.get("status", "")), ended): return
 		_finished = true
 		TerrainArmy.release_contact_source()
 		await process_frame
-		print("SITE_BANDIT_SUPPRESSION_E2E_PASS: ", checks, " checks (band destroyed)")
+		print("SITE_BANDIT_SUPPRESSION_E2E_PASS: ", checks, " checks (band wiped out)")
 		quit(0)
 		return
-	if not _ok(attacked, "the band is recorded as attacked by an official faction after %.1f game hours" % ((float(slot.control.logical_game_seconds) - started_clock) / 3600.0)): return
-	var table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
-	if not _ok(int(table.heat) == 95 and str(table.lair.site_id) == lair, "its heat rose from 75 to 95; it still holds its lair", table): return
+	if not _ok(str(ended.get("status", "")) == "active", "a band with members left goes on", ended): return
+	table = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
 	# The band's next day: hot and attacked, it moves its lair.
 	var next_day := int(table.attacked_day) + 1
 	var ran: Dictionary = {}

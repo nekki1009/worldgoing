@@ -3722,6 +3722,9 @@ func _free_military_seats() -> int:
 func pending_cadre() -> Array[int]:
 	var pending: Array[int] = []
 	for index: int in officer_service:
+		# A fallen officer travels inert with his team (Nekki 11/10 5A) and holds no post; he is nobody to seat or release.
+		# Counted here, he kept his whole team from converting to the crowd at the next Site (found 2026-11-24).
+		if member_gone(index): continue
 		if SiteOffices.position_of(team_offices(), combat_identity(index)).is_empty(): pending.append(combat_identity(index))
 	return pending
 

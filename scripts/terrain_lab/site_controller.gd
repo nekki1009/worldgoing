@@ -10708,7 +10708,12 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 		var able := 0
 		for person: Variant in team.get("person_ids", []):
 			var target: Dictionary = lab._original_person_target(int(person))
-			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: able += 1
+			if target.is_empty() or float(target.get("hp", 0.0)) <= 0.0: continue
+			# A knocked out or captive person has hp but is out of this fight (M2 A: 被擊倒的人這場仗就退出). Counted as able,
+			# a side with only knocked out people left was never beaten and no battle had a winner (found 2026-11-24).
+			var state: Dictionary = host.soldier_state(int(host._index_by_id[int(person)])) if host._index_by_id.has(int(person)) else {}
+			if float(state.get("ko", 0.0)) > 0.0 or float(state.get("captive", 0.0)) > 0.0: continue
+			able += 1
 		standing[faction] = int(standing.get(faction, 0)) + able
 		if team.get("person_ids", []).size() > int(largest.get(faction, {}).get("size", -1)):
 			largest[faction] = {"size": team.get("person_ids", []).size(), "team_id": int(team.team_id)}
@@ -10719,10 +10724,12 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	var closed: Dictionary = tracker.close(now, standing, commanders)
 	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
-	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
 	closed["bandits_attacked"] = BanditAttacked.note_battle(self, closed) # Nekki 2026-11-22 B: queued, saved at rest
-	closed["caravans_lost"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab) # 土匪 B5: TR-55
-	closed["tax_teams_lost"] = (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab) # 軍餉與稅收 P3b: PT-17
+	# What the registry or the Region ledger keeps waits for the Site at rest: a battle closes inside the Site's own
+	# Region point, where the registry cannot be saved (2026-11-24).
+	if region_slot != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching):
+		battle_effects_due.append({"standing": standing.duplicate(), "battle": closed.battle.duplicate(true), "commanders": commanders.duplicate(true)})
+	else: closed.merge(_battle_effects({"standing": standing, "battle": closed.battle, "commanders": commanders}, self))
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
@@ -10740,6 +10747,26 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 			PersonSkills.credit(found.body, "tactics", PersonSkills.TACTICS_PER_BATTLE * float(commanded))
 	if region_slot != null: region_slot.pending_battles.append(closed.battle)
 	return closed
+
+## One entry for each battle closed inside the Site's Region point: {standing (faction -> people still able to fight),
+## battle, commanders}.
+var battle_effects_due: Array = []
+
+## `saver` = the active Site's controller, the only one that may save the registry.
+func _battle_effects(due: Dictionary, saver: Variant) -> Dictionary:
+	return {"plunder": BanditAftermath.after_battle(self, due.standing, saver), # B4d-3b: a band that won a raid takes the stock.
+		"bands_ended": (load("res://scripts/terrain_lab/site_bandit_ended.gd") as Script).call("after_battle", self, due.battle, due.commanders, saver), # O3
+		"caravans_lost": (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab), # 土匪 B5: TR-55
+		"tax_teams_lost": (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab)} # 軍餉與稅收 P3b: PT-17
+
+## Between two steps: what the battles closed since the last rest leave to the registry and the ledger. Each once.
+func flush_battle_effects(saver: Variant = null) -> Array:
+	var done: Array = []
+	if battle_effects_due.is_empty(): return done
+	var due: Array = battle_effects_due
+	battle_effects_due = []
+	for entry: Dictionary in due: done.append(_battle_effects(entry, saver if saver != null else self))
+	return done
 
 func team_captain_of_team(team_id: int) -> int:
 	var roster: Dictionary = lab.crowd_site.native_roster(team_id)

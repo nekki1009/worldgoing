@@ -38,9 +38,11 @@ static func plunder(inventory: Dictionary, standing: int) -> Dictionary:
 
 ## Called when a battle closes on the live crowd Site with `standing` {faction: able people}. Returns
 ## {ok, band, taken} or {} when no band won a raid here.
-static func after_battle(controller: Variant, standing: Dictionary) -> Dictionary:
+## `saver` = the active Site's controller: a Site nobody watches may not save the registry itself (its stock and the hoard
+## are saved in the one publication, which collects the bound cold Sites).
+static func after_battle(controller: Variant, standing: Dictionary, saver: Variant = null) -> Dictionary:
 	var verdict := judge(controller, standing)
-	return apply(controller, verdict) if not verdict.is_empty() else {}
+	return apply(controller, verdict, saver) if not verdict.is_empty() else {}
 
 ## Which band won a raid here and what it takes: {band, taken} or {}. Reads the settlement; changes nothing.
 static func judge(controller: Variant, standing: Dictionary) -> Dictionary:
@@ -59,7 +61,7 @@ static func judge(controller: Variant, standing: Dictionary) -> Dictionary:
 	return {}
 
 ## Moves `verdict.taken` from the Site's stock into the band's hoard, saved in one commit. Returns {ok, band, taken}.
-static func apply(controller: Variant, verdict: Dictionary) -> Dictionary:
+static func apply(controller: Variant, verdict: Dictionary, saver: Variant = null) -> Dictionary:
 	var lab: Variant = controller.lab
 	var slot: Variant = controller.region_slot
 	var band := int(verdict.band)
@@ -77,7 +79,7 @@ static func apply(controller: Variant, verdict: Dictionary) -> Dictionary:
 	for item: String in taken:
 		inventory[item] = int(inventory[item]) - int(taken[item])
 		if int(inventory[item]) <= 0: inventory.erase(item)
-	var saved: Dictionary = controller._commit_diplomacy(stored, "")
+	var saved: Dictionary = (saver if saver != null else controller)._commit_diplomacy(stored, "")
 	if not saved.ok:
 		for item: String in taken: inventory[item] = int(inventory.get(item, 0)) + int(taken[item]) # nothing left the Site
 		return saved

@@ -1852,6 +1852,12 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if bool(permit.get("cold_fire_active", false)): pre_step_combat_left = maxf(pre_step_combat_left, elapsed)
 	if _siege_tactical_active(): pre_step_combat_left = maxf(pre_step_combat_left, 10.0)
 	if fire_active_at_start: pre_step_combat_left = maxf(pre_step_combat_left, SiteRuntime.COMBAT_GRACE)
+	# The native crowd's combat clock is this Site's own countdown in every step (_native_combat_left). The joint Region
+	# interval's tactical share below is at most the interval's own width and shared by the whole world: handed to the
+	# native it left 0 at the end of a whole step, and the native ran the Site's combat mechanics (run fatigue, recovery,
+	# knockouts, bleeding, capture, morale) at the world rate, 60 times the rate decided for TCM (M2 A, M3 A; found
+	# 2026-11-24, run fatigue measured 0.1 against 0.001667 per game second). The share stays in the clock journal.
+	var native_combat_left := pre_step_combat_left
 	if region_callers:
 		region_request_slot = site_controller.region_slot
 		pre_prof = _combat_profile_stage("pre_misc", pre_prof)
@@ -1887,10 +1893,15 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			var early_limit: float = site_controller.Settlement.capture_interval_limit(terrain, early_sample, early_window)
 			if early_limit > ACTION_TIME_EPSILON and early_limit < early_window - ACTION_TIME_EPSILON:
 				elapsed = RegionSaveSlot.GameplayClock.action_for_game(early_limit, simulation_speed, minf(elapsed, pre_step_combat_left))
-		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
+		native_begin = _prepare_native_begin_shared_window(elapsed, native_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)
-		pre_step_combat_left = float(native_begin.combat_begin)
+		native_combat_left = float(native_begin.combat_begin)
+		# The journal's share takes a volley fired in this window as before; outside Region steps it is the one clock.
+		if region_callers or not fire_replay_interval.is_empty():
+			var volley: PackedFloat64Array = native_begin.ranged.preview
+			for offset: int in range(0, volley.size(), 10): pre_step_combat_left = maxf(pre_step_combat_left, float(volley[offset + 9]))
+		else: pre_step_combat_left = native_combat_left
 	shared_prof = _combat_profile_stage("shared_native_begin_prepare", shared_prof)
 	# Classify/clip before the first body/work mutation. All consumers below
 	# receive exactly the same accepted original action and game interval.
@@ -1991,7 +2002,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if not replaying and not _shared_movement_prepared: _advance_movement_input()
 	_combat_profile_stage("movement_input", movement_started)
 	var combat_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0
-	_advance_combat(elapsed, pre_step_combat_left)
+	_advance_combat(elapsed, native_combat_left if not native_begin.is_empty() else pre_step_combat_left)
 	shared_prof = _combat_profile_stage("advance_combat", combat_prof)
 	_fatigue_work_seconds.clear()
 	fault = site_controller.original_step_fault_guard()
@@ -9832,7 +9843,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		# accepted joint interval. Cold crowd owners clip in their own replay pieces.
 		if original.crowd_site != null and original.crowd_site.active:
 			if original == self:
-				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, float(interval.tactical_seconds))
+				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, _native_combat_left())
 				_clear_shared_work_step()
 				if not window.get("ok", false): return _region_preflight_failure(originals, window)
 				limited = minf(limited, float(window.action_seconds))
@@ -9943,6 +9954,14 @@ func _advance_region_original_stages(interval: Dictionary, suppress_melee: bool)
 	_region_owner_interval_active = false
 	result.complete = result.get("ok", false) and result.get("completed", false)
 	return result
+
+## The combat clock a crowd Site's native step starts with: the Site's own countdown (the native's contact marks put it
+## up, the Site clock counts it down), with the same siege and fire floors as _advance_original_shared_step.
+func _native_combat_left() -> float:
+	var left := float(terrain.site.get("combat_left", 0.0))
+	if _siege_tactical_active(): left = maxf(left, 10.0)
+	if _fire_activity(): left = maxf(left, SiteRuntime.COMBAT_GRACE)
+	return left
 
 ## A native crowd replay step can stop before the interval end (native begin query cadence, work boundary).
 ## The grid path resumes such a step from the fire cursor; this resumes the same interval until the cursor
@@ -11445,9 +11464,7 @@ func _region_party_original_action_limit(maximum: float) -> float:
 	# query pulse, work and ranged transitions) clips the interval here, as the joint planner previews a live crowd Site.
 	# The frame converts on its first planned interval; a refused conversion is reported by the step itself.
 	if _region_party_frame_native().ok and crowd_site != null and crowd_site.active and limit > ACTION_TIME_EPSILON:
-		var tactical := limit if _fire_activity() or _siege_tactical_active() or _region_melee_tactical_demand() \
-			else minf(limit, float(terrain.site.get("combat_left", 0.0)))
-		var window: Dictionary = _prepare_native_begin_shared_window(limit, tactical)
+		var window: Dictionary = _prepare_native_begin_shared_window(limit, _native_combat_left())
 		_clear_shared_work_step()
 		if window.get("ok", false): limit = minf(limit, float(window.action_seconds))
 	return limit
@@ -12457,13 +12474,16 @@ func _region_run_due_daily_hooks() -> void:
 	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
 	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
+	site_controller.flush_battle_effects()
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
 		var original: Variant = slot._region_original_labs[owner]
-		if not is_instance_valid(original) or original == self or original.site_controller == null or not original.site_controller.daily_hooks_due: continue
+		if not is_instance_valid(original) or original == self or original.site_controller == null: continue
+		if not original.site_controller.daily_hooks_due and original.site_controller.battle_effects_due.is_empty(): continue
 		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
-		original.site_controller.run_daily_hooks()
+		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
+		original.site_controller.flush_battle_effects(site_controller)
 
 
 func _region_gameplay_endpoint_checkpoint(payload: Dictionary = {}) -> Dictionary:
@@ -15962,6 +15982,10 @@ func _settle_native_checked_point_endpoint() -> Dictionary:
 	if endpoint.is_empty() or bool(endpoint.get("finished", false)): return SiteRuntime.ok()
 	# Original queue life effects have now committed. Current alive/scope/source
 	# authority decides products/receipts; it cannot erase paid positive prefix.
+	# The battle log (2026-11-24): CrowdSite.step ticks its battle tracker only outside a native work point, and every crowd
+	# step runs one, so no battle was ever opened (no log, no records, no plunder, no civilian harm). It is ticked here with
+	# the Site's own combat countdown, before the events of this step, so the step that starts a battle counts in it.
+	crowd_site._battle_tick(float(terrain.site.get("combat_left", 0.0)))
 	if not crowd_site.finish_work_fatigue_point_events(): return crowd_site.last_event_error
 	site_controller.person_actions.finish_native_fire_point(endpoint.fire)
 	_finish_original_shared_prefixes(endpoint.checked, false)
