@@ -2074,8 +2074,15 @@ func preview_region_interval(elapsed: float, scale: float, local_tactical: float
 func _prune_recoverable_fire_journal() -> int:
 	if folder.is_empty(): return prune_fire_clock_prefix(control.fire_clock) # Isolated legacy clock tests.
 	var clock: Dictionary = control.fire_clock
-	var recovery: Dictionary = clock.duplicate(true)
 	var durable: Dictionary = _marker.get("control", {}).get("fire_clock", {}).get("index", {})
+	# Nothing to prune while the oldest Site has not passed the base: the journal copy below grows with every unopened
+	# Site's dormant day (a scenario world: 3.4 MB on day 3, copied at every step; found 2026-11-25).
+	if clock.get("index", {}).is_empty(): return 0
+	var oldest := int(clock.sequence)
+	for identity: String in clock.index:
+		oldest = mini(oldest, mini(int(clock.index[identity].sequence), int(durable.get(identity, {}).get("sequence", clock.get("base_sequence", 0)))))
+	if oldest <= int(clock.get("base_sequence", 0)): return 0
+	var recovery: Dictionary = clock.duplicate(true)
 	for identity: String in recovery.index:
 		# Volatile completion is not a restartable snapshot. Keep history through
 		# the oldest durable original, including newly registered owners at base.
@@ -2928,6 +2935,10 @@ func commit_ground_crossing(request: Dictionary, source_data: TerrainData, compl
 # OUTPUT ONLY / NOT RUN. Append to the ORIGINAL RegionSaveSlot owner.
 # Journal records completed original intervals. It never advances simulation.
 const FIRE_CLOCK_VERSION := 1
+## Rows the journal may hold (about 280 bytes each). A Site nobody opens keeps the journal's first rows, so in a scenario
+## world it grows by about 4000 rows a game day at speed 16: at 65536 such a world ended in CORRUPT_FIRE_CLOCK on day 16
+## (found 2026-11-25). Raised to a year; what pins the rows is a known issue of its own.
+const FIRE_JOURNAL_LIMIT := 1048576
 const FIRE_CLOCK_FIELDS := ["version", "epoch", "action_seconds", "sequence", "base_game_seconds", "journal", "index"]
 const FIRE_CLOCK_BASE_FIELDS := ["base_sequence", "base_action_seconds"]
 const FIRE_CLOCK_SEGMENT_FIELDS := ["first_sequence", "last_sequence", "action_begin", "action_end", "game_begin", "game_end", "scale", "tactical_seconds", "steps"]
@@ -2948,7 +2959,7 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 		or not has_base_sequence and value.size() != FIRE_CLOCK_FIELDS.size(): return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點欄位")
 	if not _whole(value.version, 1, FIRE_CLOCK_VERSION) or not value.epoch is String or value.epoch.is_empty() \
 		or not _seconds(value.action_seconds) or not _whole(value.sequence, 0, 2147483647) \
-		or not _seconds(value.base_game_seconds) or not value.journal is Array or value.journal.size() > 65536 \
+		or not _seconds(value.base_game_seconds) or not value.journal is Array or value.journal.size() > FIRE_JOURNAL_LIMIT \
 		or not value.index is Dictionary or value.index.size() > 65536: return _fail("CORRUPT_FIRE_CLOCK", "火攻共同時間版本")
 	if not _whole(value.get("base_sequence", 0), 0, int(value.sequence)) or not _seconds(value.get("base_action_seconds", 0.0)):
 		return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點型別非法")
@@ -3013,7 +3024,8 @@ static func validate_fire_settlement(state: Dictionary, clock: Dictionary) -> Di
 	if journal is Array and not journal.is_empty():
 		var last: Variant = journal.back()
 		if last is Dictionary: clock_game = last.get("game_end")
-	var clock_check: Dictionary = validate_fire_clock(clock, clock_game)
+	# Each bound cold Site is checked at every step's commit, on the same live clock (2026-11-25).
+	var clock_check: Dictionary = validate_fire_clock_grown(clock, clock_game)
 	if not clock_check.ok: return clock_check
 	if not _whole(value.version, 1, 1) or value.epoch != clock.epoch \
 		or not _whole(value.sequence, 0, int(clock.sequence)) or not _seconds(value.action_seconds) or not _seconds(value.game_seconds) \
@@ -3063,8 +3075,92 @@ static func fire_replay_segments(state: Dictionary, clock: Dictionary, world_gam
 	if next_sequence != int(clock.sequence) + 1: return _fail("MISSING_FIRE_HISTORY", "冷地點雙時鐘區間不連續")
 	return {"ok": true, "from_sequence": sequence, "to_sequence": int(clock.sequence), "segments": segments}
 
+## validate_fire_clock for the clock a live step previews, several times a step. The journal only grows at its end (the last
+## row is extended or a row is appended; pruning replaces the array), so rows checked before are not read again: only from
+## the last row the previous check ended on. The index and the whole fields are checked every time. A different clock, a
+## different journal array or anything else than growth takes the full check, and so does every 512th call; loads, saves
+## and restores always take the full check themselves. Before, every preview read the whole journal, several times a
+## step: a scenario world grew by 38 ms a frame every quarter game day (found 2026-11-25).
+static var _fire_clock_memo: Dictionary = {}
+
+static func validate_fire_clock_grown(value: Variant, world_game: Variant) -> Dictionary:
+	if not value is Dictionary or not value.get("journal") is Array: return validate_fire_clock(value, world_game)
+	var memo := _fire_clock_memo
+	var journal: Array = value.journal
+	var known: bool = memo.get("clock") is Dictionary and is_same(memo.clock, value) and memo.get("journal") is Array and is_same(memo.journal, journal) \
+		and int(memo.rows) <= journal.size() and int(memo.calls) < 512 \
+		and memo.base == [value.get("base_sequence", 0), value.get("base_action_seconds", 0.0), value.get("base_game_seconds", 0.0), value.get("epoch", "")]
+	if not known:
+		var full := validate_fire_clock(value, world_game)
+		_fire_clock_memo = {} if not full.ok else {"clock": value, "journal": journal, "rows": journal.size(), "calls": 0,
+			"base": [value.get("base_sequence", 0), value.get("base_action_seconds", 0.0), value.get("base_game_seconds", 0.0), value.get("epoch", "")]}
+		if full.ok: _fire_clock_memo_tail(value)
+		return full
+	# The rows up to the one before the last known row are unchanged; the last known row may have been extended.
+	var from := maxi(0, int(memo.rows) - 1)
+	var checked := _fire_journal_rows(value, world_game, from, memo)
+	if not checked.ok: return checked
+	memo.rows = journal.size()
+	memo.calls = int(memo.calls) + 1
+	_fire_clock_memo_tail(value)
+	return {"ok": true}
+
+## Remembers where the row before the last one ends, the start of the next incremental check.
+static func _fire_clock_memo_tail(value: Dictionary) -> void:
+	var journal: Array = value.journal
+	var keep := journal.size() - 1
+	if keep <= 0:
+		_fire_clock_memo["previous"] = [int(value.get("base_sequence", 0)), float(value.get("base_action_seconds", 0.0)), float(value.base_game_seconds)]
+		return
+	var row: Dictionary = journal[keep - 1]
+	_fire_clock_memo["previous"] = [int(row.last_sequence), float(row.action_end), float(row.game_end)]
+
+## The same row rules as validate_fire_clock for the rows from `from` on, and the same end and index checks.
+static func _fire_journal_rows(value: Dictionary, world_game: Variant, from: int, memo: Dictionary) -> Dictionary:
+	if not _seconds(world_game) or not _whole(value.version, 1, FIRE_CLOCK_VERSION) or not _seconds(value.action_seconds) or not _whole(value.sequence, 0, 2147483647) \
+		or value.journal.size() > FIRE_JOURNAL_LIMIT or not value.index is Dictionary or value.index.size() > 65536: return _fail("CORRUPT_FIRE_CLOCK", "火攻共同時間版本")
+	var base_sequence := int(value.get("base_sequence", 0))
+	var base_action := float(value.get("base_action_seconds", 0.0))
+	if base_sequence > int(value.sequence) or base_action > float(value.action_seconds) or float(value.base_game_seconds) > float(world_game): return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點非法")
+	var previous: Array = memo.previous if from > 0 else [base_sequence, base_action, float(value.base_game_seconds)]
+	var previous_sequence := int(previous[0])
+	var previous_action := float(previous[1])
+	var previous_game := float(previous[2])
+	for at: int in range(from, value.journal.size()):
+		var row: Variant = value.journal[at]
+		if not row is Dictionary or row.size() != FIRE_CLOCK_SEGMENT_FIELDS.size(): return _fail("CORRUPT_FIRE_JOURNAL", "區間欄位")
+		for field: String in FIRE_CLOCK_SEGMENT_FIELDS:
+			if not row.has(field): return _fail("CORRUPT_FIRE_JOURNAL", "區間欄位")
+		for field: String in ["action_begin", "action_end", "game_begin", "game_end", "tactical_seconds", "scale"]:
+			if not _seconds(row[field]): return _fail("CORRUPT_FIRE_JOURNAL", "區間非有限秒")
+		if not _whole(row.first_sequence, 1, 2147483647) or not _whole(row.last_sequence, 1, 2147483647) \
+			or not _whole(row.steps, 1, 2147483647) or int(row.first_sequence) != previous_sequence + 1 \
+			or int(row.last_sequence) - int(row.first_sequence) + 1 != int(row.steps) \
+			or float(row.action_begin) != previous_action or float(row.game_begin) != previous_game \
+			or float(row.action_end) <= previous_action or float(row.game_end) <= previous_game \
+			or float(row.scale) not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
+			or float(row.tactical_seconds) > float(row.action_end) - previous_action + 0.000000001:
+			return _fail("CORRUPT_FIRE_JOURNAL", "區間不連續或倍率非法")
+		var expected := (float(row.action_end) - previous_action) * 60.0 * float(row.scale)
+		if not Runtime.interval_game_ok(float(row.game_end) - previous_game, float(row.action_end) - previous_action, float(row.tactical_seconds), float(row.scale), maxf(0.00000001, expected * 0.000000001)): return _fail("CORRUPT_FIRE_JOURNAL", "區間時鐘不符")
+		previous_sequence = int(row.last_sequence)
+		previous_action = float(row.action_end)
+		previous_game = float(row.game_end)
+	if previous_sequence != int(value.sequence) or previous_action != float(value.action_seconds) or previous_game != float(world_game): return _fail("CORRUPT_FIRE_JOURNAL", "共同完成端點不一致")
+	for identity: Variant in value.index:
+		var entry: Variant = value.index[identity]
+		if not identity is String or identity.is_empty() or not entry is Dictionary or entry.size() not in [5, 6] \
+			or not entry.get("coordinate") is Array or entry.coordinate.size() != 2 \
+			or not entry.get("active") is bool or not _whole(entry.get("sequence"), base_sequence, previous_sequence) \
+			or entry.size() == 6 and not entry.get("fire_active") is bool \
+			or not _seconds(entry.get("action_seconds")) or not _seconds(entry.get("game_seconds")) \
+			or float(entry.action_seconds) > previous_action + maxf(0.00000001, previous_action * 0.000000001) \
+			or float(entry.game_seconds) > previous_game + maxf(0.00000001, previous_game * 0.000000001):
+			return _fail("CORRUPT_FIRE_INDEX", "原 Site 活動索引非法")
+	return {"ok": true}
+
 static func preview_fire_interval(clock: Dictionary, game_begin: float, action_seconds: float, scale: float, tactical_seconds: float) -> Dictionary:
-	var clock_check := validate_fire_clock(clock, game_begin)
+	var clock_check := validate_fire_clock_grown(clock, game_begin)
 	if not clock_check.ok: return clock_check
 	if not _seconds(action_seconds) or action_seconds <= 0.0 \
 		or action_seconds > 1.0 / 30.0 + 0.000000001 or scale not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
