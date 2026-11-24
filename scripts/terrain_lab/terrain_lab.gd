@@ -6159,6 +6159,14 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			_cold_replay_lab.free()
 			_cold_replay_lab = null
 			return restored
+		# 時間與氣候 TC9: the world's climate switch reaches a Site at its bind through the slot's registry (bind_terrain). A
+		# replay Lab has no slot, so the body it completed lacked the switch, and the cold owner bound from that body added
+		# it to a hash-checked region snapshot: CORRUPT_REGION_SNAPSHOT inside the bind, retried silently every frame (found
+		# 2026-11-24: no NPC party could enter a scenario Site unopened since the birth). The replay Lab's own bound body
+		# takes the switch here, after its bind; the source body stays untouched (its selected bind proof reads it).
+		var world_registry: Variant = site_controller.region_slot.control.get("faction_registry", {}) if site_controller != null and site_controller.region_slot != null else {}
+		if _cold_replay_lab.terrain != null and not _cold_replay_lab.terrain.site.has("climate_enabled") and world_registry is Dictionary and world_registry.get("climate") is Dictionary and world_registry.climate.get("enabled") == true:
+			_cold_replay_lab.terrain.site["climate_enabled"] = true
 		_cold_replay_lab._fire_replay_tracking = data.site.has("fire_settlement")
 		_cold_replay_lab._fire_replay_epoch = str(data.site.get("fire_settlement", {}).get("epoch", ""))
 		var indexed_fire_site: Dictionary = site_controller.region_slot.control.get("fire_clock", {}).get("index", {}).get(identity, {}) if _cold_replay_lab._fire_replay_tracking else {}
@@ -10509,7 +10517,12 @@ func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData, stage_cr
 	child.bind_terrain(data, staged)
 	var receipt: Dictionary = child._region_bind_receipt_value
 	child._region_owner_bind_tickets.erase(token)
-	if crowd_saved and (child.crowd_site == null or not child.crowd_site.active): return SiteRuntime.fail("REGION_CHILD_BIND_FAILED", "群眾原生內容未在冷補算中啟用")
+	if crowd_saved and (child.crowd_site == null or not child.crowd_site.active):
+		# The child's own refusal travels with the failure (2026-11-24: this one hid why an unopened scenario Site never bound).
+		var crowd_refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED", "群眾原生內容未在冷補算中啟用")
+		crowd_refused["cause"] = child.get_meta(&"last_refused_result", {})
+		crowd_refused["crowd_cause"] = child.crowd_site.last_event_error if child.crowd_site != null else {"code": "NO_CROWD_SITE"}
+		return crowd_refused
 	if child.terrain != data or child._region_bound_data != data or receipt.get("owners_restored") != true:
 		var refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED")
 		refused["cause"] = child.get_meta(&"last_refused_result", {}) # The child's own refusal, when its bind showed one.
@@ -12443,7 +12456,7 @@ func _region_run_due_daily_hooks() -> void:
 	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
 	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
-	if site_controller.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
+	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
@@ -15602,6 +15615,34 @@ func _native_begin_runner_only_pools(all_requests: Array, run_requests: Array, p
 		if band_end > PersonFatigue.WORK_PLAN_EPS: band_limit = minf(band_limit, band_end)
 	return {"kept": kept, "band_limit": band_limit}
 
+## A fatigue band boundary only possible runners could reach (nobody runs yet) cuts a peaceful window when it lies at
+## least this many game seconds ahead; nearer than that it is not a cut. A fixed length, not a share of the window: the
+## accepted window is bounded again over its own width and must come back the same (NATIVE_BEGIN_WINDOW_CHANGED).
+const NATIVE_RUN_BAND_FLOOR := 0.25
+
+## The pools of `planned` whose fatigue the native World charges by itself: a native formation's pool in which no work
+## participant of `requests` has seconds. crowd_site.prepare_native_begin_work_point sends the native only the pools
+## with work ("NO WORK RUN/recovery stays in World"); a pool of runners alone is charged by World::fatigue_stage on the
+## native's own tactical clock.
+func _native_begin_native_charged_pools(planned: Dictionary, requests: Array, projection: Dictionary) -> Array:
+	var pools := {} # formation -> the plan's pool
+	var worked := {}
+	for request: Dictionary in requests:
+		var seconds: Dictionary = planned.jobs.get(str(request.provider), {}).get(str(request.key), {}).get("participant_seconds", {})
+		for raw: Dictionary in request.participants:
+			var snapshot: Variant = raw.get("native_snapshot")
+			if not snapshot is Dictionary: continue
+			var formation := int(snapshot.get("formation", -1))
+			if str(raw.get("native_effort_kind", "work")) == "work" and float(seconds.get(int(raw.person_id), 0.0)) > 0.0: worked[formation] = true
+			if pools.has(formation): continue
+			var participant: Dictionary = projection.get(int(raw.person_id), raw)
+			var pool: Variant = PersonFatigue._work_plan_body(participant.get("body")).get("original_pool")
+			if pool is Dictionary: pools[formation] = pool
+	var result: Array = []
+	for formation: Variant in pools:
+		if not worked.has(formation): result.append(pools[formation])
+	return result
+
 func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, preview: PackedFloat64Array) -> Dictionary:
 	var pb := Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var combat: float = combat_begin
@@ -15640,9 +15681,26 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	if not lower.ok: return lower
 	var upper: Dictionary = _plan_shared_vehicle_work_interval(runner_split.kept, seconds, projection)
 	if not upper.ok: return upper
-	limit = minf(limit, float(runner_split.band_limit))
+	# A band boundary cuts the window so that a plan the native takes from here (a pool with work: its fatigue is this
+	# plan's, charged per world game second) changes band at a step's end. A pool of runners alone is not such a plan:
+	# the native World charges it by itself, on its tactical clock (World::tactical_dt), and nothing here reads where it
+	# crosses a band. Cutting for it was also futile in combat. A step cut before the combat clock's end is charged
+	# 1/60 of the world rate the boundary was computed with, so the cut step covers 1/60 (1/120 with half the possible
+	# runners running) of the way, and the next window is cut again: hundreds of windows for one boundary. When the
+	# runner then stops inside that approach, the pool stays a hair under 30 and every later window is cut at the same
+	# 1e-4 game second boundary for ever. A cold crowd owner needed 70 000 pieces for one 8 game second interval and
+	# failed REGION_CROWD_REPLAY_STALLED after 4096 (found 2026-11-24, 官方剿匪 at an unwatched lair: about one fight in
+	# four); a watched Site grinds through the same pieces inside its frames. So for a pool the native charges by itself:
+	# - in combat no band boundary cuts the window;
+	# - at peace (the native charges the world rate, the boundary is exact) the boundary of the people who run now still
+	#   cuts it, and a boundary only possible runners could reach cuts it when it lies NATIVE_RUN_BAND_FLOOR game seconds
+	#   ahead or more (nobody may run, and then a nearer boundary would cut every window at the same place).
+	var run_floor: float = NATIVE_RUN_BAND_FLOOR
+	if combat <= 0.0 and float(runner_split.band_limit) >= run_floor: limit = minf(limit, float(runner_split.band_limit))
 	pb = _combat_profile_stage("nbb_plan", pb)
+	var plan_index := 0
 	for planned: Dictionary in [lower, upper]:
+		var native_charged: Variant = null # Read on the first band boundary inside the window.
 		for group: Dictionary in planned.pools:
 			for segment: Dictionary in group.segments:
 				var end: float = float(segment.begin) + float(segment.seconds)
@@ -15654,8 +15712,14 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 				var band_end := INF
 				if rate > 0.0 and start < 30.0: band_end = (30.0 - start) / rate
 				elif rate > 0.0 and start < 100.0: band_end = (100.0 - start) / rate
-				if band_end > PersonFatigue.WORK_PLAN_EPS: limit = minf(limit, band_end)
+				if band_end > PersonFatigue.WORK_PLAN_EPS and band_end < limit:
+					if native_charged == null: native_charged = _native_begin_native_charged_pools(planned, interval_requests if plan_index == 0 else runner_split.kept, projection)
+					var own := false
+					for pool: Variant in native_charged:
+						if is_same(pool, group.original_pool): own = true; break
+					if not own or combat <= 0.0 and (plan_index == 0 or band_end >= run_floor): limit = band_end
 				break
+		plan_index += 1
 	# A successful pulse sets the original formation's charged_this_step flag;
 	# safe_fatigue_rest is therefore false for that pool in the actual next step.
 	# Other native pools keep their exact original no-pulse rest-limit query.

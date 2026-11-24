@@ -84,7 +84,7 @@ func _run() -> void:
 	Attacked.queue(controller, band, 11)
 	var flushed: Dictionary = Attacked.flush(controller)
 	var attacked_table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
-	if not _check(flushed.ok and int(attacked_table.heat) == 95 and int(attacked_table.get("attacked_day", -1)) == 11 and not controller.has_meta(&"bandit_attacked_due"), "an official attack on day 11 is saved: heat 75 -> 95, attacked_day 11", [flushed, attacked_table]): return
+	if not _check(flushed.ok and int(attacked_table.heat) == 95 and int(attacked_table.get("attacked_day", -1)) == 11 and not slot.has_meta(&"bandit_attacked_due"), "an official attack on day 11 is saved: heat 75 -> 95, attacked_day 11", [flushed, attacked_table]): return
 	var generation := int(slot._marker.generation)
 	ran = BanditDay.run(controller, 12)
 	var table: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)

@@ -5241,7 +5241,7 @@ func settle_person_deaths(real_seconds: float) -> void:
 		run_daily_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	if has_meta(&"fence_heat_due"): TradeSession.Fence.flush(self) # 土匪 B5b: a fence sale's heat, saved at rest
-	if has_meta(&"bandit_attacked_due"): BanditAttacked.flush(self) # Nekki 2026-11-22 B: an official attack's heat, saved at rest
+	if region_slot != null and region_slot.has_meta(&"bandit_attacked_due"): BanditAttacked.flush(self) # Nekki 2026-11-22 B: an official attack's heat, saved at rest by the active Site
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue

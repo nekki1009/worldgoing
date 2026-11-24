@@ -4254,6 +4254,11 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var identity := Grid.site_id(str(pin.atlas_id), to)
 	var requested_mode := "live" if identity == str(control.active_site_id) else "cold_exact"
 	var original: Dictionary = region_owner_lab.call(identity, requested_mode)
+	# A destination nobody has opened since it was last settled (a scenario Site since the birth) first catches up by
+	# its own bounded cold replay; that PENDING result is the dispatcher's retained endpoint
+	# (TerrainLab._region_original_cold_pending retries it), not a failed bind. Found 2026-11-24: a 官方剿匪 expedition
+	# entering a lair Site unopened since the birth latched COMMITTED_UNBOUND as a step fault.
+	if not original.get("ok", false) and str(original.get("code", "")) == "PENDING" and original.get("cold_replay") is Dictionary: return original
 	if not original.get("ok", false) or not original.get("lab") is TerrainLab: return fail("COMMITTED_UNBOUND", "目的地原 owner 尚未完整 bind")
 	var lab: TerrainLab = original.lab
 	if str(lab.terrain.site.id) != identity: return fail("WRONG_SITE", "到站原 owner 不同")
@@ -4263,10 +4268,42 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	# A cold destination advanced by accepted intervals since its last joint
 	# publication is published at this same point first; no clock moves. The
 	# bind preflight below still requires that exact published frame.
-	if requested_mode == "cold_exact" and _region_cold_unpublished(lab):
+	# A cold owner bound just now from its own cold replay (a destination nobody had opened) stands at the world clock, so
+	# the time test above reads it as published, yet its selected publication is still the older file, or the plain body
+	# of the scenario birth, which was never a region checkpoint: the bind preflight below then refused it for ever
+	# (STALE_REGION_SOURCE_BODY, or CORRUPT_REGION_SNAPSHOT size 0 for the plain body; found 2026-11-24). It is published
+	# here like any cold owner whose publication is behind, as the live branch below already does by the same reading.
+	var cold_behind: bool = requested_mode == "cold_exact" and _region_cold_unpublished(lab)
+	if requested_mode == "cold_exact" and not cold_behind:
+		# Read as the live branch reads it: the owner's body is captured first (the capture the insertion below takes
+		# anyway), then its selected publication is compared with it.
+		var cold_capture: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+			{"npc_arrival": true, "token": token, "event": str(event.get("id", ""))}, token)
+		if not cold_capture.ok: return cold_capture
+		var cold_source: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
+		var cold_code := str(cold_source.get("code", ""))
+		cold_behind = not cold_source.get("ok", false) and (cold_code in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"] or cold_code == "CORRUPT_REGION_SNAPSHOT" and str(cold_source.get("check", "")) == "size" and int(cold_source.get("snapshot_size", -1)) == 0)
+	if cold_behind:
 		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
 		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
+		# The joint publication captures the active Site too. While that Site's own completed point is still open (this
+		# arrival is dispatched inside it), a Site that carries fire state (always, in a world with climate) stands with
+		# that state at the interval's end and its settlement a step behind, and its capture is refused
+		# (INVALID_FIRE_BARRIER; found 2026-11-24). Only then the active Site's point is closed, and the cold owners'
+		# points, as a live arrival and a live departure do, and the publication is taken again. A publication that
+		# went through is left as it was (the active Site keeps its open point's progress for its own next publication).
+		if published is Dictionary and not published.get("ok", false) and str(published.get("code", "")) == "INVALID_FIRE_BARRIER":
+			var active_owner: Variant = region_owner_lab.call(str(control.active_site_id), "live") if not str(control.active_site_id).is_empty() else {}
+			if active_owner is Dictionary and active_owner.get("ok", false) and active_owner.get("lab") is TerrainLab:
+				var active_lab: TerrainLab = active_owner.lab
+				if not active_lab._region_point_pending.is_empty() and not active_lab._region_point_consuming:
+					var active_closed: Dictionary = active_lab.region_close_point_for_transfer()
+					if not active_closed.ok: return active_closed
+					var behind_points: Dictionary = _close_original_cold_region_points()
+					if not behind_points.get("ok", false): return behind_points
+					if not behind_points.get("complete", false): return fail("REGION_POINT_INCOMPLETE", "原冷 owner endpoint 尚未完成，未移交")
+					published = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
 		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
 		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "到站前發布不得推進時鐘")
 	# A live destination (the Site the player stands in) first closes its own completed point, then publishes the progress

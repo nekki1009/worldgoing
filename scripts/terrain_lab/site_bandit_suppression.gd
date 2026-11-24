@@ -94,10 +94,24 @@ static func _coordinate(site_id: String) -> Vector2i:
 ## The daily pass, once per controller per day (meta `suppress_day`). Returns {day, sent?, reason?} or {} when already run.
 static func day(controller: Variant) -> Dictionary:
 	if controller == null or controller.region_slot == null or controller.lab == null: return {}
+	Attacked.watch(controller) # a fight on a Site nobody watches is read from the standing people (once a game minute)
 	var today := Attacked.today_of(controller)
-	if int(controller.get_meta(&"suppress_day", -1)) == today: return {}
+	var crowd: Variant = controller.lab.crowd_site
+	var team_count: int = crowd.teams.size() if crowd != null and crowd.active else -1
+	if int(controller.get_meta(&"suppress_day", -1)) == today:
+		# The day's pass has run. An expedition that entered since (a team was added to this Site) attacks at once: a
+		# cold lair Site runs its day's pass at its bind, before the arriving expedition is put in. An order the Site
+		# could not take yet is asked again on the next look.
+		if team_count >= 0 and team_count != int(controller.get_meta(&"suppress_teams", -1)):
+			var fight: Dictionary = attack(controller, today)
+			if int(fight.get("wanted", 0)) <= fight.orders.size(): controller.set_meta(&"suppress_teams", team_count)
+			if not fight.orders.is_empty(): return {"day": today, "attack": fight.orders}
+		return {}
 	controller.set_meta(&"suppress_day", today)
-	return run(controller, today)
+	var result := run(controller, today)
+	# An attack the Site could not take yet (asked for but not ordered) is asked again on the next look.
+	controller.set_meta(&"suppress_teams", -1 if bool(result.get("attack_refused", false)) else team_count)
+	return result
 
 static func run(controller: Variant, today: int) -> Dictionary:
 	var result := {"day": today}
@@ -111,6 +125,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	if not fight.orders.is_empty():
 		result["attack"] = fight.orders
 		return result
+	if int(fight.get("wanted", 0)) > 0: result["attack_refused"] = true
 	# Stage 2: an expedition standing here (a lair Site has no settlement of its own) goes home.
 	var homeward: Dictionary = go_home(controller, today)
 	if homeward.has("sent"):
@@ -196,6 +211,7 @@ static func pursued_band(registry: Dictionary, faction: int, bands: Array, today
 static func attack(controller: Variant, today: int) -> Dictionary:
 	var lab: Variant = controller.lab
 	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {})
+	if registry.get("version") != RegionFactionQuery.VERSION or lab.crowd_site == null or not lab.crowd_site.active: return {"orders": [], "wanted": 0}
 	var player := int(lab.controlled_person_id())
 	var band_people := {}
 	for team: Dictionary in lab.crowd_site.teams:
@@ -209,7 +225,8 @@ static func attack(controller: Variant, today: int) -> Dictionary:
 			rows.append({"id": int(person), "cell": body.cell})
 			band_people[band] = rows
 	var orders: Array = []
-	if band_people.is_empty(): return {"orders": orders}
+	var wanted := 0
+	if band_people.is_empty(): return {"orders": orders, "wanted": 0}
 	var bands: Array = band_people.keys()
 	bands.sort()
 	for team: Dictionary in lab.crowd_site.teams:
@@ -218,6 +235,7 @@ static func attack(controller: Variant, today: int) -> Dictionary:
 		if not Attacked.official(registry, faction) or str(registry.entries[str(faction)].get("kind", "")) == "player" or team.get("person_ids", []).has(player): continue
 		var band := pursued_band(registry, faction, bands, today)
 		if band < 0: continue
+		wanted += 1
 		var captain := int(controller.team_captain_of_team(int(team.team_id)))
 		var from: Dictionary = lab.crowd_site.combat_target(captain if captain > 0 else int(team.person_ids[0]))
 		if from.is_empty(): continue
@@ -226,8 +244,9 @@ static func attack(controller: Variant, today: int) -> Dictionary:
 			if Vector2(foe.cell - from.cell).length_squared() < Vector2(best.cell - from.cell).length_squared(): best = foe
 		var ordered: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.ATTACK, best.cell, int(best.id), "suppress")
 		if ordered.ok: orders.append({"team": int(team.team_id), "faction": faction, "band": band, "target": int(best.id)})
+		else: controller.set_meta(&"suppress_refused", str(ordered.get("code", ""))) # why the last order was not taken (read by tests)
 	if not orders.is_empty() and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵進剿山寨")
-	return {"orders": orders}
+	return {"orders": orders, "wanted": wanted}
 
 ## Stage 2: one of the expedition teams standing here goes home ({sent: {faction, team, home, token}} or {reason}). Not while
 ## any living band person stands here; only teams of official non-player factions whose latest expedition's home is
