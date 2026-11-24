@@ -49,6 +49,22 @@ static func note_raid(controller: Variant, band: int, site_id: String, today: in
 	raids[band] = {"site_id": site_id, "day": today}
 	controller.region_slot.set_meta(&"bandit_raids_open", raids)
 
+## True while `band`'s raid on this Site is open (noted in the last RAID_DAYS days and not yet fought): its teams stay.
+static func raid_open(controller: Variant, band: int) -> bool:
+	if controller.region_slot == null: return false
+	var raid: Dictionary = controller.region_slot.get_meta(&"bandit_raids_open", {}).get(band, {})
+	return not raid.is_empty() and not bool(raid.get("done", false)) and str(raid.get("site_id", "")) == str(controller.lab.terrain.site.get("id", "")) and today_of(controller) - int(raid.get("day", -100)) <= RAID_DAYS
+
+## Notes that `band`'s raid on this Site has been fought (or found nobody to fight).
+static func raid_done(controller: Variant, band: int) -> void:
+	if controller.region_slot == null: return
+	var raids: Dictionary = controller.region_slot.get_meta(&"bandit_raids_open", {})
+	var raid: Dictionary = raids.get(band, {})
+	if raid.is_empty() or str(raid.get("site_id", "")) != str(controller.lab.terrain.site.get("id", "")): return
+	raid["done"] = true
+	raids[band] = raid
+	controller.region_slot.set_meta(&"bandit_raids_open", raids)
+
 ## Queues `band` as attacked today on this Site, once per band and day here. False when already noted.
 static func _mark(controller: Variant, band: int, today: int) -> bool:
 	var marked: Dictionary = controller.get_meta(&"bandit_attacked_marked", {})

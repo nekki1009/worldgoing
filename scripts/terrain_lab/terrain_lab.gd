@@ -12476,6 +12476,7 @@ func _region_run_due_daily_hooks() -> void:
 	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
 	site_controller.flush_battle_effects()
 	SiteController.BanditEnded.check(site_controller, site_controller)
+	SiteController.BanditRaidField.watch(site_controller, site_controller)
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
@@ -12483,6 +12484,7 @@ func _region_run_due_daily_hooks() -> void:
 		if not is_instance_valid(original) or original == self or original.site_controller == null: continue
 		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
 		SiteController.BanditEnded.check(original.site_controller, site_controller)
+		SiteController.BanditRaidField.watch(original.site_controller, site_controller)
 		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
 		original.site_controller.flush_battle_effects(site_controller)
 

@@ -6,6 +6,7 @@ extends RefCounted
 ## multi-person teams home toward the lair on its captain's word (captain:band) until none is left; never during a fight.
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 
 const CARRY := 20
@@ -44,6 +45,27 @@ static func after_battle(controller: Variant, standing: Dictionary, saver: Varia
 	var verdict := judge(controller, standing)
 	return apply(controller, verdict, saver) if not verdict.is_empty() else {}
 
+## The warehouses of the settlement `owner` on this Site (their keys, ordered): spec §5.1, a band that wins takes the
+## warehouse stock. Every complete warehouse of that faction, private family estates included: a band takes no notice of
+## whose goods they are. Their item records (gear) stay; only bulk resources are carried off, as from the camp stock.
+static func warehouses(site: Dictionary, owner: int) -> Array[String]:
+	var keys: Array[String] = []
+	for key: Variant in site.get("stockpiles", {}):
+		var feature: Variant = site.get("features", {}).get(key, {})
+		if not feature is Dictionary or str(feature.get("kind", "")) != "warehouse": continue
+		if str(feature.get("stage", "")) != "complete" or int(feature.get("owner_faction", -1)) != owner: continue
+		keys.append(str(key))
+	keys.sort()
+	return keys
+
+## Every resource the settlement has here, camp stock and warehouses together.
+static func stock_of(site: Dictionary, owner: int) -> Dictionary:
+	var total := {}
+	for item: Variant in site.get("inventory", {}): total[str(item)] = int(total.get(str(item), 0)) + int(site.inventory[item])
+	for key: String in warehouses(site, owner):
+		for item: Variant in site.stockpiles[key].cargo: total[str(item)] = int(total.get(str(item), 0)) + int(site.stockpiles[key].cargo[item])
+	return total
+
 ## Which band won a raid here and what it takes: {band, taken} or {}. Reads the settlement; changes nothing.
 static func judge(controller: Variant, standing: Dictionary) -> Dictionary:
 	var lab: Variant = controller.lab
@@ -57,7 +79,7 @@ static func judge(controller: Variant, standing: Dictionary) -> Dictionary:
 	if registry.get("version") != RegionFactionQuery.VERSION: return {}
 	for band: int in _bands(registry):
 		if band == owner or int(standing.get(band, 0)) <= 0: continue
-		return {"band": band, "taken": plunder(lab.terrain.site.get("inventory", {}), int(standing[band]))}
+		return {"band": band, "owner": owner, "taken": plunder(stock_of(lab.terrain.site, owner), int(standing[band]))}
 	return {}
 
 ## Moves `verdict.taken` from the Site's stock into the band's hoard, saved in one commit. Returns {ok, band, taken}.
@@ -67,21 +89,42 @@ static func apply(controller: Variant, verdict: Dictionary, saver: Variant = nul
 	var band := int(verdict.band)
 	var taken: Dictionary = verdict.taken
 	if taken.is_empty(): return {"ok": true, "band": band, "taken": {}}
-	var inventory: Dictionary = lab.terrain.site.get("inventory", {})
+	var site: Dictionary = lab.terrain.site
+	var owner := int(verdict.get("owner", -1))
+	var available := stock_of(site, owner)
 	for item: String in taken:
-		if int(inventory.get(item, 0)) < int(taken[item]): return Runtime.fail("STALE_PLUNDER", "倉庫存貨已變")
+		if int(available.get(item, 0)) < int(taken[item]): return Runtime.fail("STALE_PLUNDER", "倉庫存貨已變")
 	var registry: Dictionary = slot.control.faction_registry
 	var stored := Bandit._with_table(registry, band, func(table: Dictionary) -> void:
 		var hoard: Dictionary = table.get("hoard", {})
 		for item: String in taken: hoard[item] = mini(100000000, int(hoard.get(item, 0)) + int(taken[item]))
 		table["hoard"] = hoard, float(slot.control.logical_game_seconds))
 	if not stored.ok: return stored
+	# The camp stock first, then the warehouses in order. Kept to undo when the save is refused: nothing then left the Site.
+	var keys := warehouses(site, owner)
+	var before := {"inventory": site.get("inventory", {}).duplicate(), "cargo": {}, "version": {}}
+	for key: String in keys:
+		before.cargo[key] = site.stockpiles[key].cargo.duplicate()
+		before.version[key] = int(site.stockpiles[key].holder.version)
+	if not site.get("inventory") is Dictionary: site["inventory"] = {}
 	for item: String in taken:
-		inventory[item] = int(inventory[item]) - int(taken[item])
-		if int(inventory[item]) <= 0: inventory.erase(item)
+		var left := int(taken[item])
+		for source: String in ["inventory"] + keys:
+			if left <= 0: break
+			var holder: Dictionary = site.inventory if source == "inventory" else site.stockpiles[source].cargo
+			var n := mini(left, int(holder.get(item, 0)))
+			if n <= 0: continue
+			holder[item] = int(holder[item]) - n
+			if int(holder[item]) <= 0: holder.erase(item)
+			left -= n
+			if source != "inventory": site.stockpiles[source].holder.version = int(site.stockpiles[source].holder.version) + 1
+	lab.terrain.environment_revision += 1
 	var saved: Dictionary = (saver if saver != null else controller)._commit_diplomacy(stored, "")
 	if not saved.ok:
-		for item: String in taken: inventory[item] = int(inventory.get(item, 0)) + int(taken[item]) # nothing left the Site
+		site["inventory"] = before.inventory
+		for key: String in keys:
+			site.stockpiles[key]["cargo"] = before.cargo[key]
+			site.stockpiles[key].holder["version"] = before.version[key]
 		return saved
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("土匪劫走倉庫存貨")
 	return {"ok": true, "band": band, "taken": taken}
@@ -105,6 +148,7 @@ static func go_home(controller: Variant, band: int) -> Dictionary:
 	var slot: Variant = controller.region_slot
 	if lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "群眾未啟用")
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_BATTLE", "戰鬥中不撤")
+	if Attacked.raid_open(controller, band): return Runtime.fail("RAID_OPEN", "遠征還沒打")
 	var teams := away_teams(controller, band)
 	if teams.is_empty(): return Runtime.fail("NO_TEAM", "沒有在外的隊伍")
 	var lair: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band).lair

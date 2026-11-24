@@ -39,6 +39,7 @@ const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents
 const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
 const Typhoon = preload("res://scripts/terrain_lab/site_typhoon.gd") # 時間與氣候 TC11
 const BanditEnded = preload("res://scripts/terrain_lab/site_bandit_ended.gd") # Nekki 2026-11-24 OQ2
+const BanditRaidField = preload("res://scripts/terrain_lab/site_bandit_raid_field.gd")
 const BanditAttacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B: official attacks raise heat.
 const BanditSuppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd") # 官方剿匪 (Nekki 2026-11-22 B)
 const BanditAftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: plunder and the way home. # 平民 C4c: a migrant household moves in.
@@ -10755,6 +10756,7 @@ var battle_effects_due: Array = []
 
 ## `saver` = the active Site's controller, the only one that may save the registry.
 func _battle_effects(due: Dictionary, saver: Variant) -> Dictionary:
+	for side: Variant in due.battle.get("sides", {}): BanditAttacked.raid_done(self, int(due.battle.sides[side].get("faction", -1)))
 	return {"plunder": BanditAftermath.after_battle(self, due.standing, saver), # B4d-3b: a band that won a raid takes the stock.
 		"bands_ended": BanditEnded.after_battle(self, due.battle, due.commanders, saver), # O3
 		"caravans_lost": (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab), # 土匪 B5: TR-55
