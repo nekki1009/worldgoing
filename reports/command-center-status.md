@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-24 20:20（台北）
+更新：2026-11-24 22:25（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
 ## 2026-11-24 20:20（台北）戰鬥計時（R0）、戰報（R1）、收場結算（O2）、全滅土匪（O3）
@@ -12,8 +12,9 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/
 - O2：戰鬥在自己的區域點裡收場，登記簿存不了。改成 `battle_effects_due` 排隊，靜止時由活動 Site 的控制器存檔（冷 Site 不能單檔發布登記簿，`checkpoint_region_site` 會拒絕）：劫掠、商隊與稅隊覆沒、全滅土匪。
 - O3：新檔 `site_bandit_ended.gd`。土匪在自己的山寨最後一人死亡或被俘（擊倒會醒的不算），且沒有旅途中的隊伍、沒有近兩日的劫掠在外、其他已綁定 Site 也沒有站著的成員，就標成 extinct、清山寨，官方最大隊的指揮者威望 +3。
 - 新測試：site_battle_log_live_test（預設一般敵國 19 項、`-- --band` 全滅土匪 22 項）、site_battle_tracker_probe_test（探針）。剿匪全程測試延長到戰鬥收場（26 項）。
-- 回歸：R1_REG 25/25；264 項全回歸 FULL_1124B 20:16 起在跑。
-- 尚未：提交、推送（等 Nekki 說）；恢復、流血、俘虜逐項量；已綁定但沒有隊伍在的冷 Site 上的土匪成員（未綁定的別站）看不到。
+- 回歸：R1_REG 25/25；264 項全回歸 FULL_1124B：262 項並行過、2 項單獨過、0 失敗。提交 b138126（未推送）。
+- O3 補強（22:10）：收場時只是被擊倒的土匪，之後死亡或被俘也會讓這伙結束（`SiteBanditEnded.check`，每遊戲分鐘在靜止時看一次，只看近兩日被官方攻打過、且山寨在本 Site 的土匪；威望給當時站在這裡的官方最大隊隊長）。測試 `-- --band --late`；O3B_REG 16/16。
+- 尚未：推送（等 Nekki 說）；恢復、流血、俘虜逐項量；O2 的驗收測試（土匪遠征沒人看的聚落，倉庫存貨進山寨）；已綁定但沒有隊伍在的冷 Site 上的土匪成員（未綁定的別站）看不到。
 
 ## 2026-11-24 16:10（台北）冷 Site 步進卡死：根因與修正
 - 現象：剿匪全程測試約四場一場 `REGION_CROWD_REPLAY_STALLED`（官兵在沒人看的山寨開打時）。

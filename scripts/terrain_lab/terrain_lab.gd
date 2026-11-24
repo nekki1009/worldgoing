@@ -12475,13 +12475,14 @@ func _region_run_due_daily_hooks() -> void:
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
 	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
 	site_controller.flush_battle_effects()
+	SiteController.BanditEnded.check(site_controller, site_controller)
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
 		var original: Variant = slot._region_original_labs[owner]
 		if not is_instance_valid(original) or original == self or original.site_controller == null: continue
-		if not original.site_controller.daily_hooks_due and original.site_controller.battle_effects_due.is_empty(): continue
 		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
+		SiteController.BanditEnded.check(original.site_controller, site_controller)
 		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
 		original.site_controller.flush_battle_effects(site_controller)
 

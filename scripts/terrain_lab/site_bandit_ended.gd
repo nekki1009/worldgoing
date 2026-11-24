@@ -3,6 +3,8 @@ extends RefCounted
 ## member at its lair died or was captured in a battle ends (extinct, lair cleared): until then it stayed active in the
 ## registry for ever, with its heat and its lair, and nobody led it. The commander of the largest official team in that
 ## battle gains Bandit.SUPPRESS_PRESTIGE, once per band (an ended band is never read again).
+## Checked when a battle's effects are saved, and once a game minute of rest on the lair's own Site (`check`), so a band
+## whose knocked out survivors die or are captured after the battle closed ends as well.
 ## A band with members anywhere else does not end: a travelling party, an open raid on another Site, or standing members
 ## on another bound Site. Members knocked out recover, so they count as members; captives and the dead do not.
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
@@ -36,6 +38,41 @@ static func people_elsewhere(controller: Variant, band: int) -> bool:
 		if not is_instance_valid(other) or other == controller.lab or other.terrain == null: continue
 		if members_left(other, band): return true
 	return false
+
+## The official faction with the most standing people here and the captain of its largest team: {person} or {}.
+static func official_captain(controller: Variant) -> Dictionary:
+	var registry: Dictionary = controller.region_slot.control.get("faction_registry", {})
+	var best := {}
+	for team: Dictionary in controller.lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or not Attacked.official(registry, int(team.get("faction", -1))): continue
+		var size: int = team.get("person_ids", []).size()
+		if size <= int(best.get("size", 0)): continue
+		best = {"size": size, "faction": int(team.faction), "person": int(controller.team_captain_of_team(int(team.team_id)))}
+	return best
+
+## Once a game minute of rest: the bands whose lair is this Site, where nobody of them is left and some were lost here in
+## the last Attacked.RAID_DAYS days to an official attack. Returns the ended bands.
+static func check(controller: Variant, saver: Variant) -> Array[int]:
+	var slot: Variant = controller.region_slot
+	if slot == null or saver == null or controller.lab == null or controller.lab.crowd_site == null or not controller.lab.crowd_site.active: return [] as Array[int]
+	var now := float(slot.control.logical_game_seconds)
+	if now - float(controller.get_meta(&"bandit_ended_at", -INF)) < Attacked.WATCH_SECONDS: return [] as Array[int]
+	controller.set_meta(&"bandit_ended_at", now)
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	if registry.get("version") != RegionFactionQuery.VERSION: return [] as Array[int]
+	var here := str(controller.lab.terrain.site.get("id", ""))
+	var captain := official_captain(controller)
+	var commanders := {int(captain.faction): {"person": int(captain.person)}} if not captain.is_empty() else {}
+	var sides := {}
+	for band: Variant in registry.entries:
+		if not RegionFactionQuery.is_bandit(registry, int(band)) or registry.entries[band].get("status") != "active": continue
+		var table := RegionFactionQuery.bandit_of(registry, int(band))
+		if not table.get("lair") is Dictionary or str(table.lair.get("site_id", "")) != here: continue
+		# Nobody of a band is dead or captive on a Site that was never attacked: an empty lair (its people are away) goes on.
+		if Attacked.today_of(controller) - int(table.get("attacked_day", -100)) > Attacked.RAID_DAYS: continue
+		sides[str(int(band))] = {"faction": int(band)}
+	for faction: Variant in commanders: sides[str(int(faction))] = {"faction": int(faction)}
+	return after_battle(controller, {"site_id": here, "sides": sides}, commanders, saver)
 
 ## Ends every band of `battle` ({site_id, sides}) that lost its last member at its own lair here. `commanders` = faction ->
 ## {person, ref}. `saver` = the active Site's controller, the only one that may save the registry. Returns the ended bands.

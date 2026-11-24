@@ -10,6 +10,8 @@ extends SceneTree
 ## - what a battle saves to the registry was flushed between two steps; no step fault; the world saves.
 ## With `-- --band` the cadre is a bandit band of one whose lair is this Site (O3, Nekki 2026-11-24 OQ2): when he falls the
 ## band ends (extinct, no lair) and the commander who wiped it out gains Bandit.SUPPRESS_PRESTIGE.
+## With `-- --band --late` he is only knocked out when the battle closes: the band goes on, and ends once he dies of his
+## wounds (SiteBanditEnded.check, at rest).
 ## Output: SITE_BATTLE_LOG_LIVE_PASS on success; quit(1) on any failure or the deadline.
 
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
@@ -89,6 +91,7 @@ func _run() -> void:
 		if owner != null and lab.crowd_site._split_exit_ready(owner, int(lab.crowd_site._index_by_id[rebel])): break
 		await process_frame
 	var as_band := OS.get_cmdline_user_args().has("--band")
+	var late := as_band and OS.get_cmdline_user_args().has("--late")
 	var entry := {"name": "乙國", "kind": "npc", "leader_ref": JoinFaction._world_ref(controller, rebel), "founded_at": float(slot.control.logical_game_seconds)}
 	if as_band:
 		var stand: Vector2i = lab.crowd_site.combat_target(rebel).cell
@@ -119,8 +122,14 @@ func _run() -> void:
 			opened = true
 			break
 	if not _check(opened, "the fight opens the battle tracker", {"combat_left": lab.terrain.site.get("combat_left"), "hp": _hp(rebel)}): return
-	# Weakened, so the next blow of the real fight brings him down.
-	lab.crowd_site.apply_environment_damage(rebel, maxf(0.0, _hp(rebel) - 4.0))
+	# Weakened, so the next blow of the real fight brings him down (late: knocked out, not killed, once both sides joined).
+	if late:
+		for _frame: int in range(3000):
+			await process_frame
+			if _finished: return
+			if lab.crowd_site.battle.participants.has(rebel) and lab.crowd_site.battle.participants.size() >= 2: break
+		if not _check(lab.crowd_site.set_soldier_fields(int(lab.crowd_site._index_by_id[rebel]), {"ko": 14400.0}), "the band's only man is knocked out"): return
+	else: lab.crowd_site.apply_environment_damage(rebel, maxf(0.0, _hp(rebel) - 4.0))
 	for _frame: int in range(9000):
 		await process_frame
 		if _finished: return
@@ -131,7 +140,7 @@ func _run() -> void:
 
 	print("SITE_BATTLE_LOG_LIVE down ", _fate(rebel))
 	# A blow may knock him out instead of killing him; a band only ends when its people are dead or captive.
-	if as_band:
+	if as_band and not late:
 		lab.crowd_site.apply_environment_damage(rebel, 10000.0)
 		for _frame: int in range(30): await process_frame
 		if not _check(float(_fate(rebel).hp) <= 0.0, "the band's only man is dead", _fate(rebel)): return
@@ -156,7 +165,7 @@ func _run() -> void:
 	var mine: Dictionary = battle.sides.get(str(home), {})
 	var theirs: Dictionary = battle.sides.get(str(enemy), {})
 	if not _check(not mine.is_empty() and not theirs.is_empty() and str(battle.site_id) == str(lab.terrain.site.id), "the record names both factions and this Site", battle): return
-	if not _check(int(theirs.deaths) + int(theirs.kos) + int(theirs.captured) >= 1, "the record counts the lone cadre's loss", theirs): return
+	if not late and not _check(int(theirs.deaths) + int(theirs.kos) + int(theirs.captured) >= 1, "the record counts the lone cadre's loss", theirs): return
 	if not _check(int(battle.winner) == home, "the player's faction won", battle.winner): return
 	if not _check(RegionBattleLog.last_fight(slot.control.faction_registry, home, enemy) > 0.0, "diplomacy sees the last fight"): return
 	var won := 0
@@ -164,6 +173,13 @@ func _run() -> void:
 		if int(participants[person]) == home and int(_record(int(person)).get("wins", 0)) == 1: won += 1
 	if not _check(won >= 1, "the winners carry a won battle", won): return
 	if not _check(int(_record(rebel).get("battles", 0)) == 1 and int(_record(rebel).get("losses", 0)) == 1, "the lone cadre carries a lost battle", _record(rebel)): return
+	if late:
+		if not _check(str(slot.control.faction_registry.entries.get(str(enemy), {}).get("status", "")) == "active", "a band whose last man is only knocked out goes on", _fate(rebel)): return
+		lab.crowd_site.apply_environment_damage(rebel, 10000.0)
+		for _frame: int in range(9000):
+			await process_frame
+			if _finished: return
+			if str(slot.control.faction_registry.entries.get(str(enemy), {}).get("status", "")) != "active": break
 	if as_band:
 		var ended: Dictionary = slot.control.faction_registry.entries.get(str(enemy), {})
 		if not _check(str(ended.get("status", "")) == "extinct" and RegionFactionQuery.canonical_bandit(ended.get("bandit", {})).get("lair") == null, "the wiped-out band ended and has no lair", [ended.get("status"), ended.get("bandit")]): return
