@@ -87,6 +87,54 @@ func _run_rate(label: String, region: bool) -> void:
 	rates.sort()
 	print("BATTLE_TRACKER_PROBE %s run in combat: samples=%d min=%.6f max=%.6f (0.1 = world rate, 0.001667 = tactical rate)" % [label, rates.size(), rates[0] if not rates.is_empty() else 0.0, rates[-1] if not rates.is_empty() else 0.0])
 
+## Knockout countdown, bleeding and idle fatigue recovery while the Site is in combat, per world game second. TCM (M2 A,
+## M3 A): the combat mechanics run on the tactical clock, 1/60 of the world clock, so a knockout falls 1/60 per second,
+## and a resting pool recovers nothing in combat (it is not safe to rest).
+func _mechanics(label: String, region: bool) -> void:
+	var player := int(lab.controlled_person_id())
+	var owner: Variant = lab.crowd_site.person_owner(player)
+	if owner == null: return
+	var formation := int(owner.formation_index)
+	var victim := -1
+	for identity: Variant in lab.crowd_site._index_by_id:
+		if int(identity) != player and lab.crowd_site.person_owner(int(identity)) == owner: victim = int(identity)
+	if victim < 0:
+		print("BATTLE_TRACKER_PROBE %s mechanics: no second person in the team" % label)
+		return
+	var index := int(lab.crowd_site._index_by_id[victim])
+	# Idle recovery at peace, nobody knocked out: the team stands 90 world game seconds.
+	lab.terrain.site["combat_left"] = 0.0
+	lab.crowd_site.crowd.charge_exchange_fatigue(int(lab.crowd_site._index_by_id[player]), 40.0 * float(lab.crowd_site.crowd.work_fatigue_state(formation)[4]))
+	var idle_from := _world_clock(region)
+	var idle_pool: PackedFloat64Array = lab.crowd_site.crowd.work_fatigue_state(formation)
+	for _step: int in range(600):
+		if region: await process_frame
+		else:
+			lab._process(1.0 / 30.0)
+			lab.site_controller.person_actions.settle_after_contacts()
+		if _world_clock(region) - idle_from >= 90.0: break
+	var idle_after: PackedFloat64Array = lab.crowd_site.crowd.work_fatigue_state(formation)
+	var form: Dictionary = lab.crowd_site.formation_state(formation)
+	print("BATTLE_TRACKER_PROBE %s idle at peace: seconds=%.1f fatigue %.4f->%.4f rest %.1f->%.1f | order=%s attacking=%s threat=%s routed=%s no_orders=%s rest_limit=%.2f runners=%d" % [label, _world_clock(region) - idle_from, float(idle_pool[2]), float(idle_after[2]), float(idle_pool[3]), float(idle_after[3]), str(form.get("order")), str(form.get("attacking")), str(form.get("threat")), str(form.get("routed")), str(form.get("no_orders")), float(lab.crowd_site.crowd.work_fatigue_rest_limit(formation, 0.0, 100000.0, 0.0)), lab.crowd_site.crowd.work_fatigue_runners(formation).size()])
+	for combat: bool in [true, false]:
+		lab.crowd_site.set_soldier_fields(index, {"ko": 14400.0, "hp": 60.0, "bandaged": 0.0})
+		lab.crowd_site.crowd.charge_exchange_fatigue(int(lab.crowd_site._index_by_id[player]), 40.0 * float(lab.crowd_site.crowd.work_fatigue_state(formation)[4]))
+		if not combat: lab.terrain.site["combat_left"] = 0.0
+		var first: Dictionary = lab.crowd_site.soldier_state(index)
+		var pool_first: PackedFloat64Array = lab.crowd_site.crowd.work_fatigue_state(formation)
+		var begin := _world_clock(region)
+		for _step: int in range(400):
+			if combat: SiteRuntime.mark_combat(lab.terrain, 30.0, true)
+			if region: await process_frame
+			else:
+				lab._process(1.0 / 30.0)
+				lab.site_controller.person_actions.settle_after_contacts()
+			if _world_clock(region) - begin >= 60.0: break
+		var seconds := _world_clock(region) - begin
+		var last: Dictionary = lab.crowd_site.soldier_state(index)
+		var pool_last: PackedFloat64Array = lab.crowd_site.crowd.work_fatigue_state(formation)
+		print("BATTLE_TRACKER_PROBE %s mechanics %s: seconds=%.1f ko %.2f->%.2f (%.5f/s) hp %.4f->%.4f (%.6f/s) fatigue %.4f->%.4f rest %.1f->%.1f" % [label, "combat" if combat else "peace", seconds, float(first.ko), float(last.ko), (float(first.ko) - float(last.ko)) / maxf(0.001, seconds), float(first.hp), float(last.hp), (float(first.hp) - float(last.hp)) / maxf(0.001, seconds), float(pool_first[2]), float(pool_last[2]), float(pool_first[3]), float(pool_last[3])])
+
 func _world_clock(region: bool) -> float:
 	return float(lab.site_controller.region_slot.control.logical_game_seconds) if region else SiteRuntime.now(lab.terrain) * 60.0
 
@@ -118,6 +166,7 @@ func _region() -> void:
 			await process_frame
 		_report("region %s" % ("in combat" if combat else "at peace"), spy, _native_tick() - begin)
 	await _run_rate("region", true)
+	await _mechanics("region", true)
 	print("BATTLE_TRACKER_PROBE_DONE region")
 	quit(0)
 
@@ -150,6 +199,7 @@ func _single() -> void:
 			lab.site_controller.person_actions.settle_after_contacts()
 		_report("single %s" % ("in combat" if combat else "at peace"), spy, _native_tick() - begin)
 	await _run_rate("single", false)
+	await _mechanics("single", false)
 	print("BATTLE_TRACKER_PROBE_DONE single")
 	TerrainArmy.release_contact_source()
 	quit(0)

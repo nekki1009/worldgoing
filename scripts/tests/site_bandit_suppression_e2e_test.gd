@@ -15,6 +15,7 @@ const Generator = preload("res://scripts/scenarios/demo_a_generator.gd")
 const Suppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd")
 const BanditDay = preload("res://scripts/terrain_lab/site_bandit_day.gd")
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
+const Aftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd")
 
 var checks := 0
 var _finished := false
@@ -266,6 +267,35 @@ func _run() -> void:
 		quit(0)
 		return
 	if not _ok(str(ended.get("status", "")) == "active", "a band with members left goes on", ended): return
+	# O2: what a band that won a raid takes on a Site nobody watches. That Site may not save the registry itself; the active
+	# Site's controller saves the hoard and the Site's lower stock in one publication. (The stand-in settlement is read when
+	# the winner is judged and gone before anything saves: no raid won a real settlement in this test.)
+	var field_site: Dictionary = field.terrain.site
+	if not field_site.get("inventory") is Dictionary: field_site["inventory"] = {}
+	var stock_before := int(field_site.inventory.get("grain", 0))
+	field_site.inventory["grain"] = stock_before + 200
+	var real_settlement: Variant = field_site.get("settlement")
+	field_site["settlement"] = {"version": 1, "settlement_id": "o2_village", "center_id": "c", "level": 2, "name": "測試村", "owner_faction": 1, "offices": SiteOffices.default_offices("settlement", 0, false), "fall_record": SiteSettlement.empty_fall_record()}
+	var verdict: Dictionary = Aftermath.judge(field.site_controller, {band: 3, 1: 0})
+	if real_settlement == null: field_site.erase("settlement")
+	else: field_site["settlement"] = real_settlement
+	if not _ok(int(verdict.get("band", -1)) == band and int(verdict.get("taken", {}).get("grain", 0)) == 60, "the winning band would take 60 grain", verdict): return
+	var hoard_before := int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).get("hoard", {}).get("grain", 0))
+	var refused: Dictionary = Aftermath.apply(field.site_controller, verdict)
+	if not _ok(not refused.get("ok", false) and int(field_site.inventory.grain) == stock_before + 200, "the unwatched Site cannot save it alone; its stock is unchanged", refused): return
+	var saved: Dictionary = {}
+	for _frame: int in range(600):
+		saved = Aftermath.apply(field.site_controller, verdict, controller)
+		if saved.get("ok", false): break
+		await process_frame
+		lab._process(1.0 / 30.0)
+		controller.person_actions.settle_after_contacts()
+	if not _ok(saved.get("ok", false), "the active Site's controller saves the plunder", saved): return
+	if not _ok(int(field_site.inventory.get("grain", 0)) == stock_before + 140, "the unwatched Site's stock lost 60", field_site.inventory.get("grain")): return
+	if not _ok(int(RegionFactionQuery.bandit_of(slot.control.faction_registry, band).hoard.get("grain", 0)) == hoard_before + 60, "the band's hoard gained 60"): return
+	var lair_at: Vector2i = slot._coordinate(field.terrain).site
+	var on_disk: Dictionary = slot._load_checked(slot.folder.path_join(str(slot._marker.sites[slot._site_key(lair_at)].path)), lair_at)
+	if not _ok(on_disk.ok and int(on_disk.data.site.get("inventory", {}).get("grain", -1)) == stock_before + 140, "the published file of the unwatched Site has the lower stock", on_disk.get("code")): return
 	table = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
 	# The band's next day: hot and attacked, it moves its lair.
 	var next_day := int(table.attacked_day) + 1
