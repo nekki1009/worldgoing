@@ -65,9 +65,14 @@ func _run() -> void:
 	var player := int(lab.controlled_person_id())
 	var me: Dictionary = actions._person(player)
 	var npc := -1
+	var nearest := INF
 	for person: Variant in lab.crowd_site._team_by_id(int(me.owner.team_id)).person_ids:
 		var candidate := actions._person(int(person))
-		if int(person) != player and npc < 0 and Vector2(candidate.cell).distance_to(Vector2(me.cell)) <= 2.0: npc = int(person)
+		# The nearest: one at the edge of reach (2 cells) stepped a cell aside under load and every offer was refused TOO_FAR (2026-11-25).
+		var apart := Vector2(candidate.cell).distance_to(Vector2(me.cell))
+		if int(person) != player and apart <= 2.0 and apart < nearest:
+			nearest = apart
+			npc = int(person)
 	if not _check(npc > 0, "a cadre stands next to the player"): return
 	var them: Dictionary = actions._person(npc)
 	var neutral := {"version": 1}
