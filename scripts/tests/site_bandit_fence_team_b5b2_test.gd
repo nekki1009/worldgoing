@@ -245,12 +245,19 @@ func _run() -> void:
 	var iron_left := int(me.cargo.get("iron", 0))
 	# The band's daily turn runs between steps; called here directly it may meet a Region point still open
 	# (REGION_EFFECTS_PENDING: nothing moves, the trip stays on the ledger), so it is asked again a frame later.
+	var waited_from := float(slot.control.logical_game_seconds)
+	var waited_ms := Time.get_ticks_msec()
 	var returned: Dictionary = FenceTeam.home(controller, band)
 	for _frame: int in range(3600):
 		if not returned.refusals.is_empty() and str(returned.refusals[0].code) in ["REGION_EFFECTS_PENDING", "REGION_EFFECT_RUNNING"]:
 			await process_frame
 			returned = FenceTeam.home(controller, band)
 		else: break
+	if returned.home.is_empty(): # why: what is due and not settled, and whether the world moves at all
+		print("SITE_BANDIT_FENCE_TEAM_B5B2 STUCK game %s -> %s ms %d point %d consuming %s dispatching %s paused %s fault %s" % [waited_from, float(slot.control.logical_game_seconds), Time.get_ticks_msec() - waited_ms,
+			lab._region_point_pending.size(), lab._region_point_consuming, lab._region_point_dispatching, paused, str(controller._original_step_fault).left(200)])
+		for event: Dictionary in slot.region_registry().events:
+			if str(event.status) == "pending" and float(event.at) <= float(slot.control.logical_game_seconds) + 120.0: print("SITE_BANDIT_FENCE_TEAM_B5B2 DUE ", JSON.stringify(event).left(300))
 	if not _check(returned.ok and returned.home.size() == 1 and returned.refusals.is_empty(), "the trip comes home", returned): return
 	var hoard := _hoard(slot, band)
 	if not _check(int(hoard.get("grain", 0)) == got and int(hoard.get("iron", 0)) == iron_left and int(me.cargo.get("grain", 0)) == 0 and int(me.cargo.get("iron", 0)) == 0,

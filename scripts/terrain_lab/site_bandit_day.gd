@@ -63,14 +63,14 @@ static func run(controller: Variant, today: int) -> Dictionary:
 		# is not its leader: checked above) the band runs on its own, and the switch is saved so it stays on.
 		if not bool(table.get("raid_ai", true)):
 			var switched := Bandit._with_table(registry, band, func(row: Dictionary) -> void: row.raid_ai = true, now)
-			if not switched.ok or not controller._commit_diplomacy(switched, "").ok: continue
+			if not switched.ok or not controller.registry_saver()._commit_diplomacy(switched, "").ok: continue
 			registry = slot.control.faction_registry
 			table = RegionFactionQuery.bandit_of(registry, band)
 			result.actions.append({"band": band, "action": "npc_takes_over", "ok": true, "code": ""})
 		var heat := int(table.get("heat", 0))
 		if cooling and heat > 0:
 			var cooled := Bandit.set_heat(registry, band, Bandit.heat_after(heat, "quiet", COOL_EVERY_DAYS), now)
-			if cooled.ok and controller._commit_diplomacy(cooled, "").ok:
+			if cooled.ok and controller.registry_saver()._commit_diplomacy(cooled, "").ok:
 				registry = slot.control.faction_registry
 				heat = int(RegionFactionQuery.bandit_of(registry, band).heat)
 		# B5b-2: a fence team back at the lair unloads into the hoard (one commit per trip).
@@ -100,7 +100,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 		match str(decision.action):
 			"move_lair": done = move_lair(controller, band)
 			"rise":
-				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
+				done = controller.registry_saver()._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
 			"raid":
 				var far := bool(decision.target.get("far", false))
@@ -138,7 +138,7 @@ static func move_lair(controller: Variant, band: int) -> Dictionary:
 		var site_id := "%s:%d:%d" % [atlas, next.x, next.y]
 		var moved := Bandit.move_lair(registry, band, site_id, Vector2i(int(lair.cell[0]), int(lair.cell[1])), float(slot.control.logical_game_seconds))
 		if not moved.ok: return moved
-		return controller._commit_diplomacy(moved, "")
+		return controller.registry_saver()._commit_diplomacy(moved, "")
 	return {"ok": false, "code": "NO_LAND_NEIGHBOUR"}
 
 # --- B4d-3a: a raid on the settlement of the band's own Site (bandit spec §5.1, §11, §12) ------------------------------
@@ -183,6 +183,6 @@ static func raid(controller: Variant, band: int, target: Dictionary) -> Dictiona
 	var slot: Variant = controller.region_slot
 	var registry: Dictionary = slot.control.faction_registry
 	var hotter := Bandit.set_heat(registry, band, Bandit.heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "raid"), float(slot.control.logical_game_seconds))
-	var saved: Dictionary = controller._commit_diplomacy(hotter, "") if hotter.ok else hotter
+	var saved: Dictionary = controller.registry_saver()._commit_diplomacy(hotter, "") if hotter.ok else hotter
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("%s 劫掠本地聚落" % str(RegionFactionQuery.display(registry, band).name))
 	return {"ok": true, "orders": orders, "heat_saved": bool(saved.get("ok", false))}

@@ -365,14 +365,63 @@ const RAID_STRENGTH := 1.2
 const FORM_MIN := 3
 const FORM_WAIT_DAYS := 7
 
+## A band goes out again RAID_REST_DAYS after its last raid, and to the same settlement after RAID_AGAIN_DAYS (the days of
+## a paid protection): else a hot-headed chief empties the same warehouse day after day (2026-11-25).
+const RAID_REST_DAYS := 10
+const RAID_AGAIN_DAYS := 30
+
+static func raid_rested(table: Dictionary, day: int) -> bool:
+	for row: Variant in table.get("raided", {}).values():
+		if day - int(row.day) < RAID_REST_DAYS: return false
+	return true
+
+static func raided_lately(table: Dictionary, site_id: String, day: int) -> bool:
+	var row: Variant = table.get("raided", {}).get(site_id)
+	return row is Dictionary and day - int(row.day) < RAID_AGAIN_DAYS
+
+## Writes a raid on `site_id` into the table: the day, and for a formula raid (`source` given) the loot that is still in
+## that Site file. Rows nothing depends on any more are dropped.
+static func note_raided(table: Dictionary, site_id: String, day: int, taken: Dictionary, source: String) -> void:
+	var rows: Dictionary = table.get("raided", {})
+	for id: Variant in rows.keys():
+		if rows[id].taken.is_empty() and day - int(rows[id].day) >= RAID_AGAIN_DAYS: rows.erase(id)
+	var owed: Dictionary = taken.duplicate()
+	var before: Variant = rows.get(site_id)
+	if before is Dictionary and (str(before.source) == source or source.is_empty()):
+		for item: String in before.taken: owed[item] = int(owed.get(item, 0)) + int(before.taken[item])
+		source = str(before.source) # a really fought raid keeps only its day: what is owed stays owed
+	rows[site_id] = {"day": maxi(0, day), "taken": owed, "source": source}
+	table["raided"] = rows
+
+## A formula raid (region_bandit_formula.gd): heat +10, the loot joins the hoard, the Site owes it; `lost` of the band's
+## people did not come back (they still stand in the lair's saved file until it is opened).
+static func raided(registry: Dictionary, band: int, site_id: String, day: int, taken: Dictionary, source: String, now: float, lost: int = 0) -> Dictionary:
+	var heat := heat_after(int(bandit_heat(registry, band)), "raid")
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		table["heat"] = heat
+		if lost > 0: table["fallen"] = int(table.get("fallen", 0)) + lost
+		if not taken.is_empty():
+			var hoard: Dictionary = table.get("hoard", {})
+			for item: String in taken: hoard[item] = mini(100000000, int(hoard.get(item, 0)) + int(taken[item]))
+			table["hoard"] = hoard
+		note_raided(table, site_id, day, taken, source), now)
+
+## The lair was opened and its lost people are dead there.
+static func fallen_settled(registry: Dictionary, band: int, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void: table.erase("fallen"), now)
+
+static func bandit_heat(registry: Dictionary, band: int) -> int:
+	return int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0))
+
 ## May the band raid this target: within REACH_SITES of the lair, at least 1.2 times as strong, not protected by a paid
-## fee (a settlement) or a paid pass (a party).
+## fee (a settlement) or a paid pass (a party), rested since its last raid and not at the same settlement again at once.
 static func may_raid(registry: Dictionary, band: int, target: Dictionary, band_strength: float, day: int) -> bool:
 	var table: Dictionary = RegionFactionQuery.bandit_of(registry, band)
 	if table.is_empty() or not table.lair is Dictionary or not bool(table.raid_ai): return false
 	if site_distance(str(table.lair.site_id), str(target.get("site_id", ""))) > REACH_SITES: return false
 	if float(target.get("strength", 0.0)) <= 0.0 or band_strength < float(target.strength) * RAID_STRENGTH: return false
 	if str(target.get("kind", "")) == "settlement" and protected(registry, band, str(target.site_id), day): return false
+	if not raid_rested(table, day) or str(target.get("kind", "")) == "settlement" and raided_lately(table, str(target.site_id), day): return false
 	if str(target.get("kind", "")) == "party" and int(table.get("passes", {}).get(str(target.get("token", "")), -1)) >= day: return false
 	return true
 

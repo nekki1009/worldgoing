@@ -1,7 +1,7 @@
 extends SceneTree
 ## Observation, not a pass / fail rule (2026-11-24): thirty game days of a small generated scenario world (6 settlements, 3
 ## bands, 1 town) run step by step at speed 16 with the player idle on the start Site. Nothing is forced: no receipts, no
-## orders. Prints once a game day the bands, their heat, the band parties on the map, the bound Sites and the battle log,
+## orders. Prints once a game day the formula raids, the bands, their heat, the band parties on the map, the bound Sites and the battle log,
 ## and at the end how many raids left, how many battles were fought and who died in them. `--days=N` (default 30).
 ## Output: RAID_30DAY lines and RAID_30DAY_DONE; quit(1) on a step fault or the deadline.
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
@@ -73,6 +73,9 @@ func _run() -> void:
 	var first_day := int(float(slot.control.logical_game_seconds) / Bandit.DAY)
 	var last_day := first_day
 	var parties_seen := {}
+	var formula_raids := 0
+	var formula_wins := 0
+	var musters := 0
 	var started_ms := Time.get_ticks_msec()
 	var boot_ms := 0 # since the process started, birth included
 	for frame: int in range(2000000):
@@ -94,9 +97,26 @@ func _run() -> void:
 			var entry: Dictionary = slot.control.faction_registry.entries[key]
 			if not RegionFactionQuery.is_bandit(slot.control.faction_registry, int(key)): continue
 			var table := RegionFactionQuery.bandit_of(slot.control.faction_registry, int(key))
-			bands.append("%s:%s heat=%d" % [str(key), str(entry.status), int(table.get("heat", 0))])
+			bands.append("%s:%s heat=%d hoard=%s fallen=%d" % [str(key), str(entry.status), int(table.get("heat", 0)), JSON.stringify(table.get("hoard", {})), int(table.get("fallen", 0))])
 		var log := RegionBattleLog.table(slot.control.faction_registry)
 		print("RAID_30DAY day=%d real_s=%d bands=[%s] parties=%d bound=%d battles=%d raids_open=%s" % [day - first_day, (Time.get_ticks_msec() - started_ms) / 1000, ", ".join(bands), slot.region_registry().get("parties", {}).size(), slot._region_original_labs.size(), log.records.size(), str(slot.get_meta(&"bandit_raids_open", {}))])
+		var formula: Dictionary = slot.get_meta(&"bandit_formula_last", {})
+		if not formula.get("raids", []).is_empty() or not formula.get("mustered", []).is_empty():
+			print("RAID_30DAY FORMULA ", JSON.stringify(formula).left(600))
+			for raid: Dictionary in formula.get("raids", []):
+				formula_raids += 1
+				if bool(raid.get("won", false)): formula_wins += 1
+			musters += formula.get("mustered", []).size()
+		if slot.has_meta(&"bandit_formula_refused"):
+			print("RAID_30DAY REFUSED ", JSON.stringify(slot.get_meta(&"bandit_formula_refused")).left(300))
+			slot.remove_meta(&"bandit_formula_refused")
+		if slot.has_meta(&"bandit_raid_outcome"):
+			print("RAID_30DAY LIVE_OUTCOME ", JSON.stringify(slot.get_meta(&"bandit_raid_outcome")).left(300))
+			slot.remove_meta(&"bandit_raid_outcome")
+		if slot.has_meta(&"bandit_raid_home"):
+			print("RAID_30DAY LIVE_HOME ", JSON.stringify(slot.get_meta(&"bandit_raid_home")).left(300))
+			slot.remove_meta(&"bandit_raid_home")
+		print("RAID_30DAY JOURNAL rows=%d idle_released=%s" % [slot.control.get("fire_clock", {}).get("journal", []).size(), JSON.stringify(lab.get_meta(&"idle_release_last", {})).left(160)])
 		if day - first_day >= _days(): break
 		# The canonical verifier allows 3600 seconds: what was seen by then is the observation.
 		if Time.get_ticks_msec() - boot_ms > 3200000: break
@@ -110,7 +130,7 @@ func _run() -> void:
 		for side: Variant in battle.sides:
 			deaths += int(battle.sides[side].deaths)
 			downs += int(battle.sides[side].kos)
-	print("RAID_30DAY SUMMARY days=%d bands_on_the_map=%d battles=%d deaths=%d knockouts=%d bound_sites=%d" % [last_day - first_day, band_parties, records.records.size(), deaths, downs, slot._region_original_labs.size()])
+	print("RAID_30DAY SUMMARY formula_raids=%d won=%d musters=%d days=%d bands_on_the_map=%d battles=%d deaths=%d knockouts=%d bound_sites=%d" % [formula_raids, formula_wins, musters, last_day - first_day, band_parties, records.records.size(), deaths, downs, slot._region_original_labs.size()])
 	for battle: Dictionary in records.records: print("RAID_30DAY BATTLE ", JSON.stringify(battle).left(500))
 	_finished = true
 	TerrainArmy.release_contact_source()

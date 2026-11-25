@@ -179,7 +179,7 @@ static func send(controller: Variant, faction: int, chosen: Dictionary, today: i
 	var component: int = RegionTravelSite.start_component(slot, at.site, person.cell, lab.terrain)
 	var marked: Dictionary = Bandit.pursued(slot.control.faction_registry, int(chosen.band), faction, today, here, float(slot.control.logical_game_seconds))
 	if not marked.ok: return {"ok": false, "code": str(marked.get("code", "PURSUED_REFUSED"))}
-	var saved: Dictionary = controller._commit_diplomacy(marked, "")
+	var saved: Dictionary = controller.registry_saver()._commit_diplomacy(marked, "")
 	if not saved.ok: return {"ok": false, "code": str(saved.get("code", "PURSUED_REFUSED"))}
 	var token := "suppress_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
 	var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:suppress", int(chosen.team_id), _coordinate(str(chosen.lair_site)), component, [], token)

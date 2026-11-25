@@ -39,6 +39,7 @@ const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents
 const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
 const Typhoon = preload("res://scripts/terrain_lab/site_typhoon.gd") # 時間與氣候 TC11
 const BanditEnded = preload("res://scripts/terrain_lab/site_bandit_ended.gd") # Nekki 2026-11-24 OQ2
+const BanditFormula = preload("res://scripts/region_lab/region_bandit_formula.gd") # raids nobody sees (Nekki 2026-11-25 B)
 const BanditRaidField = preload("res://scripts/terrain_lab/site_bandit_raid_field.gd")
 const BanditAttacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B: official attacks raise heat.
 const BanditSuppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd") # 官方剿匪 (Nekki 2026-11-22 B)
@@ -11370,6 +11371,16 @@ func _peerage_people(person_id: int, granter_id: int = -1) -> Dictionary:
 	if granter_ref == null: return Runtime.fail("NO_PERSON_REF", "你沒有世界身分")
 	if person_id > 0 and (person_ref == null or lab._original_person_target(person_id).is_empty()): return Runtime.fail("NO_TARGET", "須當面選中此地的人物")
 	return Runtime.ok("", {"granter_ref": granter_ref, "person_ref": person_ref, "registry": region_slot.control.get("faction_registry", {}), "now": float(region_slot.control.logical_game_seconds)})
+
+## The controller that may save the registry: the active Site's own (checkpoint_region_site refuses every other). A bound
+## cold Site's decisions are saved through it, in the one publication that collects the bound cold Sites (2026-11-25: a
+## cold lair's raid heat and its daily cooling were refused and silently lost).
+func registry_saver() -> SiteController:
+	if region_slot == null or lab == null or lab.terrain == null or str(lab.terrain.site.get("id", "")) == str(region_slot.control.active_site_id): return self
+	var host: Object = region_slot.region_original_endpoint_checkpoint.get_object() if region_slot.region_original_endpoint_checkpoint.is_valid() else null
+	if not host is TerrainLab: return self
+	var selected: Dictionary = (host as TerrainLab)._region_gameplay_active_player_lab()
+	return selected.lab.site_controller if selected.get("ok", false) else self
 
 func _commit_peerage(candidate: Dictionary, message: String) -> Dictionary:
 	if not candidate.get("ok", false): return candidate

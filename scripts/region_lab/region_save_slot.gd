@@ -323,10 +323,20 @@ func _resolve_foreign_region_barrier(data: TerrainData, context: Dictionary) -> 
 	return Store.validate_region_snapshot(data, {}).ok
 
 
+## The Site file whose catch-up is being settled slice by slice: {key: [path, sha256, target], data}. Every slice used to read,
+## rebuild and check the same file again (2.8 of 3.05 seconds a slice, measured 2026-11-25). The data is the loaded body as
+## it was read; a settlement works on its own detached copy. Static: a resumed arrival opens the slot anew for each retry.
+static var _open_pending: Dictionary = {}
+
 func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	if pin.is_empty() or source == null:
 		return fail("INVALID_SLOT", "存檔尚未開啟")
 	var path := site_path(site)
+	var pending_key: Array = [ProjectSettings.globalize_path(path), str(_marker.get("sites", {}).get(_site_key(site), {}).get("sha256", "")), float(control.logical_game_seconds)]
+	if not str(pending_key[1]).is_empty() and _open_pending.get("key") == pending_key and FileAccess.file_exists(path):
+		var going := _settle_cold_candidate(_open_pending.data, float(control.logical_game_seconds))
+		if str(going.get("code", "")) != "PENDING": _open_pending = {}
+		return {"ok": true, "data": going.data} if going.ok else going
 	if FileAccess.file_exists(path):
 		var loaded: Dictionary = Store.load_site(path, func(saved_base: Dictionary) -> Dictionary:
 			if not _matches_base(saved_base, site):
@@ -358,6 +368,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 					loaded["region_commit"] = region_bind_proof(loaded.data)
 					return loaded
 		var settled := _settle_cold_candidate(loaded.data, float(control.logical_game_seconds))
+		_open_pending = {"key": pending_key, "data": loaded.data} if str(settled.get("code", "")) == "PENDING" and not str(pending_key[1]).is_empty() else {}
 		if not settled.ok: return settled
 		loaded.data = settled.data
 		return loaded
@@ -599,6 +610,11 @@ func _file_entry(path: String) -> Dictionary:
 func _generation_path(generation: int, site: Vector2i) -> String:
 	return folder.path_join("generations/%020d_%d_%d_%d.json" % [generation, site.x, site.y, Time.get_ticks_usec()])
 
+## A commit record holds the whole control clock. A scenario world's fire journal passed the 1 MB every other document may
+## have within two game days: the record was written, could not be read back and every later save was refused SAVE_IO
+## (found 2026-11-25). The journal is compacted now; the limit is what a file may reasonably be.
+const COMMIT_DOCUMENT_BYTES := 64 * 1024 * 1024
+
 func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > maximum: return fail("SAVE_IO", "存檔槽記錄無法讀取")
@@ -682,7 +698,7 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 	files.sort()
 	# A fully renamed marker is a commit. Corruption of its selected generation
 	# is an error; falling back would resurrect ownership from an older Site.
-	var latest := _read_document(folder.path_join("commits").path_join(files.back()))
+	var latest := _read_document(folder.path_join("commits").path_join(files.back()), COMMIT_DOCUMENT_BYTES)
 	if not latest.ok: return latest
 	var recorded: Dictionary = latest.payload
 	if recorded.size() != 7 or not _whole(recorded.get("format"), 1, 2) \
@@ -827,7 +843,7 @@ static func _normalize_journey(value: Dictionary) -> Dictionary:
 ## The control a given commit recorded, decoded and checked as _recover_read_latest
 ## checks the latest one. Read-only: nothing here touches the live control.
 func region_commit_control(generation: int) -> Dictionary:
-	var document := _read_document(folder.path_join("commits").path_join("%020d.json" % generation))
+	var document := _read_document(folder.path_join("commits").path_join("%020d.json" % generation), COMMIT_DOCUMENT_BYTES)
 	if not document.ok: return document
 	var recorded: Dictionary = document.payload
 	if not _whole(recorded.get("generation"), 1, 2147483647) or int(recorded.generation) != generation or not _same_pin(recorded.get("pin"), pin) \
@@ -882,6 +898,9 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		next_clock.fire_clock.base_action_seconds = 0.0
 	var fire_clock_check := validate_fire_clock(next_clock.get("fire_clock"), next_clock.get("logical_game_seconds"))
 	if not fire_clock_check.ok: return fire_clock_check
+	if compact_fire_journal(next_clock.fire_clock, float(next_clock.logical_game_seconds) - FIRE_JOURNAL_EXACT_SECONDS) > 0:
+		fire_clock_check = validate_fire_clock(next_clock.fire_clock, next_clock.logical_game_seconds)
+		if not fire_clock_check.ok: return fire_clock_check
 	var next_fire_clock: Dictionary = next_clock.fire_clock
 	var previous_active := str(control.get("active_site_id", ""))
 	var next_active := str(next_clock.get("active_site_id", ""))
@@ -1281,7 +1300,7 @@ func _was_committed(token: String) -> bool:
 	if commits == null: return false
 	for name: String in commits.get_files():
 		if not name.ends_with(".json") or not name.trim_suffix(".json").is_valid_int(): continue
-		var document := _read_document(folder.path_join("commits").path_join(name))
+		var document := _read_document(folder.path_join("commits").path_join(name), COMMIT_DOCUMENT_BYTES)
 		if document.ok and str(document.payload.get("transfer_token", "")) == token: return true
 	return false
 
@@ -1292,7 +1311,7 @@ func _was_cancelled(token: String) -> bool:
 	if commits == null: return false
 	for name: String in commits.get_files():
 		if not name.ends_with(".json") or not name.trim_suffix(".json").is_valid_int(): continue
-		var document := _read_document(folder.path_join("commits").path_join(name))
+		var document := _read_document(folder.path_join("commits").path_join(name), COMMIT_DOCUMENT_BYTES)
 		if document.ok and str(document.payload.get("transfer_token", "")) == receipt: return true
 	return false
 
@@ -3214,6 +3233,40 @@ static func _fire_row_width(last: Dictionary, interval: Dictionary) -> float:
 		return width
 	return 0.0
 
+## How much of the journal keeps every step's width: a Site away shorter than a day replays it exactly.
+const FIRE_JOURNAL_EXACT_SECONDS := 2.0 * 86400.0
+
+## Joins neighbouring quiet rows (no tactical time, the same speed) that ended before `before_game` and stand between no
+## Site's watermarks. A Site that still needs them has been away longer than a day and is settled by day and hour steps
+## (Nekki 2026-11-16 A), which need where the quiet time begins and ends, not each step's width. An unopened Site pins the
+## journal for as long as it stays unopened; without this a scenario world's save grew by about 1.1 MB a game day.
+## Returns how many rows went.
+static func compact_fire_journal(clock: Dictionary, before_game: float) -> int:
+	var marks := {}
+	for value: Variant in clock.get("index", {}).values():
+		if not value is Dictionary or not _whole(value.get("sequence"), 0, 2147483647): return 0
+		marks[int(value.sequence)] = true
+	var kept: Array = []
+	for source_row: Variant in clock.journal:
+		var row: Dictionary = source_row
+		var last: Dictionary = kept.back() if not kept.is_empty() else {}
+		# A watermark inside either row is measured by that row's own steps (validate_fire_settlement): such a row stays as it is.
+		if not last.is_empty() and float(row.game_end) <= before_game and float(last.tactical_seconds) == 0.0 and float(row.tactical_seconds) == 0.0 \
+				and float(last.scale) == float(row.scale) and not marks.has(int(last.last_sequence)) and not _marked_inside(marks, last) and not _marked_inside(marks, row):
+			last["last_sequence"] = int(row.last_sequence)
+			last["action_end"] = float(row.action_end)
+			last["game_end"] = float(row.game_end)
+			last["steps"] = int(last.steps) + int(row.steps)
+		else: kept.append(row.duplicate())
+	var removed: int = clock.journal.size() - kept.size()
+	if removed > 0: clock["journal"] = kept
+	return removed
+
+static func _marked_inside(marks: Dictionary, row: Dictionary) -> bool:
+	for mark: int in marks:
+		if mark >= int(row.first_sequence) and mark < int(row.last_sequence): return true
+	return false
+
 static func prune_fire_clock_prefix(clock: Dictionary) -> int:
 	# Every indexed Fire Site must have reached the prefix; a dormant old Site pins it safely.
 	if not clock is Dictionary or not clock.get("index") is Dictionary or clock.index.is_empty(): return 0
@@ -4148,7 +4201,12 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	# moves. The probe is the bind preflight's own canonical source check, so the
 	# publish decision and the bind decision share one capture rule.
 	var source_check: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
-	if not source_check.ok and str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]:
+	# (2026-11-25: a cold owner bound from its unopened file, a lair going out on its first raid, was refused
+	# REGION_BACKEND_UNADMITTED: that file still carries the retired grid's capture, or none at all. It is published first
+	# too, as an arrival there does.)
+	var dispatch_behind: bool = not source_check.ok and (str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY", "REGION_BACKEND_UNADMITTED"] \
+		or str(source_check.get("code", "")) == "CORRUPT_REGION_SNAPSHOT" and str(source_check.get("check", "")) == "size" and int(source_check.get("snapshot_size", -1)) == 0)
+	if dispatch_behind:
 		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
 		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_dispatch", "token": token})
@@ -4311,6 +4369,18 @@ func commit_npc_region_dispatch(prepared: Dictionary) -> Dictionary:
 		var fault := fail("COMMITTED_UNBOUND", "移交已提交，原完整 bind 未完成；凍結至真 bind")
 		prepared.lab.site_controller.latch_original_step_fault(fault)
 		return fault
+	# A cold owner its last people left has another backend now (no crowd): its mode follows, as at a bind
+	# (TerrainLab._region_gameplay_owner_lab), or every later check of it is refused REGION_BACKEND_UNADMITTED (2026-11-25).
+	var source_id := str(prepared.lab.terrain.site.id)
+	var source_mode: Dictionary = region_registry().modes.get(source_id, {})
+	if source_id != str(control.active_site_id) and str(source_mode.get("mode", "")) == "cold_exact" and str(source_mode.get("backend", "")) != prepared.lab.region_backend_expected():
+		var receipt: Dictionary = prepared.lab.region_bind_receipt(prepared.lab.terrain)
+		if not receipt.get("complete", false): return receipt
+		receipt["mode"] = "cold_exact"
+		receipt["consumer"] = str(source_mode.consumer)
+		receipt["generation"] = int(_marker.get("generation", 0))
+		var reactivated := activate_region_mode(source_id, "cold_exact", str(source_mode.consumer), receipt, str(receipt.backend))
+		if not reactivated.ok: return reactivated
 	_region_npc_party_runtime[token] = prepared.party
 	_region_npc_plan_runtime[token] = prepared.plan
 	return {"ok": true, "token": token, "generation": published.generation, "binding": bound}
@@ -5282,6 +5352,87 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 		# Capture verifies the same party bytes; checkpoint publication must retain
 		# its runtime identity for original callers spanning this common marker.
 	return {"ok": true}
+
+## Game seconds a bound cold Site must have been of no use before it is released.
+const IDLE_RELEASE_SECONDS := 6.0 * 3600.0
+var _idle_since: Dictionary = {} # Site id -> the game second since which nothing needed its bound Lab.
+var _idle_checked := -INF # the last look (once a game minute)
+
+## Why the bound cold Site `owner` may not be released now ("" when it may). Anything that still needs its live bodies keeps
+## it: combat, fire, a region battle or an open event there, a traveller's team on its way there, a guest team standing
+## there (an expedition or a raid that has to go home), an open raid, unfinished effects or a resting point.
+func idle_release_block(owner: String) -> String:
+	if owner == str(control.active_site_id): return "ACTIVE"
+	var original: TerrainLab = _region_original_labs.get(owner)
+	if not is_instance_valid(original) or original.terrain == null or str(original.terrain.site.id) != owner: return "NOT_BOUND"
+	if str(region_registry().modes.get(owner, {}).get("mode", "")) != "cold_exact": return "NOT_COLD"
+	if not original._region_point_pending.is_empty() or original._region_point_consuming or original._region_point_dispatching: return "POINT_OPEN"
+	if float(original.terrain.site.get("combat_left", 0.0)) > 0.0 or original._fire_activity() or bool(control.fire_clock.get("index", {}).get(owner, {}).get("fire_active", false)): return "COMBAT"
+	if not original.site_controller._pending_deaths.is_empty() or not original.site_controller.battle_effects_due.is_empty(): return "EFFECTS"
+	if original.crowd_site != null and original.crowd_site.active and original.crowd_site.battle.open: return "BATTLE_OPEN"
+	for battle: Dictionary in region_registry().battles.values():
+		if str(battle.get("phase", "")) != "finished" and str(battle.get("site_id", "")) == owner: return "REGION_BATTLE"
+	for event: Dictionary in region_registry().events:
+		if str(event.get("owner", "")) == owner and str(event.get("status", "")) == "pending" and str(event.get("kind", "")) != "evaluation": return "EVENT"
+	# Teams on their way to it, or sent from it (they come back): binding it again when they arrive costs far more.
+	for token: String in region_registry().parties:
+		var party: Dictionary = region_registry().parties[token]
+		if str(party.get("phase", "")) not in ["travelling", "pending_life", "materializing"]: continue
+		var from: Variant = party.get("origin")
+		if not from is Array or from.size() != 2 or Grid.site_id(str(pin.atlas_id), Vector2i(int(from[0]), int(from[1]))) == owner: return "PARTY_OUT"
+		var plan := _region_npc_plan(token)
+		if not plan.ok: return "PARTY"
+		var last: Array = plan.plan.steps.back().site
+		if Grid.site_id(str(pin.atlas_id), Vector2i(int(last[0]), int(last[1]))) == owner: return "PARTY"
+	for mission: Dictionary in region_registry().get("caravans", {}).get("missions", []):
+		if owner in [str(mission.get("from_site", "")), str(mission.get("to_site", ""))]: return "CARAVAN"
+	for route: Dictionary in region_registry().get("tax_routes", {}).get("routes", []):
+		if owner == str(route.get("home_site", "")) or route.get("stops", []).has(owner): return "TAX"
+	for raid: Dictionary in get_meta(&"bandit_raids_open", {}).values():
+		if str(raid.get("site_id", "")) == owner and not bool(raid.get("done", false)): return "RAID"
+	# A lair bound to go out (region_bandit_formula.gd) keeps its bodies over the next day's move.
+	if int(float(control.logical_game_seconds) / 86400.0) - int(get_meta(&"bandit_musters", {}).get(owner, -100)) <= 1: return "MUSTER"
+	var settlement_owner := int(original.terrain.site.get("settlement", {}).get("owner_faction", -1))
+	if original.crowd_site != null and original.crowd_site.active:
+		for team: Dictionary in original.crowd_site.teams:
+			if bool(team.get("departed", false)) or team.get("person_ids", []).is_empty(): continue
+			var faction := int(team.get("faction", -1))
+			if faction == settlement_owner or faction == RegionFactionQuery.NEUTRAL_FACTION_ID: continue
+			var lair: Variant = RegionFactionQuery.bandit_of(control.faction_registry, faction).get("lair") if RegionFactionQuery.is_bandit(control.faction_registry, faction) else null
+			if lair is Dictionary and str(lair.get("site_id", "")) == owner: continue # a band at home
+			return "GUESTS"
+	return ""
+
+## Releases bound cold Sites that nobody has needed for IDLE_RELEASE_SECONDS, one a call: every bound Site is published
+## together with the active one, then its Lab is freed and forgotten. A later need binds it again from its saved file,
+## as after loading a save. Called at rest by the active Site's owner. Returns {released: owner} or {}.
+func release_idle_cold_owner() -> Dictionary:
+	if not region_original_endpoint_checkpoint.is_valid() or str(control.active_site_id).is_empty(): return {}
+	var now := float(control.logical_game_seconds)
+	if now - _idle_checked < 60.0: return {}
+	_idle_checked = now
+	for owner: String in _region_original_labs.keys():
+		if idle_release_block(owner) != "" or not _idle_since.has(owner):
+			_idle_since[owner] = now
+			continue
+		var since := float(_idle_since[owner])
+		if now - since < IDLE_RELEASE_SECONDS: continue
+		# Its hourly evaluations end with it: a due one would bind it again at once. They return with the next bind.
+		var registry := region_registry()
+		var events: Array = registry.events
+		registry["events"] = events.filter(func(event: Dictionary) -> bool: return not (str(event.owner) == owner and str(event.kind) == "evaluation" and str(event.status) == "pending"))
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "idle_release", "token": owner})
+		if not published is Dictionary or not published.get("ok", false):
+			region_registry()["events"] = events
+			_idle_since[owner] = now # not again at every step: the next try is IDLE_RELEASE_SECONDS away
+			return {"refused": owner, "result": published}
+		var original: TerrainLab = _region_original_labs[owner]
+		_region_original_labs.erase(owner)
+		_fire_cold_candidates.erase(owner)
+		_idle_since.erase(owner)
+		original.queue_free()
+		return {"released": owner}
+	return {}
 
 func _close_original_cold_region_points() -> Dictionary:
 	for owner: String in _region_original_labs:

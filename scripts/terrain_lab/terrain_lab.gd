@@ -63,6 +63,7 @@ var _fire_replay_epoch := ""
 var _fire_replay_keep_tactical := false
 var _fire_replay_segments: Array[Dictionary] = []
 var _fire_replay_boundaries: Array = [] # Per segment: the live action clock values A_0..A_n.
+var _fire_replay_averaged: Dictionary = {} # Segment index -> true: joined quiet rows standing on their average width.
 var _fire_replay_boundaries_unrecoverable := false # Legacy rows: exact path only, no quiet prefix.
 var _region_quiet_formal_steps: Array = [] # Live boundaries one quiet prefix replaces.
 var _fire_replay_segment_index := 0
@@ -2081,8 +2082,11 @@ func _fire_replay_consume_step(result: Dictionary) -> void:
 ## Lab advances by action_end - action_begin. Rebuild the same values by the same
 ## sum from an exact live value (the Site watermark, then each row end). The
 ## rebuilt step must land bit-exactly on the row end; otherwise refuse.
-func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: float) -> Dictionary:
+## `averaged`: this replay is a long absence's (settled by day and hour steps), so a quiet row that compaction joined from
+## rows of other widths (RegionSaveSlot.compact_fire_journal) may stand on its average width; its ends are exact.
+func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: float, averaged: bool = false) -> Dictionary:
 	var result: Array = []
+	var joined := {}
 	var begin := start_action
 	for index: int in segments.size():
 		var segment: Dictionary = segments[index]
@@ -2102,12 +2106,33 @@ func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: fl
 				at += width
 				values.append(at)
 			if at != end: continue
-			if not found.is_empty() and found != values: return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "ambiguous width")
+			if not found.is_empty() and found != values:
+				if averaged: continue # the live width found first stands
+				return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "ambiguous width")
 			found = values
+		if found.is_empty() and averaged and float(segment.get("tactical_seconds", 0.0)) == 0.0:
+			for step: int in steps + 1: found.append(begin + (end - begin) * float(step) / float(steps))
+			found[0] = begin
+			found[steps] = end
+			joined[index] = true
 		if found.is_empty(): return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "no live width reproduces the row end")
 		result.append(found)
 		begin = end
-	return SiteRuntime.ok("", {"boundaries": result})
+	return SiteRuntime.ok("", {"boundaries": result, "averaged": joined})
+
+## Neighbouring quiet segments (no tactical time, the same speed) that end before `before_game`, joined.
+static func _join_quiet_segments(segments: Array[Dictionary], before_game: float) -> Array[Dictionary]:
+	var joined: Array[Dictionary] = []
+	for segment: Dictionary in segments:
+		var last: Dictionary = joined.back() if not joined.is_empty() else {}
+		if not last.is_empty() and float(segment.game_end) <= before_game and float(last.tactical_seconds) == 0.0 and float(segment.tactical_seconds) == 0.0 \
+				and float(last.scale) == float(segment.scale):
+			last["last_sequence"] = int(segment.last_sequence)
+			last["action_end"] = float(segment.action_end)
+			last["game_end"] = float(segment.game_end)
+			last["steps"] = int(last.steps) + int(segment.steps)
+		else: joined.append(segment.duplicate())
+	return joined
 
 ## One exact replay step. A formal replay reproduces the live cold owner bit for
 ## bit, and live drives that owner by advance_region_cold_stages: the same original
@@ -2115,8 +2140,16 @@ func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: fl
 ## boundary the interval's clock width overshoots by ulps). It keeps this replay's
 ## own target so pending time is still measured. Every other replay is unchanged.
 func _fire_replay_exact_step(action_step: float, target: float, interval: Dictionary) -> Dictionary:
+	# A joined quiet row has no live steps to be reproduced: its steps replay as any cold step does, cut where a person's work
+	# or fatigue ends (the formal path below refuses a step it would have to cut).
 	if _region_cold_formal.is_empty() or interval.is_empty():
 		return _advance_original_shared_step(action_step, target, interval)
+	if _fire_replay_averaged.has(_fire_replay_segment_index):
+		var plain := _advance_original_shared_step(action_step, target, interval)
+		if plain.get("ok", false) and plain.get("completed", false) and not _region_point_pending.is_empty():
+			var closed := consume_region_point(false)
+			if not closed.get("ok", false) or not closed.get("complete", false): return closed
+		return plain
 	var guarded := _region_original_interval_guard(interval)
 	if not guarded.ok: return guarded
 	var elapsed := float(interval.action_end) - float(interval.action_begin)
@@ -6178,6 +6211,10 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		var world_registry: Variant = site_controller.region_slot.control.get("faction_registry", {}) if site_controller != null and site_controller.region_slot != null else {}
 		if _cold_replay_lab.terrain != null and not _cold_replay_lab.terrain.site.has("climate_enabled") and world_registry is Dictionary and world_registry.get("climate") is Dictionary and world_registry.climate.get("enabled") == true:
 			_cold_replay_lab.terrain.site["climate_enabled"] = true
+		# 公式遠征 (Nekki 2026-11-25 B): what bands took from this Site while nobody looked leaves it before its catch-up runs.
+		# Here too the replay Lab's own body changes; the source body stays untouched.
+		if site_controller != null and site_controller.region_slot != null and _cold_replay_lab.terrain != null:
+			SiteController.BanditFormula.apply_to(site_controller.region_slot, _cold_replay_lab.terrain)
 		_cold_replay_lab._fire_replay_tracking = data.site.has("fire_settlement")
 		_cold_replay_lab._fire_replay_epoch = str(data.site.get("fire_settlement", {}).get("epoch", ""))
 		var indexed_fire_site: Dictionary = site_controller.region_slot.control.get("fire_clock", {}).get("index", {}).get(identity, {}) if _cold_replay_lab._fire_replay_tracking else {}
@@ -6189,11 +6226,19 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 				_cold_replay_lab = null
 				return SiteRuntime.fail("CORRUPT_FIRE_JOURNAL", "原火攻回放區間格式非法")
 			replay_segments.append(segment)
+		# A long absence is settled by hour steps: its quiet rows before the exact tail are joined, or every step would end at
+		# the next row (a scenario world writes about four thousand a game day; found 2026-11-25).
+		var long_absence: bool = data.site.has("fire_settlement") and target_seconds - float(data.site.fire_settlement.game_seconds) >= COARSE_MIN_SECONDS + COARSE_TAIL_SECONDS
+		if long_absence: replay_segments = _join_quiet_segments(replay_segments, target_seconds - COARSE_TAIL_SECONDS)
 		_cold_replay_lab._fire_replay_segments = replay_segments
 		_cold_replay_lab._fire_replay_boundaries = []
+		_cold_replay_lab._fire_replay_averaged = {}
 		if _cold_replay_lab._fire_replay_tracking:
-			var built := _cold_replay_lab._fire_replay_build_boundaries(replay_segments, float(data.site.fire_settlement.action_seconds))
-			if built.ok: _cold_replay_lab._fire_replay_boundaries = built.boundaries
+			var built := _cold_replay_lab._fire_replay_build_boundaries(replay_segments, float(data.site.fire_settlement.action_seconds),
+				long_absence)
+			if built.ok:
+				_cold_replay_lab._fire_replay_boundaries = built.boundaries
+				_cold_replay_lab._fire_replay_averaged = built.averaged
 			# An older save's tolerance-merged rows: replay every step on the exact path.
 			elif str(built.get("code", "")) == "REPLAY_STEP_UNRECOVERABLE": _cold_replay_lab._fire_replay_boundaries_unrecoverable = true
 			else:
@@ -10672,8 +10717,10 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	# native capture, exactly as site_controller.capture_region_checkpoint admits a live crowd.
 	var crowd_admitted: bool = child.crowd_site != null and child.crowd_site.active
 	var crowd_captured := {}
+	# A Site whose last people leave with this departure has no crowd any more: its capture is a plain one, whatever the
+	# source's was (2026-11-25: a whole band could never leave its lair, REGION_BACKEND_UNADMITTED).
+	context["backend"] = "native" if crowd_admitted else "gd"
 	if crowd_admitted:
-		context["backend"] = "native"
 		crowd_captured = child.crowd_site.capture_save(true)
 		if not crowd_captured.ok: child.free(); return crowd_captured
 	child.site_controller._capture_positions()
@@ -12477,6 +12524,12 @@ func _region_run_due_daily_hooks() -> void:
 	site_controller.flush_battle_effects()
 	SiteController.BanditEnded.check(site_controller, site_controller)
 	SiteController.BanditRaidField.watch(site_controller, site_controller)
+	SiteController.BanditFormula.tell(site_controller)
+	SiteController.BanditFormula.settle_fallen(site_controller, site_controller)
+	if float(terrain.site.get("combat_left", 0.0)) <= 0.0: # each may save (a second or two of stillness): never in a fight
+		SiteController.BanditFormula.day(site_controller)
+		var released: Dictionary = slot.release_idle_cold_owner()
+		if not released.is_empty(): set_meta(&"idle_release_last", released)
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
@@ -12485,6 +12538,7 @@ func _region_run_due_daily_hooks() -> void:
 		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
 		SiteController.BanditEnded.check(original.site_controller, site_controller)
 		SiteController.BanditRaidField.watch(original.site_controller, site_controller)
+		SiteController.BanditFormula.settle_fallen(original.site_controller, site_controller)
 		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
 		original.site_controller.flush_battle_effects(site_controller)
 
@@ -12829,13 +12883,29 @@ func region_cold_original_inputs() -> Dictionary:
 			and not actor.guarding and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 \
 			and actor.projectiles.is_empty() and not site_controller.person_actions.is_busy(actor.person_id)
 		p0_stable = p0_stable and actor.hp > 0.0
+	# A crowd Site's teams are rosters of native people: their rest is read from the native bodies (2026-11-25: with the
+	# rosters counted as marching grid teams no Site with people ever took the long-absence steps, and a village nobody had
+	# opened for a day and a half was replayed step by step for minutes).
+	# Only for a long absence: a shorter one replays every step, as before.
+	var crowd_here: bool = crowd_site != null and crowd_site.active and bool(_region_cold_isolated.get("coarse", false))
 	for team: TerrainArmy in combat_armies:
-		if team.has_army(): actions_stable = false
+		if team.has_army() and not (crowd_here and (_native_original_army(team) or not team.combat_enabled)): actions_stable = false
+	if crowd_here: actions_stable = actions_stable and _region_cold_crowd_quiet()
 	var formal_slot: RegionSaveSlot = _region_cold_formal.get("slot")
 	var generation := int(formal_slot._marker.get("generation", -1)) if formal_slot != null else int(bind.get("generation", -1))
 	return SiteRuntime.ok("", {"inputs": {"p0_stable": p0_stable, "actions_stable": actions_stable,
 		"owner_generation": generation, "source_owner_id": get_instance_id(),
 		"site_id": str(terrain.site.id), "backend": str(bind.backend)}})
+
+## Nobody living in the native crowd is down or getting up, nothing flies and no battle is open: nothing there needs its
+## steps one by one. The dead lie where they lie and prisoners stay held; positions, orders and schedules go on from where
+## they stand in the exact tail.
+func _region_cold_crowd_quiet() -> bool:
+	if crowd_site.battle.open or crowd_site.has_projectiles(): return false
+	for identity: Variant in crowd_site._index_by_id:
+		var state: Dictionary = crowd_site.soldier_state(int(crowd_site._index_by_id[identity]))
+		if float(state.get("hp", 0.0)) > 0.0 and (float(state.get("ko", 0.0)) > 0.0 or float(state.get("getup", 0.0)) > 0.0): return false
+	return true
 
 func _region_cold_quiet_admission() -> Dictionary:
 	var original := region_cold_original_inputs()
@@ -12878,6 +12948,14 @@ func _region_cold_quiet_admission() -> Dictionary:
 func _region_cold_idle_fire_proof(data: TerrainData) -> Dictionary:
 	if data != terrain or data != _region_bound_data or not restore_only or site_controller == null:
 		return SiteRuntime.fail("COLD_ORIGINAL_OWNER_REQUIRED")
+	# A long absence asks that nothing burns and nothing flies. Fire state as such is always there in a world with climate
+	# (the weather's history), and so is the count of arrows shot long ago (2026-11-25).
+	if bool(_region_cold_isolated.get("coarse", false)):
+		if _fire_activity() or not fire_projectiles.is_empty() or not fire_reservations.is_empty() or not siege_projectiles.is_empty() or _fire_committing or _fire_advancing:
+			return SiteRuntime.fail("COLD_ACTIVE_FIRE")
+		var held := capture_fire_owner_state()
+		if not held.ok: return held
+		return SiteRuntime.ok() if held.state.is_empty() else SiteRuntime.fail("COLD_ACTIVE_FIRE_OWNER")
 	if not terrain.site.get("fire", {}).is_empty() or not fire_projectiles.is_empty() or not fire_reservations.is_empty() \
 		or not siege_projectiles.is_empty() or _fire_committing or _fire_advancing:
 		return SiteRuntime.fail("COLD_ACTIVE_FIRE")
@@ -12917,7 +12995,7 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	if not fire_guard.ok: return fire_guard
 	var action_seconds := game_seconds / (60.0 * simulation_speed)
 	if not is_finite(action_seconds) or action_seconds <= 0.0 \
-		or absf(SiteRuntime.game_seconds(action_seconds, combat_left) * simulation_speed - game_seconds) > ACTION_TIME_EPSILON:
+		or absf(SiteRuntime.game_seconds(action_seconds, combat_left) * simulation_speed - game_seconds) > (maxf(ACTION_TIME_EPSILON, game_seconds * 0.000000001) if coarse else ACTION_TIME_EPSILON):
 		return SiteRuntime.fail("CLOCK_CONTRACT")
 	var original := terrain
 	var action_begin := fire_action_cursor
@@ -13033,6 +13111,7 @@ func _region_cold_replaced_steps(begin: float, end: float) -> int:
 
 ## Long-absence catch-up (Nekki 11/16 A).
 const COARSE_MIN_SECONDS := 86400.0
+const COARSE_TAIL_SECONDS := 7200.0 # the exact tail (advance_region_cold_actual_fixed's default)
 const COARSE_STEP_SECONDS := 3600.0
 ## 平民 C6: a registered resident's work speed offline, as on the live work step (SiteResidentMood).
 func _coarse_work_factor(identity: int) -> float:
@@ -13348,10 +13427,12 @@ func _region_cold_formal_admission() -> Dictionary:
 	if str(slot.control.active_site_id) == site_id: return SiteRuntime.fail("PLAYER_BARRIER")
 	var mode: Dictionary = slot.region_registry().modes.get(site_id, {})
 	var activation: Dictionary = mode.get("activation", {})
-	if str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != region_backend_expected() \
+	# A Site nobody ever opened has no mode yet: its long absence is settled all the same (2026-11-25).
+	var never_opened: bool = mode.is_empty() and bool(_region_cold_isolated.get("coarse", false))
+	if not never_opened and (str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != region_backend_expected() \
 		or str(mode.get("consumer", "")) != "original_replay" or int(mode.get("generation", -1)) != int(_region_cold_formal.generation) \
 		or activation.get("complete") != true or activation.get("owners_restored") != true \
-		or str(activation.get("owner", "")) != site_id or int(activation.get("generation", -1)) != int(_region_cold_formal.generation):
+		or str(activation.get("owner", "")) != site_id or int(activation.get("generation", -1)) != int(_region_cold_formal.generation)):
 		return SiteRuntime.fail("COLD_FORMAL_MODE_REQUIRED")
 	if _region_owner_restore_receipt.get("owners_restored") != true or _region_owner_restore_receipt.get("effects_complete") != true \
 		or bool(_region_bind_receipt_value.get("zero_world_only", false)):
@@ -13393,9 +13474,11 @@ func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 	result["game_end"] = float(row.game_end) if count == remaining else float(first.game_begin) + game_step * count
 	result["tactical_seconds"] = 0.0
 	result["consumed_steps"] = count
-	if float(result.game_end) - float(result.game_begin) > maximum_game_seconds + ACTION_TIME_EPSILON \
+	# An hour out of joined rows carries the rounding of thousands of steps: measured as the journal itself is.
+	var tolerance: float = maxf(ACTION_TIME_EPSILON, maximum_game_seconds * 0.000000001) if coarse else ACTION_TIME_EPSILON
+	if float(result.game_end) - float(result.game_begin) > maximum_game_seconds + tolerance \
 		or absf((float(result.action_end) - float(result.action_begin)) * 60.0 * simulation_speed \
-			- (float(result.game_end) - float(result.game_begin))) > ACTION_TIME_EPSILON:
+			- (float(result.game_end) - float(result.game_begin))) > tolerance:
 		return SiteRuntime.fail("CLOCK_CONTRACT")
 	if _fire_replay_segment_index < _fire_replay_boundaries.size():
 		result["action_end"] = float(_fire_replay_boundaries[_fire_replay_segment_index][_fire_replay_segment_offset + count])
@@ -15316,6 +15399,10 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 
 func _prepare_native_begin_shared_window_body(maximum: float, combat_begin: float) -> Dictionary:
 	var nb: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
+	# A plain Site's step wraps its phase by subtraction and can leave -1e-14: that is the round's own beginning. A Site
+	# that becomes a crowd again (a band back in the lair it left empty) was refused INVALID_NATIVE_BEGIN_WINDOW at every
+	# later step (found 2026-11-25).
+	if _exchange_phase < 0.0 and _exchange_phase >= -ACTION_TIME_EPSILON: _exchange_phase = 0.0
 	_wire_fire_ranged()
 	nb = _combat_profile_stage("nb_wire_fire", nb)
 	var input_batches: Array[Dictionary] = []
@@ -15787,10 +15874,10 @@ func _native_begin_ranged_window(phase: float, maximum: float, without_pulse: fl
 	# held WORK effort and the actual unpulsed clock, plus exact previewed pulses.
 	# Unknown future RUN/P5 upper bounds provide NO minimum-effort witness.
 	for value: float in [phase,maximum,without_pulse,with_pulse]:
-		if not is_finite(value) or value<0.0: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		if not is_finite(value) or value<0.0: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "phase %s maximum %s bounds %s %s" % [phase, maximum, without_pulse, with_pulse])
 	if maximum<=0.0 or maximum>EXCHANGE_ACTION_STEP+ACTION_TIME_EPSILON \
 		or without_pulse>maximum or with_pulse>maximum:
-		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "phase %s maximum %s bounds %s %s" % [phase, maximum, without_pulse, with_pulse])
 	var no_due: bool = (phase+without_pulse)+ACTION_TIME_EPSILON>=EXCHANGE_QUERY_STEP
 	var pulse_due: bool = (phase+with_pulse)+ACTION_TIME_EPSILON>=EXCHANGE_QUERY_STEP
 	if not no_due:
@@ -15851,7 +15938,8 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 	if crowd_site == null or not crowd_site.active or crowd_site.crowd == null: return SiteRuntime.fail("CLOCK_NOT_READY")
 	if _fire_committing or _fire_advancing or terrain == null or not physical_ranged_enabled \
 		or not exchange_enabled or not is_finite(action_seconds) or action_seconds <= 0.0 \
-		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON:
+		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "site %s action %s fire %s/%s ranged %s exchange %s" % [str(terrain.site.get("id", "")) if terrain != null else "", action_seconds, _fire_committing, _fire_advancing, physical_ranged_enabled, exchange_enabled])
 	if query_override not in [-1, 0, 1] or register_candidate and query_override != -1: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
 	var rp: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	var people: Array[Dictionary] = _siege_people()

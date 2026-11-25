@@ -98,7 +98,8 @@ static func apply(controller: Variant, verdict: Dictionary, saver: Variant = nul
 	var stored := Bandit._with_table(registry, band, func(table: Dictionary) -> void:
 		var hoard: Dictionary = table.get("hoard", {})
 		for item: String in taken: hoard[item] = mini(100000000, int(hoard.get(item, 0)) + int(taken[item]))
-		table["hoard"] = hoard, float(slot.control.logical_game_seconds))
+		table["hoard"] = hoard
+		Bandit.note_raided(table, str(site.get("id", "")), Attacked.today_of(controller), {}, ""), float(slot.control.logical_game_seconds))
 	if not stored.ok: return stored
 	# The camp stock first, then the warehouses in order. Kept to undo when the save is refused: nothing then left the Site.
 	var keys := warehouses(site, owner)
@@ -165,7 +166,7 @@ static func go_home(controller: Variant, band: int) -> Dictionary:
 		var component: int = RegionTravelSite.start_component(slot, here.site, person.cell, lab.terrain)
 		var token := "band_home_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
 		var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:band", team_id, goal, component, [], token)
-		if not prepared.ok: refusals.append([team_id, str(prepared.get("code", ""))]); continue
+		if not prepared.ok: refusals.append([team_id, str(prepared.get("code", "")), str(prepared.get("message", "")), prepared.get("preflight", {})]); continue
 		var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
 		if not committed.ok: return committed
 		return {"ok": true, "team": team_id, "token": token}
