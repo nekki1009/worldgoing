@@ -49,6 +49,9 @@ func _team_of(where: TerrainLab, person: int) -> Dictionary:
 		if not bool(team.get("departed", false)) and team.get("person_ids", []).has(person): return team
 	return {}
 
+func _role(where: TerrainLab, person: int) -> String:
+	return SiteOffices.body_military_role(where.site_controller.person_actions._person(person, false).get("body"))
+
 ## The whole team of `person` in `where` leaves for `target`; asked again while somebody is still busy.
 func _send(where: TerrainLab, person: int, target: Vector2i, token: String) -> bool:
 	var last: Dictionary = {}
@@ -117,6 +120,8 @@ func _run() -> void:
 	var band := int(_team_of(lab, player).faction)
 	var trip: Dictionary = lab.crowd_site.detach_to_new_team(cadres[0], band)
 	if not _ok(trip.ok and lab.crowd_site.join_team(cadres[1], int(trip.team_id)).ok, "two cadres form a team of their own", trip): return
+	# One of them is a civilian: he stays one wherever he arrives.
+	if not _ok(lab.crowd_site.native_set_military_role(cadres[1], "civilian").ok and _role(lab, cadres[1]) == "civilian", "one of them is a civilian"): return
 	for frame: int in range(10):
 		if not await _frame(): return
 	var here: Dictionary = slot._coordinate(lab.terrain)
@@ -142,6 +147,7 @@ func _run() -> void:
 	if not _ok(is_instance_valid(field) and field != lab, "the wild Site is bound as a cold owner", slot._region_original_labs.keys()): return
 	var team := _team_of(field, cadres[0])
 	if not _ok(not team.is_empty() and team.person_ids.has(cadres[1]) and int(team.faction) == band, "the two cadres stand there in one team", team): return
+	if not _ok(_role(field, cadres[1]) == "civilian" and _role(field, cadres[0]) != "civilian", "the civilian came as one", [_role(field, cadres[0]), _role(field, cadres[1])]): return
 	if not _ok(slot._marker.sites.has("%d:%d" % [wild.x, wild.y]) and FileAccess.file_exists(slot.folder.path_join(str(slot._marker.sites["%d:%d" % [wild.x, wild.y]].path))), "it has a saved file of its own"): return
 	var from := float(slot.control.logical_game_seconds)
 	for frame: int in range(6000):
@@ -162,6 +168,7 @@ func _run() -> void:
 	if not await _wait_entered("wild_home", 3600.0): return
 	team = _team_of(lab, cadres[0])
 	if not _ok(not team.is_empty() and team.person_ids.has(cadres[1]), "the two cadres are home", team): return
+	if not _ok(_role(lab, cadres[1]) == "civilian" and _role(lab, cadres[0]) != "civilian", "the civilian came home as one", [_role(lab, cadres[0]), _role(lab, cadres[1])]): return
 	from = float(slot.control.logical_game_seconds)
 	for frame: int in range(6000):
 		if not await _frame(): return

@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-25 17:30（台北）
+更新：2026-11-25 21:05（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
 
 ## 2026-11-25 17:30（台北）NPC 隊伍抵達會讓世界停住、沒人看的 Site 成伙、綁定快 10 倍
@@ -15,7 +15,8 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/
 - 綁定變快：逐段量，99% 花在登記外觀圖集與準備要畫的人物（看不見的 Site 也做）。`CrowdSite._undrawn()`：restore_only 的 Lab 不登記、不準備；變成看得到時第一幀才做。讀檔時也不重查外觀來源（SiteStore.recheck_assets，背景綁定才關）。12 人的村 23.6 → 2.2 秒（最長一次 11.4 → 1.1 秒）；山寨 9.2 → 1.6 秒。探針 bind_cost_probe（在自己的程序裡加量測點，不動磁碟上的程式）。
 - 30 日觀察：6 聚落、3 伙、1 市鎮，玩家不動，30 日 33 分鐘、沒有錯誤；公式遠征 3 次都贏。沒人打開過的村存糧不會變多，所以每村最多被搶一次（待 Nekki 決定要不要估算生產）。
 - 回歸：關聯 25／25；完整回歸 FULL_1129 272 項：269 項並行過、3 項單獨過（2 項是驗證器清舊資料夾互撞、1 項交易畫面測試等交貨），0 失敗。
-- 推送等 Nekki 說（未推送：361a98f、c864df6、79db33d、b383591 與這一包）。
+- 21:05 補：居民一戶出走走到野地會停住（平民當隊長，格子名冊只收軍官，`CORRUPT_SAVE`）、平民隨隊抵達變士兵、聚落首長被叫去出走後存不了檔，三個都改（region_travel._without_civilian_command、site_resident_exodus）。新測試 region_emigrant_arrival_test；旅行與居民回歸 FAM_1130 107／107。交易畫面測試改挑最近的人（6c379f9）。
+- 推送等 Nekki 說（未推送：361a98f、c864df6、79db33d、b383591、0ab819a、6c379f9 與 21:05 這一包）。待 Nekki 決定：沒打開的村要不要估算生產。
 
 ## 2026-11-25 12:00（台北）遠征劫掠、存檔與久未打開的 Site
 - Nekki 02:52「遠征劫掠要有，做到可用」；07:10「都依建議」：沒人打開的山寨與村落之間用公式劫掠（11/01 原生決定的例外）；已綁定的冷 Site 閒置先釋放；寨主自動知道 2 個 Site 內的聚落與概略人數。沒有准推送。

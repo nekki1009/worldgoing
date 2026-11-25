@@ -8,7 +8,7 @@ extends RefCounted
 ## head leaves the residents team into his own team, the others join it) and the head takes them onto the Region map
 ## toward the first land neighbour Site (RegionAI.prepare_captain_dispatch, reason emigrate). Going outlaw: the same team
 ## becomes a new band (origin refugee) led by the head, its lair at his cell; the band stays on this Site.
-## Members who are not free here (dead, captive, busy, controlled) stay behind and keep their registration.
+## Members who are not free here (dead, captive, busy, controlled, the settlement's head) stay behind and keep their registration.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
@@ -67,8 +67,11 @@ static func depart(controller: Variant, people: Array, outlaw: bool) -> Dictiona
 	var crowd: Variant = lab.crowd_site
 	var player := int(lab.controlled_person_id())
 	var free: Array[int] = []
+	# The settlement's head stays (2026-11-25): without a head of its own faction the Site could not be saved any more.
+	var head_holder := int(SiteOffices.head_position(lab.terrain.site.get("settlement", {}).get("offices", {})).get("holder", 0))
 	for raw: Variant in people:
 		var identity := int(raw)
+		if identity == head_holder and head_holder > 0: continue
 		var person: Dictionary = controller.person_actions._person(identity, false)
 		if identity == player or person.is_empty() or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)) or controller.person_actions.is_busy(identity): continue
 		free.append(identity)
