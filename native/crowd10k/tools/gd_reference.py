@@ -47,7 +47,7 @@ def attack_profile(clip):
     if clip in ["attack_spear", "ride_thrust", "attack_dagger", "attack_bow", "attack_crossbow"]: kind = "stab"
     elif clip in ["attack_hammer", "attack_unarmed"]: kind = "blunt"
     return {"kind": kind, "power": 30.0 if clip in ["attack_jump_heavy", "attack_axe", "attack_hammer"] else 20.0,
-            "impact": {"slash": 12.0, "stab": 8.0, "blunt": 35.0}[kind]}
+            "impact": 14.0 if clip == "attack_unarmed" else {"slash": 12.0, "stab": 8.0, "blunt": 35.0}[kind]}
 
 def armor_profile(item):
     if "mingguang" in item or "steel" in item: return {"slash": 35.0, "stab": 25.0, "blunt": 15.0, "cushion": 10.0}

@@ -12,6 +12,11 @@ const RESCUED_KNOCKOUT_GAME_SECONDS := 3600.0
 const GUARD_TRANSITION := 0.15
 const GUARD_BREAK_SECONDS := 0.4
 const GUARD_BREAK_IMPACT := 30.0
+## Bare hands are a blunt attack, but stun far less than a hammer's 35 (2026-11-25): with the hammer's value ten unarmed
+## residents and two soldiers knocked out nine and ten armed bandits in the measured far raids (a sword stuns 12, and
+## draws stun both sides). At 14 an unarmed resident counts about half a soldier with sword, leather and shield, the
+## coefficient of residents who fight in the off-screen battle rules (10A.3). Adjustable.
+const UNARMED_IMPACT := 14.0
 
 # Adjacent exchanges are an explicitly different combat policy, not a geometry
 # approximation. Original owners supply attributes and apply the returned effects.
@@ -381,7 +386,7 @@ static func attack_profile(clip: StringName) -> Dictionary:
 	elif clip in [&"attack_hammer", &"attack_unarmed"]:
 		kind = "blunt"
 	return {"kind": kind, "power": 30.0 if clip in [&"attack_jump_heavy", &"attack_axe", &"attack_hammer"] else 20.0,
-		"impact": {"slash": 12.0, "stab": 8.0, "blunt": 35.0}[kind],
+		"impact": UNARMED_IMPACT if clip == &"attack_unarmed" else {"slash": 12.0, "stab": 8.0, "blunt": 35.0}[kind],
 		"ranged": clip in [&"attack_bow", &"attack_crossbow"], "pierces_people": false}
 
 static func armor_profile(item: String) -> Dictionary:
