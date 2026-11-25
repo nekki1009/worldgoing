@@ -113,11 +113,11 @@ static func _outlaw(controller: Variant, head: int, team_id: int) -> Dictionary:
 		{"name": named.left(32), "kind": "bandit", "leader_ref": head_ref, "founded_at": float(slot.control.logical_game_seconds),
 		"bandit": {"origin": "refugee", "lair": {"site_id": str(lab.terrain.site.get("id", "")), "cell": [cell.x, cell.y]}}})
 	if not prepared.ok: return prepared
-	var founded: Dictionary = controller._commit_diplomacy(prepared, "")
+	var founded: Dictionary = controller.commit_registry(prepared)
 	if not founded.ok: return founded
 	var moved: Dictionary = lab.relabel_team_faction(team_id, int(prepared.faction_id))
 	if not moved.ok: return moved
-	var saved: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
+	var saved: Dictionary = controller.commit_registry({"ok": true, "registry": slot.control.faction_registry})
 	if not saved.ok: return saved
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("不滿的居民一戶落草：%s" % named.left(32))
 	return Runtime.ok("", {"team_id": team_id, "band": int(prepared.faction_id)})

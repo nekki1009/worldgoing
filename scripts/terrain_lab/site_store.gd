@@ -663,6 +663,10 @@ static func _stringify_crowd_payload(payload: Dictionary) -> String:
 	if not batch.encode(): return JSON.stringify(payload, "", false, true)
 	return "".join(batch.parts)
 
+## False while a Site is opened for play in the background (TerrainLab._region_gameplay_owner_lab): the atlas sources were
+## checked when the player's own Site was loaded, and checking them anew takes two seconds (2026-11-25).
+static var recheck_assets := true
+
 static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable = Callable(), crowd_workers: int = 1, preserve_simulation: bool = false) -> Dictionary:
 	var decoded := _read(path)
 	if not decoded.ok:
@@ -764,7 +768,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	var vehicle_validation := _validate_vehicles(data, data.site, true, region_loaded.get("context", {}))
 	if not vehicle_validation.ok:
 		return vehicle_validation
-	var army_assets := _validate_army_assets(data, data.site, true)
+	var army_assets := _validate_army_assets(data, data.site, recheck_assets and not preserve_simulation)
 	if not army_assets.ok:
 		return army_assets
 	# Earlier format-3 deaths may have left real opened food at their private

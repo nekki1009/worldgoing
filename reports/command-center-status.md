@@ -1,7 +1,21 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-25 12:00（台北）
+更新：2026-11-25 17:30（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-25 17:30（台北）NPC 隊伍抵達會讓世界停住、沒人看的 Site 成伙、綁定快 10 倍
+- 起因：銷贓隊回寨測試並行時失敗、單獨過。並行 9 次重現 7 次，現場一致：世界停在抵達那一刻，不是測試老毛病。五個原因，已推送的 458b40b 都有：
+  1. 抵達沒人去過、沒有存檔的野地 Site：`UNSELECTED_REGION_SOURCE` → 步進鎖錯。改成先聯合存檔（prepare_npc_region_arrival）。搬寨、出走都會走到。
+  2. 同一隊兩名幹部抵達沒有群眾的 Site：舊存檔遷移檢查誤擋，留成已退役的格子隊（d5_prepare_existing，剛抵達的隊伍不查）。
+  3. 步進被切短後重新預報抵達，時間差最後一位：`REGION_EVENT_CONFLICT` 每幀重試。改成還沒發生的預報以最新為準（_queue_region_forecast、_drop_region_forecasts）。
+  4. 隊伍時鐘與世界時鐘差 4.5e-13：走進玩家所在 Site 時 `STALE_REGION_PARTY_BODY`。容許 1e-8（PARTY_CLOCK_EPSILON）。
+  5. 同樣的差：存登記簿時 `CORRUPT_SAVE faction source receipt`。收據時間夾到現在。
+  - 新測試 region_npc_wild_arrival_test（土匪搬寨走去新山寨再走回來）18／18；銷贓隊測試並行 9 次不再停住。
+- 沒人看的 Site 上成伙落草（逃兵、潰兵、居民落草、銷贓）：登記簿只有活動 Site 的控制器能存。`SiteController.commit_registry`；`prepare_faction_creation` 也收已綁定的冷 Site；外交只由活動 Site 結算。新測試 region_cold_band_test。
+- 綁定變快：逐段量，99% 花在登記外觀圖集與準備要畫的人物（看不見的 Site 也做）。`CrowdSite._undrawn()`：restore_only 的 Lab 不登記、不準備；變成看得到時第一幀才做。讀檔時也不重查外觀來源（SiteStore.recheck_assets，背景綁定才關）。12 人的村 23.6 → 2.2 秒（最長一次 11.4 → 1.1 秒）；山寨 9.2 → 1.6 秒。探針 bind_cost_probe（在自己的程序裡加量測點，不動磁碟上的程式）。
+- 30 日觀察：6 聚落、3 伙、1 市鎮，玩家不動，30 日 33 分鐘、沒有錯誤；公式遠征 3 次都贏。沒人打開過的村存糧不會變多，所以每村最多被搶一次（待 Nekki 決定要不要估算生產）。
+- 回歸：關聯 25／25；完整回歸 FULL_1129 272 項：269 項並行過、3 項單獨過（2 項是驗證器清舊資料夾互撞、1 項交易畫面測試等交貨），0 失敗。
+- 推送等 Nekki 說（未推送：361a98f、c864df6、79db33d、b383591 與這一包）。
 
 ## 2026-11-25 12:00（台北）遠征劫掠、存檔與久未打開的 Site
 - Nekki 02:52「遠征劫掠要有，做到可用」；07:10「都依建議」：沒人打開的山寨與村落之間用公式劫掠（11/01 原生決定的例外）；已綁定的冷 Site 閒置先釋放；寨主自動知道 2 個 Site 內的聚落與概略人數。沒有准推送。

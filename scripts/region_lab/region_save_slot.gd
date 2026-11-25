@@ -4448,7 +4448,9 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 		if not cold_capture.ok: return cold_capture
 		var cold_source: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
 		var cold_code := str(cold_source.get("code", ""))
-		cold_behind = not cold_source.get("ok", false) and (cold_code in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"] or cold_code == "CORRUPT_REGION_SNAPSHOT" and str(cold_source.get("check", "")) == "size" and int(cold_source.get("snapshot_size", -1)) == 0)
+		# A Site nobody ever visited has no file at all (2026-11-25: UNSELECTED_REGION_SOURCE stopped the world when a
+		# household that left, or a band on its way to the lair it moved to, arrived there).
+		cold_behind = not cold_source.get("ok", false) and (cold_code in ["UNSELECTED_REGION_SOURCE", "STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"] or cold_code == "CORRUPT_REGION_SNAPSHOT" and str(cold_source.get("check", "")) == "size" and int(cold_source.get("snapshot_size", -1)) == 0)
 	if cold_behind:
 		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
 		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
@@ -4782,6 +4784,32 @@ func _profile_stage(stage: String, started: int) -> int:
 	profile_usec[stage] = int(profile_usec.get(stage, 0)) + now - started
 	return now
 
+## Queues an event the travelling NPC party `token` is forecast to meet inside the coming step. The step may still be cut
+## short before it (a work point, fatigue, a seam), and the next step forecasts it again: the same event then stands a last
+## digit apart, or elsewhere after a change of pace, and was refused REGION_EVENT_CONFLICT at every later frame, the world
+## standing still (found 2026-11-25). Nothing has used an event that lies ahead: the new forecast takes its place.
+func _queue_region_forecast(kept: Dictionary, identity: String, kind: String, at: float, owner: String, payload: Dictionary, player: bool = false) -> Dictionary:
+	kept[identity] = true
+	var events: Array = region_registry().events
+	for index: int in events.size():
+		var prior: Dictionary = events[index]
+		if str(prior.id) != identity: continue
+		if str(prior.status) == "pending" and float(prior.at) > float(control.logical_game_seconds) + 0.00000001 \
+				and (float(prior.at) != at or str(prior.kind) != kind or str(prior.owner) != owner or bool(prior.player) != player or prior.payload != payload):
+			events.remove_at(index)
+		break
+	return queue_region_event(identity, kind, at, owner, payload, player)
+
+## The forecasts of an earlier, cut step that the coming one no longer makes (the party was held up) lie ahead unused: they go.
+func _drop_region_forecasts(token: String, kept: Dictionary) -> void:
+	var events: Array = region_registry().events
+	var now := float(control.logical_game_seconds) + 0.00000001
+	for index: int in range(events.size() - 1, -1, -1):
+		var prior: Dictionary = events[index]
+		var id := str(prior.id)
+		if str(prior.status) != "pending" or float(prior.at) <= now or kept.has(id): continue
+		if id.begins_with("npc:%s:arrival" % token) or id.begins_with("npc:%s:life:" % token) or id.begins_with("npc:%s:player-contact:" % token): events.remove_at(index)
+
 func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictionary = {}) -> Dictionary:
 	var qe: int = Time.get_ticks_usec() if profile_enabled else 0 # Optional counters only.
 	var retried := _region_retry_blocked_npc_land_entries()
@@ -4793,6 +4821,7 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 	for token: String in tokens:
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
 		qe = _profile_stage("qe_misc", qe)
+		var kept := {} # the ids of this step's own forecasts
 		var forecast := _preview_npc_party_to(token, unclipped_game_end, interval)
 		qe = _profile_stage("qe_preview", qe)
 		if not forecast.ok: return forecast
@@ -4808,19 +4837,20 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 			# A band's earlier stop at this same node is complete (paid and expired): the next one is a new event.
 			if _region_toll_band(token) >= 0 and registry.events.any(func(prior: Dictionary) -> bool: return str(prior.id) == contact_identity and str(prior.status) == "complete"):
 				contact_identity += ":day%d" % _region_toll_day()
-			var queued_contact := queue_region_event(contact_identity,
+			var queued_contact := _queue_region_forecast(kept, contact_identity,
 				"player_encounter", float(contact.at), str(contact.site_id), {"token": token, "site": contact.site.duplicate(), "component": int(contact.component), "contact_receipt": contact.get("contact_receipt", {}).duplicate(true)}, true)
 			if not queued_contact.ok: return queued_contact
 		for event: Dictionary in forecast.events:
-			var queued := queue_region_event("npc:%s:life:%d" % [token, int(event.sequence)], "life", float(event.at), "travel:" + token,
+			var queued := _queue_region_forecast(kept, "npc:%s:life:%d" % [token, int(event.sequence)], "life", float(event.at), "travel:" + token,
 				{"token": token, "event": event.duplicate(true)})
 			if not queued.ok: return queued
 		if bool(forecast.arrived):
 			var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(forecast.position.site[0]), int(forecast.position.site[1])))
 			var player_present := owner == str(control.active_site_id)
-			var queued := queue_region_event(_region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
+			var queued := _queue_region_forecast(kept, _region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
 				{"token": token, "site": forecast.position.site.duplicate(), "component": int(forecast.position.component)}, player_present)
 			if not queued.ok: return queued
+		_drop_region_forecasts(token, kept)
 	qe = _profile_stage("qe_party_events", qe)
 	for first_index: int in tokens.size():
 		for second_index: int in range(first_index + 1, tokens.size()):
@@ -9442,6 +9472,9 @@ func _region_land_route_preview(party: Dictionary, plan: Dictionary, path: Strin
 			if not probe.ok: return probe
 			if float(probe.metres) < remaining: low = middle
 			else: high = middle
+		# A crossing found within the interval's own tolerance of its end is at its end: the party's clock must be the
+		# world's to the last digit, or its body is refused STALE_REGION_PARTY_BODY where it arrives (2026-11-25).
+		if end - high <= 0.0000001: high = end
 		outcome = RegionTravel.advance_upkeep(input, high, options)
 		if not outcome.ok: return outcome
 	var candidate: Dictionary = outcome.party
@@ -13107,7 +13140,10 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 				persons.bodies = []
 				persons.erase("pending_remap")
 			person_sources.append({"projection": persons, "location": {"kind": "party", "id": str(summary.owner)}})
-		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": summary.at, "complete": true})
+		# A party carried to its interval's end may stand a last digit past the world's clock (the sum of the steps): it is now.
+		var as_of: Variant = summary.at
+		if _seconds(as_of) and float(as_of) > float(clock.logical_game_seconds) and float(as_of) <= float(clock.logical_game_seconds) + 0.00000001: as_of = float(clock.logical_game_seconds)
+		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": as_of, "complete": true})
 		if with_organization_sources: organization_sources.append({"kind": "party", "owner": str(summary.owner), "path": folder.path_join(path), "checksum": checksum, "historical": historical, "phase": str(reference.get("phase", "travelling")), "original_receipt": receipts.back().duplicate(true)})
 	# Battle participant fields and remote claims are projected by their original registry/Sites.
 	var political_ids := {}
@@ -13177,7 +13213,10 @@ func checkpoint_faction_migration(data: TerrainData, prepared: Dictionary, conte
 	return checkpoint_region_site(data, context, owners, current.registry)
 
 func prepare_faction_creation(data: TerrainData, expected_revision: int, reserved_ids: Array = [], fields: Dictionary = {}) -> Dictionary:
-	if data == null or str(data.site.get("id", "")) != str(control.active_site_id): return fail("REGION_SOURCE")
+	var owner := str(data.site.get("id", "")) if data != null else ""
+	# A bound cold Site founds too (2026-11-25): its candidate is saved through the active Site (SiteController.commit_registry).
+	var bound: TerrainLab = _region_original_labs.get(owner)
+	if data == null or owner != str(control.active_site_id) and (not is_instance_valid(bound) or bound.terrain != data): return fail("REGION_SOURCE")
 	if int(control.get("faction_registry", {}).get("revision", 0)) != expected_revision: return fail("CONFLICT")
 	var all_reserved: Array = reserved_ids.duplicate()
 	var current_ids := {}

@@ -10813,6 +10813,14 @@ func _commit_diplomacy(candidate: Dictionary, message: String) -> Dictionary:
 	if done.ok and _crowd_active(): lab.crowd_site._apply_slot_alliances()
 	return done
 
+## A registry candidate saved from any bound Site: a cold Site's through the active Site's controller (registry_saver), both
+## crowds then read the new hostility.
+func commit_registry(candidate: Dictionary) -> Dictionary:
+	var saver := registry_saver()
+	var done := saver._commit_diplomacy(candidate, "")
+	if done.ok and saver != self and _crowd_active(): lab.crowd_site._apply_slot_alliances()
+	return done
+
 ## §11.5: the head declares war at once; against a peace or truce it is a breach (credit -20).
 func declare_war_on(target: int) -> Dictionary:
 	var mine := diplomacy_head_faction()
@@ -10901,7 +10909,7 @@ func diplomacy_status() -> Dictionary:
 
 ## Lazy endpoints: letters and truces move on when the Region clock passes their next time (checked once per frame, cheap).
 func settle_diplomacy() -> Dictionary:
-	if region_slot == null: return {}
+	if region_slot == null or registry_saver() != self: return {} # the active Site settles the world's diplomacy
 	var registry: Dictionary = region_slot.control.get("faction_registry", {})
 	if not registry.get("diplomacy") is Dictionary: return {}
 	var now := float(region_slot.control.logical_game_seconds)
@@ -11137,7 +11145,7 @@ func _head_mind(registry: Dictionary, faction: int) -> Dictionary:
 ## peace when a truce is about to end). Controlled heads and the neutral side never act here. Reclaim war is not wired
 ## yet: the game keeps no provable list of fallen settlements per faction.
 func npc_diplomacy_day() -> Dictionary:
-	if region_slot == null: return {}
+	if region_slot == null or registry_saver() != self: return {} # once a day by the active Site, not by every bound one
 	var now := float(region_slot.control.logical_game_seconds)
 	var day := int(now / RegionDiplomacyAI.DAY)
 	if day == _npc_diplomacy_day: return {}

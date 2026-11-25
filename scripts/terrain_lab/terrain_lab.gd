@@ -21,6 +21,9 @@ const ACTION_FRAME_BUDGET_USEC := 20000 # Leave rendering time while bounded cat
 ## catch-up still reports PENDING at once; each continuation runs a 250 ms slice.
 const COLD_REPLAY_CONTINUE_BUDGET_USEC := 250000
 const ACTION_TIME_EPSILON := 0.000000000001
+## A travelling party against the world clock: the party is carried to the interval's end, the clock is the sum of the steps and
+## may stand a last digit away (4.5e-13 at one game hour, 1.2e-10 after ten days; found 2026-11-25). As every other party check.
+const PARTY_CLOCK_EPSILON := 0.00000001
 ## Accumulated minute-phase drift admitted at a step's end (action seconds); see _region_owner_action_limit.
 const PHASE_BOUNDARY_TOLERANCE := 0.00000001
 const SIMULATION_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
@@ -10224,7 +10227,9 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 	var original: TerrainLab = slot._region_original_labs.get(site_id)
 	var restored_now := not is_instance_valid(original)
 	if restored_now:
+		SiteStore.recheck_assets = false
 		var opened: Dictionary = slot.open_site(coordinate, not travel_destination)
+		SiteStore.recheck_assets = true
 		if not opened.get("ok", false): return opened
 		var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 		if scene == null: return SiteRuntime.fail("MISSING_ORIGINAL_SCENE")
@@ -11619,6 +11624,12 @@ static func _region_party_diff_keys(a: Dictionary, b: Dictionary) -> Array[Strin
 								if var_to_bytes(x.units[u].get(k)) != var_to_bytes(y.units[u].get(k)) and not result.has("units[%d].%s=%s/%s" % [u, k, str(x.units[u].get(k)), str(y.units[u].get(k))]) and result.size() < 40: result.append("units[%d].%s=%s:%d/%s:%d" % [u, k, str(x.units[u].get(k)).left(60), typeof(x.units[u].get(k)), str(y.units[u].get(k)).left(60), typeof(y.units[u].get(k))])
 					if var_to_bytes(x.get("combat_batches")) != var_to_bytes(y.get("combat_batches")): result.append("batches=%s/%s" % [str(x.get("combat_batches")), str(y.get("combat_batches"))])
 				if a.content.armies.size() != b.content.armies.size(): result.append("armies.size %d/%d" % [a.content.armies.size(), b.content.armies.size()])
+		elif key == "upkeep" and a.get(key) is Dictionary and b.get(key) is Dictionary:
+			for field: Variant in a.upkeep.keys() + b.upkeep.keys():
+				if var_to_bytes(a.upkeep.get(field)) == var_to_bytes(b.upkeep.get(field)): continue
+				var apart := " (%.20f apart)" % (float(a.upkeep[field]) - float(b.upkeep[field])) if a.upkeep.get(field) is float and b.upkeep.get(field) is float else ""
+				var told := "upkeep.%s=%s/%s%s" % [str(field), str(a.upkeep.get(field)).left(300), str(b.upkeep.get(field)).left(300), apart]
+				if not result.has(told): result.append(told)
 		elif var_to_bytes(a.get(key)) != var_to_bytes(b.get(key)) and not result.has(str(key)): result.append(str(key))
 	return result
 
@@ -14204,8 +14215,8 @@ func _region_validate_party_graph(data: TerrainData, party: Dictionary, graph: D
 	if not lab_cursor.ok: return lab_cursor
 	var fire := SiteRuntime.validate_fire_snapshot(data, transport.fire_state, float(lab_cursor.value.fire_action_cursor))
 	if not fire.ok: return fire
-	if absf(float(party.upkeep.get("at", -1.0)) - float(context.game_seconds)) > ACTION_TIME_EPSILON \
-			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > ACTION_TIME_EPSILON:
+	if absf(float(party.upkeep.get("at", -1.0)) - float(context.game_seconds)) > PARTY_CLOCK_EPSILON \
+			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > PARTY_CLOCK_EPSILON:
 		return SiteRuntime.fail("UNSETTLED_PARTY_GRAPH")
 	var scene := validate_region_owner_bind_payload(data, _region_party_scene_owners(owners), context)
 	if not scene.ok: return scene
@@ -14225,14 +14236,14 @@ func capture_region_party_owner_graph(token: String, party: Dictionary, slot: Re
 		return SiteRuntime.fail("STALE_REGION_PARTY_OWNER")
 	var clock := _region_party_capture_clock(context)
 	if not clock.ok or not clock.party: return clock if not clock.ok else SiteRuntime.fail("INVALID_REGION_PARTY_CAPTURE")
-	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(context.game_seconds)) > ACTION_TIME_EPSILON \
-			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > ACTION_TIME_EPSILON:
+	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(context.game_seconds)) > PARTY_CLOCK_EPSILON \
+			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > PARTY_CLOCK_EPSILON:
 		return SiteRuntime.fail("UNSETTLED_PARTY")
 	# Verify the actual ORIGINAL sparse body/holder closure before serialization.
 	# _capture_positions records existing bodies and does not progress any work.
 	var old_hash := _region_party_input_hash
 	var old_owner: Dictionary = terrain.get_meta(&"region_party_owner", {}).duplicate(true)
-	var original: Dictionary = _region_capture_original_party(self, party, slot, -1.0, -1.0, read_only)
+	var original: Dictionary = _region_capture_original_party(self, party, slot, float(party.upkeep.at), float(party.upkeep.owner_action_seconds), read_only)
 	if not read_only:
 		_region_party_input_hash = old_hash
 		terrain.set_meta(&"region_party_owner", old_owner)
