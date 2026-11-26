@@ -18,6 +18,7 @@ const WINTER_DAYS := 90
 const FOOD_ITEMS := ["grain", "wild_food", "fish", "meat"]
 const FOOD_KINDS := ["farm"]
 const DUTY := "settlement.registry"
+const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd") # 產出三成歸戶
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1d: the most skilled households first.
 
 ## Features of `faction` with an active operate zone, food producers first, then by id.
@@ -171,8 +172,9 @@ static func daily_production(state: Dictionary, minutes: Dictionary, data: Terra
 			if room < size: break
 			for item: String in recipe.get("input", {}): stock[item] = int(stock.get(item, 0)) - int(recipe.input[item])
 			# 軍餉與稅收 P5: the batch pays the settlement's production tax as a published batch would.
-			var kept: Dictionary = recipe.output
-			if data != null and state.has("finance"): kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, feature_key, feature, recipe.output)
+			# 產出三成歸戶: the household keeps its share of the food first (SiteResidentLife.share_house); the rest is taxed.
+			var kept: Dictionary = ResidentLife.share_house(state, house_id, recipe.output) if meals else recipe.output
+			if data != null and state.has("finance"): kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, feature_key, feature, kept)
 			for item: String in kept: stock[item] = int(stock.get(item, 0)) + int(kept[item])
 			minutes[house_id] = float(minutes[house_id]) - float(recipe.cycle)
 			made += 1

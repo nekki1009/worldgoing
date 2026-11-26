@@ -44,6 +44,14 @@ func _end(reason: String) -> void:
 	TerrainArmy.release_contact_source()
 	quit(0)
 
+## Each farm: its status text, production minutes, whether its batch is paid, its recipe.
+func _farms(site: Dictionary) -> Dictionary:
+	var result := {}
+	for key: Variant in site.get("features", {}):
+		var feature: Dictionary = site.features[key]
+		if str(feature.get("kind", "")) == "farm": result[str(key)] = [str(feature.get("status", "")), snappedf(float(feature.get("production", 0.0)), 0.1), bool(feature.get("batch_paid", false)), str(feature.get("recipe_id", ""))]
+	return result
+
 func _held(site: Dictionary) -> Dictionary:
 	var owner := int(site.get("settlement", {}).get("owner_faction", -1))
 	var alive := 0
@@ -54,7 +62,7 @@ func _held(site: Dictionary) -> Dictionary:
 			for item: Variant in unit.get("cargo", {}): carried[str(item)] = int(carried.get(str(item), 0)) + int(unit.cargo[item])
 	var kinds := {}
 	for feature: Variant in site.get("features", {}).values(): kinds[str(feature.get("kind", ""))] = int(kinds.get(str(feature.get("kind", "")), 0)) + 1
-	return {"stock": Aftermath.stock_of(site, owner), "alive": alive, "carried": carried, "fields": site.get("zones", []).size(), "features": kinds, "produced": site.get("total_produced", 0), "supply": site.get("team_supply", {}).size(), "pantry": _pantry(site), "hungry": _hungry(site), "jobs": site.get("households", {}).values().map(func(h: Dictionary) -> String: return str(h.get("job", {}).get("feature", "")))}
+	return {"stock": Aftermath.stock_of(site, owner), "alive": alive, "carried": carried, "fields": site.get("zones", []).size(), "features": kinds, "produced": site.get("total_produced", 0), "supply": site.get("team_supply", {}).size(), "pantry": _pantry(site), "share": site.get("food_share", {}), "farms": _farms(site), "hungry": _hungry(site), "jobs": site.get("households", {}).values().map(func(h: Dictionary) -> String: return str(h.get("job", {}).get("feature", "")))}
 
 func _pantry(site: Dictionary) -> float:
 	var total := 0.0
@@ -161,6 +169,14 @@ func _run() -> void:
 				var working := 0
 				for identity: Variant in there.site_controller.work_team.active_ids():
 					if str(there.site_controller.work_team._person(int(identity)).get("row", {}).get("work_task", {}).get("action", "")) == "operate": working += 1
+					var task: Dictionary = there.site_controller.work_team._person(int(identity)).get("row", {}).get("work_task", {})
+					if not task.is_empty() and int(float(slot.control.logical_game_seconds) / 3600.0) % 4 == 0: print("VILLAGE_STOCK TASK %d %s: %s at %s" % [int(identity), id, JSON.stringify(task).left(400), str(there.crowd_site.combat_target(int(identity)).get("cell", ""))])
+				var wt: Variant = there.site_controller.work_team
+				var prep: Array = []
+				if "--prepare" in OS.get_cmdline_user_args(): wt.prepare_work_requests(60.0, 0.0) # probe only: the selection of a one-minute step
+				for entry: Dictionary in wt._prepared_work: prep.append([int(entry.identity), str(entry.get("blocked", "")), str(entry.get("plan_key", "")), bool(entry.get("zero_work", false)), float(entry.get("request", {}).get("remaining", -1.0)), float(entry.get("productivity", -1.0)), str(entry.get("action", "")), JSON.stringify(entry.get("request", {}).get("participants", [])).left(200)])
+				print("VILLAGE_STOCK PREPARED %d %s: consumed %s seconds %.3f action %.3f point %s entries %s" % [hour, id, str(wt._work_consumed), float(wt._prepared_seconds), float(wt._prepared_action_seconds), str(there.crowd_site.work_fatigue_point_active()), JSON.stringify(prep).left(800)])
+				if "--prepare" in OS.get_cmdline_user_args(): wt.discard_prepared_interval()
 				for entry: Dictionary in there.terrain.site.get("team_supply", {}).values():
 					for cohort: Dictionary in entry.sustain.cohorts:
 						var rows: Array = []

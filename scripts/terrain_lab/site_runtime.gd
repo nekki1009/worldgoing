@@ -7670,7 +7670,7 @@ static func prepare_feature_output(data: TerrainData, feature: Dictionary, worke
 		if receipt.is_empty(): return fail("STALE_SOURCE", "原農事試驗須有真原paid/output完成收據")
 		protocol_prepared = prepare_farm_trial_protocol_output(data, key, feature, worker, person, receipt)
 		if not protocol_prepared.ok: return protocol_prepared
-	return ok("", {"feature_key": key, "farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
+	return ok("", {"feature_key": key, "operator": original_identity, "farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
 		"cargo_ref": cargo, "cargo_before": cargo.duplicate(true), "output": output.duplicate(true), "products": item_prepared,
 		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared, "public_operation": public_prepared, "military_operation": military_prepared, "settlement_operation": processing_prepared})
 
@@ -7682,8 +7682,11 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	if deposit.is_empty():
 		# 軍餉與稅收 P2: a settlement building's batch pays its production tax as it is published (only with a levy).
 		var kept: Dictionary = prepared.output
+		# 產出三成歸戶 (civilian plan §4.4): a household working its own main job keeps its share of the food first.
+		if data.site.get("settlement") is Dictionary and int(data.site.settlement.get("meals", 0)) == 1:
+			kept = (load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("share_batch", data.site, str(prepared.get("feature_key", "")), int(prepared.get("operator", 0)), kept)
 		if data.site.has("finance") and not str(prepared.get("feature_key", "")).is_empty():
-			kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, str(prepared.feature_key), prepared.feature_ref, prepared.output)
+			kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, str(prepared.feature_key), prepared.feature_ref, kept)
 		add_items(prepared.cargo_ref, kept)
 	else:
 		add_items(deposit.cargo, prepared.output)

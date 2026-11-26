@@ -86,6 +86,10 @@ func _label"],
 		TerrainArmy.EquipmentAtlas.refresh_female_sources()"]])
 	_patch("res://scripts/terrain_lab/terrain_lab.gd", [
 		["if not restore_only: PerfTrace.mark(", "PerfTrace.mark("],
+		before.call("	var trusted_region := bool(region_admission.get(\"trusted\", false))", "bt_admitted"),
+		before.call("	if prepared.is_empty(): prepared = prepare_crowd_load(value)", "bt_guards"),
+		before.call("	var transport_guard := SiteRuntime.ok() if trusted_region", "bt_prepared"),
+		before.call("	# All guards and native staging have succeeded; only now retire the old world.", "bt_transport"),
 		["	if converted_now:
 		for team: TerrainArmy in combat_armies: team.presentation_off = false", "	PerfTrace.mark(\"bind_converted\")
 	if converted_now:
@@ -104,6 +108,18 @@ func _initialize() -> void:
 	if OS.get_cmdline_user_args().has("--perf-trace"): _marks()
 	create_timer(1500.0).timeout.connect(func() -> void: _end("deadline"))
 	_run.call_deferred()
+
+func _arg_site() -> Vector2i:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("--site="): return Vector2i(int(arg.trim_prefix("--site=").get_slice(":", 0)), int(arg.trim_prefix("--site=").get_slice(":", 1)))
+	return Vector2i(-1, -1)
+
+func _copy_tree(from: String, to: String) -> void:
+	DirAccess.make_dir_recursive_absolute(to)
+	for file: String in DirAccess.get_files_at(from): DirAccess.copy_absolute(from.path_join(file), to.path_join(file))
+	for dir: String in DirAccess.get_directories_at(from):
+		if dir in ["logs", "shader_cache", "vulkan"]: continue
+		_copy_tree(from.path_join(dir), to.path_join(dir))
 
 func _end(reason: String) -> void:
 	if finished: return
@@ -153,6 +169,18 @@ func _steps(name: String, site: Vector2i) -> void:
 		_timed("%s   validate army assets" % name, func() -> Dictionary: return SiteStore._validate_army_assets(copy, copy.site, true))
 		_timed("%s   validate vehicles" % name, func() -> Dictionary: return SiteStore._validate_vehicles(copy, copy.site, true, {}))
 		_timed("%s   fingerprint" % name, func() -> String: return copy.fingerprint())
+		_timed("%s   guard: fire_save_guard" % name, func() -> Dictionary: return child.fire_save_guard())
+		_timed("%s   guard: fire_event_guard" % name, func() -> Dictionary: return SiteStore.fire_event_guard(copy))
+		_timed("%s   guard: ship journey" % name, func() -> Dictionary: return child._ship_journey_guard())
+		for army: Dictionary in copy.site.get("armies", []):
+			for unit: Dictionary in TerrainArmy.normalize_roster_snapshot(army).units:
+				var look: Dictionary = SiteRuntime.equipment_appearance(copy, unit.get("item_state", {}), unit.get("appearance", {})) if unit.has("item_state") else unit.get("appearance", {})
+				var one := Time.get_ticks_usec()
+				var made := TerrainArmy.prepare_contact_source_for(look)
+				var took := float(Time.get_ticks_usec() - one) / 1000.0
+				if took > 50.0: print("BIND_COST %s   contact body %s %s %.1f ms parts %s" % [name, str(look.get("body")), str(made), took, JSON.stringify(look.get("parts", {})).left(300)])
+		_timed("%s   guard: exchange snapshot" % name, func() -> Dictionary: return child.exchange_snapshot_guard(copy))
+		_timed("%s   guard: exchange snapshot again" % name, func() -> Dictionary: return child.exchange_snapshot_guard(copy))
 		_timed("%s   renderer.display alone" % name, func() -> void: child.renderer.display(copy))
 		for index: int in copy.site.get("armies", []).size():
 			child._ensure_army_slots(copy.site.armies.size())
@@ -179,14 +207,21 @@ func _steps(name: String, site: Vector2i) -> void:
 	_timed("%s free" % name, func() -> void: child.free())
 
 func _run() -> void:
-	var folder := "user://bind_cost_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	DirAccess.make_dir_recursive_absolute(folder.path_join("demo_a"))
-	var natural := RegionData.new()
-	natural.load_manifest(RegionData.DEFAULT_MANIFEST)
-	var built: Dictionary = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", 4, 1, 0, 20261122)
-	if not built.get("ok", false) or not RegionEntry.request_new_world(built.start, {}, "綁定成本", "", str(built.path)):
-		_end("no world")
-		return
+	# `--cache`: the world village_stock_probe `--keep` left (a loaded save, not a fresh birth: its first binds check assets).
+	if OS.get_cmdline_user_args().has("--cache"):
+		_copy_tree(ProjectSettings.globalize_path("res://.godot-temp/village_world"), ProjectSettings.globalize_path("user://"))
+		if not RegionEntry.request_resume():
+			_end("no kept world")
+			return
+	else:
+		var folder := "user://bind_cost_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+		DirAccess.make_dir_recursive_absolute(folder.path_join("demo_a"))
+		var natural := RegionData.new()
+		natural.load_manifest(RegionData.DEFAULT_MANIFEST)
+		var built: Dictionary = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", 4, 1, 0, 20261122)
+		if not built.get("ok", false) or not RegionEntry.request_new_world(built.start, {}, "綁定成本", "", str(built.path)):
+			_end("no world")
+			return
 	change_scene_to_file(SITE)
 	var open_deadline := Time.get_ticks_msec() + 900000
 	while Time.get_ticks_msec() < open_deadline:
@@ -210,7 +245,7 @@ func _run() -> void:
 		var loaded: Dictionary = slot._load_checked(slot.folder.path_join(str(slot._marker.sites[site].path)), at)
 		if not loaded.ok: continue
 		if Settlement.record(loaded.data).has("owner_faction"):
-			if village == Vector2i.ZERO: village = at
+			if village == Vector2i.ZERO or _arg_site() == at: village = at
 		elif lair == Vector2i.ZERO: lair = at
 	for round: int in range(1 if OS.get_cmdline_user_args().has("--parts") and not OS.get_cmdline_user_args().has("--no-refresh") else 2):
 		print("BIND_COST ROUND %d" % round)

@@ -115,7 +115,7 @@ static func meals_on(state: Dictionary) -> bool:
 ## One day's rations. {moved, short, refused: [codes]}; a team that cannot open its ledger now (it is moving) is in `refused`.
 static func ration_day(controller: Variant) -> Dictionary:
 	var lab: Variant = controller.lab
-	var result := {"moved": 0, "short": 0, "refused": []}
+	var result := {"moved": 0, "short": 0, "shared": 0, "refused": []}
 	if lab == null or lab.terrain == null or not meals_on(lab.terrain.site): return result
 	var state: Dictionary = lab.terrain.site
 	var owner := int(state.settlement.owner_faction)
@@ -153,10 +153,14 @@ static func ration_day(controller: Variant) -> Dictionary:
 					state["inventory"][food] = int(state.get("inventory", {}).get(food, 0)) + int(entry.locations[key].inventory[food])
 				entry.locations.erase(key)
 				entry["revision"] = int(entry.revision) + 1
+			var shared := int(result.shared)
 			for house_id: String in lived:
 				var location: Dictionary = entry.locations.get(Households.food_key(house_id), {})
-				if not location.is_empty(): _fill(state, owner, location.inventory, float(location.open_rations), int(people.get(house_id, 0)) * PANTRY_DAYS, result)
-			if int(result.moved) != before: entry["revision"] = int(entry.revision) + 1
+				if location.is_empty(): continue
+				# 產出三成歸戶: the house's own share of its harvest goes in first; the rations make up the rest.
+				result.shared = int(result.shared) + flush_share(state, house_id, location.inventory, held_rations(location))
+				_fill(state, owner, location.inventory, float(location.open_rations), int(people.get(house_id, 0)) * PANTRY_DAYS, result)
+			if int(result.moved) != before or int(result.shared) != shared: entry["revision"] = int(entry.revision) + 1
 			continue
 		var fed: Dictionary = controller._supply_entry(team)
 		if fed.is_empty():
@@ -169,8 +173,120 @@ static func ration_day(controller: Variant) -> Dictionary:
 		var had := int(result.moved)
 		_fill(state, owner, fed.inventory, float(fed.sustain.get("open_rations", 0.0)), living.size() * PANTRY_DAYS, result)
 		if int(result.moved) != had: fed["revision"] = int(fed.revision) + 1
-	if int(result.moved) > 0: lab.terrain.environment_revision += 1
+	if drop_lost_shares(state): result.shared = int(result.shared) + 1
+	if int(result.moved) > 0 or int(result.shared) > 0: lab.terrain.environment_revision += 1
 	return result
+
+static func held_rations(location: Dictionary) -> float:
+	var held := float(location.get("open_rations", 0.0))
+	for food: String in SiteSustain.FOODS: held += float(location.get("inventory", {}).get(food, 0))
+	return held
+
+# --- 產出三成歸戶 (civilian plan §4.4, Q4 A; reports/scenario-village-livelihood-plan.md V0.4) ----------------------------
+## Where a settlement feeds its people a household keeps SHARE_PERCENT of the food its own main job yields; the rest goes
+## on to the stock as before and pays the production tax. The share waits in the Site's `food_share` section
+## {house: {carry: {food: hundredths}, pending: {food: n}}} (a batch is published inside a step, where the pantry ledger
+## must not change) and goes into the house's pantry with the day's rations, up to SHARE_DAYS rations a member; what does
+## not fit goes to the camp stock.
+const SECTION := "food_share"
+const SHARE_PERCENT := 30
+const SHARE_DAYS := 30
+
+## A batch of the feature `feature_key` that `identity` delivered: what goes on to the stock (and its tax).
+static func share_batch(state: Dictionary, feature_key: String, identity: int, output: Dictionary) -> Dictionary:
+	if identity <= 0 or output.is_empty() or feature_key.is_empty() or not meals_on(state): return output
+	var house_id := Households.house_of(state, identity)
+	if house_id.is_empty() or str(state.get("households", {}).get(house_id, {}).get("job", {}).get("feature", "")) != feature_key: return output
+	return share_house(state, house_id, output)
+
+## The household's part of a batch of its own main job (the hundredths carried, as the production tax counts).
+static func share_house(state: Dictionary, house_id: String, output: Dictionary) -> Dictionary:
+	if house_id.is_empty() or not meals_on(state): return output
+	var foods: Array = []
+	for item: String in output:
+		if item in SiteSustain.FOODS and int(output[item]) > 0: foods.append(item)
+	if foods.is_empty(): return output
+	foods.sort()
+	var table: Dictionary = state.get(SECTION, {})
+	var share: Dictionary = (table.get(house_id, {"carry": {}, "pending": {}}) as Dictionary).duplicate(true)
+	var kept := output.duplicate()
+	for item: String in foods:
+		var total := int(share.carry.get(item, 0)) + int(output[item]) * SHARE_PERCENT
+		var units := mini(total / 100, int(output[item]))
+		if total % 100 == 0: share.carry.erase(item)
+		else: share.carry[item] = total % 100
+		if units <= 0: continue
+		share.pending[item] = int(share.pending.get(item, 0)) + units
+		kept[item] = int(output[item]) - units
+		if int(kept[item]) <= 0: kept.erase(item)
+	if share.carry.is_empty() and share.pending.is_empty(): table.erase(house_id)
+	else: table[house_id] = share
+	if table.is_empty(): state.erase(SECTION)
+	else: state[SECTION] = table
+	return kept
+
+## Moves the house's waiting share into its pantry `inventory`, which holds `held` rations, up to SHARE_DAYS rations a
+## member; the rest goes to the camp stock. Returns what went into the pantry.
+static func flush_share(state: Dictionary, house_id: String, inventory: Dictionary, held: float) -> int:
+	var table: Variant = state.get(SECTION, {})
+	if not table is Dictionary or not table.has(house_id) or table[house_id].pending.is_empty(): return 0
+	var room := Households.members(state, house_id).size() * SHARE_DAYS - ceili(held)
+	var moved := 0
+	var pending: Dictionary = table[house_id].pending
+	if not state.get("inventory") is Dictionary: state["inventory"] = {}
+	for food: String in FOOD_ORDER:
+		var n := int(pending.get(food, 0))
+		if n <= 0: continue
+		var into := clampi(room, 0, n)
+		if into > 0: inventory[food] = int(inventory.get(food, 0)) + into
+		if n > into: state.inventory[food] = int(state.inventory.get(food, 0)) + n - into
+		room -= into
+		moved += into
+	pending.clear()
+	if table[house_id].carry.is_empty(): table.erase(house_id)
+	if table.is_empty(): state.erase(SECTION)
+	return moved
+
+## The waiting share of a house nobody lives in any more goes to the camp stock. Returns whether any did.
+static func drop_lost_shares(state: Dictionary) -> bool:
+	var table: Variant = state.get(SECTION, {})
+	if not table is Dictionary or table.is_empty(): return false
+	var lived := Households.membership(state)
+	var dropped := false
+	for house_id: String in table.keys():
+		if lived.has(house_id) and not lived[house_id].is_empty(): continue
+		if not table[house_id].pending.is_empty(): dropped = true
+		flush_share(state, house_id, {}, 0.0) # no members: no room, all to the camp
+		table.erase(house_id)
+	if table.is_empty(): state.erase(SECTION)
+	return dropped
+
+static func validate_shares(state: Dictionary) -> Dictionary:
+	if not state.has(SECTION): return Runtime.ok()
+	var table: Variant = state[SECTION]
+	if not table is Dictionary or table.is_empty() or table.size() > 4096: return Runtime.fail("CORRUPT_SAVE", "戶糧分成")
+	for house_id: Variant in table:
+		var entry: Variant = table[house_id]
+		if not house_id is String or not str(house_id).is_valid_int() or not entry is Dictionary or entry.size() != 2 or not entry.get("carry") is Dictionary or not entry.get("pending") is Dictionary:
+			return Runtime.fail("CORRUPT_SAVE", "戶糧分成")
+		if entry.carry.is_empty() and entry.pending.is_empty(): return Runtime.fail("CORRUPT_SAVE", "戶糧分成")
+		for part: String in ["carry", "pending"]:
+			for item: Variant in entry[part]:
+				var value: Variant = entry[part][item]
+				var high := 99 if part == "carry" else 1000000
+				if not item is String or item not in SiteSustain.FOODS or not (value is int or value is float) or float(value) != floorf(float(value)) or float(value) < 1.0 or float(value) > float(high):
+					return Runtime.fail("CORRUPT_SAVE", "戶糧分成")
+	return Runtime.ok()
+
+static func normalize_shares(state: Dictionary) -> void:
+	var table: Variant = state.get(SECTION, {})
+	if not table is Dictionary: return
+	for entry: Variant in table.values():
+		if not entry is Dictionary: continue
+		for part: String in ["carry", "pending"]:
+			if not entry.get(part) is Dictionary: continue
+			for item: Variant in entry[part]:
+				if entry[part][item] is float: entry[part][item] = int(entry[part][item])
 
 ## The settlement's fields keep seed while little is left (the 留種 recipe, 1 seed -> 6 grain and 2 seeds) and grow plain
 ## grain (1 -> 8) when there is plenty; a batch already begun is finished first.

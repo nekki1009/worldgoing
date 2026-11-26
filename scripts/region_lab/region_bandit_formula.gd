@@ -23,6 +23,7 @@ const RegionTravelRules = preload("res://scripts/region_lab/region_travel.gd")
 const SiteFiles = preload("res://scripts/terrain_lab/site_store.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
+const Households = preload("res://scripts/terrain_lab/site_households.gd")
 const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
@@ -53,22 +54,36 @@ static func summary_of(state: Dictionary) -> Dictionary:
 	return {"owner": owner, "stock": Aftermath.stock_of(state, owner) if owner >= 0 else {}, "people": people, "living": living_of(state, owner)}
 
 ## 居民吃飯 L2 (reports/scenario-village-livelihood-plan.md): what goes on in a settlement that farms and eats while nobody
-## looks: {state (the part of its saved state a day reads), eaters, pantry (rations), first (its file's day)}, {} where no
-## meals are served. Reads only; the caller owns the parts it copies.
+## looks: {state (the part of its saved state a day reads), eaters, pantries, first (its file's day)}, {} where no meals
+## are served. `pantries` {food key: {rations, eaters, house}} are the stocks SiteResidentLife.ration_day fills: a house's
+## pantry ("house:<id>", V0.4: it also takes the house's share of its harvest) or the stock of a team without houses
+## ("team:<id>"). Reads only; the caller owns the parts it copies.
 static func living_of(state: Dictionary, owner: int) -> Dictionary:
 	if owner < 0 or not ResidentLife.meals_on(state): return {}
 	var eaters := 0
+	var pantries := {}
+	var supply: Dictionary = state.get("team_supply", {})
 	for army: Variant in state.get("armies", []):
 		if not army is Dictionary or int(army.get("faction_id", -1)) != owner: continue
+		var living: Array = []
 		for unit: Variant in army.get("units", []):
-			if unit is Dictionary and float(unit.get("hp", 0.0)) > 0.0: eaters += 1
-	var pantry := 0.0
-	for entry: Variant in state.get("team_supply", {}).values():
-		if not entry is Dictionary: continue
-		var places: Array = entry.get("locations", {}).values() if int(entry.get("version", 0)) == 3 else [{"inventory": entry.get("inventory", {}), "open_rations": entry.get("sustain", {}).get("open_rations", 0.0)}]
-		for place: Variant in places:
-			pantry += float(place.get("open_rations", 0.0))
-			for food: String in SiteSustain.FOODS: pantry += float(place.get("inventory", {}).get(food, 0))
+			if unit is Dictionary and float(unit.get("hp", 0.0)) > 0.0: living.append(int(unit.get("person_id", 0)))
+		eaters += living.size()
+		if living.is_empty(): continue
+		var entry: Variant = supply.get(str(int(army.get("team_id", 0))), {})
+		var homeless := living.filter(func(identity: int) -> bool: return Households.house_of(state, identity).is_empty()).size()
+		if homeless == living.size():
+			var stock: Dictionary = {"inventory": entry.get("inventory", {}), "open_rations": entry.get("sustain", {}).get("open_rations", 0.0)} if entry is Dictionary and int(entry.get("version", 0)) == 2 else {}
+			pantries["team:%d" % int(army.get("team_id", 0))] = {"rations": ResidentLife.held_rations(stock), "eaters": living.size(), "house": ""}
+			continue
+		if homeless > 0: continue # ration_day feeds no such team (HOMELESS)
+		for identity: int in living:
+			var house_id := Households.house_of(state, identity)
+			var key := Households.food_key(house_id)
+			if not pantries.has(key):
+				var place: Dictionary = entry.get("locations", {}).get(key, {}) if entry is Dictionary and int(entry.get("version", 0)) == 3 else {}
+				pantries[key] = {"rations": ResidentLife.held_rations(place), "eaters": 0, "house": house_id}
+			pantries[key].eaters = int(pantries[key].eaters) + 1
 	var features := {}
 	for house_id: Variant in state.get("households", {}):
 		var at := str(state.households[house_id].get("job", {}).get("feature", ""))
@@ -77,8 +92,11 @@ static func living_of(state: Dictionary, owner: int) -> Dictionary:
 	for key: String in Aftermath.warehouses(state, owner):
 		features[key] = state.features[key].duplicate(true)
 		stockpiles[key] = {"cargo": state.stockpiles[key].cargo.duplicate(true), "holder": {"version": int(state.stockpiles[key].holder.version)}}
-	return {"eaters": eaters, "pantry": pantry, "first": Calendar.day_index(float(state.get("minute", 0))),
+	var held := 0.0
+	for key: String in pantries: held += float(pantries[key].rations)
+	return {"eaters": eaters, "pantries": pantries, "pantry": held, "first": Calendar.day_index(float(state.get("minute", 0))),
 		"state": {"settlement": state.settlement.duplicate(true), "inventory": state.get("inventory", {}).duplicate(true), "capacity": int(state.get("capacity", 0)),
+			ResidentLife.SECTION: state.get(ResidentLife.SECTION, {}).duplicate(true),
 			"households": state.get("households", {}).duplicate(true), "housing": state.get("housing", {}).duplicate(true), "features": features, "stockpiles": stockpiles}}
 
 ## The stock of a settlement nobody opened, now: its saved one after its people's harvests and meals since, by the same
@@ -88,7 +106,7 @@ static func stock_now(slot: Variant, read: Dictionary) -> Dictionary:
 	var living: Dictionary = read.get("living", {})
 	if living.is_empty(): return read.stock
 	var today := Calendar.day_index(float(slot.control.logical_game_seconds) / 60.0)
-	if not read.has("run"): read["run"] = {"day": int(living.first), "state": living.state, "minutes": {}, "pantry": float(living.pantry)}
+	if not read.has("run"): read["run"] = {"day": int(living.first), "state": living.state, "minutes": {}, "pantries": living.pantries.duplicate(true), "pantry": float(living.pantry)}
 	var run: Dictionary = read.run
 	if today <= int(living.first): return read.stock
 	var climate: Variant = slot.control.get("faction_registry", {}).get("climate", {})
@@ -98,10 +116,18 @@ static func stock_now(slot: Variant, read: Dictionary) -> Dictionary:
 		run.state["minute"] = Calendar.day_start_minute(int(run.day))
 		ResidentWork.daily_production(run.state, run.minutes)
 		ResidentLife._choose_recipes(run.state, int(read.owner))
-		run.pantry = maxf(0.0, float(run.pantry) - float(living.eaters))
-		var given := {"moved": 0, "short": 0}
-		ResidentLife._fill(run.state, int(read.owner), {}, float(run.pantry), int(living.eaters) * ResidentLife.PANTRY_DAYS, given)
-		run.pantry = float(run.pantry) + float(given.moved)
+		var keys: Array = run.pantries.keys()
+		keys.sort()
+		run.pantry = 0.0
+		for key: String in keys:
+			var pantry: Dictionary = run.pantries[key]
+			pantry.rations = maxf(0.0, float(pantry.rations) - float(pantry.eaters))
+			if not str(pantry.house).is_empty(): pantry.rations = float(pantry.rations) + float(ResidentLife.flush_share(run.state, str(pantry.house), {}, float(pantry.rations)))
+			var given := {"moved": 0, "short": 0}
+			ResidentLife._fill(run.state, int(read.owner), {}, float(pantry.rations), int(pantry.eaters) * ResidentLife.PANTRY_DAYS, given)
+			pantry.rations = float(pantry.rations) + float(given.moved)
+			run.pantry = float(run.pantry) + float(pantry.rations)
+		ResidentLife.drop_lost_shares(run.state)
 	# What today's meals took so far (one every six hours from midnight on) is filled up from the stock too.
 	var stock := Aftermath.stock_of(run.state, int(read.owner))
 	var eaten := roundi(float(living.eaters) * 0.25 * float(Calendar.minute_of_day(float(slot.control.logical_game_seconds) / 60.0) / 360 + 1))

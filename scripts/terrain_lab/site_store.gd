@@ -1364,6 +1364,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		state["team_supply"] = {}
 	if not state.has("housing"): state["housing"] = {}
 	Households.normalize(state) # 平民 C0: an old save gets its households from the housing registrations.
+	(load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("normalize_shares", state) # 產出三成歸戶
 	Settlement.normalize(state)
 	ResearchInstitutions.normalize(state)
 	Schools.normalize(state)
@@ -3833,6 +3834,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	# with the registrations on load (normalize) and by the owners that change a registration.
 	var household_validation := Households.validate(state)
 	if not household_validation.ok: return household_validation
+	var share_validation: Dictionary = (load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("validate_shares", state) # 產出三成歸戶
+	if not share_validation.ok: return share_validation
 	var settlement_validation := Settlement.validate(data, state, housing_people)
 	if not settlement_validation.ok: return settlement_validation
 	var institution_validation := ResearchInstitutions.validate(state, people)
