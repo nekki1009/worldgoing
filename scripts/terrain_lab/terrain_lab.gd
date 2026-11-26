@@ -12148,6 +12148,10 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	team.role = "work"
 	team.roster_size = rows.size()
 	team.exchange_enabled = exchange_enabled
+	# 開局速度 (2026-11-27): captured into the Site below and thrown away with staging, as the start and scenario teams
+	# are; it never draws, so it builds no 3D sources or sprites, as a headless birth. With the renderer the demo A
+	# birth spent 71.5 s of 113 s building them for 316 residents.
+	team.presentation_off = true
 	team.person_id_allocator = _allocate_army_person_ids_for.bind(candidate, [], [])
 	staging.add_child(team)
 	team.set_process(false)

@@ -90,6 +90,12 @@ func _run() -> void:
 	# 開局速度 (2026-11-27): the birth starts with no Site built, as from the menu (the loads above fill RegionRoute's
 	# fixed-base memo with the package's static Sites, which the game's own load would otherwise find built).
 	RegionRoute.clear_memory_cache()
+	# The main menu parses the body models on worker threads while the player is in it (real renderer only; headless
+	# does nothing here and the birth parses them itself). A player spends longer there than the parse takes.
+	var menu_started := Time.get_ticks_msec()
+	RuntimeHumanCharacter3DEditor.prewarm_raw_bodies()
+	while RuntimeHumanCharacter3DEditor.prewarm_pending() > 0 and Time.get_ticks_msec() - menu_started < 60000: await process_frame
+	print("SCENARIO_TRIAL menu body prewarm %.1f s (%s)" % [(Time.get_ticks_msec() - menu_started) / 1000.0, DisplayServer.get_name()])
 	var asked := Time.get_ticks_msec()
 	if not _ok(RegionEntry.request_new_world(start, {}, "開墾試生", "", str(built.path)), "a new world is requested (%.1f s: the menu's check loads the package)" % ((Time.get_ticks_msec() - asked) / 1000.0), RegionEntry.menu_message): return
 	var birth_started := Time.get_ticks_msec()
