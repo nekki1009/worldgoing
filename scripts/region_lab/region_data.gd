@@ -82,8 +82,8 @@ const MAX_SCENARIO_OFFICES := 64 # one per settlement Site
 static func author_scenario_valid(document: Variant) -> bool:
 	if not document is Dictionary or not Adapter.author_integer(document.get("format"), 1, 1) or not document.get("factions") is Array: return false
 	for key: Variant in document:
-		if not str(key) in ["format", "factions", "teams", "offices", "stock"]: return false
-	if not _scenario_offices_valid(document.get("offices", [])) or not _scenario_stock_valid(document.get("stock", [])): return false
+		if not str(key) in ["format", "factions", "teams", "offices", "stock", "livelihood"]: return false
+	if not _scenario_offices_valid(document.get("offices", [])) or not _scenario_stock_valid(document.get("stock", [])) or not _scenario_livelihood_valid(document.get("livelihood", [])): return false
 	if document.factions.size() > MAX_SCENARIO_FACTIONS: return false
 	var ids := {}
 	for faction: Variant in document.factions:
@@ -135,6 +135,21 @@ static func _scenario_stock_valid(rows: Variant) -> bool:
 		if row.items.is_empty() or row.items.size() > 32: return false
 		for item: Variant in row.items:
 			if not item is String or str(item).is_empty() or not Adapter.author_integer(row.items[item], 1, 1000000): return false
+	return true
+
+## 居民吃飯 L1: the settlements whose people are fed and farm: {site, farms [feature key], camp {item: n}}, one row a Site.
+static func _scenario_livelihood_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > MAX_SCENARIO_OFFICES: return false
+	var sites := {}
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not row.get("farms") is Array or not row.get("camp") is Dictionary: return false
+		var key := "%d:%d" % [int(row.site[0]), int(row.site[1])]
+		if sites.has(key) or row.farms.size() > 16 or row.camp.size() > 16: return false
+		sites[key] = true
+		for farm: Variant in row.farms:
+			if not _author_text_valid(farm, 64, true): return false
+		for item: Variant in row.camp:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(row.camp[item], 1, 1000000): return false
 	return true
 
 ## Every bandit faction of a scenario: {id: has a team (its chief)}.

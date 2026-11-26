@@ -109,7 +109,7 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 			if work_team.is_assigned(identity):
 				result.working = int(result.working) + 1
 				continue
-			if ResidentWork.job_of(lab.terrain.site, identity).is_empty() or actions.is_busy(identity) or bool(person.moving): continue
+			if ResidentWork.job_of(lab.terrain.site, identity).is_empty() or actions.is_busy(identity) or bool(person.moving) and not Housing.drifting(person): continue
 			var one: Array[int] = [identity]
 			if bool(work_team.assign(person.owner, one, Housing.SCHEDULE_REQUESTER).get("ok", false)): result.sent = int(result.sent) + 1
 			else: result.refused = int(result.refused) + 1
@@ -122,7 +122,7 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 			result.home = int(result.home) + 1
 			if crowd_site != null and crowd_site.home_enter(identity): result["entered"] = int(result.get("entered", 0)) + 1
 			continue
-		if actions.is_busy(identity) or bool(person.moving): continue
+		if actions.is_busy(identity) or bool(person.moving) and not Housing.drifting(person): continue
 		# 平民 C1c / C3a: no house that can lodge him (burned, overrun, none) while the alarm or the storm is on: he
 		# shelters at the settlement centre, walking to its entrance and going inside there.
 		if (alarm or shelter) and crowd_site != null and not house_lodges(lab, identity, person):

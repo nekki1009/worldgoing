@@ -1336,7 +1336,7 @@ func clear(reserved_empty: TerrainArmy = null, validate_candidate: Callable = Ca
 	if not guard.ok: return guard
 	if not crowd.peek_events().is_empty():
 		return SiteRuntime.fail("BUSY", "收兵須等原生人物事件交接完成")
-	var actions: Dictionary = lab.site_controller.person_actions.save_guard()
+	var actions: Dictionary = lab.site_controller.person_actions.save_guard(false)
 	if not actions.ok: return actions
 	var prepared := ClearHandoff.prepare(self)
 	if not prepared.ok: return prepared
@@ -1449,9 +1449,11 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	var housing_input_supported := crowd.has_method("set_housing_recovery_input") and crowd.has_method("set_housing_attendance_input")
 	if housing_input_supported:
 		for attendance: Dictionary in Site.Housing.attendance_input(lab):
-			if not bool(crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))):
-				last_event_error = SiteRuntime.fail("INVALID_HOUSING", "原住戶本步資格已變更；未套用住宅出席")
-				return false
+			# Whom the native does not hold at his door this step (a step of his own still held, a body still creeping at
+			# 0.004 cells/s: it asks for less than 0.001) simply does not attend it; it clears the row itself. Refusing the
+			# whole step stopped the Site's clock, and an unopened settlement could not be opened any more: its catch-up met
+			# the same refusal every time, frame after frame (INVALID_HOUSING; found 2026-11-26).
+			crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))
 		for roster: Dictionary in rosters:
 			var housing_multiplier: float = Site.Housing.recovery_multiplier(lab, roster.units)
 			if not bool(crowd.set_housing_recovery_input(int(roster.crowd_formation), housing_multiplier)):
@@ -4147,8 +4149,9 @@ func capture_save(region_checkpoint: bool = false) -> Dictionary:
 	var synced := sync_to_site()
 	if not synced.ok: return synced
 	var bytes: PackedByteArray = crowd.save_state()
-	# KW21: the native World refuses a save only during an unfinished work point or a pending housing step (G10); it retries.
-	if bytes.is_empty(): return SiteRuntime.fail("BUSY", "原生身體步進尚未收束（住宅返家步或工作點）；下一步重試")
+	# KW21: the native World refuses a save only during an unfinished work point; it retries. A resident on his way home is
+	# saved as standing where he is (2026-11-26).
+	if bytes.is_empty(): return SiteRuntime.fail("BUSY", "原生身體步進尚未收束（工作點）；下一步重試")
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(bytes)
@@ -4690,7 +4693,7 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 	var plans: Array[Dictionary] = []
 	var seen := {}
 	var team_ids := {}
-	var action_guard: Dictionary = scene_lab.site_controller.person_actions.save_guard()
+	var action_guard: Dictionary = scene_lab.site_controller.person_actions.save_guard(false)
 	if not action_guard.ok:
 		return action_guard
 	var controlled := int(scene_lab.controlled_person_id())
@@ -5338,7 +5341,7 @@ func prepare_work_fatigue_recovery_inputs() -> Dictionary:
 		var multiplier: float = Site.Garrison.recovery_multiplier(lab, str(roster.get("garrison_feature_id", "")), int(roster.faction_id), roster.units)
 		if not bool(crowd.set_recovery_input(int(roster.crowd_formation), multiplier)): return SiteRuntime.fail("INVALID_GARRISON")
 	for attendance: Dictionary in Site.Housing.attendance_input(lab):
-		if not bool(crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))): return SiteRuntime.fail("INVALID_HOUSING")
+		crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell)) # A refused row is no attendance (step).
 	for roster: Dictionary in rosters:
 		if not bool(crowd.set_housing_recovery_input(int(roster.crowd_formation), Site.Housing.recovery_multiplier(lab, roster.units))): return SiteRuntime.fail("INVALID_HOUSING")
 	# The original fatigue housing guard reads the actual host wish. Publish

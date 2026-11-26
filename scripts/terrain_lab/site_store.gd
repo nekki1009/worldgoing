@@ -3498,6 +3498,11 @@ static func _saved_supply_locations(data: TerrainData, state: Dictionary, team_i
 		if str(key).begins_with("shore:"):
 			var index := int(str(key).trim_prefix("shore:"))
 			if not _valid_cell(data, index) or not data.is_walkable(data.cell_from_index(index)): return false
+		elif str(key).begins_with("house:"):
+			# 平民 C1b, 居民吃飯 F1 (2026-11-25: a pantry could not be saved at all). A house that is gone keeps its key until the
+			# next day's rations return what it held (SiteResidentLife.ration_day).
+			var house: Variant = state.get("features", {}).get(str(key).trim_prefix("house:"))
+			if house is Dictionary and str(house.get("kind", "")) != "house": return false
 		else:
 			var vehicle: Variant = state.get("vehicles", {}).get(str(key).trim_prefix("vehicle:"))
 			if not vehicle is Dictionary or not Vehicles.is_ship(vehicle) or int(vehicle.get("team_id", -1)) != team_id: return false

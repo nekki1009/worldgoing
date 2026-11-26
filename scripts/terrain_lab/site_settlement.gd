@@ -73,6 +73,9 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if int(settlement.version) >= 5 and settlement.has("succession"): expected_fields.append("succession")
 	if settlement.has("trade_sources"): expected_fields.append("trade_sources")
 	if settlement.has("market_listings"): expected_fields.append("market_listings") # 貿易 T3
+	if settlement.has("meals"): # 居民吃飯 F1: its people are fed from its stock (SiteResidentLife.ration_day)
+		expected_fields.append("meals")
+		if not _int(settlement.meals, 1, 1): return Runtime.fail("CORRUPT_SAVE", "聚落供餐")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
 	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
@@ -194,7 +197,7 @@ static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) 
 	if candidate_version == VERSION_LATEST and candidate.has("succession"): fields.append("succession")
 	# The optional trade sections (T2 trade_sources, T3 market_listings) stay as they are; the full Settlement.validate
 	# checks them at save. Before 2026-11-19 a bound trade source made the head unable to set the tax rate or the nation.
-	for optional: String in ["trade_sources", "market_listings"]:
+	for optional: String in ["trade_sources", "market_listings", "meals"]:
 		if candidate.has(optional): fields.append(optional)
 	if (candidate_version != VERSION_MAX and candidate_version != VERSION_LATEST) or not Technology.keys(candidate, fields): return false
 	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
@@ -270,6 +273,7 @@ static func normalize(state: Dictionary) -> void:
 				source.limits[resource].total = int(source.limits[resource].total)
 			for resource: String in source.used: source.used[resource] = int(source.used[resource])
 	if settlement.get("market_listings") is Dictionary: Market.normalize_listings(settlement.market_listings)
+	if settlement.get("meals") is float: settlement["meals"] = int(settlement.meals)
 
 # --- Trade plan T2: warehouses the head binds to settlement.trade (§4, "授權額度") ---
 ## trade_sources {warehouse key: {revision, limits {resource: {per_trade, total}}, used {resource: count}}}. A source

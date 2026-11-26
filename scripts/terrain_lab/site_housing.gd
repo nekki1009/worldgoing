@@ -97,12 +97,22 @@ static func context(lab: Variant, identity: int, house_id: String, requester_id:
 	var fleeing := flee and scheduled
 	if not fleeing and float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須先脫戰")
 	if not bool(person.moving) and not actions._ready(person): return Runtime.fail("BUSY")
-	if not allow_moving and not actions._prison_stopped(person): return Runtime.fail("BUSY")
+	if not allow_moving and not actions._prison_stopped(person) and not (scheduled and drifting(person)): return Runtime.fail("BUSY")
 	if person.body.get("site_exited") == true or person.body.get("departed") == true: return Runtime.fail("BUSY")
 	if actions.is_guarding(identity) or lab.site_controller.vehicles.is_operator(identity) or lab.site_controller.vehicles.is_siege_crew(identity) or not lab.site_controller.vehicles.ship_for_person(identity).is_empty() or lab.site_controller._is_delivering_person(identity): return Runtime.fail("BUSY", "原人物仍有其他職務")
 	if person.owner is TerrainArmy and not person.body.get("work_task", {}).is_empty(): return Runtime.fail("BUSY")
 	if not fleeing and bool(actions._threat(person, {})): return Runtime.fail("THREAT")
 	return Runtime.ok("", {"person": person, "layout": layout})
+
+## A crowd body that only drifts to its place in its formation (no step of its own under way): the timetable may send it
+## on at once. Waiting for it to stand kept residents who came off work in the field for hours: a drift decays and never
+## quite ends, and at 16x it takes that many more game minutes (found 2026-11-26: nobody who had worked came home to eat).
+static func drifting(person: Dictionary) -> bool:
+	if person.is_empty() or not person.owner is CrowdPersonOwner or not bool(person.get("moving", false)): return false
+	if not person.owner.crowd_site.crowd.has_method("controlled_step_state"): return false
+	var step: PackedInt64Array = person.owner.crowd_site.crowd.controlled_step_state(int(person.unit))
+	var siege: PackedInt64Array = person.owner.native_siege_state(int(person.unit))
+	return step.size() == 2 and int(step[0]) == 0 and siege.size() == 8 and int(siege[2]) < 0 and int(siege[3]) <= 0
 
 static func assign(lab: Variant, identity: int, house_id: String, requester_id: int, selected_cell: int = -1) -> Dictionary:
 	var checked := context(lab, identity, house_id, requester_id)

@@ -93,6 +93,7 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 	var factions: Array = []
 	var teams: Array = []
 	var offices: Array = []
+	var livelihood: Array = []
 	var stock: Array = []
 	var residents_total := 0
 	for index: int in range(settlements):
@@ -102,21 +103,38 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 		var town := main and faction <= towns
 		if main: factions.append({"id": faction, "name": PLACE_A[(faction - 1) % PLACE_A.size()] + PLACE_B[(faction * 7) % PLACE_B.size()] + ("鎮" if town else "莊"), "kind": "npc"})
 		var work := Builder.new_work(source, site)
+		var natural_site := Builder.prepare(source, work)
+		if not natural_site.ok: return {"ok": false, "code": "BUILD", "stage": "land at %s: %s" % [str(site), str(natural_site.stage)]}
 		var owner := {"owner_faction": faction}
-		var center: Dictionary = Builder.place(source, work, "settlement_center", Builder.spiral(Vector2i(46, 46), 4, 6), Vector2i(5, 5), Vector2i(5, 5), owner)
+		var center: Dictionary = Builder.place(source, work, "settlement_center", Builder.spiral(Vector2i(46, 46), 4, 6), Vector2i(5, 5), Vector2i(5, 5), owner, {"foundation": 100}, natural_site.terrain)
 		if not center.ok: return {"ok": false, "code": "BUILD", "stage": "%s centre at %s" % [str(center.stage), str(site)]}
 		var houses: Array = []
 		var origin_c: Vector2i = center.origin
 		for _house: int in range(10 if town else 5):
-			var house: Dictionary = Builder.place(source, work, "house", Builder.spiral(origin_c + Vector2i(8, 0), 5, 6), Vector2i(3, 3), Vector2i(3, 3), {"owner_faction": faction, "variant": "standard"})
+			var house: Dictionary = Builder.place(source, work, "house", Builder.spiral(origin_c + Vector2i(8, 0), 5, 6), Vector2i(3, 3), Vector2i(3, 3), {"owner_faction": faction, "variant": "standard"}, {"foundation": 100}, natural_site.terrain)
 			if not house.ok: return {"ok": false, "code": "BUILD", "stage": "%s house at %s" % [str(house.stage), str(site)]}
 			houses.append(str(house.feature))
 		var warehouse: Dictionary = Builder.place(source, work, "warehouse", Builder.spiral(origin_c + Vector2i(-8, 0), 4, 6), Vector2i(3, 2), Vector2i(3, 2), {"layout_version": 1, "quarter": 0, "owner_faction": faction})
 		if not warehouse.ok: return {"ok": false, "code": "BUILD", "stage": "%s warehouse at %s" % [str(warehouse.stage), str(site)]}
 		var well: Dictionary = Builder.place(source, work, "well", Builder.spiral(origin_c + Vector2i(0, 8), 3, 6), Vector2i(1, 1), Vector2i(1, 1), owner, {"foundation": 100, "groundwater": 100})
 		if not well.ok: return {"ok": false, "code": "BUILD", "stage": "%s well at %s" % [str(well.stage), str(site)]}
-		# Each house takes as many residents as its rest cells hold (SiteRuntime.house_layout capacity).
 		var built_terrain := Builder.prepare(source, work)
+		if not built_terrain.ok: return {"ok": false, "code": "BUILD", "stage": "settlement at %s: %s" % [str(site), str(built_terrain.stage)]}
+		# 居民吃飯 L1: two fields of one working place each (SiteRuntime.FARM_WORK_SIDE) a village, seven a town.
+		# The world begins in January: the camp keeps grain for the first winter (fields grow 0.6 of it; village_projection_probe:
+		# without it a village is out of food on day 30 and a town hungry on 28 days, with it nobody is in 420 days).
+		var door: Vector2i = built_terrain.terrain.cell_from_index(int(SiteRuntime.house_layout(built_terrain.terrain, houses[houses.size() / 2]).slots[0]))
+		var fields: Array = []
+		for _field: int in range(7 if town else 2):
+			var field := {"ok": false, "stage": ""}
+			for steps: int in [26, 60]: # near its houses by foot, if there is room
+				field = Builder.place(source, work, "farm", Builder.spiral(origin_c + Vector2i(-2, -8), 3, 10), Vector2i(6, 6), Vector2i(6, 6), owner, {"foundation": 100, "fertility": 80, "drainage": 80, "moisture": 60}, built_terrain.terrain, door, steps)
+				if field.ok: break
+			if not field.ok: return {"ok": false, "code": "BUILD", "stage": "%s field at %s" % [str(field.stage), str(site)]}
+			fields.append(str(field.feature))
+		livelihood.append({"site": [site.x, site.y], "farms": fields, "camp": {"tools": 6 if town else 3, "seeds": 30, "grain": 140 if town else 45}})
+		# Each house takes as many residents as its rest cells hold (SiteRuntime.house_layout capacity).
+		built_terrain = Builder.prepare(source, work)
 		if not built_terrain.ok: return {"ok": false, "code": "BUILD", "stage": "settlement at %s: %s" % [str(site), str(built_terrain.stage)]}
 		var rows: Array = []
 		for house_key: String in houses:
@@ -164,7 +182,7 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 	var start_work := Builder.prepare(source, Builder.new_work(source, start))
 	if not start_work.ok: return {"ok": false, "code": "BUILD", "stage": "start: " + str(start_work.stage)}
 	initial_states["%d:%d" % [start.x, start.y]] = Builder.export_state(start_work.draft, [])
-	var scenario := {"format": 1, "factions": factions, "teams": teams, "offices": offices, "stock": stock}
+	var scenario := {"format": 1, "factions": factions, "teams": teams, "offices": offices, "stock": stock, "livelihood": livelihood}
 	if not Data.author_scenario_valid(scenario): return {"ok": false, "code": "INVALID_AUTHOR_SCENARIO", "stage": "scenario"}
 	var start_row := {"mode": "created_player", "site": [start.x, start.y], "cell": [start_cell.x, start_cell.y]}
 	# A natural source with a paired resource layer lists that layer too (RegionData.load_author_package MISSING_RESOURCE_PAIR).

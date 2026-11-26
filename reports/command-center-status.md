@@ -1,7 +1,15 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-25 21:05（台北）
+更新：2026-11-26 05:55（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+
+## 2026-11-26 05:55（台北）居民吃飯＋劇本村種田（Nekki 11/25 22:22「依建議」；11/26 02:47「沒問題就push，後面要繼續」）
+- 程式完成，完整回歸 FULL_LV2（274 項）05:31 起跑；全過就提交並推送 PR #3。計畫與結果：reports/scenario-village-livelihood-plan.md V0.3。
+- 只在聚落紀錄有 `meals: 1` 生效（新劇本世界）；出貨的劇本包已重建（30 聚落都有田、有供餐）。
+- 原生模組換新：DLL 0a38a4d5…（build 3590009a…；舊 c6480a73… 備份在 evidence/WALK_SAVE_native）。`World::save()` 把走到一半的返家步存成「站在那裡」。舊 DLL 存的檔會被拒絕；Nekki 的電腦上沒有遊戲存檔。
+- 新工具：village_stock_probe（`--days --only --raids --bind --every --checkpoint --keep/--cache`）、village_projection_probe（幾秒快轉 420 天）、`--replay-trace`（印每次補算的開始、結束、拒絕原因；沉默重試就靠它抓）。
+- 改掉的東西見計畫「路上修掉的時鐘與存檔問題」九條。
+- 已寫給 Nekki 另一個專案的 Codex 派工說明：reports/codex-dispatch-howto.md。
 
 ## 2026-11-25 17:30（台北）NPC 隊伍抵達會讓世界停住、沒人看的 Site 成伙、綁定快 10 倍
 - 起因：銷贓隊回寨測試並行時失敗、單獨過。並行 9 次重現 7 次，現場一致：世界停在抵達那一刻，不是測試老毛病。五個原因，已推送的 458b40b 都有：

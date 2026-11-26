@@ -5023,7 +5023,7 @@ func advance_prepared_region_formula_progress(prepared: Dictionary) -> Dictionar
 		var original: TerrainLab = prepared.cold_labs[owner]
 		var progressed: Dictionary = region_formula_progress.call(original, {}, prepared.interval)
 		if not progressed.get("ok", false): return progressed
-		if not progressed.get("complete", false): return fail("INCOMPLETE_REGION_PROGRESS", "原 cold stages 未完成共同區間")
+		if not progressed.get("complete", false): return fail("INCOMPLETE_REGION_PROGRESS", "原 cold stages 未完成共同區間 %s %s" % [owner, JSON.stringify(progressed).left(600)])
 	for token: String in prepared.parties:
 		var candidate: Dictionary = prepared.parties[token]
 		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")

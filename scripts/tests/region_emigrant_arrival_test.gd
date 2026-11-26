@@ -88,8 +88,13 @@ func _household(field: TerrainLab, cold: SiteController, head: int, round: int) 
 		if able.size() >= 2 and leaving.is_empty(): leaving = able.slice(0, 2)
 	if not _ok(leaving.size() == 2, "two residents of one household, both civilians", houses.keys()): return false
 	lab.set_process(false)
+	# By day the household works in the fields (2026-11-26): its job ends here, or the timetable sends them back to it, and
+	# a body that came off its work drifts for about fifteen seconds before it stands (at midnight, when the game judges,
+	# they are at home).
+	for entry: Dictionary in field.terrain.site.get("households", {}).values(): entry.job["feature"] = ""
+	for person: Variant in leaving: cold.work_team.cancel(int(person))
 	var gone: Dictionary = {}
-	for attempt: int in range(300):
+	for attempt: int in range(1500):
 		gone = Exodus.depart(cold, leaving, false)
 		if gone.get("ok", false) or str(gone.get("code", "")) not in ["NOT_READY", "BUSY"]: break
 		if not await _frame(): return false

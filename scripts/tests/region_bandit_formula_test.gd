@@ -131,7 +131,21 @@ func _run() -> void:
 		var loaded: Dictionary = slot._load_checked(slot.folder.path_join(str(slot._marker.sites[key].path)), Vector2i(int(parts[0]), int(parts[1])))
 		if not _ok(loaded.ok, "%s loads" % str(key)): return
 		var same: Dictionary = Formula.summary_of(loaded.data.site)
-		if not _ok(same == read.summary, "%s reads raw as the loaded Site: owner %d people %s stock %s" % [str(key), int(read.summary.owner), JSON.stringify(read.summary.people), JSON.stringify(read.summary.stock)], same): return
+		var plain: Dictionary = read.summary.duplicate()
+		var lived: Array = [plain, same.duplicate()].map(func(value: Dictionary) -> Dictionary:
+			value.erase("living")
+			value.erase("run")
+			return value)
+		if not _ok(lived[0] == lived[1], "%s reads raw as the loaded Site: owner %d people %s stock %s" % [str(key), int(read.summary.owner), JSON.stringify(read.summary.people), JSON.stringify(read.summary.stock)], same): return
+		# 居民吃飯 L2: ten days of its harvests and meals, read raw or loaded, come to the same.
+		if not _ok(read.summary.living.is_empty() == same.living.is_empty(), "%s feeds its people or not, either way" % str(key)): return
+		var later := {"control": {"logical_game_seconds": float(slot.control.logical_game_seconds) + 10.0 * 86400.0, "faction_registry": slot.control.faction_registry}}
+		var raw_copy: Dictionary = read.summary.duplicate(true)
+		raw_copy.erase("run")
+		var raw_stock: Dictionary = Formula.stock_now(later, raw_copy)
+		var loaded_stock: Dictionary = Formula.stock_now(later, same)
+		if not _ok(JSON.stringify(raw_stock, "", true) == JSON.stringify(loaded_stock, "", true), "%s in ten days: %s" % [str(key), JSON.stringify(raw_stock)], loaded_stock): return
+		if not same.living.is_empty() and not _ok(int(raw_stock.get("grain", 0)) != int(read.summary.stock.get("grain", 0)), "its grain moves from %d" % int(read.summary.stock.get("grain", 0))): return
 		checked += 1
 	if not _ok(checked == slot._marker.sites.size(), "every saved Site was compared"): return
 
@@ -185,7 +199,7 @@ func _run() -> void:
 		if not _ok(int(owed.day) == 1 and owed.taken == row.taken and (row.taken.is_empty() or bool(row.won)), "%s owes what was taken: %s" % [str(row.target), JSON.stringify(row.taken)], owed): return
 		for item: String in row.taken:
 			if not _ok(int(table.hoard[item]) == int(hoard_before[int(row.band)].get(item, 0)) + int(row.taken[item]), "the hoard of %d holds it: %s" % [int(row.band), item]): return
-		var stock: Dictionary = Formula.summary(slot, Formula.site_key(str(row.target))).summary.stock
+		var stock: Dictionary = Formula.stock_now(slot, Formula.summary(slot, Formula.site_key(str(row.target))).summary)
 		var all_owed: Dictionary = Formula.debts(slot, str(row.target)).taken
 		for item: String in all_owed:
 			if not _ok(int(all_owed[item]) <= int(stock.get(item, 0)), "%s owes no more %s than it has" % [str(row.target), item], [all_owed, stock]): return

@@ -998,10 +998,17 @@ static void aboard_formal_commander_resumes_command() {
 }
 
 static void held_siege_step_saves_and_loads() {
-	test_case = "G10: an arrived (held) siege step saves and loads; a pending housing step is still unsaveable (KW21: a pending siege step saves)";
+	test_case = "G10: an arrived (held) siege step saves and loads; a pending housing step saves as a body without the step (2026-11-26; KW21: a pending siege step saves)";
 	World w(1); setup(w);
 	w.escort_mode[2] = 3; w.escort_goal[2] = w.cell[2]; // pending housing step: a goal is set
-	REQUIRE(w.save().empty());
+	{
+		const std::vector<uint8_t> walking = w.save();
+		REQUIRE(!walking.empty());
+		World stands(1); setup(stands);
+		REQUIRE(stands.load(walking));
+		REQUIRE(stands.escort_mode[2] == 0 && stands.escort_goal[2] == -1 && stands.px[2] == w.px[2] && stands.py[2] == w.py[2]);
+		REQUIRE(w.escort_mode[2] == 3 && w.escort_goal[2] == w.cell[2]); // the live one walks on
+	}
 	w.escort_mode[2] = 5; w.escort_goal[2] = -1; // arrived and held
 	const std::vector<uint8_t> blob = w.save();
 	REQUIRE(!blob.empty());

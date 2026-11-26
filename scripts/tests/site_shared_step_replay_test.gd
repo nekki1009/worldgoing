@@ -484,7 +484,9 @@ func _run() -> void:
 	# 11/20 (平民 C1c, ff8aadf): World::validate accepts absent kind 5 "at home" (validation only; the KW21 layout is unchanged).
 	# 11/20 (技能 K3/K2b): World gained the host-set person skill inputs (melee/riding/ranged ability, rescue rate): not
 	# serialized, assigned defaults on load, size-checked by validate; the KW21 layout is unchanged.
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "3a49e311c62d9c9fd8660f2de739b721b4dcbd2668259776559fa68592e61319", "fixed KW21 serializer state.cpp for typed byte comparison"): return
+	# 11/26 (居民吃飯): World::save writes a housing step under way as no step (escort mode 0, goal -1), the same bytes; the
+	# KW21 layout is unchanged.
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/state.cpp") == "7417117044da5225831f1971768e867013ea566b95575a93d8ada30dc5c074f3", "fixed KW21 serializer state.cpp for typed byte comparison"): return
 	# TCM 11/16: crowd_core.hpp gained the runtime-only step_combat_start (not serialized); the KW21 layout is unchanged.
 	# CIV-A0 11/19 (2f454b0): Presentation gained the RenderActivity override (presentation only, cleared on load, not
 	# serialized); the KW21 layout is unchanged.

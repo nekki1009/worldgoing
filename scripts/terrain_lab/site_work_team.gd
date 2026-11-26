@@ -686,7 +686,7 @@ func _same_work_interval(left: float, right: float) -> bool:
 
 func _work_retry_ready(identity: int, person: Dictionary, seconds: float, prepare_only: bool) -> bool:
 	if not prepare_only:
-		_retry_left[identity] = maxf(0.0, float(_retry_left.get(identity, 0.0)) - seconds)
+		_retry_left[identity] = _wait_left(identity, seconds)
 		return float(_retry_left[identity]) <= 0.0
 	# Observe the interval start; a later retry cannot select work or move now.
 	_prepared_retry[identity] = {"row": person.row, "task": person.row.work_task}
@@ -716,7 +716,14 @@ func _consume_prepared_retry(seconds: float) -> void:
 		var original: Dictionary = _prepared_retry[identity]
 		var person := _person(identity)
 		if person.is_empty() or not is_same(person.row, original.row) or not is_same(person.row.get("work_task", {}), original.task): continue
-		if _retry_left.has(identity): _retry_left[identity] = maxf(0.0, float(_retry_left[identity]) - seconds)
+		if _retry_left.has(identity): _retry_left[identity] = _wait_left(identity, seconds)
+
+## A wait that ends within the person-work tolerance is over: what rounding left of it (1e-12 game seconds) cut the next
+## window to zero action time, and the Site clock stood still (REGION_EVENT_PENDING for ever; found 2026-11-25, residents
+## waiting for a place in their field).
+func _wait_left(identity: int, seconds: float) -> float:
+	var left := maxf(0.0, float(_retry_left.get(identity, 0.0)) - seconds)
+	return left if left > PersonFatigue.WORK_PLAN_EPS else 0.0
 
 func retime_prepared_interval(game_seconds: float, action_seconds: float = 0.0) -> Dictionary:
 	if not is_finite(game_seconds) or game_seconds <= 0.0 or not is_finite(action_seconds) or action_seconds < 0.0 or _prepared_seconds <= 0.0 or _work_consumed or _ladders_consumed:

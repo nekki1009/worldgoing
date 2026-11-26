@@ -58,10 +58,38 @@ static func foundation(work: Dictionary, rect: Rect2i, land: Dictionary = {"foun
 
 ## Places one building of `kind` at the first admitted origin of `origins` (each tried with `footprint` given full
 ## foundation first). {ok, feature, origin} with `work` updated, or {ok false, stage}; `work` is unchanged on a refusal.
-static func place(source: RegionData, work: Dictionary, kind: String, origins: Array, footprint: Vector2i, size: Vector2i, options: Dictionary, land: Dictionary = {"foundation": 100}) -> Dictionary:
+## With `near` (the Site's terrain as prepared before, only read) an origin with natural resources standing is passed over
+## (it is refused anyway); with `steps` too the natural resources (trees, stones, ...) that stand in
+## the footprint are taken off the authored map, and `steps` keeps it to where its middle is at most that many cells of
+## walking from `from` (a field across a cliff from its village is an hour's way round).
+static func place(source: RegionData, work: Dictionary, kind: String, origins: Array, footprint: Vector2i, size: Vector2i, options: Dictionary, land: Dictionary = {"foundation": 100}, near: TerrainData = null, from: Vector2i = Vector2i(-1, -1), steps: int = 0) -> Dictionary:
 	var last := ""
+	# An origin whose footprint meets a building is refused anyway; a preparation is the costly part of a trial.
+	var taken := {}
+	for feature: Variant in work.initial_state.get("features", {}).values():
+		for cell: Variant in feature.get("cells", []): taken[Vector2i(int(cell) % SIDE, int(cell) / SIDE)] = true
 	for origin: Vector2i in origins:
+		var free := true
+		for y: int in range(origin.y, origin.y + footprint.y):
+			for x: int in range(origin.x, origin.x + footprint.x):
+				if taken.has(Vector2i(x, y)): free = false
+		if not free:
+			last = "taken"
+			continue
+		if steps > 0:
+			var walk: Array[Vector2i] = near.path_between(from, origin + footprint / 2)
+			if walk.is_empty() or walk.size() > steps:
+				last = "far"
+				continue
 		var trial: Dictionary = work.duplicate(true)
+		if near != null:
+			var standing: Array = []
+			for y: int in range(origin.y, origin.y + footprint.y):
+				for x: int in range(origin.x, origin.x + footprint.x): standing.append_array(near.resources_at.get(near.index(Vector2i(x, y)), []))
+			if steps <= 0 and not standing.is_empty():
+				last = "clearing"
+				continue
+			for key: Variant in standing: trial.terrain_static.resources[str(key)] = null
 		foundation(trial, Rect2i(origin, footprint), land)
 		trial.revision = int(trial.revision) + 1
 		var prepared := prepare(source, trial)

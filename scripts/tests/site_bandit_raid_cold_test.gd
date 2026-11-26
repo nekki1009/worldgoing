@@ -169,9 +169,13 @@ func _run() -> void:
 	var arrived_clock := float(slot.control.logical_game_seconds)
 	var next_report := 0.0
 	var fought := false
+	var beat := Time.get_ticks_msec()
 	for frame: int in range(60000):
 		await process_frame
 		if _finished: return
+		if Time.get_ticks_msec() - beat > 20000: # real time: a standing clock shows
+			beat = Time.get_ticks_msec()
+			print("SITE_BANDIT_RAID_COLD BEAT %d s frame %d clock %.3f h owners %s replay '%s' events %d" % [beat / 1000, frame, (float(slot.control.logical_game_seconds) - arrived_clock) / 3600.0, str(slot._region_original_labs.keys()), lab._cold_replay_id, slot.pending_region_events().size()])
 		lab._process(1.0 / 30.0)
 		controller.person_actions.settle_after_contacts()
 		if not controller._original_step_fault.is_empty():

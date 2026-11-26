@@ -1952,7 +1952,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		var pending_game_seconds := float(window.pending)
 		var time_tolerance := maxf(0.00000001, pending_game_seconds * 0.000000001)
 		if completed_game_seconds - pending_game_seconds > time_tolerance:
-			return _region_preflight_failure(region_originals, SiteRuntime.fail("INVALID_TIME", "補算原步進超過固定目標"))
+			return _region_preflight_failure(region_originals, SiteRuntime.fail("INVALID_TIME", "補算原步進超過固定目標 %.15f > %.15f (%s)" % [completed_game_seconds, pending_game_seconds, str(terrain.site.get("id", ""))]))
 		completed_game_seconds = minf(completed_game_seconds, pending_game_seconds)
 	if formula_interval:
 		if not replaying or not _region_owner_interval_active or fire_replay_interval.is_empty(): return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_FORMULA_CONTRACT"))
@@ -2160,7 +2160,11 @@ func _fire_replay_exact_step(action_step: float, target: float, interval: Dictio
 		return SiteRuntime.fail("REGION_OWNER_UNCLIPPED_ENDPOINT")
 	_region_owner_interval_active = true
 	_region_formula_active = false # advance_region_cold_stages: suppress_melee false.
-	var result := _advance_original_shared_step(elapsed, target, interval, not (crowd_site != null and crowd_site.active))
+	# A native step that work or fatigue cuts inside the interval goes on to the interval's end, as live's does: the next
+	# piece is no interval of its own, and the guard above refused it (REGION_OWNER_FIRE_SOURCE; found 2026-11-25, a
+	# settlement whose residents work its fields could not be opened after a day).
+	var native: bool = crowd_site != null and crowd_site.active
+	var result := _advance_native_region_interval(interval, target) if native else _advance_original_shared_step(elapsed, target, interval, true)
 	_region_owner_interval_active = false
 	# Live then finishes this cold owner's point with consume_region_point(false)
 	# (_finish_original_cold_region_points); the replay finishes it the same way.
@@ -6214,10 +6218,11 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		var world_registry: Variant = site_controller.region_slot.control.get("faction_registry", {}) if site_controller != null and site_controller.region_slot != null else {}
 		if _cold_replay_lab.terrain != null and not _cold_replay_lab.terrain.site.has("climate_enabled") and world_registry is Dictionary and world_registry.get("climate") is Dictionary and world_registry.climate.get("enabled") == true:
 			_cold_replay_lab.terrain.site["climate_enabled"] = true
-		# 公式遠征 (Nekki 2026-11-25 B): what bands took from this Site while nobody looked leaves it before its catch-up runs.
-		# Here too the replay Lab's own body changes; the source body stays untouched.
+		# 公式遠征 (Nekki 2026-11-25 B): what bands took from this Site while nobody looked leaves it on the day of the raid
+		# (the hour steps of a long absence), the rest after its catch-up. The replay Lab's own body changes; the source body
+		# stays untouched.
 		if site_controller != null and site_controller.region_slot != null and _cold_replay_lab.terrain != null:
-			SiteController.BanditFormula.apply_to(site_controller.region_slot, _cold_replay_lab.terrain)
+			_cold_replay_lab._coarse_raids = SiteController.BanditFormula.debts(site_controller.region_slot, identity).rows
 		_cold_replay_lab._fire_replay_tracking = data.site.has("fire_settlement")
 		_cold_replay_lab._fire_replay_epoch = str(data.site.get("fire_settlement", {}).get("epoch", ""))
 		var indexed_fire_site: Dictionary = site_controller.region_slot.control.get("fire_clock", {}).get("index", {}).get(identity, {}) if _cold_replay_lab._fire_replay_tracking else {}
@@ -6231,7 +6236,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			replay_segments.append(segment)
 		# A long absence is settled by hour steps: its quiet rows before the exact tail are joined, or every step would end at
 		# the next row (a scenario world writes about four thousand a game day; found 2026-11-25).
-		var long_absence: bool = data.site.has("fire_settlement") and target_seconds - float(data.site.fire_settlement.game_seconds) >= COARSE_MIN_SECONDS + COARSE_TAIL_SECONDS
+		var long_absence: bool = data.site.has("fire_settlement") and target_seconds - float(data.site.fire_settlement.game_seconds) >= _coarse_min_seconds(data.site) + COARSE_TAIL_SECONDS
 		if long_absence: replay_segments = _join_quiet_segments(replay_segments, target_seconds - COARSE_TAIL_SECONDS)
 		_cold_replay_lab._fire_replay_segments = replay_segments
 		_cold_replay_lab._fire_replay_boundaries = []
@@ -6254,6 +6259,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		_cold_replay_lab._fire_replay_end_sequence = int(fire_replay.get("to_sequence", -1))
 		_cold_replay_lab._fire_replay_end_action = float(site_controller.region_slot.control.get("fire_clock", {}).get("action_seconds", 0.0)) if _cold_replay_lab._fire_replay_tracking else 0.0
 		_cold_replay_lab._fire_replay_end_game = target_seconds if _cold_replay_lab._fire_replay_tracking else 0.0
+		_replay_trace("begin %s to %.4f" % [identity, target_seconds])
 		_cold_replay_id = identity
 		_cold_replay_target = target_seconds
 		_cold_replay_signature = signature
@@ -6267,6 +6273,8 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	if advanced.ok and str(advanced.status) == "PENDING":
 		return {"ok": false, "code": "PENDING", "message": "原地點補算續作中；旅程尚未提交",
 			"pending": advanced.pending, "target": target_seconds, "site_id": identity, "source_sha256": signature, "cold_replay": cold_receipt}
+	if not advanced.ok: _replay_trace("failed %s %s" % [identity, JSON.stringify(advanced).left(700)])
+	elif str(advanced.status) != "PENDING": _replay_trace("done %s %s" % [identity, JSON.stringify(cold_receipt).left(250)])
 	if not advanced.ok:
 		if str(advanced.get("code", "")) != "PENDING":
 			_cold_replay_lab.free()
@@ -6276,6 +6284,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			_cold_replay_signature = ""
 		return advanced
 	var completed_data: TerrainData = advanced.data
+	if site_controller != null and site_controller.region_slot != null: SiteController.BanditFormula.leave_news(site_controller.region_slot, identity)
 	# A crowd replay ran its native World; the completed candidate carries that World's capture, as a crowd checkpoint
 	# writes it (capture_region_checkpoint), not the section it was loaded from (2026-11-08).
 	if _cold_replay_lab.crowd_site != null and _cold_replay_lab.crowd_site.active and completed_data == _cold_replay_lab.terrain:
@@ -6300,7 +6309,15 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	_cold_replay_signature = ""
 	return SiteRuntime.ok("冷地點已沿原步進結算", {"data": completed_data, "cold_replay": cold_receipt})
 
+## `--replay-trace` (a test's user argument) prints every catch-up of an unopened Site: its begin, its end, its refusal. A
+## bind that fails is tried again in silence, frame after frame; this shows it.
+static var _replay_traced := -1
+static func _replay_trace(text: String) -> void:
+	if _replay_traced < 0: _replay_traced = int("--replay-trace" in OS.get_cmdline_user_args())
+	if _replay_traced == 1: print("REPLAY_TRACE %d ms %s" % [Time.get_ticks_msec(), text])
+
 func cancel_cold_site_replay(source_sha256: String) -> Dictionary:
+	_replay_trace("cancel %s %s" % [_cold_replay_id, str(get_stack().slice(1, 4))])
 	# Only the original pending transaction may retire its uncommitted scene.
 	# Input Site/committed files/arriving original crew were never modified.
 	if not is_instance_valid(_cold_replay_lab): return SiteRuntime.ok()
@@ -9960,7 +9977,7 @@ func _region_original_interval_guard(interval: Dictionary) -> Dictionary:
 	if not _region_point_pending.is_empty() or not terrain.get_meta(&"fire_boundary", {}).is_empty(): return SiteRuntime.fail("REGION_ENDPOINT_PENDING")
 	if not is_finite(fire_action_cursor) or absf(fire_action_cursor - float(interval.action_begin)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "owner fire cursor %.12f, interval begin %.12f" % [fire_action_cursor, float(interval.action_begin)])
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
-	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
+	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "Site clock " + JSON.stringify({"interval": [interval.get("epoch"), interval.get("sequence"), interval.get("game_begin"), interval.get("action_begin")], "site": [fire.get("epoch"), fire.get("sequence"), fire.get("game_seconds"), fire.get("action_seconds")]}))
 	var fire_guard := _fire_step_guard()
 	if not fire_guard.ok: return fire_guard
 	var demand := minf(elapsed, maxf(0.0, float(terrain.site.get("combat_left", 0.0))))
@@ -10014,16 +10031,31 @@ func _native_combat_left() -> float:
 ## A native crowd replay step can stop before the interval end (native begin query cadence, work boundary).
 ## The grid path resumes such a step from the fire cursor; this resumes the same interval until the cursor
 ## reaches action_end, so the fire settlement, cursor and watermark are stamped once, by the final piece.
-func _advance_native_region_interval(interval: Dictionary) -> Dictionary:
+## `target` is a replay's own fixed time (the interval's end for a live one).
+func _advance_native_region_interval(interval: Dictionary, target: float = -1.0) -> Dictionary:
 	var end_action := float(interval.action_end)
+	if target < 0.0: target = float(interval.game_end)
+	var last: Dictionary = {"ok": true, "completed": true}
 	for _round: int in range(4096):
 		var remaining := end_action - fire_action_cursor
-		if remaining <= ACTION_TIME_EPSILON: return {"ok": true, "completed": true}
+		if remaining <= ACTION_TIME_EPSILON: return last
 		var piece: Dictionary = interval.duplicate(true)
 		piece["action_begin"] = fire_action_cursor
 		piece["tactical_seconds"] = minf(float(interval.tactical_seconds), remaining)
-		var result: Dictionary = _advance_original_shared_step(remaining, float(interval.game_end), piece, false)
+		var result: Dictionary = _advance_original_shared_step(remaining, target, piece, false)
 		if not result.get("ok", false) or not result.get("completed", false): return result
+		last = result
+		# The step takes what is within 1e-8 action of the interval's end for the end: it has stamped the interval's fire
+		# settlement and its game time. The cursor lands there too, as a party frame's does; one more piece of 1e-10 action
+		# has no game time left to consume (INVALID_TIME on every later step; found 2026-11-26).
+		if not bool(result.get("fire_partial", false)):
+			if not _region_point_pending.is_empty() and _region_point_pending.has("fire_action_end") and absf(float(_region_point_pending.fire_action_end) - end_action) <= PHASE_BOUNDARY_TOLERANCE:
+				_region_point_pending.fire_action_end = end_action
+				var boundary: Variant = terrain.get_meta(&"fire_boundary", {})
+				if boundary is Dictionary and boundary.has("action_end") and absf(float(boundary.action_end) - end_action) <= PHASE_BOUNDARY_TOLERANCE: boundary["action_end"] = end_action
+			if absf(fire_action_cursor - end_action) <= PHASE_BOUNDARY_TOLERANCE:
+				fire_action_cursor = end_action
+				return last
 	return SiteRuntime.fail("REGION_CROWD_REPLAY_STALLED")
 
 var _region_owner_interval_active := false
@@ -11004,6 +11036,8 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 	if not restore_only or terrain == null or terrain != _region_bound_data or _replay_target != target_game_seconds \
 		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_clock_agreement_tolerance() \
 		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish restore_only=%s bound=%s target=%s replay_target=%s now=%s (now-target=%s) consuming=%s pending_points=%d" % [restore_only, terrain != null and terrain == _region_bound_data, target_game_seconds, _replay_target, SiteRuntime.now(terrain) * 60.0 if terrain != null else -1.0, SiteRuntime.now(terrain) * 60.0 - target_game_seconds if terrain != null else 0.0, _region_point_consuming, _region_point_pending.size()])
+	# 公式遠征 (Nekki 2026-11-25 B): the loot of the raids of the meantime that is still here leaves before the body is captured.
+	if not _coarse_raids.is_empty(): SiteController.BanditFormula.take_rest(terrain, _coarse_raids, _coarse_raids_done)
 	var settled := RegionSaveSlot.validate_settlement(terrain.site, target_game_seconds)
 	# The settlement's pending is GAME seconds: the replay loop finished it at its game-second residue tolerance (found
 	# 2026-11-13: a 7e-12 game-second residue, below the loop's 6e-11, was refused against the 1e-12 action epsilon).
@@ -11996,8 +12030,8 @@ func prepare_initial_author_teams(new_data: TerrainData, rows: Array) -> Diction
 ## 示範劇本 step 3: this Site's scenario offices and warehouse stock (RegionData.author_scenario_valid "offices",
 ## "stock"), after its residents are born. The head seat and the named duties' seats take the residents of those names;
 ## each stocked warehouse gets its storage and items. Fresh births only; unchanged on any refusal.
-func prepare_initial_scenario_settlement(new_data: TerrainData, offices: Array, stock: Array) -> Dictionary:
-	if offices.is_empty() and stock.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
+func prepare_initial_scenario_settlement(new_data: TerrainData, offices: Array, stock: Array, livelihood: Array = []) -> Dictionary:
+	if offices.is_empty() and stock.is_empty() and livelihood.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
 	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
 	var named := {}
 	for army: Variant in candidate.site.get("armies", []):
@@ -12023,6 +12057,20 @@ func prepare_initial_scenario_settlement(new_data: TerrainData, offices: Array, 
 		SiteRuntime.add_items(stored.stock.cargo, row.items)
 		var endpoint: Dictionary = SiteStockpiles.stock_endpoint(candidate, str(row.feature))
 		if endpoint.is_empty() or int(endpoint.get("capacity", 0)) >= 0 and SiteRuntime.inventory_size(stored.stock.cargo) > int(endpoint.capacity): return SiteRuntime.fail("STORAGE_FULL", "劇本倉庫「%s」存貨超過容量" % str(row.feature))
+	# 居民吃飯 L1 (reports/scenario-village-livelihood-plan.md): its people are fed from its stock; its fields are worked.
+	for row: Dictionary in livelihood:
+		var fed: Variant = candidate.site.get("settlement", {})
+		if not fed is Dictionary or fed.is_empty(): return SiteRuntime.fail("NO_TARGET", "劇本供餐所在 Site 沒有聚落")
+		fed["meals"] = 1
+		var owner := int(fed.get("owner_faction", -1))
+		for key: Variant in row.farms:
+			var farm: Dictionary = candidate.site.get("features", {}).get(str(key), {})
+			if str(farm.get("kind", "")) != "farm" or str(farm.get("stage", "")) != "complete" or int(farm.get("owner_faction", -1)) != owner: return SiteRuntime.fail("NO_TARGET", "劇本農田「%s」無效" % str(key))
+			candidate.site.zones.append({"cells": farm.cells.duplicate(), "kind": -1, "action": "operate", "feature": str(key), "active": true})
+		SiteRuntime.add_items(candidate.site.inventory, row.camp)
+		if SiteRuntime.inventory_size(candidate.site.inventory) > int(candidate.site.get("capacity", 0)): return SiteRuntime.fail("STORAGE_FULL", "劇本營地放不下起始物資")
+		SiteController.Households.reconcile(candidate.site)
+		ResidentWork.apply(candidate.site, ResidentWork.plan(candidate.site, owner, true))
 	return SiteRuntime.ok("", {"data": candidate, "changed": true})
 
 func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
@@ -12529,6 +12577,7 @@ func _region_run_due_daily_hooks() -> void:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null or restore_only or str(slot.control.active_site_id) != str(terrain.site.get("id", "")): return
 	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
+	site_controller.run_rest_hooks()
 	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
 	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
@@ -12551,6 +12600,7 @@ func _region_run_due_daily_hooks() -> void:
 		SiteController.BanditRaidField.watch(original.site_controller, site_controller)
 		SiteController.BanditFormula.settle_fallen(original.site_controller, site_controller)
 		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
+		original.site_controller.run_rest_hooks()
 		original.site_controller.flush_battle_effects(site_controller)
 
 
@@ -13031,6 +13081,8 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 			ResidentMood.day(self)
 			CoarseSocial.settle_site(self)
 			ResidentWork.daily_production(terrain.site, _coarse_work_minutes, terrain, _coarse_work_factor, _coarse_skill_work)
+			SiteController.ResidentLife.ration_day(site_controller) # 居民吃飯 F2
+			SiteController.BanditFormula.take_due(terrain, _coarse_raids, _coarse_raids_done)
 		_exchange_phase = fposmod(_exchange_phase + action_seconds, EXCHANGE_QUERY_STEP)
 		for actor: TerrainTestCharacter in combat_actors:
 			if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
@@ -13124,6 +13176,11 @@ func _region_cold_replaced_steps(begin: float, end: float) -> int:
 const COARSE_MIN_SECONDS := 86400.0
 const COARSE_TAIL_SECONDS := 7200.0 # the exact tail (advance_region_cold_actual_fixed's default)
 const COARSE_STEP_SECONDS := 3600.0
+## A settlement whose people farm and eat (居民吃飯) has no quiet hours: a shorter absence was replayed step by step with
+## everybody walking to work, 285 s for a town of 37 over one day (measured 2026-11-26). Its absences are settled by hours
+## and days from one hour up; anything that fights or burns stays exact as everywhere.
+static func _coarse_min_seconds(site: Dictionary) -> float:
+	return COARSE_STEP_SECONDS if SiteController.ResidentLife.meals_on(site) else COARSE_MIN_SECONDS
 ## 平民 C6: a registered resident's work speed offline, as on the live work step (SiteResidentMood).
 func _coarse_work_factor(identity: int) -> float:
 	var person: Dictionary = site_controller.person_actions._person(identity, false)
@@ -13138,6 +13195,9 @@ func _coarse_skill_work(identity: int, line: String, seconds: float) -> float:
 
 ## Work minutes each household put into its job during the coarse prefix (runtime; ResidentWork.daily_production).
 var _coarse_work_minutes: Dictionary = {}
+## The formula raids on this Site since its file (a replay Lab's; RegionBanditFormula.debts) and what they took already.
+var _coarse_raids: Array = []
+var _coarse_raids_done: Dictionary = {}
 
 ## Offline, residents on scheduled work stop (the daily formula stands for their work). Returns whether any stopped.
 func _coarse_release_residents() -> bool:
@@ -13150,7 +13210,15 @@ func _coarse_release_residents() -> bool:
 	return released
 
 ## Hunger that would start to hurt (48 h of deficit) stops the coarse prefix: the exact path settles deaths.
+const COARSE_HUNGER_HELD := 38.0
 func _coarse_hunger_stop() -> String:
+	# 居民吃飯: a settlement that feeds its people and has run out scrapes by while nobody looks (hunger is held just under
+	# what hurts) instead of being replayed step by step, hours for a town over a month; opened, it starves as anywhere.
+	if SiteController.ResidentLife.meals_on(terrain.site):
+		for entry: Variant in terrain.site.get("team_supply", {}).values():
+			if not entry is Dictionary: continue
+			for cohort: Variant in entry.get("sustain", {}).get("cohorts", []):
+				if cohort is Dictionary and float(cohort.get("hunger", 0.0)) > COARSE_HUNGER_HELD: cohort["hunger"] = COARSE_HUNGER_HELD
 	for entry: Variant in terrain.site.get("team_supply", {}).values():
 		if not entry is Dictionary: continue
 		for cohort: Variant in entry.get("sustain", {}).get("cohorts", []):
@@ -13232,7 +13300,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 			"logic_action_origin": fire_action_cursor,
 			# Long-absence catch-up (Nekki 2026-11-16 A, NPC AI §10A D5): a gap over a day lets a developed Site take the
 			# quiet prefix in hour steps by its original daily owners; politics (duty AI) does not run offline.
-			"coarse": maxf(float(window.from), target - tail_seconds) - float(window.from) >= COARSE_MIN_SECONDS}
+			"coarse": maxf(float(window.from), target - tail_seconds) - float(window.from) >= _coarse_min_seconds(terrain.site)}
 	if _region_cold_isolated.data != terrain or float(_region_cold_isolated.target) != target or float(_region_cold_isolated.tail) != tail_seconds:
 		return SiteRuntime.fail("BUSY", "原隔離來源／固定目標仍在補算")
 	var steps := 0
@@ -13311,6 +13379,9 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		window = RegionSaveSlot.replay_window(terrain.site, target)
 		if not window.ok: return window
 	var replay: Dictionary = SiteRuntime.ok("", {"status": "PENDING", "pending": float(window.pending), "steps": 0, "data": terrain})
+	if not str(_region_cold_isolated.fallback).is_empty() and not _region_cold_isolated.has("traced"):
+		_region_cold_isolated["traced"] = true
+		_replay_trace("exact from %.3f of %.3f because %s" % [float(window.from), target, str(_region_cold_isolated.fallback)])
 	if (float(window.from) + ACTION_TIME_EPSILON >= float(_region_cold_isolated.prefix_end) or not str(_region_cold_isolated.fallback).is_empty()) \
 		and steps < max_steps and Time.get_ticks_usec() < deadline:
 		replay = replay_site_to(target, maxi(1, deadline - Time.get_ticks_usec()), max_steps - steps)
@@ -13347,7 +13418,9 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 		return SiteRuntime.fail("STALE_COLD_TRANSACTION")
 	if _region_cold_formal.is_empty():
 		var selected := parent._region_selected_bind_source(source_data, slot)
-		if not selected.ok: return replay_site_to(target, budget_usec, max_steps)
+		if not selected.ok:
+			if _replay_target < 0.0: _replay_trace("unselected %s %s" % [str(identity.site_id), JSON.stringify(selected).left(200)])
+			return replay_site_to(target, budget_usec, max_steps)
 		_region_cold_formal = {"slot": slot, "parent": parent, "source_data": source_data,
 			"source_sha256": str(identity.source_sha256), "selected_proof": selected.proof.duplicate(true),
 			"generation": int(slot._marker.get("generation", -1)), "target": target}
@@ -13448,9 +13521,12 @@ func _region_cold_formal_admission() -> Dictionary:
 	if _region_owner_restore_receipt.get("owners_restored") != true or _region_owner_restore_receipt.get("effects_complete") != true \
 		or bool(_region_bind_receipt_value.get("zero_world_only", false)):
 		return SiteRuntime.fail("COLD_EFFECTS_PENDING")
-	# A deferred original world endpoint is never swept through by an idle macro.
+	# A deferred original world endpoint is never swept through by an idle macro. The hour steps of a long absence end at
+	# their prefix, two hours before the target: an event at the target itself (the arrival this catch-up is made for) lies
+	# in the exact tail. Until 2026-11-26 it sent every catch-up for an arriving party down the step-by-step path.
+	var swept_to := float(_region_cold_isolated.prefix_end) if bool(_region_cold_isolated.get("coarse", false)) else float(_region_cold_formal.target)
 	for event: Dictionary in slot.pending_region_events():
-		if float(event.get("at", INF)) <= float(_region_cold_formal.target) + ACTION_TIME_EPSILON:
+		if float(event.get("at", INF)) <= swept_to + ACTION_TIME_EPSILON:
 			return SiteRuntime.fail("COLD_WORLD_ENDPOINT_PENDING")
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
 	var interval := _next_fire_replay_interval()

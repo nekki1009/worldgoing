@@ -22,6 +22,9 @@ const Aftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd")
 const RegionTravelRules = preload("res://scripts/region_lab/region_travel.gd")
 const SiteFiles = preload("res://scripts/terrain_lab/site_store.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
+const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
+const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
+const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 
 const CIVIL_WEIGHT := 0.5
 const ODDS := 8.0
@@ -47,7 +50,68 @@ static func summary_of(state: Dictionary) -> Dictionary:
 		var faction := str(int(actor.get("faction_id", -1)))
 		if not people.has(faction): people[faction] = {"armed": 0, "civil": 0}
 		people[faction]["civil" if str(actor.get("military_role", "")) == "civilian" else "armed"] += 1
-	return {"owner": owner, "stock": Aftermath.stock_of(state, owner) if owner >= 0 else {}, "people": people}
+	return {"owner": owner, "stock": Aftermath.stock_of(state, owner) if owner >= 0 else {}, "people": people, "living": living_of(state, owner)}
+
+## 居民吃飯 L2 (reports/scenario-village-livelihood-plan.md): what goes on in a settlement that farms and eats while nobody
+## looks: {state (the part of its saved state a day reads), eaters, pantry (rations), first (its file's day)}, {} where no
+## meals are served. Reads only; the caller owns the parts it copies.
+static func living_of(state: Dictionary, owner: int) -> Dictionary:
+	if owner < 0 or not ResidentLife.meals_on(state): return {}
+	var eaters := 0
+	for army: Variant in state.get("armies", []):
+		if not army is Dictionary or int(army.get("faction_id", -1)) != owner: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and float(unit.get("hp", 0.0)) > 0.0: eaters += 1
+	var pantry := 0.0
+	for entry: Variant in state.get("team_supply", {}).values():
+		if not entry is Dictionary: continue
+		var places: Array = entry.get("locations", {}).values() if int(entry.get("version", 0)) == 3 else [{"inventory": entry.get("inventory", {}), "open_rations": entry.get("sustain", {}).get("open_rations", 0.0)}]
+		for place: Variant in places:
+			pantry += float(place.get("open_rations", 0.0))
+			for food: String in SiteSustain.FOODS: pantry += float(place.get("inventory", {}).get(food, 0))
+	var features := {}
+	for house_id: Variant in state.get("households", {}):
+		var at := str(state.households[house_id].get("job", {}).get("feature", ""))
+		if state.get("features", {}).has(at): features[at] = state.features[at].duplicate(true)
+	var stockpiles := {}
+	for key: String in Aftermath.warehouses(state, owner):
+		features[key] = state.features[key].duplicate(true)
+		stockpiles[key] = {"cargo": state.stockpiles[key].cargo.duplicate(true), "holder": {"version": int(state.stockpiles[key].holder.version)}}
+	return {"eaters": eaters, "pantry": pantry, "first": Calendar.day_index(float(state.get("minute", 0))),
+		"state": {"settlement": state.settlement.duplicate(true), "inventory": state.get("inventory", {}).duplicate(true), "capacity": int(state.get("capacity", 0)),
+			"households": state.get("households", {}).duplicate(true), "housing": state.get("housing", {}).duplicate(true), "features": features, "stockpiles": stockpiles}}
+
+## The stock of a settlement nobody opened, now: its saved one after its people's harvests and meals since, by the same
+## daily rules a long absence is settled by (ResidentWork.daily_production, SiteResidentLife). `read` = its summary, which
+## keeps where the projection got to. Skill, mood and the raids of the meantime are not in it (debts: stock_left).
+static func stock_now(slot: Variant, read: Dictionary) -> Dictionary:
+	var living: Dictionary = read.get("living", {})
+	if living.is_empty(): return read.stock
+	var today := Calendar.day_index(float(slot.control.logical_game_seconds) / 60.0)
+	if not read.has("run"): read["run"] = {"day": int(living.first), "state": living.state, "minutes": {}, "pantry": float(living.pantry)}
+	var run: Dictionary = read.run
+	if today <= int(living.first): return read.stock
+	var climate: Variant = slot.control.get("faction_registry", {}).get("climate", {})
+	run.state["climate_enabled"] = climate is Dictionary and climate.get("enabled") == true
+	while int(run.day) < today:
+		run.day = int(run.day) + 1
+		run.state["minute"] = Calendar.day_start_minute(int(run.day))
+		ResidentWork.daily_production(run.state, run.minutes)
+		ResidentLife._choose_recipes(run.state, int(read.owner))
+		run.pantry = maxf(0.0, float(run.pantry) - float(living.eaters))
+		var given := {"moved": 0, "short": 0}
+		ResidentLife._fill(run.state, int(read.owner), {}, float(run.pantry), int(living.eaters) * ResidentLife.PANTRY_DAYS, given)
+		run.pantry = float(run.pantry) + float(given.moved)
+	# What today's meals took so far (one every six hours from midnight on) is filled up from the stock too.
+	var stock := Aftermath.stock_of(run.state, int(read.owner))
+	var eaten := roundi(float(living.eaters) * 0.25 * float(Calendar.minute_of_day(float(slot.control.logical_game_seconds) / 60.0) / 360 + 1))
+	for food: String in ResidentLife.FOOD_ORDER:
+		var n := mini(eaten, int(stock.get(food, 0)))
+		if n <= 0: continue
+		stock[food] = int(stock[food]) - n
+		if int(stock[food]) <= 0: stock.erase(food)
+		eaten -= n
+	return stock
 
 ## The summary of the Site file `key` ("x:y") names now: {ok, summary} or a refusal. A file is read once (its sha256 is the
 ## key): 2 to 5 ms for an unopened Site of the demo scenario (measured 2026-11-25).
@@ -129,7 +193,7 @@ static func known_settlements(slot: Variant, band: int, lair: String) -> Array:
 		var people: Dictionary = read.summary.people
 		if not people.has(str(owner)): continue # nobody of the owner's is left to lose anything
 		targets.append({"kind": "settlement", "id": id, "site_id": id, "strength": estimate(people, band), "defence": defence(people, band), "faction": owner, "far": true, "open": false,
-			"stock": stock_left(slot, id, read.summary.stock)})
+			"stock": stock_left(slot, id, stock_now(slot, read.summary))})
 	return targets
 
 ## The same for an open Site (the active one or a bound cold owner), from its living people; {} when it is no settlement.
@@ -204,20 +268,17 @@ static func debts(slot: Variant, id: String) -> Dictionary:
 		for item: String in row.taken: result.taken[item] = int(result.taken.get(item, 0)) + int(row.taken[item])
 	return result
 
-## Takes what the Site owes out of its opened body (the camp stock first, then the warehouses): called once when the
-## Site's saved file becomes living bodies, before its catch-up runs. Returns the rows applied.
-static func apply_to(slot: Variant, data: TerrainData) -> Array:
-	if slot == null or data == null or data.site.is_empty(): return []
-	var id := str(data.site.get("id", ""))
-	var owed := debts(slot, id)
-	if owed.rows.is_empty(): return []
+## Takes `wanted` {item: n} out of a Site's body: the camp stock first, then the owner's warehouses, then what its people
+## keep to eat. Returns what it got.
+static func take(data: TerrainData, wanted: Dictionary) -> Dictionary:
 	var site: Dictionary = data.site
 	var settlement: Variant = site.get("settlement", {})
 	var owner := int(settlement.get("owner_faction", -1)) if settlement is Dictionary else -1
 	if not site.get("inventory") is Dictionary: site["inventory"] = {}
 	var keys: Array[String] = Aftermath.warehouses(site, owner)
-	for item: String in owed.taken:
-		var left := int(owed.taken[item])
+	var got := {}
+	for item: String in wanted:
+		var left := int(wanted[item])
 		for source: String in ["inventory"] + keys:
 			if left <= 0: break
 			var holder: Dictionary = site.inventory if source == "inventory" else site.stockpiles[source].cargo
@@ -227,7 +288,55 @@ static func apply_to(slot: Variant, data: TerrainData) -> Array:
 			if int(holder[item]) <= 0: holder.erase(item)
 			left -= n
 			if source != "inventory": site.stockpiles[source].holder["version"] = int(site.stockpiles[source].holder.version) + 1
+		if left > 0 and item in SiteSustain.FOODS and ResidentLife.meals_on(site):
+			for entry: Variant in site.get("team_supply", {}).values():
+				var places: Array = entry.locations.values() if int(entry.get("version", 0)) == 3 else [entry]
+				for place: Dictionary in places:
+					var n := mini(left, int(place.get("inventory", {}).get(item, 0)))
+					if n <= 0: continue
+					place.inventory[item] = int(place.inventory[item]) - n
+					if int(place.inventory[item]) <= 0: place.inventory.erase(item)
+					entry["revision"] = int(entry.get("revision", 0)) + 1
+					left -= n
+		if left < int(wanted[item]): got[item] = int(wanted[item]) - left
 	data.environment_revision += 1
+	return got
+
+## A long absence: the raids of the meantime take their loot on their own day. `rows` = debts().rows of the Site, `done`
+## {item: n} is what has been taken so far (kept for apply_to).
+static func take_due(data: TerrainData, rows: Array, done: Dictionary) -> void:
+	var now := (float(data.site.get("minute", 0)) + float(data.site.get("phase", 0.0))) * 60.0
+	for row: Dictionary in rows:
+		if bool(row.get("due_done", false)) or float(row.day) * float(Bandit.DAY) > now: continue
+		row["due_done"] = true
+		var got := take(data, row.taken)
+		for item: String in got: done[item] = int(done.get(item, 0)) + int(got[item])
+
+## The end of the catch-up (TerrainLab._region_finish_cold_replay, before the body is captured): what the raids of the
+## meantime have not got yet.
+static func take_rest(data: TerrainData, rows: Array, done: Dictionary) -> void:
+	var rest := {}
+	for row: Dictionary in rows:
+		for item: String in row.taken: rest[item] = int(rest.get(item, 0)) + int(row.taken[item])
+	for item: String in rest.keys():
+		rest[item] = int(rest[item]) - int(done.get(item, 0))
+		if int(rest[item]) <= 0: rest.erase(item)
+	if rest.is_empty(): return
+	var got := take(data, rest)
+	for item: String in got: done[item] = int(done.get(item, 0)) + int(got[item])
+
+## Takes what the Site owes out of its body at once, and leaves the news of it. Returns the rows applied.
+static func apply_to(slot: Variant, data: TerrainData) -> Array:
+	if slot == null or data == null or data.site.is_empty(): return []
+	var owed := debts(slot, str(data.site.get("id", "")))
+	if owed.rows.is_empty(): return []
+	take_rest(data, owed.rows, {})
+	return leave_news(slot, str(data.site.get("id", "")))
+
+## The news of the raids the Site owes for: called once when its saved file has become living bodies. Returns the rows.
+static func leave_news(slot: Variant, id: String) -> Array:
+	var owed := debts(slot, id)
+	if owed.rows.is_empty(): return []
 	# A Site's notices are not kept over its catch-up: the news waits on the slot until somebody stands there (tell).
 	var news: Dictionary = slot.get_meta(&"bandit_loot_news", {})
 	news[id] = []

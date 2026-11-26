@@ -323,7 +323,11 @@ static void safe_load() {
   if(siege)job.cancel_siege_step(0);else job.cancel_housing_step(0);
   REQUIRE(siege?job.order_siege_step(0,next):job.order_housing_step(0,next));job.apply_contact(0,0,rules::STUN_LIMIT);
   REQUIRE(job.ko[0]>0 && job.escort_goal[0]==next && job.escort_mode[0]==(siege?6:4));
-  REQUIRE(job.validate(&why));REQUIRE(!job.validate(&why,false));REQUIRE(siege?!job.save().empty():job.save().empty()); // KW21: a siege step in progress saves; a housing step does not (G10)
+  REQUIRE(job.validate(&why));REQUIRE(!job.validate(&why,false));REQUIRE(!job.save().empty()); // KW21: a siege step in progress saves
+  if(!siege) { // A housing step under way saves as a body standing where it is, without the step; the live one goes on (2026-11-26).
+   const auto mid=job.save();World back(1);REQUIRE(back.load(mid));REQUIRE(back.escort_mode[0]==0 && back.escort_goal[0]==-1 && back.ko[0]==job.ko[0] && back.px[0]==job.px[0] && back.py[0]==job.py[0]);
+   REQUIRE(job.escort_goal[0]==next && job.escort_mode[0]==4 && back.save()==mid);
+  }
  }
 
  auto corrupt_bool=[&](const std::function<void(World&)>&toggle) { World z(1);REQUIRE(z.load(bytes));toggle(z);auto other=z.save();size_t changed=bytes.size();for(size_t k=0;k<bytes.size();++k)if(bytes[k]!=other[k]){changed=k;break;}REQUIRE(changed<bytes.size());other=bytes;other[changed]=2;bad(other); };

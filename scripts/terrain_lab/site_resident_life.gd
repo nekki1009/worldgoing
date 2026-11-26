@@ -94,11 +94,135 @@ static func pantry(controller: Variant, team: Variant, house_id: String) -> Dict
 	if entry.is_empty() or int(entry.get("version", 0)) != 3: return {}
 	return entry.locations.get(Households.food_key(house_id), {})
 
+# --- 居民吃飯 F1 (reports/scenario-village-livelihood-plan.md; the rations of civilian plan §4.4, Q4 A) -----------------
+## Where a settlement's record says `meals` (the settlements of a new scenario world), its people are fed once a game day
+## from its own stock, the camp's first, then its warehouses': every household's pantry is filled up to PANTRY_DAYS rations
+## a member, and the stock of its teams without houses (the militia, a garrison) the same. Real food only; what is not
+## there is not given, and hunger follows its one authority (SiteSustain).
+const PANTRY_DAYS := 3
+const FOOD_ORDER := ["grain", "wild_food", "fish", "meat"]
+
+## Where a settlement feeds its people they take their ration along (a field is worked over two meals, and at a fast clock
+## the way home is hours of it: asking for the doorstep starved whoever worked, found 2026-11-26). In a fight only who is
+## home eats.
+static func meals_anywhere(state: Dictionary) -> bool:
+	return meals_on(state) and float(state.get("combat_left", 0.0)) <= 0.0
+
+static func meals_on(state: Dictionary) -> bool:
+	var settlement: Variant = state.get("settlement", {})
+	return settlement is Dictionary and int(settlement.get("meals", 0)) == 1
+
+## One day's rations. {moved, short, refused: [codes]}; a team that cannot open its ledger now (it is moving) is in `refused`.
+static func ration_day(controller: Variant) -> Dictionary:
+	var lab: Variant = controller.lab
+	var result := {"moved": 0, "short": 0, "refused": []}
+	if lab == null or lab.terrain == null or not meals_on(lab.terrain.site): return result
+	var state: Dictionary = lab.terrain.site
+	var owner := int(state.settlement.owner_faction)
+	_choose_recipes(state, owner)
+	for team: Variant in lab.team_owners():
+		if team == null or not team.combat_enabled or int(team.faction_id) != owner: continue
+		var living: Array[int] = []
+		var homeless := 0
+		for index: int in _indices(team):
+			var identity: int = team.combat_identity(index)
+			if not team.is_member(index) or float(team.combat_hot_get(index, &"hp", 0.0)) <= 0.0 or bool(team.combat_hot_get(index, &"captive", false)): continue
+			living.append(identity)
+			if Households.house_of(state, identity).is_empty(): homeless += 1
+		if living.is_empty(): continue
+		if homeless < living.size():
+			# A resident without a house has no pantry to eat from: such a team is not put on household food at all.
+			if homeless > 0:
+				result.refused.append("HOMELESS")
+				continue
+			var opened := open_pantries(controller, team)
+			if not opened.ok:
+				result.refused.append(str(opened.get("code", "")))
+				continue
+			var entry: Dictionary = controller._supply_entry(team)
+			var people := {}
+			for identity: int in living:
+				var house_id := Households.house_of(state, identity)
+				people[house_id] = int(people.get(house_id, 0)) + 1
+			var before := int(result.moved)
+			var lived := team_houses(controller, team)
+			# What a house nobody of the team lives in any more still holds goes back to the camp.
+			for key: String in entry.locations.keys():
+				if not key.begins_with("house:") or lived.has(key.trim_prefix("house:")): continue
+				for food: String in entry.locations[key].inventory:
+					state["inventory"][food] = int(state.get("inventory", {}).get(food, 0)) + int(entry.locations[key].inventory[food])
+				entry.locations.erase(key)
+				entry["revision"] = int(entry.revision) + 1
+			for house_id: String in lived:
+				var location: Dictionary = entry.locations.get(Households.food_key(house_id), {})
+				if not location.is_empty(): _fill(state, owner, location.inventory, float(location.open_rations), int(people.get(house_id, 0)) * PANTRY_DAYS, result)
+			if int(result.moved) != before: entry["revision"] = int(entry.revision) + 1
+			continue
+		var fed: Dictionary = controller._supply_entry(team)
+		if fed.is_empty():
+			var enabled: Dictionary = controller.captivity_supply.enable_team(team)
+			if not enabled.ok:
+				result.refused.append(str(enabled.get("code", "")))
+				continue
+			fed = enabled.entry
+		if int(fed.get("version", 0)) != 2 or not fed.get("delivery", {}).is_empty(): continue
+		var had := int(result.moved)
+		_fill(state, owner, fed.inventory, float(fed.sustain.get("open_rations", 0.0)), living.size() * PANTRY_DAYS, result)
+		if int(result.moved) != had: fed["revision"] = int(fed.revision) + 1
+	if int(result.moved) > 0: lab.terrain.environment_revision += 1
+	return result
+
+## The settlement's fields keep seed while little is left (the 留種 recipe, 1 seed -> 6 grain and 2 seeds) and grow plain
+## grain (1 -> 8) when there is plenty; a batch already begun is finished first.
+const SEEDS_LOW := 20
+const SEEDS_PLENTY := 60
+static func _choose_recipes(state: Dictionary, owner: int) -> void:
+	var seeds := int(state.get("inventory", {}).get("seeds", 0))
+	if seeds >= SEEDS_LOW and seeds < SEEDS_PLENTY: return
+	for key: Variant in state.get("features", {}):
+		var farm: Dictionary = state.features[key]
+		if str(farm.get("kind", "")) != "farm" or str(farm.get("stage", "")) != "complete" or int(farm.get("owner_faction", -1)) != owner: continue
+		if int(farm.get("layout_version", 0)) != Runtime.BUILDING_LAYOUT_VERSION or bool(farm.get("batch_paid", false)) or float(farm.get("production", 0.0)) > 0.0 or farm.has("pending_build"): continue
+		if seeds < SEEDS_LOW: farm["recipe_id"] = "retain_seed"
+		else: farm.erase("recipe_id")
+
+## Moves food from the settlement's stock into `pantry` until it holds `want` rations (an opened one counts).
+static func _fill(state: Dictionary, owner: int, pantry: Dictionary, open_rations: float, want: int, result: Dictionary) -> void:
+	var need := ceili(float(want) - open_rations)
+	for food: String in SiteSustain.FOODS: need -= int(pantry.get(food, 0))
+	if need <= 0: return
+	var holders: Array = [state.get("inventory", {})]
+	var keys: Array[String] = _warehouses(state, owner)
+	for key: String in keys: holders.append(state.stockpiles[key].cargo)
+	for food: String in FOOD_ORDER:
+		for at: int in holders.size():
+			if need <= 0: return
+			var holder: Dictionary = holders[at]
+			var n := mini(need, int(holder.get(food, 0)))
+			if n <= 0: continue
+			holder[food] = int(holder[food]) - n
+			if int(holder[food]) <= 0: holder.erase(food)
+			pantry[food] = int(pantry.get(food, 0)) + n
+			if at > 0: state.stockpiles[keys[at - 1]].holder["version"] = int(state.stockpiles[keys[at - 1]].holder.version) + 1
+			need -= n
+			result.moved = int(result.moved) + n
+	if need > 0: result.short = int(result.short) + need
+
+## The owner's complete warehouses with a stockpile, sorted (as SiteBanditAftermath.warehouses).
+static func _warehouses(state: Dictionary, owner: int) -> Array[String]:
+	var keys: Array[String] = []
+	for key: Variant in state.get("stockpiles", {}):
+		var feature: Variant = state.get("features", {}).get(key, {})
+		if feature is Dictionary and str(feature.get("kind", "")) == "warehouse" and str(feature.get("stage", "")) == "complete" and int(feature.get("owner_faction", -1)) == owner: keys.append(str(key))
+	keys.sort()
+	return keys
+
 ## The food location a member eats from in his own house: his registered house's key while he stands on its door rest
 ## cell, else "" (ship_food_locations then tries the shore rules).
 static func member_house_key(controller: Variant, identity: int, cell: Vector2i, locations: Dictionary) -> String:
 	var registered: Dictionary = Housing.relation(controller.lab, identity)
 	if registered.is_empty(): return ""
 	var key := Households.food_key(str(registered.house_id))
-	if not locations.has(key) or controller.lab.terrain.index(cell) != int(registered.cell): return ""
+	if not locations.has(key): return ""
+	if controller.lab.terrain.index(cell) != int(registered.cell) and not meals_anywhere(controller.lab.terrain.site): return ""
 	return key

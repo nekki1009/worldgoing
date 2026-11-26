@@ -76,6 +76,9 @@ static func depart(controller: Variant, people: Array, outlaw: bool) -> Dictiona
 		if identity == player or person.is_empty() or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)) or controller.person_actions.is_busy(identity): continue
 		free.append(identity)
 	if free.is_empty(): return Runtime.fail("NO_TARGET", "沒有可離開的成員")
+	# Who leaves stops his work for the settlement; the step he is in ends first (NOT_READY until then).
+	for identity: int in free:
+		if controller.work_team.is_assigned(identity): controller.work_team.cancel(identity)
 	var head := free[0]
 	# Gather: the head leaves into his own neutral team, the others join him.
 	# A head who already stands alone (his own one-person team) keeps it; otherwise he leaves into his own neutral team.

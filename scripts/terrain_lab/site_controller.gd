@@ -5222,8 +5222,21 @@ func _person_died(identity: int) -> void:
 ## Set while the day's hooks wait for the Site's Region point to close (never saved: a reload runs them at once).
 var daily_hooks_due := false
 
+## 居民吃飯 F1: a settlement that feeds its people does so once a game day (SiteResidentLife.ration_day); a team that was on
+## the move is asked again at the next game hour.
+var last_rations: Dictionary = {}
+func resident_rations_day() -> void:
+	if lab == null or lab.terrain == null or not ResidentLife.meals_on(lab.terrain.site): return
+	var hour := int(lab.terrain.site.get("minute", 0)) / 60
+	var day := int(lab.terrain.site.get("minute", 0)) / 1440
+	if int(get_meta(&"ration_done_day", -1)) == day or int(get_meta(&"ration_hour", -1)) == hour: return
+	set_meta(&"ration_hour", hour)
+	last_rations = ResidentLife.ration_day(self)
+	if last_rations.refused.is_empty(): set_meta(&"ration_done_day", day)
+
 func run_daily_hooks() -> void:
 	daily_hooks_due = false
+	resident_rations_day()
 	BanditDay.day(self)
 	BanditSuppression.day(self) # 官方剿匪: the settlement's official owner may send an expedition against a hot band
 	resident_exodus_day()
@@ -5238,10 +5251,11 @@ func settle_person_deaths(real_seconds: float) -> void:
 	# The daily hooks that may send a team onto the Region map (a band's raid or way home, emigrants, a caravan) need the
 	# Site at rest: inside the Site's own Region point every transfer snapshot is refused. While a point is open they are
 	# only marked due; TerrainLab runs them between two steps (run_daily_hooks), the state the hooks were written for.
-	if lab != null and region_slot != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching):
+	if region_slot != null and _in_region_point():
 		daily_hooks_due = true
 	else:
 		run_daily_hooks()
+		if region_slot == null: run_rest_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	if has_meta(&"fence_heat_due"): TradeSession.Fence.flush(self) # 土匪 B5b: a fence sale's heat, saved at rest
 	if region_slot != null and region_slot.has_meta(&"bandit_attacked_due"): BanditAttacked.flush(self) # Nekki 2026-11-22 B: an official attack's heat, saved at rest by the active Site
@@ -5602,9 +5616,10 @@ func _supply_location_valid(team: Variant, key: String) -> bool:
 		var index := int(key.trim_prefix("shore:"))
 		return index >= 0 and index < lab.terrain.size.x * lab.terrain.size.y and lab.terrain.is_walkable(lab.terrain.cell_from_index(index))
 	if key.begins_with("house:"):
-		# 平民 C1b: a pantry is a completed house of the team's own faction.
+		# 平民 C1b: a pantry is a house (open_pantries opens those the team's members live in). One that burned down or fell to
+		# another side feeds nobody (nobody is registered there); it must not stop the whole team's meals until it is cleared.
 		var house: Dictionary = lab.terrain.site.get("features", {}).get(key.trim_prefix("house:"), {})
-		return str(house.get("kind", "")) == "house" and int(house.get("owner_faction", -1)) == int(team.faction_id)
+		return house.is_empty() or str(house.get("kind", "")) == "house"
 	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(key.trim_prefix("vehicle:"), {})
 	return SiteVehicleTransport.is_ship(vehicle) and int(vehicle.get("team_id", -1)) == team.team_id
 
@@ -5624,8 +5639,18 @@ func ship_food_locations(team: Variant, members: Dictionary, candidate_locations
 	var locations: Dictionary = entry.get("locations", {}) if candidate_locations.is_empty() else candidate_locations
 	var keys := locations.keys()
 	keys.sort()
+	# 居民吃飯 F1: a team that eats from its pantries alone (no ship, no shore) is asked every step: at most where each member
+	# stands is read, not the whole person.
+	var pantries: bool = _crowd_active() and not keys.is_empty() and keys.all(func(key: String) -> bool: return key.begins_with("house:"))
+	var anywhere: bool = pantries and ResidentLife.meals_anywhere(lab.terrain.site)
 	for id: int in members:
 		result[id] = ""
+		if pantries and lab.crowd_site.contains_person(id):
+			var registered: Dictionary = ResidentLife.Housing.relation(lab, id)
+			var pantry := ResidentLife.Households.food_key(str(registered.get("house_id", "")))
+			if registered.is_empty() or not locations.has(pantry): continue
+			if anywhere or lab.terrain.index(lab.crowd_site.combat_target(id).cell) == int(registered.cell): result[id] = pantry
+			continue
 		var person := _supply_person(id)
 		if person.is_empty():
 			continue
@@ -12655,7 +12680,7 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			# 示範劇本 steps 2-3: the scenario's armed teams, offices and stock of the start Site.
 			var start_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
 			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, start_site))
-			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", start_site), _scenario_rows_of(candidate, "stock", start_site))
+			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", start_site), _scenario_rows_of(candidate, "stock", start_site), _scenario_rows_of(candidate, "livelihood", start_site))
 			if birth.ok: _note_scenario_leaders(start_site, birth.data)
 		else:
 			# Same original Slot has already frozen/validated this policy.
@@ -12696,7 +12721,7 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 		if not populated.ok: return populated
 		if not teams.is_empty(): populated = lab.prepare_initial_author_teams(populated.data, teams)
 		if not populated.ok: return populated
-		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock)
+		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock, _scenario_rows_of(candidate, "livelihood", companion))
 		if not populated.ok: return populated
 		births[companion] = populated.data
 		_note_scenario_leaders(companion, populated.data)
@@ -15226,6 +15251,12 @@ func _native_sustain_due_candidate(held: Dictionary, payments: Array) -> Diction
 				var opened: float = float(debit.get("open_rations", 0.0))
 				if opened < 0.0 or float(stock[source.key].open_rations) < opened: return Runtime.fail("MATERIALS")
 				stock[source.key].open_rations = float(stock[source.key].open_rations) - opened
+	# A ledger a residue short of its meal is at it. advance_crowd_sustain moves no ledger over a window of 1e-9 game seconds
+	# or less, so a meal 1.2e-10 ahead cut every later window to that and was never reached: the Site clock stood still
+	# (REGION_CROWD_REPLAY_STALLED; found 2026-11-26, the noon meal of a settlement settled off-screen).
+	for cohort: Dictionary in state.cohorts:
+		var short := float(cohort.meal_until) - float(state.at)
+		if short > 0.0 and short <= Sustain.EPS: state["at"] = float(cohort.meal_until)
 	var before: Dictionary = stock.duplicate(true)
 	var reader: Callable = func(identity: int, field: StringName) -> Variant:
 		return held.life[identity][String(field)] if held.life.has(identity) and held.life[identity].has(String(field)) else held.members.get(identity, {}).get(String(field))
@@ -15463,6 +15494,21 @@ var coarse_offline := false
 
 ## 平民 C3c (option A): an NPC 營務 decider drafts the residents when an alarm finds no fight yet, and releases them once
 ## the alarm is over. A controlled decider decides himself (SiteMilitia.draft / release).
+## What moves people between teams needs the Site at rest: a step has its food window prepared, and a ledger that changes
+## inside it faults the step (STALE_SOURCE; found 2026-11-26, the militia of a settlement that feeds its people was
+## released in the middle of one). Inside a point it waits for TerrainLab._region_run_due_daily_hooks (a replay's own
+## controller, without a slot, runs it where it runs its daily hooks).
+var militia_due := -1 # 1 a draft under alarm, 0 a release, -1 nothing
+func _in_region_point() -> bool:
+	return lab != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching)
+
+func run_rest_hooks() -> void:
+	if militia_due >= 0:
+		var alarm := militia_due == 1
+		militia_due = -1
+		_militia_auto(alarm)
+	if has_meta(ResidentExodus.PENDING): ResidentExodus.dispatch_pending(self)
+
 func _militia_auto(alarm: bool) -> void:
 	if Settlement.record(lab.terrain).is_empty(): return
 	var allowed: Dictionary = Militia.authority(lab, -1)
@@ -15477,7 +15523,8 @@ var _resident_fighting := false
 ## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
 func resident_schedule_tick() -> void:
 	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)) or coarse_offline: return
-	if has_meta(ResidentExodus.PENDING): ResidentExodus.dispatch_pending(self) # 平民 C4b: gathered emigrants leave once seated.
+	var inside := _in_region_point()
+	if has_meta(ResidentExodus.PENDING) and not inside: ResidentExodus.dispatch_pending(self) # 平民 C4b: gathered emigrants leave once seated.
 	if lab.terrain.site.get("housing", {}).is_empty(): return
 	var minute := float(lab.terrain.site.get("minute", 0))
 	var check := ResidentSchedule.check_index(minute)
@@ -15489,7 +15536,8 @@ func resident_schedule_tick() -> void:
 	if check != _resident_check and ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
 	_resident_check = check
 	if ResidentSchedule.danger(lab): resident_alarm_until = minute + ResidentSchedule.ALARM_HOLD_MINUTES
-	_militia_auto(minute < resident_alarm_until)
+	if inside: militia_due = int(minute < resident_alarm_until)
+	else: _militia_auto(minute < resident_alarm_until)
 	last_resident_schedule = ResidentSchedule.drive(self, minute, minute < resident_alarm_until)
 	last_resident_schedule["alarm"] = minute < resident_alarm_until
 
