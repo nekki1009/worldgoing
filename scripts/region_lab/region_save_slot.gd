@@ -200,7 +200,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 	pin = expected
 	folder = location
 	_initialization = pending_record
+	PerfTraceSlot.mark("open_pinned")
 	var recovered := _recover_control()
+	PerfTraceSlot.mark("open_recovered")
 	if not recovered.ok: return recovered
 	if not manifest_exists and _initialization.is_empty():
 		# Never treat an arbitrary partial directory as a new world. This path
@@ -228,7 +230,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			if not finalized.ok: return finalized
 		elif not prepare_new:
 			return fail("INITIALIZATION_PENDING", "原開局尚無已提交世代，請接續同一建立請求")
+	PerfTraceSlot.mark("open_initialized")
 	var persons: Dictionary = _open_person_allocator(prepare_new)
+	PerfTraceSlot.mark("open_persons")
 	if not persons.ok: return persons
 	return {"ok": true, "person_upgrade": persons.get("upgrade_refused", {}), "path": manifest_path, "initialization_pending": initialization_pending(), "initialization_committed": not _marker.is_empty()}
 
@@ -6931,6 +6935,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 		for other: Vector2i in _initial_site_coordinates():
 			if other == coordinate.site: continue
 			var companion: Dictionary = _author_companion_candidate(other)
+			PerfTraceSlot.mark("slot_companion_candidate")
 			if not companion.ok: return companion
 			companions.append(companion)
 	var original_control := control.duplicate(true)
@@ -7013,7 +7018,9 @@ func _initial_site_coordinates() -> Array:
 # P5C-S2: companion birth state. Terrain only; any authored population is refused
 # here and waits for P5C-S3. Mirrors open_site's fresh genesis for an uncontrolled Site.
 func _author_companion_candidate(site: Vector2i) -> Dictionary:
+	PerfTraceSlot.mark("candidate_begin")
 	var projected: Dictionary = source.project_terrain(site, "author_initial")
+	PerfTraceSlot.mark("candidate_projected")
 	if not projected.ok: return projected
 	if not _matches_base(projected.base, site): return fail("SAVE_VERSION", "固定地圖版本已變更")
 	var data: TerrainData = projected.data
@@ -7029,7 +7036,9 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 	var refreshed: Dictionary = _refresh_boundaries(data, site)
 	if not refreshed.ok: return refreshed
 	data.site.world_pin = pin.duplicate(true)
+	PerfTraceSlot.mark("candidate_refreshed")
 	var genesis: Dictionary = _settle_cold_candidate(data, float(control.logical_game_seconds))
+	PerfTraceSlot.mark("candidate_settled")
 	if not genesis.ok: return genesis
 	data = genesis.data
 	if not _fire_history_empty(data.site): return fail("INVALID_NEW_SITE", "新地點已存在原火攻歷史")
@@ -13566,11 +13575,13 @@ func _open_person_allocator(prepare_new: bool) -> Dictionary:
 	if _marker.is_empty() and prepare_new:
 		var sources: Array = []
 		for pair: Array in source.author_initial_context().get("expected_initial_sites", []):
-			var initial: Dictionary = source.project_terrain(Vector2i(int(pair[0]), int(pair[1])), "author_initial")
-			if not initial.ok: return initial
-			var projection: Dictionary = person_projection(initial.data.site)
+			var at := Vector2i(int(pair[0]), int(pair[1]))
+			# Only the authored state's people count here. Its projection (a tile build and the state checks, about half a
+			# second a Site, 46 at a scenario birth plus their neighbours) runs where the body is used (開局速度 2026-11-27).
+			var state: Dictionary = source.author_initial_state(at)
+			var projection: Dictionary = person_projection(state)
 			if projection.bodies.is_empty(): projection.next_person_id = 1
-			sources.append({"projection": projection, "location": {"kind": "site", "id": str(initial.data.site.get("id", initial.base.site_id))}})
+			sources.append({"projection": projection, "location": {"kind": "site", "id": str(state.get("id", Grid.site_id(str(pin.atlas_id), at)))}})
 		prepared = person_migration(str(pin.world_instance_id), sources)
 	else: prepared = prepare_person_migration()
 	if not prepared.ok:

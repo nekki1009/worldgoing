@@ -1169,7 +1169,7 @@ func make_author_draft(site: Vector2i, raw: Dictionary, revision: int) -> Dictio
 	return candidate.make_terrain_data(site.x, site.y)
 
 func _initial_body(site: Vector2i) -> Dictionary:
-	var built: Dictionary = make_terrain_data(site.x, site.y)
+	var built: Dictionary = RegionRoute.fresh_fixed_base(self, site) # a private copy of the Site's one tile build (開局速度)
 	if not bool(built.get("ok", false)): return built
 	var key: String = "%d:%d" % [site.x, site.y]
 	var data: TerrainData = built.data
@@ -1193,6 +1193,13 @@ func _initial_body(site: Vector2i) -> Dictionary:
 	state.erase("world_pin")
 	var navigation: TerrainData = SiteEnvironment.navigation_for_state(data, state)
 	return {"ok": true, "data": navigation, "base": built.base, "metadata": built.metadata}
+
+## The authored initial state of `site` as the package holds it (a copy), {} where the package authors none. Nothing is
+## checked here: a projection checks it where the body is used. For what needs only the state's people
+## (RegionSaveSlot._open_person_allocator; 開局速度, 2026-11-27: projecting every Site there cost a minute of a birth).
+func author_initial_state(site: Vector2i) -> Dictionary:
+	var key := "%d:%d" % [site.x, site.y]
+	return _author_initial[key].duplicate(true) if _author_initial.has(key) else {}
 
 ## 示範劇本 birth speed: an authored Site body (its state validated by _initial_body), read only and shared, for checks
 ## that never change it (RegionSaveSlot.open_map's resident-house check). {ok, data, base, metadata} or a refusal.

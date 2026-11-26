@@ -12699,6 +12699,7 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 	for companion_site: Vector2i in _initial_companion_births:
 		var supplied: Dictionary = candidate.set_companion_birth(companion_site, _initial_companion_births[companion_site])
 		if not supplied.ok: return supplied
+	PerfTrace.mark("init_companions_set")
 	var prepared_site: Dictionary = candidate.prepare_initial_site(_initial_world_birth_data)
 	PerfTrace.mark("init_site_prepared")
 	return prepared_site
