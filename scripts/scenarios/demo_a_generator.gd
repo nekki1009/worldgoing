@@ -57,6 +57,27 @@ static func _walkable_near_middle(source: RegionData, site: Vector2i) -> Vector2
 		if data.is_walkable(origin): return origin
 	return Vector2i(-1, -1)
 
+## Cells around a field (`origin`, `size`), nearest ring first, up to WELL_RINGS away; only those in the 16x16 ground
+## block `block` unless it is (-1, -1).
+const WELL_RINGS := 6
+static func _well_cells(origin: Vector2i, size: Vector2i, block: Vector2i = Vector2i(-1, -1)) -> Array:
+	var cells: Array = []
+	for ring: int in range(1, WELL_RINGS + 1):
+		for y: int in range(origin.y - ring, origin.y + size.y + ring):
+			for x: int in range(origin.x - ring, origin.x + size.x + ring):
+				var inside := x >= origin.x - ring + 1 and x < origin.x + size.x + ring - 1 and y >= origin.y - ring + 1 and y < origin.y + size.y + ring - 1
+				if inside or x < 6 or y < 6 or x >= Builder.SIDE - 6 or y >= Builder.SIDE - 6: continue
+				if block.x < 0 or Vector2i(x / 16, y / 16) == block: cells.append(Vector2i(x, y))
+	return cells
+
+## The ground blocks around a field, nearest first.
+static func _well_blocks(origin: Vector2i, size: Vector2i) -> Array:
+	var blocks: Array = []
+	for cell: Vector2i in _well_cells(origin, size):
+		var block := Vector2i(cell.x / 16, cell.y / 16)
+		if not blocks.has(block): blocks.append(block)
+	return blocks
+
 static func generate(source: RegionData, folder: String, package_name: String, settlements: int, bands: int, towns: int, seed_value: int, scenario_id: String = "demo_a_kaiken") -> Dictionary:
 	var started := Time.get_ticks_msec()
 	var rng := RandomNumberGenerator.new()
@@ -125,6 +146,7 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 		# without it a village is out of food on day 30 and a town hungry on 28 days, with it nobody is in 420 days).
 		var door: Vector2i = built_terrain.terrain.cell_from_index(int(SiteRuntime.house_layout(built_terrain.terrain, houses[houses.size() / 2]).slots[0]))
 		var fields: Array = []
+		var field_origins: Array = []
 		for _field: int in range(7 if town else 2):
 			var field := {"ok": false, "stage": ""}
 			for steps: int in [26, 60]: # near its houses by foot, if there is room
@@ -132,6 +154,60 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 				if field.ok: break
 			if not field.ok: return {"ok": false, "code": "BUILD", "stage": "%s field at %s" % [str(field.stage), str(site)]}
 			fields.append(str(field.feature))
+			field_origins.append(field.origin)
+		# 2026-11-26: a field is worked only where a well's water reaches its working place (SiteRuntime water: 14 steps; 2.0
+		# a 16x16 ground block, shared by its wells; a 6x6 field asks 1.44, 1.87 in summer); the village well alone reached
+		# none. Each field gets a well beside it in a ground block of its own, the fields with the fewest blocks around them
+		# choosing first; trees are cleared and the well is at most a walk of 12 from the field.
+		var options := {}
+		for at: int in fields.size(): options[at] = _well_blocks(field_origins[at], Vector2i(6, 6))
+		var order: Array = range(fields.size())
+		order.sort_custom(func(a: int, b: int) -> bool: return options[a].size() < options[b].size() or options[a].size() == options[b].size() and a < b)
+		var taken_blocks := {}
+		var well_misses: Array = []
+		for at: int in order:
+			var field_well: Dictionary = {"ok": false, "stage": "no ground block left"}
+			for block: Vector2i in options[at]:
+				if taken_blocks.has(block): continue
+				field_well = Builder.place(source, work, "well", _well_cells(field_origins[at], Vector2i(6, 6), block), Vector2i(1, 1), Vector2i(1, 1), owner, {"foundation": 100, "groundwater": 100}, built_terrain.terrain, field_origins[at] + Vector2i(3, 3), 12)
+				if field_well.ok:
+					taken_blocks[block] = true
+					break
+				well_misses.append([str(fields[at]), [block.x, block.y], str(field_well.stage)])
+			if not field_well.ok: # no block of its own: the water check below says whether a shared one is enough
+				field_well = Builder.place(source, work, "well", _well_cells(field_origins[at], Vector2i(6, 6)), Vector2i(1, 1), Vector2i(1, 1), owner, {"foundation": 100, "groundwater": 100}, built_terrain.terrain, field_origins[at] + Vector2i(3, 3), 12)
+				if not field_well.ok: return {"ok": false, "code": "BUILD", "stage": "%s well of a field at %s" % [str(field_well.stage), str(site)]}
+		# Every field must have its water as the live step allocates it (in key order, from the first well that reaches it):
+		# a field another field drained gets one more well in a ground block nobody uses yet.
+		var short_report := ""
+		for _round: int in range(4):
+			var watered := Builder.prepare(source, work)
+			if not watered.ok: return {"ok": false, "code": "BUILD", "stage": "water at %s: %s" % [str(site), str(watered.stage)]}
+			var worked := {} # water goes only to the working places in use: every field is taken as worked
+			for key: String in fields:
+				var places := {}
+				for place: Dictionary in SiteRuntime.feature_work_slots(watered.terrain, watered.terrain.site.features[key]): places[int(place.slot)] = true
+				worked[key] = places
+			watered.terrain.set_meta(&"site_operating_slots", worked)
+			SiteRuntime.rebuild_water(watered.terrain)
+			var short: Array = []
+			for at: int in fields.size():
+				var status: Dictionary = watered.terrain.site.get("water_status", {}).get(str(fields[at]), {})
+				if float(status.get("demand", 0.0)) <= 0.0 or float(status.get("supplied", 0.0)) < float(status.demand) * 0.999: short.append([at, status])
+			if short.is_empty():
+				short_report = ""
+				break
+			short_report = JSON.stringify(short)
+			for row: Array in short:
+				var at: int = row[0]
+				for block: Vector2i in options[at]:
+					if taken_blocks.has(block): continue
+					var extra: Dictionary = Builder.place(source, work, "well", _well_cells(field_origins[at], Vector2i(6, 6), block), Vector2i(1, 1), Vector2i(1, 1), owner, {"foundation": 100, "groundwater": 100}, built_terrain.terrain, field_origins[at] + Vector2i(3, 3), 12)
+					if extra.ok:
+						taken_blocks[block] = true
+						break
+					well_misses.append([str(fields[at]), [block.x, block.y], str(extra.stage)])
+		if not short_report.is_empty(): return {"ok": false, "code": "BUILD", "stage": "fields without enough water at %s: %s; fields %s; misses %s" % [str(site), short_report, JSON.stringify(fields), JSON.stringify(well_misses)]}
 		livelihood.append({"site": [site.x, site.y], "farms": fields, "camp": {"tools": 6 if town else 3, "seeds": 30, "grain": 140 if town else 45}})
 		# Each house takes as many residents as its rest cells hold (SiteRuntime.house_layout capacity).
 		built_terrain = Builder.prepare(source, work)

@@ -7011,7 +7011,9 @@ static func _technology_actions(data: TerrainData) -> Variant:
 static func _technology_policy(data: TerrainData) -> Dictionary:
 	if not data.site.has("world_pin"): return TechnologyPolicy.new_policy()
 	var pin: Variant = data.site.world_pin
-	if not pin is Dictionary or not Technology.integer(pin.get("format"), 1, 2): return fail("INVALID_TECH_POLICY", "原固定世界政策容器失效")
+	# An author-map world (format 3, P5B) keeps the policy of a new world (format 2); before 2026-11-26 it was refused here
+	# and nobody in a scenario world could work on a live Site.
+	if not pin is Dictionary or not Technology.integer(pin.get("format"), 1, 3): return fail("INVALID_TECH_POLICY", "原固定世界政策容器失效")
 	return TechnologyPolicy.candidate(pin, int(pin.format) == 1)
 
 static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int = 0, occupied: Callable = Callable(), checked_prefix: Dictionary = {}) -> Dictionary:

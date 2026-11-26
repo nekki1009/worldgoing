@@ -1861,6 +1861,14 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		if content.get("family", {}).get("offices") is Dictionary:
 			var local := Family.member_ids(content.family, "travel:" + token)
 			SiteOffices.vacate_unless(content.family.offices, func(holder: int) -> bool: return local.has(holder))
+	# A paid batch whose payer leaves stays with the Site: whoever works the place next finishes it (found 2026-11-26: an
+	# emigrating farmer left his field's paid batch naming him, and every Site state left behind was refused on save as
+	# CORRUPT_TECHNOLOGY). A named trial keeps its person; its worker is not let go (person_actions.is_busy).
+	for holder: String in ["features", "vehicles"]:
+		for key: Variant in origin.get(holder, {}):
+			var target: Variant = origin[holder][key]
+			if not target is Dictionary or not target.get("tech_batch") is Dictionary or not target.get("tech_trial", {}).is_empty(): continue
+			if movers.has(int(target.tech_batch.get("operator_id", 0))): target.tech_batch["operator_id"] = 0
 	var people: Array = movers.keys()
 	people.sort()
 	var vehicles: Array = moving_vehicles.keys()
