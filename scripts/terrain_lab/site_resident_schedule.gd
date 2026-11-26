@@ -116,7 +116,7 @@ static func drive(controller: Variant, minute: float, alarm: bool = false) -> Di
 			continue
 		if place != "home": continue
 		if work_team.is_assigned(identity):
-			work_team.cancel(identity)
+			work_team.cancel_after_step(identity)
 			continue # the housing return starts at the next check, after the work step settles
 		if Housing._attends(lab, identity):
 			result.home = int(result.home) + 1

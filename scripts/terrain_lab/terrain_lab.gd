@@ -15277,7 +15277,8 @@ func _capture_shared_vehicle_groups(requests: Array) -> Dictionary:
 				"target_id": facts.target_id, "action": facts.action, "field": facts.field, "sources": [], "person_ids": [],
 				"required_skills": [], "eligible_by_id": {}, "remaining": float(facts.physical_remaining)}
 			_shared_vehicle_groups.append(group)
-		if not is_finite(float(facts.physical_remaining)) or float(facts.physical_remaining) < 0.0 or absf(float(group.remaining) - float(facts.physical_remaining)) > PersonFatigue.WORK_PLAN_EPS: return SiteRuntime.fail("STALE_SHARED_WORK")
+		if not is_finite(float(facts.physical_remaining)) or float(facts.physical_remaining) < 0.0 or absf(float(group.remaining) - float(facts.physical_remaining)) > PersonFatigue.WORK_PLAN_EPS:
+			return SiteRuntime.fail("STALE_SHARED_WORK", "共同工作量不一致 %s：已有 %.9f，%s 的 %.9f（%d 個來源，%s）" % [str(group.key), float(group.remaining), str(request.get("provider", "")), float(facts.physical_remaining), group.sources.size(), str(facts.person_ids)])
 		for identity: int in facts.person_ids:
 			if group.person_ids.has(identity): return SiteRuntime.fail("DUPLICATE_SHARED_WORKER")
 			group.person_ids.append(identity)
@@ -15385,7 +15386,9 @@ func _plan_shared_vehicle_work_interval(requests: Array, seconds: float, project
 		var participants: Array = []
 		var maximum := seconds
 		for source: Dictionary in group.sources:
-			if not _gd_mesh_group_source_accepted(source) and not source.owner.valid_shared_vehicle_work_request_facts(source.request, source.facts): return SiteRuntime.fail("STALE_SHARED_WORK")
+			if not _gd_mesh_group_source_accepted(source) and not source.owner.valid_shared_vehicle_work_request_facts(source.request, source.facts):
+				var change: String = source.owner.shared_vehicle_request_facts_change(source.request, source.facts) if source.owner.has_method("shared_vehicle_request_facts_change") else ""
+				return SiteRuntime.fail("STALE_SHARED_WORK", "共同工作在收集後已變更 %s：%s" % [str(group.key), change])
 			for participant: Dictionary in source.request.participants:
 				participants.append(projection.get(int(participant.person_id), participant))
 			maximum = minf(maximum, maxf(0.0, float(source.request.max_game_seconds) - float(_gd_mesh_work_point.get("elapsed", 0.0))))

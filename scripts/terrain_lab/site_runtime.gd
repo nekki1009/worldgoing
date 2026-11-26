@@ -1611,6 +1611,17 @@ static func max_building_productivity() -> float:
 
 # Production minutes one work step adds; the SAME value advances production and,
 # for workshop batches, the batch's effective work.
+## A farm's production minutes per work minute on its served cells: the cells' average fertility / 60 (0.25 to 1.5) for
+## each of them. A field of a settlement that feeds its people (`meals`, the scenario villages) yields by its worker
+## instead, one production minute a work minute, as its long absences are settled (SiteResidentWork.daily_production;
+## 2026-11-26 A: watched, a village field gave 36 times that, so a village seen and unseen were not the same village).
+static func farm_productivity(data: TerrainData, feature: Dictionary, served: Array) -> float:
+	var settlement: Variant = data.site.get("settlement", {})
+	if settlement is Dictionary and int(settlement.get("meals", 0)) == 1 and int(feature.get("owner_faction", -1)) == int(settlement.get("owner_faction", -2)): return 1.0
+	var fertility := 0.0
+	for index: int in served: fertility += float(data.fertility[index])
+	return clampf(fertility / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+
 static func feature_production_minutes(minutes: float, water_ratio: float, productivity: float) -> float:
 	return minutes * water_ratio * productivity
 
@@ -4521,11 +4532,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		return
 	var productivity := 1.0
 	if kind in FARM_KINDS:
-		var fertility_total := 0.0
-		var served: Array = feature.cells if service.is_empty() else service
-		for index: int in served:
-			fertility_total += float(data.fertility[index])
-		productivity = clampf(fertility_total / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+		productivity = farm_productivity(data, feature, feature.cells if service.is_empty() else service)
 	elif kind in PASTURE_KINDS and not service.is_empty():
 		var total_service := 0
 		for slot: Dictionary in _operating_slots(data, key, feature):
@@ -7214,11 +7221,9 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	if ratio <= 0.0: return fail("NO_WATER")
 	var productivity := 1.0
 	if kind in FARM_KINDS:
-		var fertility := 0.0
 		var served: Array = feature.cells if service.is_empty() else service
 		if served.is_empty(): return fail("NO_WORK_CELLS")
-		for index: int in served: fertility += float(data.fertility[index])
-		productivity = clampf(fertility / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+		productivity = farm_productivity(data, feature, served)
 	elif kind in PASTURE_KINDS and not service.is_empty():
 		var total_service := 0
 		for original_slot: Dictionary in _operating_slots(data, key, feature): total_service += original_slot.service_cells.size()

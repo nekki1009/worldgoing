@@ -147,20 +147,30 @@ static func generate(source: RegionData, folder: String, package_name: String, s
 		var door: Vector2i = built_terrain.terrain.cell_from_index(int(SiteRuntime.house_layout(built_terrain.terrain, houses[houses.size() / 2]).slots[0]))
 		var fields: Array = []
 		var field_origins: Array = []
+		# A field lies inside one 16x16 ground block no other field uses, where there is one (its well's water is that
+		# block's: 2.0 for 1.44, 1.87 in summer; seven town fields packed together had water for five).
+		var field_blocks := {}
 		for _field: int in range(7 if town else 2):
 			var field := {"ok": false, "stage": ""}
-			for steps: int in [26, 60]: # near its houses by foot, if there is room
-				field = Builder.place(source, work, "farm", Builder.spiral(origin_c + Vector2i(-2, -8), 3, 10), Vector2i(6, 6), Vector2i(6, 6), owner, {"foundation": 100, "fertility": 80, "drainage": 80, "moisture": 60}, built_terrain.terrain, door, steps)
+			var everywhere: Array = Builder.spiral(origin_c + Vector2i(-2, -8), 3, 10)
+			var own: Array = everywhere.filter(func(at: Vector2i) -> bool: return at.x / 16 == (at.x + 5) / 16 and at.y / 16 == (at.y + 5) / 16 and not field_blocks.has(Vector2i(at.x / 16, at.y / 16)))
+			for origins: Array in [own, everywhere]:
+				for steps: int in [26, 60]: # near its houses by foot, if there is room
+					field = Builder.place(source, work, "farm", origins, Vector2i(6, 6), Vector2i(6, 6), owner, {"foundation": 100, "fertility": 80, "drainage": 80, "moisture": 60}, built_terrain.terrain, door, steps)
+					if field.ok: break
 				if field.ok: break
 			if not field.ok: return {"ok": false, "code": "BUILD", "stage": "%s field at %s" % [str(field.stage), str(site)]}
 			fields.append(str(field.feature))
 			field_origins.append(field.origin)
+			field_blocks[Vector2i(field.origin.x / 16, field.origin.y / 16)] = true
 		# 2026-11-26: a field is worked only where a well's water reaches its working place (SiteRuntime water: 14 steps; 2.0
 		# a 16x16 ground block, shared by its wells; a 6x6 field asks 1.44, 1.87 in summer); the village well alone reached
 		# none. Each field gets a well beside it in a ground block of its own, the fields with the fewest blocks around them
 		# choosing first; trees are cleared and the well is at most a walk of 12 from the field.
 		var options := {}
-		for at: int in fields.size(): options[at] = _well_blocks(field_origins[at], Vector2i(6, 6))
+		for at: int in fields.size():
+			var home := Vector2i(field_origins[at].x / 16, field_origins[at].y / 16) # its own block first
+			options[at] = [home] + _well_blocks(field_origins[at], Vector2i(6, 6)).filter(func(block: Vector2i) -> bool: return block != home)
 		var order: Array = range(fields.size())
 		order.sort_custom(func(a: int, b: int) -> bool: return options[a].size() < options[b].size() or options[a].size() == options[b].size() and a < b)
 		var taken_blocks := {}

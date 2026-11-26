@@ -94,7 +94,8 @@ func _household(field: TerrainLab, cold: SiteController, head: int, round: int) 
 	for entry: Dictionary in field.terrain.site.get("households", {}).values(): entry.job["feature"] = ""
 	for person: Variant in leaving: cold.work_team.cancel(int(person))
 	var gone: Dictionary = {}
-	for attempt: int in range(1500):
+	# A farmer worked his field until now (2026-11-26 A: a batch lasts a working shift): the walk home from it is long.
+	for attempt: int in range(9000):
 		gone = Exodus.depart(cold, leaving, false)
 		if gone.get("ok", false) or str(gone.get("code", "")) not in ["NOT_READY", "BUSY"]: break
 		if not await _frame(): return false

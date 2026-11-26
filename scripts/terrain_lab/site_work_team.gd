@@ -35,6 +35,8 @@ var _consuming_work_plan: Dictionary = {} # Only the synchronous original advanc
 
 func discard_prepared_interval() -> void:
 	discard_checked_work_prefix()
+	var due := _cancel_due.duplicate()
+	_cancel_due.clear()
 	# Original interval closures may capture this RefCounted owner. Drop them
 	# after endpoint settlement, failed preflight and Lab teardown, retaining
 	# real assignment/tasks/routes/retry balances owned across intervals.
@@ -46,6 +48,18 @@ func discard_prepared_interval() -> void:
 	_work_consumed = true
 	_ladders_consumed = true
 	_consuming_work_plan.clear()
+	for identity: int in due:
+		if is_assigned(identity): cancel(identity)
+
+## A cancel asked inside a step whose work requests are captured (the resident schedule's checks run there) waits for the
+## step's end, discard_prepared_interval: a captured task must not change under the step (STALE_SHARED_WORK, found
+## 2026-11-26 once a field's batch outlasted a working shift and the worker went home for lunch mid-step).
+var _cancel_due: Array[int] = []
+func cancel_after_step(identity: int) -> void:
+	if _prepared_seconds < 0.0:
+		cancel(identity)
+	elif not _cancel_due.has(identity):
+		_cancel_due.append(identity)
 
 func init(context: Variant) -> void:
 	discard_checked_work_prefix()
@@ -522,6 +536,11 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 ## This stage never pays materials, advances work, or charges fatigue.
 func prepare_work_requests(seconds: float, action_seconds: float = 0.0, shared_requests: Array = []) -> Array[Dictionary]:
 	discard_checked_work_prefix()
+	# A cancel that waited for a step's end is done before the next step's requests are captured.
+	var due := _cancel_due.duplicate()
+	_cancel_due.clear()
+	for identity: int in due:
+		if is_assigned(identity): cancel(identity)
 	var requests: Array[Dictionary] = []
 	_prepared_work.clear()
 	_prepared_ladders.clear()
@@ -1636,6 +1655,26 @@ func valid_shared_vehicle_work_request_facts(request: Dictionary, facts: Diction
 	for entry: Dictionary in facts.entries:
 		if not is_same(_checked_work_target(entry), facts.target_ref) or not is_same(_checked_work_unit(entry), facts.work_unit) or not is_same(entry.row.get("work_task"), entry.task) or str(entry.action) != str(facts.action): return false
 	return true
+
+## Which part of valid_shared_vehicle_work_request_facts no longer holds ("" when all do): for the refusal's message.
+func shared_vehicle_request_facts_change(request: Dictionary, facts: Dictionary) -> String:
+	if facts.get("owner") != self: return "owner"
+	if not is_same(facts.get("request"), request): return "request"
+	if not is_same(facts.get("site"), lab.terrain.site): return "site"
+	if not is_same(facts.get("participants"), request.get("participants")): return "participants"
+	if request != facts.get("values"):
+		var changed: Array = []
+		for field: Variant in request:
+			if not facts.get("values", {}).has(field) or request[field] != facts.values[field]: changed.append(str(field))
+		return "request values " + ",".join(changed)
+	if _shared_vehicle_participant_values(request) != facts.get("participant_values"): return "participant values"
+	if not is_same(_shared_vehicle_request_facts.get(str(request.key)), facts): return "facts replaced"
+	for entry: Dictionary in facts.entries:
+		if not is_same(_checked_work_target(entry), facts.target_ref): return "target of %d" % int(entry.identity)
+		if not is_same(_checked_work_unit(entry), facts.work_unit): return "work unit of %d" % int(entry.identity)
+		if not is_same(entry.row.get("work_task"), entry.task): return "task of %d (%s)" % [int(entry.identity), JSON.stringify(entry.row.get("work_task", {})).left(160)]
+		if str(entry.action) != str(facts.action): return "action of %d" % int(entry.identity)
+	return ""
 
 func validate_gd_contact_work_segment(segment: Dictionary) -> Dictionary:
 	if not is_same(segment, _gd_contact_work_segment) or bool(segment.get("published", true)) or not segment.get("runtime", []).is_empty() or not is_same(segment.get("plan"), lab.gd_mesh_work_segment_plan()) or not is_same(segment.get("priors"), lab.gd_mesh_work_segment_priors()): return SiteRuntime.fail("STALE_WORK_PREFIX")
