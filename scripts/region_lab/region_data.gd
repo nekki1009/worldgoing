@@ -37,6 +37,11 @@ var _tile_index: Dictionary = {}
 var _lru: Array[String] = []
 var _cache_bytes := 0
 var peak_cache_bytes := 0
+## 開局速度 (2026-11-27): the source caches above (_tiles/_lru/_cache_bytes, _fine_masks/_fine_lru, _resource_region/
+## _resource_cover, peak_cache_bytes) are shared by the parallel Site builds of prebuild_fixed_bases; every read-modify of
+## them holds this (reentrant) lock. Everything else a build reads is fixed once the manifest is loaded.
+var _cache_mutex := Mutex.new()
+const PREBUILD_WORKERS := 6
 var _author_pin: Dictionary = {}
 var _author_document: Dictionary = {}
 ## 示範劇本 (reports: 示範劇本 A 開墾之地): the package's scenario document, {} when it has none (author_scenario_valid).
@@ -315,10 +320,12 @@ func load_author_package(path: String) -> Dictionary:
 	# Every static layer must build on its Site. 開局速度 (2026-11-27): the build goes through RegionRoute's fixed-base memo
 	# (keyed by the natural source and this package's identity, both already on the candidate), so a birth that follows
 	# takes these Sites from it instead of building them again (30 Sites, about 16 of the 22 s the demo A load took).
+	var static_sites: Array = []
 	for key: String in candidate._author_static:
 		var pair: PackedStringArray = key.split(":")
-		var built: Dictionary = RegionRoute.fresh_fixed_base(candidate, Vector2i(int(pair[0]), int(pair[1])))
-		if not bool(built.get("ok", false)): return built
+		static_sites.append(Vector2i(int(pair[0]), int(pair[1])))
+	var built: Dictionary = candidate.prebuild_fixed_bases(static_sites) # 開局速度: on worker threads, refusal in this order
+	if not bool(built.get("ok", false)): return built
 	# Stage on the same owner, then replace only script state after every check.
 	for property: Dictionary in candidate.get_property_list():
 		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
@@ -453,6 +460,12 @@ func _read_resource_manifest(geography_hash: String) -> Dictionary:
 	return {"ok": true, "manifest": parsed, "sha256": text.sha256_text()}
 
 func site_resource_cover(site: Vector2i) -> Dictionary:
+	_cache_mutex.lock()
+	var cover := _site_resource_cover_locked(site)
+	_cache_mutex.unlock()
+	return cover
+
+func _site_resource_cover_locked(site: Vector2i) -> Dictionary:
 	if _resource_manifest.is_empty():
 		return {"ok": true, "enabled": false}
 	var region := Grid.region_of(site)
@@ -671,6 +684,12 @@ func _tile_at(easting: float, northing: float) -> Dictionary:
 	return {}
 
 func _load_tile(tile: Dictionary) -> Dictionary:
+	_cache_mutex.lock()
+	var loaded := _load_tile_locked(tile)
+	_cache_mutex.unlock()
+	return loaded
+
+func _load_tile_locked(tile: Dictionary) -> Dictionary:
 	var identity := str(tile.id)
 	if _tiles.has(identity):
 		if _lru.back() != identity:
@@ -777,21 +796,51 @@ func _load_tile(tile: Dictionary) -> Dictionary:
 	peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
 	return result
 
-func _fine_water_at(easting: float, northing: float, tile: Dictionary) -> Dictionary:
+## `build_cache` (one Site build's centre_cache, or null): 開局速度 (2026-11-27) keeps the loaded tile and the fine masks
+## that build has read under the keys &"tiles" and &"fine_masks", so its 10,404 samples take the shared caches' lock
+## once per tile and mask instead of twice per sample (parallel builds contended on it). Same values either way.
+func _fine_water_at(easting: float, northing: float, tile: Dictionary, build_cache: Variant = null) -> Dictionary:
 	if not tile.get("derived", {}).has("water_detail"):
 		return {"ok": true, "available": false}
-	var loaded := _load_tile(tile)
-	if not loaded.ok:
-		return loaded
+	var tiles: Dictionary = {}
+	var masks: Dictionary = {}
+	if build_cache != null:
+		if not build_cache.has(&"tiles"):
+			build_cache[&"tiles"] = {}
+			build_cache[&"fine_masks"] = {}
+		tiles = build_cache[&"tiles"]
+		masks = build_cache[&"fine_masks"]
+	var loaded: Dictionary = tiles.get(tile.id, {})
+	if loaded.is_empty():
+		loaded = _load_tile(tile)
+		if not loaded.ok:
+			return loaded
+		if build_cache != null: tiles[tile.id] = loaded
 	var site := Grid.site_from_meters(easting, northing)
 	var region := Grid.region_of(site)
 	var local_site := site - region * 100
 	var key := str((99 - local_site.y) * 100 + local_site.x)
 	if not loaded.fine_index.has(key):
 		return {"ok": true, "available": false}
+	var mask: Variant = masks.get(site)
+	if mask == null:
+		_cache_mutex.lock()
+		mask = _fine_mask_locked(site, loaded.fine_index[key], loaded.fine_bank)
+		_cache_mutex.unlock()
+		if mask is Dictionary:
+			return mask
+		if build_cache != null: masks[site] = mask
+	var cell := Grid.local_from_mm(roundi(easting * 1000.0), roundi(northing * 1000.0))
+	var body := int((mask as PackedByteArray).decode_u32((cell.y * 100 + cell.x) * 4))
+	return {"ok": true, "available": true, "water_body": body,
+		"water_kind": 0 if body == 0 else (2 if body == 1 else int(_water_body_kinds[_water_bodies[body]])),
+		"water_id": "" if body == 0 else ("ocean" if body == 1 else _water_body_sources[_water_bodies[body]])}
+
+## The fine shoreline mask of `site` from the cache (read, checked and cached on a miss), touching its LRU place, or a
+## refusal Dictionary. Called with _cache_mutex held.
+func _fine_mask_locked(site: Vector2i, segment: Dictionary, fine_bank: PackedByteArray) -> Variant:
 	if not _fine_masks.has(site):
-		var segment: Dictionary = loaded.fine_index[key]
-		var compressed: PackedByteArray = loaded.fine_bank.slice(int(segment.offset), int(segment.offset) + int(segment.compressed_bytes))
+		var compressed: PackedByteArray = fine_bank.slice(int(segment.offset), int(segment.offset) + int(segment.compressed_bytes))
 		var hasher := HashingContext.new()
 		hasher.start(HashingContext.HASH_SHA256)
 		hasher.update(compressed)
@@ -811,11 +860,7 @@ func _fine_water_at(easting: float, northing: float, tile: Dictionary) -> Dictio
 		_fine_lru.erase(site)
 	_fine_lru.append(site)
 	peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
-	var cell := Grid.local_from_mm(roundi(easting * 1000.0), roundi(northing * 1000.0))
-	var body := int(_fine_masks[site].decode_u32((cell.y * 100 + cell.x) * 4))
-	return {"ok": true, "available": true, "water_body": body,
-		"water_kind": 0 if body == 0 else (2 if body == 1 else int(_water_body_kinds[_water_bodies[body]])),
-		"water_id": "" if body == 0 else ("ocean" if body == 1 else _water_body_sources[_water_bodies[body]])}
+	return _fine_masks[site]
 
 func _sample_center(easting: float, northing: float) -> Dictionary:
 	var tile := _tile_at(easting, northing)
@@ -867,7 +912,7 @@ func _sample_meters(easting: float, northing: float, centre_cache: Variant) -> D
 	var tile := _tile_at(easting, northing)
 	if tile.is_empty():
 		return _sea_sample(easting, northing)
-	var detail := _fine_water_at(easting, northing, tile)
+	var detail := _fine_water_at(easting, northing, tile, centre_cache)
 	if not detail.ok:
 		return detail
 	if detail.available and int(detail.water_kind) == 2:
@@ -934,6 +979,24 @@ func make_terrain_data(site_x: int, site_y: int) -> Dictionary:
 	var open := _site_open(site_x, site_y)
 	if not open.ok: return open
 	return Adapter.build(self, Vector2i(site_x, site_y))
+
+## 開局速度 (2026-11-27): builds `sites` (Vector2i) into RegionRoute's fixed-base memo on up to PREBUILD_WORKERS worker
+## threads, so the callers that build them one by one next find them built. {ok} or the first refusal in the given order
+## (what building them in that order would have stopped at). Off the main thread, or on one core, it builds in order.
+## Each build is the unchanged make_terrain_data; the source caches it shares are locked (_cache_mutex).
+func prebuild_fixed_bases(sites: Array, max_workers: int = PREBUILD_WORKERS) -> Dictionary:
+	var results: Array = []
+	results.resize(sites.size())
+	var workers := mini(sites.size(), clampi(int(OS.get_processor_count() / 2.0), 1, max_workers))
+	# Only the memoized source (RegionRoute.fresh_fixed_base: the exact RegionData script) keeps what a worker builds.
+	if workers > 1 and Thread.is_main_thread() and get_script() == RegionData and not manifest_hash.is_empty():
+		var build_one := func(index: int) -> void: results[index] = RegionRoute.fresh_fixed_base(self, sites[index])
+		var group := WorkerThreadPool.add_group_task(build_one, sites.size(), workers, true, "Fixed Site builds")
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	for index: int in range(sites.size()):
+		if results[index] == null: results[index] = RegionRoute.fresh_fixed_base(self, sites[index])
+		if not bool(results[index].get("ok", false)): return results[index]
+	return {"ok": true}
 
 ## The source checks make_terrain_data runs before a Site's tile build: {ok} or its refusal.
 func _site_open(site_x: int, site_y: int) -> Dictionary:
@@ -1027,6 +1090,11 @@ func cache_stats() -> Dictionary:
 		"limit_tiles": MAX_CACHE_TILES, "limit_bytes": MAX_CACHE_BYTES}
 
 func clear_cache() -> void:
+	_cache_mutex.lock()
+	_clear_cache_locked()
+	_cache_mutex.unlock()
+
+func _clear_cache_locked() -> void:
 	_resource_region = ""
 	_resource_cover = PackedByteArray()
 	_tiles.clear()

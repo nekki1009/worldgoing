@@ -77,6 +77,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			if not FileAccess.file_exists(unborn_location.path_join("manifest.json")) and not FileAccess.file_exists(unborn_location.path_join("manifest.pending.json")) and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(unborn_location)): return fail("AUTHOR_MULTI_SITE_UNSUPPORTED")
 		# P5C-S2: every expected initial Site projects before any file IO, so a
 		# damaged companion never leaves a partial birth behind.
+		# 開局速度 (2026-11-27): their tile builds first, on worker threads (RegionData.prebuild_fixed_bases); a refusal is
+		# left to the loop below, which meets it in the same order and refuses as before.
+		if map_data.get_script() == RegionData: map_data.prebuild_fixed_bases(author_initial_site_order(author_context))
 		for coordinate: Vector2i in author_initial_site_order(author_context):
 			# 示範劇本 birth speed: the check reads each authored body once (validated, read only) instead of projecting it
 			# with its eight neighbours; the birth projects every Site again before it writes anything.
