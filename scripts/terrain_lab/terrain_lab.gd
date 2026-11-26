@@ -2248,7 +2248,8 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		_region_formal_duty_due(_replay_target - pending)
 		var fire_interval := _next_fire_replay_interval() if _fire_replay_tracking else {}
 		if _fire_replay_tracking and fire_interval.is_empty():
-			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒，但原火攻 journal 已耗盡")
+			var last_row: Dictionary = _fire_replay_segments.back() if not _fire_replay_segments.is_empty() else {}
+			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒 %.9f（目標 %.6f，Site %.6f），但原火攻 journal 已耗盡：%d 段，第 %d 段第 %d 步，末段 game %.6f..%.6f action %.6f..%.6f，cursor %.9f，partial %.9f" % [pending, _replay_target, SiteRuntime.now(terrain) * 60.0, _fire_replay_segments.size(), _fire_replay_segment_index, _fire_replay_segment_offset, float(last_row.get("game_begin", -1.0)), float(last_row.get("game_end", -1.0)), float(last_row.get("action_begin", -1.0)), float(last_row.get("action_end", -1.0)), fire_action_cursor, _fire_replay_partial_cursor])
 		# Recreate the world-wide tactical permit recorded by this original interval.
 		if _fire_replay_tracking:
 			SiteRuntime.start_combat(terrain.site, float(fire_interval.tactical_seconds))
