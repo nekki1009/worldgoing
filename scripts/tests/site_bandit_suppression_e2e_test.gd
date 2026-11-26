@@ -312,6 +312,48 @@ func _run() -> void:
 			controller.person_actions.settle_after_contacts()
 	var after: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, band)
 	if not _ok(moved and str(after.lair.site_id) != lair and int(after.heat) == Bandit.HEAT_AFTER_MOVE, "on its next day the attacked hot band moves its lair (heat 30)", [ran, after]): return
+	# Stage 2 (2026-11-26): once no band person stands at the old lair, the expedition goes home and arrives there.
+	var home := Suppression.home_of(slot.control.faction_registry, 1, next_day)
+	if not _ok(not home.is_empty() and home != lair, "the expedition's home is recorded: %s" % home): return
+	var homeward: Dictionary = {}
+	var seen: Array = [] # each change of the refusal, in order, with the attempt and the game hours since the move
+	var last := {}
+	var same := 0
+	var moved_at := float(slot.control.logical_game_seconds)
+	for attempt: int in range(400):
+		var at_lair: Variant = slot._region_original_labs.get(lair)
+		if at_lair != null and is_instance_valid(at_lair):
+			homeward = Suppression.go_home(at_lair.site_controller, next_day)
+			if homeward.has("sent"): break
+			if last != homeward:
+				last = homeward
+				seen.append([attempt, snappedf((float(slot.control.logical_game_seconds) - moved_at) / 3600.0, 0.01), homeward])
+				same = 0
+			same += 1
+			# Fail fast: a refusal that is not waiting for the band or for the hold to settle does not change by itself.
+			if same >= 20 and str(homeward.get("reason", "")) not in ["BAND_HERE", "HOLDING"]: break
+		for _frame: int in range(30):
+			await process_frame
+			if _finished: return
+			lab._process(1.0 / 30.0)
+			controller.person_actions.settle_after_contacts()
+	if not _ok(homeward.has("sent") and str(homeward.sent.home) == home, "with the band gone it goes home", seen): return
+	var home_token := str(homeward.sent.token)
+	var home_phase := ""
+	var went_from := float(slot.control.logical_game_seconds)
+	for frame: int in range(120000):
+		await process_frame
+		if _finished: return
+		lab._process(1.0 / 30.0)
+		controller.person_actions.settle_after_contacts()
+		if not controller._original_step_fault.is_empty():
+			_fail("a frame fault on the way home", controller._original_step_fault)
+			return
+		home_phase = str(slot.region_registry().parties.get(home_token, {}).get("phase", ""))
+		if home_phase in ["entered", ""]: break
+	var hours_home := (float(slot.control.logical_game_seconds) - went_from) / 3600.0
+	if not _ok(home_phase in ["entered", ""] and hours_home < 48.0, "it arrived home after %.1f game hours (phase '%s')" % [hours_home, home_phase]): return
+	print("SITE_BANDIT_SUPPRESSION_E2E HOME %s after %.1f game hours; on the way out: %s" % [home, hours_home, JSON.stringify(seen)])
 	_finished = true
 	TerrainArmy.release_contact_source()
 	await process_frame

@@ -99,6 +99,11 @@ static func day(controller: Variant) -> Dictionary:
 	var crowd: Variant = controller.lab.crowd_site
 	var team_count: int = crowd.teams.size() if crowd != null and crowd.active else -1
 	if int(controller.get_meta(&"suppress_day", -1)) == today:
+		# An expedition that stopped its attack to go home leaves on a later look of the same day.
+		if bool(controller.get_meta(&"suppress_home_wait", false)):
+			var later: Dictionary = go_home(controller, today)
+			if str(later.get("reason", "")) != "HOLDING": controller.set_meta(&"suppress_home_wait", false)
+			if later.has("sent"): return {"day": today, "home": later.sent}
 		# The day's pass has run. An expedition that entered since (a team was added to this Site) attacks at once: a
 		# cold lair Site runs its day's pass at its bind, before the arriving expedition is put in. An order the Site
 		# could not take yet is asked again on the next look.
@@ -109,6 +114,7 @@ static func day(controller: Variant) -> Dictionary:
 		return {}
 	controller.set_meta(&"suppress_day", today)
 	var result := run(controller, today)
+	controller.set_meta(&"suppress_home_wait", bool(result.get("home_wait", false)))
 	# An attack the Site could not take yet (asked for but not ordered) is asked again on the next look.
 	controller.set_meta(&"suppress_teams", -1 if bool(result.get("attack_refused", false)) else team_count)
 	return result
@@ -130,6 +136,9 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	var homeward: Dictionary = go_home(controller, today)
 	if homeward.has("sent"):
 		result["home"] = homeward.sent
+		return result
+	if str(homeward.get("reason", "")) == "HOLDING":
+		result["home_wait"] = true
 		return result
 	var settlement: Dictionary = Settlement.record(lab.terrain)
 	var faction := int(settlement.get("owner_faction", -1))
@@ -248,9 +257,10 @@ static func attack(controller: Variant, today: int) -> Dictionary:
 	if not orders.is_empty() and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵進剿山寨")
 	return {"orders": orders, "wanted": wanted}
 
-## Stage 2: one of the expedition teams standing here goes home ({sent: {faction, team, home, token}} or {reason}). Not while
-## any living band person stands here; only teams of official non-player factions whose latest expedition's home is
-## another Site.
+## Stage 2: one of the expedition teams standing here goes home ({sent: {faction, team, home, token}} or {reason, detail?}).
+## Not while any living band person stands here; only teams of official non-player factions whose latest expedition's
+## home is another Site. A team still under its attack order is first told to hold (reason HOLDING): Travel takes only a
+## team standing at its post (found 2026-11-26: the order outlived the band, and the team never left).
 static func go_home(controller: Variant, today: int) -> Dictionary:
 	var lab: Variant = controller.lab
 	var slot: Variant = controller.region_slot
@@ -265,11 +275,11 @@ static func go_home(controller: Variant, today: int) -> Dictionary:
 		for person: Variant in team.get("person_ids", []):
 			var target: Dictionary = lab._original_person_target(int(person))
 			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: living += 1
-		if RegionFactionQuery.is_bandit(registry, faction) and living > 0: return {"reason": "BAND_HERE"}
+		if RegionFactionQuery.is_bandit(registry, faction) and living > 0: return {"reason": "BAND_HERE", "team": int(team.team_id), "living": living}
 		if bool(team.get("solo", false)) or living < 2 or team.get("person_ids", []).has(player) or not Attacked.official(registry, faction): continue
 		if str(registry.entries[str(faction)].get("kind", "")) == "player" or int(controller.team_captain_of_team(int(team.team_id))) <= 0: continue
 		var rows: Array = by_faction.get(faction, [])
-		rows.append({"team_id": int(team.team_id), "size": living})
+		rows.append({"team_id": int(team.team_id), "size": living, "formation": int(team.get("formation", -1))})
 		by_faction[faction] = rows
 	var factions: Array = by_faction.keys()
 	factions.sort()
@@ -282,12 +292,16 @@ static func go_home(controller: Variant, today: int) -> Dictionary:
 		var captain := int(controller.team_captain_of_team(team_id))
 		var person: Dictionary = lab.crowd_site.combat_target(captain) if captain > 0 else {}
 		if person.is_empty(): continue
+		if int(lab.crowd_site.formation_state(int(rows[0].formation)).get("order", 0)) != 0:
+			var held: Dictionary = lab.crowd_site.issue_order(team_id, TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "suppress")
+			if held.get("ok", false): return {"reason": "HOLDING", "team": team_id}
+			return {"reason": "HOLD_REFUSED", "detail": {"code": str(held.get("code", "")), "message": str(held.get("message", ""))}}
 		var at: Dictionary = slot._coordinate(lab.terrain)
 		if not at.ok: return {"reason": str(at.get("code", ""))}
 		var component: int = RegionTravelSite.start_component(slot, at.site, person.cell, lab.terrain)
 		var token := "suppress_home_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
 		var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:suppress", team_id, _coordinate(home), component, [], token)
-		if not prepared.ok: return {"reason": str(prepared.get("code", "DISPATCH_REFUSED"))}
+		if not prepared.ok: return {"reason": str(prepared.get("code", "DISPATCH_REFUSED")), "detail": prepared.get("preflight", str(prepared.get("message", "")))}
 		var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
 		if not committed.ok: return {"reason": str(committed.get("code", "DISPATCH_REFUSED"))}
 		if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵剿匪收兵回營")
