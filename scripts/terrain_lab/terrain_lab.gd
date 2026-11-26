@@ -11837,6 +11837,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if not TechnologyPolicy.birth_categories_admitted(policy.policy): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
 	if not new_data.site.get("actors", {}).is_empty() or not new_data.site.get("armies", []).is_empty() or new_data.site.has("family") or new_data.site.has("crowd") or new_data.site.has("initial_scenario") or not new_data.site.get("captivity", {}).is_empty() or not new_data.site.get("vehicles", {}).is_empty() or not new_data.site.get("item_records", {}).is_empty() or int(new_data.site.get("minute", -1)) != 0 or float(new_data.site.get("phase", -1.0)) != 0.0 or bool(new_data.site.get("paused", false)) or float(new_data.site.get("combat_left", 0.0)) != 0.0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO")
 	var candidate := SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	PerfTrace.mark("pop_navigation") # 開局速度: the parts of the start population (--perf-trace)
 	var start := candidate.cell_from_index(int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell))))
 	if not candidate.is_walkable(start): return SiteRuntime.fail("NO_BIRTH_GROUND")
 	var staging := Node2D.new()
@@ -11860,6 +11861,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	snapshot.appearance.parts.cape = "none"
 	starter.restore_state(snapshot)
 	snapshot = starter.capture_state()
+	PerfTrace.mark("pop_starter")
 	# Neutral part 2 (shape b): the player is born as roster unit 0 and formal commander of a neutral team, never as a
 	# separate actor body. Nekki 2026-11-03: the start brings INITIAL_CADRES cadres (officers), not artisans. Bind restores
 	# this team and the crowd conversion (convert_existing) turns it into a crowd roster whose captain is the host-controlled
@@ -11880,8 +11882,11 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	team.set_process(false)
 	var player_cells := _initial_team_cells(candidate, start, player_ids.size())
 	if player_cells.size() != player_ids.size(): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND", "玩家隊伍出生格不足；未改變"))
-	if not team.deploy_at(candidate, null, null, player_cells) or not team.enable_combat(false) or team.combat_units.size() != player_ids.size() or team.combat_identity(0) != starter.person_id:
+	var deployed := team.deploy_at(candidate, null, null, player_cells)
+	PerfTrace.mark("pop_deploy_at")
+	if not deployed or not team.enable_combat(false) or team.combat_units.size() != player_ids.size() or team.combat_identity(0) != starter.person_id:
 		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍無法出生；未改變"))
+	PerfTrace.mark("pop_team_deployed")
 	# enable_combat seats unit 0 as the formal commander (an officer); the player keeps that seat.
 	if team.formal_commander != 0: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍沒有隊長；未改變"))
 	# The cadres: every other row is an officer holding an officer-service seat, with its own standard gear.
@@ -11919,6 +11924,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 					seated = true
 					break
 		if not seated: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_SPACE", "隊伍職位不足以安置開局幹部；未改變"))
+	PerfTrace.mark("pop_cadres")
 	var body: Dictionary = team.combat_units[0]
 	body["military_role"] = "officer"
 	body["appearance"] = snapshot.appearance.duplicate(true)
@@ -11932,6 +11938,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if not equipped.ok: return _initial_artisan_birth_dispose(staging, equipped)
 	if not TerrainArmy.prepare_contact_source_for(SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)):
 		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("MISSING_ASSET", "玩家外觀接觸資源未備妥；未改變"))
+	PerfTrace.mark("pop_contact_source")
 	var player_team: Dictionary = team.capture_combat_state()
 	candidate.site["actors"] = {}
 	candidate.site["armies"] = [player_team]
@@ -11939,7 +11946,9 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	candidate.site["controlled_person_id"] = starter.person_id
 	candidate.site["next_person_id"] = maxi(int(player_ids.max()) + 1, int(candidate.site.get("next_person_id", 1)))
 	candidate.site["army_next_team"] = team.team_id + 1
+	PerfTrace.mark("pop_team_captured")
 	if not TerrainArmy.valid_combat_state(player_team, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_ARMY", "玩家一人隊快照非法；未改變"))
+	PerfTrace.mark("pop_team_checked")
 	for checked: Dictionary in [SiteStore._validate_actors(candidate, candidate.site), SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_armies(candidate, candidate.site, true), SiteStore._validate_items(candidate, candidate.site), SiteStore._validate_cape_roles(candidate.site)]:
 		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
 	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))

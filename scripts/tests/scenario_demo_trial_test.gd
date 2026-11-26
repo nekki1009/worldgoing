@@ -87,7 +87,11 @@ func _run() -> void:
 	# Step 6: the menu's scenario list reads the package (<root>/<id>/<id>.json with a scenario file).
 	var listed: Array = RegionEntry.scenario_packages(folder if package_path.is_empty() else package_path.get_base_dir().get_base_dir())
 	if not _ok(listed.size() == 1 and str(listed[0].id) == "demo_a" and listed[0].start == start and str(listed[0].name) == "開墾之地" and str(listed[0].record.id) == "demo_a_kaiken", "the scenario list finds the package with its start", listed): return
-	if not _ok(RegionEntry.request_new_world(start, {}, "開墾試生", "", str(built.path)), "a new world is requested", RegionEntry.menu_message): return
+	# 開局速度 (2026-11-27): the birth starts with no Site built, as from the menu (the loads above fill RegionRoute's
+	# fixed-base memo with the package's static Sites, which the game's own load would otherwise find built).
+	RegionRoute.clear_memory_cache()
+	var asked := Time.get_ticks_msec()
+	if not _ok(RegionEntry.request_new_world(start, {}, "開墾試生", "", str(built.path)), "a new world is requested (%.1f s: the menu's check loads the package)" % ((Time.get_ticks_msec() - asked) / 1000.0), RegionEntry.menu_message): return
 	var birth_started := Time.get_ticks_msec()
 	change_scene_to_file(SITE)
 	var lab: TerrainLab = null

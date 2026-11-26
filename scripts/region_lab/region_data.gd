@@ -312,9 +312,12 @@ func load_author_package(path: String) -> Dictionary:
 		else: candidate._author_initial[key] = content.duplicate(true)
 	candidate._author_pin = {"scenario_id": str(parsed.scenario_id), "scenario_revision": int(parsed.revision), "scenario_package_sha256": str(parsed.package_digest)}
 	candidate._author_document = parsed.duplicate(true)
+	# Every static layer must build on its Site. 開局速度 (2026-11-27): the build goes through RegionRoute's fixed-base memo
+	# (keyed by the natural source and this package's identity, both already on the candidate), so a birth that follows
+	# takes these Sites from it instead of building them again (30 Sites, about 16 of the 22 s the demo A load took).
 	for key: String in candidate._author_static:
 		var pair: PackedStringArray = key.split(":")
-		var built: Dictionary = candidate.make_terrain_data(int(pair[0]), int(pair[1]))
+		var built: Dictionary = RegionRoute.fresh_fixed_base(candidate, Vector2i(int(pair[0]), int(pair[1])))
 		if not bool(built.get("ok", false)): return built
 	# Stage on the same owner, then replace only script state after every check.
 	for property: Dictionary in candidate.get_property_list():
@@ -928,6 +931,12 @@ func _sample_meters(easting: float, northing: float, centre_cache: Variant) -> D
 	return result
 
 func make_terrain_data(site_x: int, site_y: int) -> Dictionary:
+	var open := _site_open(site_x, site_y)
+	if not open.ok: return open
+	return Adapter.build(self, Vector2i(site_x, site_y))
+
+## The source checks make_terrain_data runs before a Site's tile build: {ok} or its refusal.
+func _site_open(site_x: int, site_y: int) -> Dictionary:
 	var summary := get_site_summary(site_x, site_y)
 	if not summary.ok:
 		return summary
@@ -935,7 +944,7 @@ func make_terrain_data(site_x: int, site_y: int) -> Dictionary:
 		return fail("OUTSIDE_CONTENT", "此地點保留真實地理背景，目前尚未開放")
 	if summary.class_id == 0:
 		return fail("MISSING_DATA", "此Site尚無地理來源；保留目前檢視")
-	return Adapter.build(self, Vector2i(site_x, site_y))
+	return {"ok": true}
 
 func refresh_boundary(data: TerrainData, site: Vector2i, neighbour_query: Callable = Callable()) -> Dictionary:
 	if data == null or data.size != Vector2i(100, 100):
@@ -1219,15 +1228,28 @@ func project_terrain(site: Vector2i, mode: String = "base") -> Dictionary:
 	if mode == "base": return make_terrain_data(site.x, site.y)
 	if mode != "author_initial" or _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "current必須由原Slot provider提供；initial須有作者來源")
 	# Validate all referenced neighbours once in this projection call, before any edge commit.
+	# 開局速度 (2026-11-27): a neighbour the package neither authors nor changes (no static layer, no initial state) is
+	# not built: refresh_boundary reads only its border cells' height and water, which its build takes unchanged from the
+	# source samples, so they are read from the samples (sample_meters, refresh_boundary's own default). Its source
+	# checks still refuse as its build did. A scenario birth built about a hundred such Sites, half a second each, only
+	# for these 404 values (PROJECTION_DIGEST probe: same projections before and after).
 	var neighbours := {}
+	var plain := {}
 	for offset: Vector2i in [Vector2i.ZERO, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN, Vector2i(-1,-1), Vector2i(-1,1), Vector2i(1,-1), Vector2i(1,1)]:
 		var coordinate: Vector2i = site + offset
+		var coordinate_key := "%d:%d" % [coordinate.x, coordinate.y]
+		if offset != Vector2i.ZERO and not _author_initial.has(coordinate_key) and not _author_static.has(coordinate_key):
+			var open := _site_open(coordinate.x, coordinate.y)
+			if not open.ok: return open
+			plain[coordinate] = true
+			continue
 		var built: Dictionary = _initial_body(coordinate) if offset == Vector2i.ZERO else _initial_neighbour_body(coordinate)
 		if not bool(built.get("ok", false)): return built
 		neighbours[coordinate] = built
 	var result: Dictionary = neighbours[site]
 	var data: TerrainData = result.data
 	var refreshed: Dictionary = refresh_boundary(data, site, func(at: Vector2i, cell: Vector2i) -> Dictionary:
+		if plain.has(at): return sample_meters((at.x * Grid.SITE_MM + cell.x * Grid.CELL_MM + 1000) / 1000.0, (at.y * Grid.SITE_MM + (99 - cell.y) * Grid.CELL_MM + 1000) / 1000.0)
 		if not neighbours.has(at): return fail("MISSING_AUTHOR_NEIGHBOUR", "初始鄰圖缺失")
 		var other: TerrainData = neighbours[at].data
 		return {"ok": true, "level": int(other.height_levels[other.index(cell)]), "water_kind": int(other.water_kind[other.index(cell)])})

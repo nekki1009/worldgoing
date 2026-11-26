@@ -12710,6 +12710,7 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 	var births: Dictionary = {}
 	for companion: Vector2i in candidate.initial_companion_sites():
 		var projected: Dictionary = candidate.source.project_terrain(companion, "author_initial")
+		PerfTrace.mark("companion_projected") # 開局速度: the parts of one companion (--perf-trace)
 		if not projected.ok: return projected
 		var data: TerrainData = projected.data
 		var rows: Array = data.site.get("residents", [])
@@ -12719,8 +12720,10 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 		if data.site.is_empty() or rows.is_empty() and teams.is_empty() and stock.is_empty(): continue
 		candidate.attach_person_allocator(data)
 		var populated: Dictionary = lab.prepare_initial_resident_roster(data) if not rows.is_empty() else Runtime.ok("", {"data": data})
+		PerfTrace.mark("companion_residents")
 		if not populated.ok: return populated
 		if not teams.is_empty(): populated = lab.prepare_initial_author_teams(populated.data, teams)
+		PerfTrace.mark("companion_teams")
 		if not populated.ok: return populated
 		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock, _scenario_rows_of(candidate, "livelihood", companion))
 		if not populated.ok: return populated
