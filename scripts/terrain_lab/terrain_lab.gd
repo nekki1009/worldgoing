@@ -2248,6 +2248,12 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		_region_formal_duty_due(_replay_target - pending)
 		var fire_interval := _next_fire_replay_interval() if _fire_replay_tracking else {}
 		if _fire_replay_tracking and fire_interval.is_empty():
+			# The journal is used up with the Site clock within the clock agreement of its target (the Site's minute and phase
+			# accumulators drift from the world clock): the replay is complete. Found 2026-11-26: 1e-9 s was left at 90120 s,
+			# one step partition in a few (parallel runs only), and the raided village could not be opened.
+			if pending <= _replay_clock_agreement_tolerance():
+				pending = 0.0
+				break
 			var last_row: Dictionary = _fire_replay_segments.back() if not _fire_replay_segments.is_empty() else {}
 			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒 %.9f（目標 %.6f，Site %.6f），但原火攻 journal 已耗盡：%d 段，第 %d 段第 %d 步，末段 game %.6f..%.6f action %.6f..%.6f，cursor %.9f，partial %.9f" % [pending, _replay_target, SiteRuntime.now(terrain) * 60.0, _fire_replay_segments.size(), _fire_replay_segment_index, _fire_replay_segment_offset, float(last_row.get("game_begin", -1.0)), float(last_row.get("game_end", -1.0)), float(last_row.get("action_begin", -1.0)), float(last_row.get("action_end", -1.0)), fire_action_cursor, _fire_replay_partial_cursor])
 		# Recreate the world-wide tactical permit recorded by this original interval.
@@ -13382,9 +13388,17 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 	var replay: Dictionary = SiteRuntime.ok("", {"status": "PENDING", "pending": float(window.pending), "steps": 0, "data": terrain})
 	if not str(_region_cold_isolated.fallback).is_empty() and not _region_cold_isolated.has("traced"):
 		_region_cold_isolated["traced"] = true
-		_replay_trace("exact from %.3f of %.3f because %s" % [float(window.from), target, str(_region_cold_isolated.fallback)])
+		var at_fallback: Dictionary = terrain.site.get("fire_settlement", {})
+		var next_row := _next_fire_replay_interval() if _fire_replay_tracking else {}
+		_replay_trace("exact from %.3f of %.3f because %s; cursor %.9f settlement action %.9f game %.6f seq %d; next row %s; coarse %s; prefix steps %d" % [float(window.from), target, str(_region_cold_isolated.fallback),
+			fire_action_cursor, float(at_fallback.get("action_seconds", -1.0)), float(at_fallback.get("game_seconds", -1.0)), int(at_fallback.get("sequence", -1)),
+			JSON.stringify(next_row).left(300), str(_region_cold_isolated.get("coarse", false)), int(_region_cold_isolated.get("prefix_steps", 0))])
 	if (float(window.from) + ACTION_TIME_EPSILON >= float(_region_cold_isolated.prefix_end) or not str(_region_cold_isolated.fallback).is_empty()) \
 		and steps < max_steps and Time.get_ticks_usec() < deadline:
+		# Once the prefix or its exact quanta consumed journal rows, the tail continues the same fixed target: replay_site_to's
+		# saved-boundary guard is for a fresh start. A quantum cut by work leaves the cursor inside its row, ahead of the last
+		# stamped watermark (found 2026-11-26: FIRE_CLOCK_MISMATCH 86.5625 against 86.5439 opening a raided village).
+		if _replay_target < 0.0 and int(_region_cold_isolated.get("prefix_steps", 0)) + int(_region_cold_isolated.get("exact_steps", 0)) > 0: _replay_target = target
 		replay = replay_site_to(target, maxi(1, deadline - Time.get_ticks_usec()), max_steps - steps)
 		if not replay.ok: return replay
 		steps += int(replay.steps)
