@@ -7211,7 +7211,7 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"): return fail("BUSY")
 	if not definition.has("cycle"): return fail("NO_TARGET")
 	if feature.has("species") and (int(feature.residents) > grazing_capacity(data, feature.cells) or int(feature.residents) < (2 if str(feature.species) == "horse" else 1)): return fail("NO_RESIDENTS")
-	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
+	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity, person) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
 	if not recipe_guard.ok: return recipe_guard
 	if operating_projection_only:
 		var projection_inputs: Dictionary = _production_input_preflight(data, feature, key, definition, cargo, carry_limit)
@@ -7551,10 +7551,12 @@ static func _technology_payment_source(data: TerrainData, feature: Dictionary, k
 # REPLACE pay_feature_inputs body; the optional task argument preserves callers.
 
 
-static func technology_batch_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, original_identity: int = 0) -> Dictionary:
+## `known_operator`: the caller's own actions._technology_operator_for_task(task, original_identity) from this same
+## preflight, nothing written since (2026-11-28, town frame time: the work preflight looked the operator up twice).
+static func technology_batch_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, original_identity: int = 0, known_operator: Variant = null) -> Dictionary:
 	var token: Dictionary = feature.get("tech_trial", {})
 	var actions: Variant = _technology_actions(data)
-	var person: Dictionary = actions._technology_operator_for_task(task, original_identity) if actions != null else {}
+	var person: Dictionary = known_operator if known_operator is Dictionary else actions._technology_operator_for_task(task, original_identity) if actions != null else {}
 	if not token.is_empty():
 		if person.is_empty() or int(person.person_id) != int(token.person.person_id) or feature.get("tech_batch", {}).get("token", token) != token: return fail("WAITING", "原具名試作者未在本工位；本項目整批暫停")
 		if actions == null or not actions.has_method("technology_phase_active_guard"): return fail("UNSUPPORTED")
