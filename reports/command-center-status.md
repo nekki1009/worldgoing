@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-27 16:00（台北）
+更新：2026-11-27 18:15（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
 
 ## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（三個本機 commit：778e1a8、a38e223、5ce1cda，未推送）
@@ -25,7 +25,10 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/
 - 回歸：FULL_FW（290 項：11/27 全套＋選單測試＋新測試，3 個並行）287 過；另 3 項（剿匪全程、共同步進重播釘住的標頭雜湊、範本選單測試的「尚未開放」）已在上面三個 commit 修好並重跑通過；土匪、商隊、剿匪、選單相關 FIX_SUP2 38／39 並行過（第 39 項單獨過），剿匪 5 項 SUP3 並行全過。
 - 推送等 Nekki 說。
 ### 待辦
-- 有畫面開局已確認（scenario_existing_person_capture，output/scenario_existing_capture_1127：寨主、首領）。鎮上（37 人）剛開局時畫面每秒 14–15 幀（寨 51 幀），模擬每步 4 ms，慢在繪製；還沒查。
+- 有畫面開局已確認（scenario_existing_person_capture，output/scenario_existing_capture_1127：寨主、首領）。
+### 鎮上畫面（3e13ee5，Nekki 16:06「A」）
+- 溪前鎮（37 人）有畫面每幀 93 ms：原生開步窗口每幀準備兩次（聯合區間預覽 24 ms＋真的 20 ms）。改成真的開步沿用預覽（_native_begin_preview_ticket），對不上照舊重算：每幀 93 → 71 ms（10.6 → 13.9 fps），Lab 63 → 43 ms。完整回歸 FULL_FW2 290 項：288 並行過，剿匪全程 --repeat=3 與冷山寨劫掠兩項單獨過（負載）。
+- 下一個大塊：收集共同工作每幀 13 ms（nb_collect_work）。
 - 快轉時船隻（GD 船身）、作業計時器仍是 1 倍；目前沒看到問題，沒動。
 
 ## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
