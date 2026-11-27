@@ -9,6 +9,7 @@ extends SceneTree
 ## - on the band's next day it moves its lair (hot and attacked), heat 30.
 ## On a timeout the test prints what the lair Site's owner holds (bound, crowd, teams, the day passes) before failing.
 ## Output: SITE_BANDIT_SUPPRESSION_E2E_PASS on success; quit(1) on any failure or the deadline.
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd")
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Generator = preload("res://scripts/scenarios/demo_a_generator.gd")
@@ -30,6 +31,15 @@ func _fail(message: String, detail: Variant = null) -> bool:
 	push_error("SITE_BANDIT_SUPPRESSION_E2E_FAIL: %s %s" % [message, str(detail)])
 	quit(1)
 	return false
+
+## A body's growth on `line`: [pending micro-seconds, toward, lines] (a daily settlement moves pending on).
+func _growth(body: Variant, line: String) -> Array:
+	var packet: Variant = body.get("skills") if body != null else null
+	if not packet is Dictionary: return [0, 0, 0]
+	return [int(packet.get("pending", {}).get(line, 0)), int(packet.get("toward", {}).get(line, 0)), int(packet.get("lines", {}).get(line, 0))]
+
+func _grew(before: Array, after: Array) -> bool:
+	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS)
 
 func _ok(condition: bool, message: String, detail: Variant = null) -> bool:
 	checks += 1
@@ -139,6 +149,14 @@ func _run() -> void:
 	if not _ok(led.ok, "#%d leads the expedition" % int(cadres[0]), led): return
 	if not _ok(controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "").ok, "the expedition is saved"): return
 	for _frame: int in range(300): await process_frame # the native seats the new captain on its next step; the team regroups and stands still
+	# 技能 K3b (Nekki 2026-11-28 「還是要記戰報啊，不然成長怎麼算」): what each officer of the expedition has growing before the
+	# unwatched fight, on his martial line and toward his 武力.
+	var growth_before := {}
+	for person: Variant in cadres.slice(0, 5):
+		var found: Dictionary = controller.person_actions._person(int(person), false)
+		if found.is_empty() or str(found.body.get("military_role", "")) != "officer": continue
+		var line := PersonSkills.martial_line(found.body)
+		growth_before[int(person)] = {"line": line, "martial": _growth(found.body, line), "ability": _growth(found.body, PersonSkills.ABILITY)}
 	var today := int(float(slot.control.logical_game_seconds) / Bandit.DAY)
 	var sent: Dictionary = {}
 	for attempt: int in range(31):
@@ -256,6 +274,16 @@ func _run() -> void:
 			var found: Dictionary = field.site_controller.person_actions._person(int(person), false)
 			if not found.is_empty() and int(preload("res://scripts/terrain_lab/person_social.gd").combat_record(found.body).get("battles", 0)) >= 1: fought += 1
 	if not _ok(fought >= 1, "%d official people carry the battle in their records" % fought): return
+	# Each officer who fought the unwatched battle grew from it (70 hours on his martial line and toward his 武力).
+	var grown := 0
+	var not_grown: Array = []
+	for person: Variant in growth_before:
+		var found: Dictionary = field.site_controller.person_actions._person(int(person), false)
+		if found.is_empty() or int(preload("res://scripts/terrain_lab/person_social.gd").combat_record(found.body).get("battles", 0)) < 1: continue
+		var before: Dictionary = growth_before[person]
+		if _grew(before.martial, _growth(found.body, str(before.line))) and _grew(before.ability, _growth(found.body, PersonSkills.ABILITY)): grown += 1
+		else: not_grown.append([int(person), before, _growth(found.body, str(before.line)), _growth(found.body, PersonSkills.ABILITY)])
+	if not _ok(grown >= 1 and not_grown.is_empty(), "%d officers who fought the unwatched battle grew from it" % grown, not_grown): return
 	var ended: Dictionary = slot.control.faction_registry.entries.get(str(band), {})
 	if not preload("res://scripts/terrain_lab/site_bandit_ended.gd").members_left(field, band):
 		# Nobody of the band is left: it ended (extinct, no lair) with the battle.

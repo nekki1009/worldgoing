@@ -17,6 +17,7 @@ extends SceneTree
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Social = preload("res://scripts/terrain_lab/person_social.gd")
+const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd")
 const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 const Reputation = preload("res://scripts/terrain_lab/person_reputation.gd")
 const START := Vector2i(1170, 13252)
@@ -67,6 +68,19 @@ func _record(person: int) -> Dictionary:
 	var found: Dictionary = controller.person_actions._person(person, false)
 	return Social.combat_record(found.body) if not found.is_empty() else {}
 
+## 技能 K3b (Nekki 2026-11-28 「還是要記戰報啊，不然成長怎麼算」): what a person has growing on `line`: his pending work
+## plus what the daily settlement already moved on (toward, lines), in micro-seconds and points, so a settlement between
+## the two reads cannot hide the credit.
+func _growth(person: int, line: String) -> Array:
+	var found: Dictionary = controller.person_actions._person(person, false)
+	if found.is_empty(): return [0, 0, 0]
+	var packet: Variant = found.body.get("skills")
+	if not packet is Dictionary: return [0, 0, 0]
+	return [int(packet.get("pending", {}).get(line, 0)), int(packet.get("toward", {}).get(line, 0)), int(packet.get("lines", {}).get(line, 0))]
+
+func _grew(before: Array, after: Array) -> bool:
+	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS)
+
 func _run() -> void:
 	if not _check(RegionEntry.request_new_world(START, {}, "戰報世界", "", RegionData.DEFAULT_MANIFEST, {"mode": "found", "name": "甲國"}), "a world is requested", RegionEntry.menu_message): return
 	change_scene_to_file(SITE)
@@ -113,6 +127,14 @@ func _run() -> void:
 	var battles_before: int = RegionBattleLog.table(slot.control.faction_registry).records.size()
 
 	var prestige_before := int(controller.reputation_of(player).prestige)
+	# What everyone who may fight has growing before the fight (K3b credits officers and the controlled person).
+	var growth_before := {}
+	for person: Variant in _team_of(player).person_ids + [rebel]:
+		var body: Dictionary = controller.person_actions._person(int(person), false).get("body", {})
+		if body.is_empty(): continue
+		var line := PersonSkills.martial_line(body)
+		growth_before[int(person)] = {"line": line, "martial": _growth(int(person), line), "ability": _growth(int(person), PersonSkills.ABILITY),
+			"credited": str(body.get("military_role", "")) == "officer" or int(person) == player}
 	# The fight.
 	var opened := false
 	for _frame: int in range(1800):
@@ -173,6 +195,20 @@ func _run() -> void:
 		if int(participants[person]) == home and int(_record(int(person)).get("wins", 0)) == 1: won += 1
 	if not _check(won >= 1, "the winners carry a won battle", won): return
 	if not _check(int(_record(rebel).get("battles", 0)) == 1 and int(_record(rebel).get("losses", 0)) == 1, "the lone cadre carries a lost battle", _record(rebel)): return
+	# Growth from the battle (K3b): each officer or controlled person who fought gains 70 hours on his martial line and
+	# toward his 武力; nobody else does.
+	var grown := 0
+	var wrong: Array = []
+	for person: Variant in growth_before:
+		var before: Dictionary = growth_before[person]
+		var fought := int(_record(int(person)).get("battles", 0)) >= 1
+		var grew := _grew(before.martial, _growth(int(person), str(before.line))) and _grew(before.ability, _growth(int(person), PersonSkills.ABILITY))
+		if fought and bool(before.credited) and grew: grown += 1
+		elif fought and bool(before.credited) or grew and not (fought and bool(before.credited)):
+			wrong.append({"person": int(person), "fought": fought, "credited": before.credited, "player": int(person) == player, "role": str(controller.person_actions._person(int(person), false).get("body", {}).get("military_role", "")),
+				"martial": [before.martial, _growth(int(person), str(before.line))], "ability": [before.ability, _growth(int(person), PersonSkills.ABILITY)]})
+	print("SITE_BATTLE_LOG_LIVE growth ", grown, " ", JSON.stringify(wrong).left(1200))
+	if not _check(grown >= 1 and wrong.is_empty(), "%d who fought grew from the battle (officers and the player only)" % grown, wrong): return
 	if late:
 		if not _check(str(slot.control.faction_registry.entries.get(str(enemy), {}).get("status", "")) == "active", "a band whose last man is only knocked out goes on", _fate(rebel)): return
 		lab.crowd_site.apply_environment_damage(rebel, 10000.0)
