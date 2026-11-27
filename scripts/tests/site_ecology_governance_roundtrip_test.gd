@@ -1,5 +1,7 @@
 extends "res://scripts/tests/site_ecology_policy_border_test.gd"
 ## ECO16 real settlement office save/load and accepted capture timer.
+## Run with -- --grid: the attackers are a TerrainArmy roster standing in the capture zone (data only, never stepped);
+## a crowd Lab (the default since 2026-11-02) reads the capture zone from its crowd owners only and never sees them.
 
 const GOVERNANCE_SAVE := "res://.godot-temp/site_ecology_governance/"
 
@@ -41,6 +43,10 @@ func _save_governance(lab: TerrainLab, suffix: String, key: String, base: Terrai
 	return loaded
 
 func _run() -> void:
+	if not "--grid" in OS.get_cmdline_user_args():
+		push_error("SITE_ECOLOGY_GOVERNANCE_ROUNDTRIP_FAIL: run with -- --grid (its attackers are a TerrainArmy roster in the capture zone)")
+		quit(1)
+		return
 	var data := _building_fixture()
 	data.site.id = RegionGrid.site_id(RegionGrid.ATLAS_ID, Vector2i.ZERO)
 	data.parameters["composition"] = "fixed_geography"
