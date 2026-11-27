@@ -1,9 +1,9 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-27 18:15（台北）
+更新：2026-11-27 19:30（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
 
-## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（三個本機 commit：778e1a8、a38e223、5ce1cda，未推送）
+## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（Nekki 18:25「Push 然後繼續做」：到 050cce3 已推送 PR #3）
 ### 快轉走路（A）
 - 原生 `World::step_body`：不在戰鬥中、遊戲時間快於 1 倍（×2–×16）的一步，移動做 N 次（N＝倍數，最多 16），每次就是 1 倍的移動；計時器、救援、流血只做一次。1 倍和戰鬥中完全不變。新原生測試：×16 一步走得和 ×1 十六步一樣遠。
 - DLL 12e807f1…（build 2a643cb6…）；舊 0a38a4d5… 備份在 output/project_command_center/evidence/FASTWALK_native。舊 DLL 存的檔會被拒絕（Nekki 沒有存檔）。
@@ -28,7 +28,10 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/
 - 有畫面開局已確認（scenario_existing_person_capture，output/scenario_existing_capture_1127：寨主、首領）。
 ### 鎮上畫面（3e13ee5，Nekki 16:06「A」）
 - 溪前鎮（37 人）有畫面每幀 93 ms：原生開步窗口每幀準備兩次（聯合區間預覽 24 ms＋真的 20 ms）。改成真的開步沿用預覽（_native_begin_preview_ticket），對不上照舊重算：每幀 93 → 71 ms（10.6 → 13.9 fps），Lab 63 → 43 ms。完整回歸 FULL_FW2 290 項：288 並行過，剿匪全程 --repeat=3 與冷山寨劫掠兩項單獨過（負載）。
-- 下一個大塊：收集共同工作每幀 13 ms（nb_collect_work）。
+- 收集共同工作（40ed312，本機未推送）：每幀 13.0 → 9.0 ms，整幀 Lab 42.7 → 36.7 ms（14.1 → 15.5 fps）。答案都不變，只是少讀：四周沒有別勢力的人就直接答「無威脅」（原本每個工人逐格查 145 格）；住宅出席先看人在不在家門格、不給列的人（非群眾、在屋裡）先跳過、同一輪同一間房的佈局只算一次；房屋佈局只掃一次其他建築的門（原本每個門格都掃全部建築）；Site 沒有船就直接答沒上船。
+- 回歸 33 項（住宅、居民、工作隊、船、攻城、選現成人物、共同步進重播）：29 過；site_work_team_clock（已退役格子模擬）、site_fatigue_threat_fast（舊非交換路徑）、site_housing_crowd（要求房屋步進中原生存檔要拒絕，11/26 已改成可存）三項在沒有這次改動的版本上一樣失敗；site_housing_crowd 要 `--grid --crowd-test <新 id> --crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime`、visual。
+- 聚落佔領取樣（未 commit，回歸中）：群眾 Site 上若沒有任何「別勢力、敵對、不是土匪」的隊伍，直接答沒有攻方（原本每幀讀每個人和佔領圈）：原生開步界限 4.3 → 3.3 ms，整幀 Lab 35.2 ms、15.8 fps。
+- 下一塊：補給（_native_sustain_original_rows 每幀算三次，收集 1.2＋界限 1.2＋nb_sustain 1.9 ms）、工作隊選人 3.3 ms、住宅出席 1.8 ms（_ready 0.9 ms）。
 - 快轉時船隻（GD 船身）、作業計時器仍是 1 倍；目前沒看到問題，沒動。
 
 ## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
