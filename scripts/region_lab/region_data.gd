@@ -59,6 +59,24 @@ static func _shared_tile(key: String) -> Variant:
 	_shared_tile_mutex.unlock()
 	return found
 
+## The summary, content-scope and source-quality bytes (4.56 million each) passed their value range for this SHA-256 in
+## this process: a second load of the same source skips the loops (Taiwan r4: 512 -> 376 ms a load). The bytes are the file's, proven
+## by _read_verified against the same record's SHA-256 first.
+static var _checked_ranges: Dictionary = {}
+
+static func _bytes_below(bytes: PackedByteArray, record: Dictionary, limit: int) -> bool:
+	var key := "%s|%d|%d" % [str(record.get("sha256", "")), bytes.size(), limit]
+	_shared_tile_mutex.lock()
+	var known := _checked_ranges.has(key)
+	_shared_tile_mutex.unlock()
+	if known: return true
+	for value: int in bytes:
+		if value >= limit: return false
+	_shared_tile_mutex.lock()
+	_checked_ranges[key] = true
+	_shared_tile_mutex.unlock()
+	return true
+
 static func _publish_shared_tile(key: String, tile: Dictionary) -> void:
 	_shared_tile_mutex.lock()
 	if not _shared_tiles.has(key):
@@ -379,9 +397,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	var bytes: PackedByteArray = loaded.bytes
 	if bytes.size() != int(summary.size[0]) * int(summary.size[1]):
 		return fail("INVALID_SUMMARY", "地理摘要長度與格網不符")
-	for value: int in bytes:
-		if value < 0 or value >= CLASS_NAMES.size():
-			return fail("INVALID_SUMMARY", "地理摘要含未知分類")
+	if not _bytes_below(bytes, summary, CLASS_NAMES.size()):
+		return fail("INVALID_SUMMARY", "地理摘要含未知分類")
 	var scope_bytes := PackedByteArray()
 	if parsed.has("content_scope"):
 		var scope_result := _read_verified(path.get_base_dir(), parsed.content_scope, MAX_SUMMARY_BYTES)
@@ -390,9 +407,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 		scope_bytes = scope_result.bytes
 		if scope_bytes.size() != bytes.size():
 			return fail("INVALID_SCOPE", "內容範圍長度與地理摘要不同")
-		for value: int in scope_bytes:
-			if value > 5:
-				return fail("INVALID_SCOPE", "內容範圍包含未知分類")
+		if not _bytes_below(scope_bytes, parsed.content_scope, 6):
+			return fail("INVALID_SCOPE", "內容範圍包含未知分類")
 	var quality_bytes := PackedByteArray()
 	if parsed.has("source_quality"):
 		var quality_result := _read_verified(path.get_base_dir(), parsed.source_quality, MAX_SUMMARY_BYTES)
@@ -401,9 +417,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 		quality_bytes = quality_result.bytes
 		if quality_bytes.size() != bytes.size():
 			return fail("INVALID_QUALITY", "來源品質長度與地理摘要不同")
-		for value: int in quality_bytes:
-			if value > 4:
-				return fail("INVALID_QUALITY", "來源品質包含未知分類")
+		if not _bytes_below(quality_bytes, parsed.source_quality, 5):
+			return fail("INVALID_QUALITY", "來源品質包含未知分類")
 	var resource_layer := _read_resource_manifest(text.sha256_text())
 	if not resource_layer.ok:
 		return resource_layer
