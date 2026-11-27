@@ -14,6 +14,28 @@ const DAY := 86400.0
 var lab: TerrainLab
 var slot: RegionSaveSlot
 var finished := false
+var _sustain_traced := {} # `--sustain-trace`: Site id -> team keys already reported ahead of their Site clock
+var _sustain_last := {} # Site id -> [site seconds, {team: at}] after the previous frame
+
+## `--sustain-trace` (2026-11-27, fast-forward walking): after every frame, each bound settlement's team supply clocks
+## against its Site clock; the first time a team runs ahead by more than 1e-6 s it prints both frames' values.
+func _trace_sustain() -> void:
+	if not "--sustain-trace" in OS.get_cmdline_user_args(): return
+	for id: String in slot._region_original_labs:
+		var there: TerrainLab = slot._region_original_labs[id]
+		if there == null or there.terrain == null: continue
+		var site_seconds := (float(there.terrain.site.minute) + float(there.terrain.site.phase)) * 60.0
+		var clocks := {}
+		for key: Variant in there.terrain.site.get("team_supply", {}):
+			var entry: Dictionary = there.terrain.site.team_supply[key]
+			clocks[str(key)] = float(entry.get("sustain", {}).get("at", -1.0))
+		for key: String in clocks:
+			if float(clocks[key]) - site_seconds > 0.000001 and not _sustain_traced.get(id, {}).has(key):
+				if not _sustain_traced.has(id): _sustain_traced[id] = {}
+				_sustain_traced[id][key] = true
+				print("VILLAGE_STOCK SUSTAIN_AHEAD %s team %s at %.9f Site %.9f (+%.9f); previous frame %s; speed %s; members %s" % [id, key, float(clocks[key]), site_seconds, float(clocks[key]) - site_seconds,
+					JSON.stringify(_sustain_last.get(id, [])), str(there.simulation_speed), JSON.stringify(there.terrain.site.team_supply[key].sustain.get("cohorts", []).map(func(c: Dictionary) -> Array: return c.get("ids", []))).left(200)])
+		_sustain_last[id] = [site_seconds, clocks]
 
 func _initialize() -> void:
 	create_timer(3400.0).timeout.connect(func() -> void: _end("deadline"))
@@ -158,6 +180,7 @@ func _run() -> void:
 		if finished: return
 		lab._process(1.0 / 30.0)
 		lab.site_controller.person_actions.settle_after_contacts()
+		_trace_sustain()
 		if _arg("bind", 0.0) > 0.0 and int(float(slot.control.logical_game_seconds) / _arg("every", 3600.0)) != hour:
 			hour = int(float(slot.control.logical_game_seconds) / _arg("every", 3600.0))
 			for id: String in slot._region_original_labs:

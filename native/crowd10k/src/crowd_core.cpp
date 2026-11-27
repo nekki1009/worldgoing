@@ -2486,6 +2486,27 @@ double World::tactical_dt(float dt, double gdt) const {
 	return gdt * (c + ((double)dt - c) * 60.0) / ((double)dt * 60.0);
 }
 
+// How far each slot follower stands from his slot after a motion pass; formation_stage turns it into the formation's lag.
+void World::accumulate_slot_lag() {
+	const int n = soldier_count();
+	for (int i = 0; i < n; ++i) {
+		if (state[i] != S_SLOT || slot[i] < 0 || is_convoy_crew(i)) continue; // convoy crew are not formation slot followers
+		// CAV-4a: a rider of a CHARGE cycle with an enemy within its engage radius is in the press, not a follower the
+		// formation waits for (the centre leads the form-up and rally walks out, and the riders work free and follow)
+		if (mounted[i] && target[i] >= 0 && formations[form[i]].order == Order::CHARGE) continue;
+		float dx = slot_tx_[i] - px[i], dy = slot_ty_[i] - py[i];
+		lag_acc_[form[i]] += std::sqrt(dx * dx + dy * dy);
+		lag_cnt_[form[i]]++;
+	}
+}
+
+int World::motion_passes(float dt, double gdt) const {
+	if (step_combat_start > 0.0 || !(dt > 0.0f) || !(gdt > 0.0)) return 1;
+	const double ratio = gdt / ((double)dt * 60.0);
+	if (!std::isfinite(ratio) || ratio < 1.5) return 1;
+	return (int)std::min((double)MAX_MOTION_PASSES, std::round(ratio));
+}
+
 bool World::step(float dt) {
 	if (work_point_active_ || !valid_action_dt(dt)) return false;
 	external_clock = false;
@@ -2544,34 +2565,49 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	}
 	pt.ai = ms_since(t); t = Clock::now();
 
-	formation_stage(dt);
-	pt.formation = ms_since(t); t = Clock::now();
+	// Nekki 2026-11-27 (A): a fast-forward step out of combat makes one motion pass per x of its speed (motion_passes),
+	// each exactly the x1 motion of this action dt; pass 0 is the original step order, so a single-pass step is unchanged.
+	// Later passes repeat only the motion: slot lag, positions hash, formations, contacts, movement. Timers, rescue and
+	// bleed run once; the host's housing attendance is consumed after the last pass.
+	const int passes = motion_passes(dt, gdt);
+	for (int pass = 0; pass < passes; ++pass) {
+		if (pass > 0) {
+			accumulate_slot_lag();
+			build_hash();
+		}
+		formation_stage(dt);
+		pt.formation += ms_since(t); t = Clock::now();
 
-	pool_.run(chunks_, [&](int ch) { timers_stage(dt, tdt, ch); });
-	for (int ch = 0; ch < chunks_; ++ch) {
-		for (int i : wake_buf_[ch]) { stats.wakes++; formations[form[i]].command_dirty = true; push_event(EV_WAKE, i, -1); }
-		for (int i : getup_buf_[ch]) formations[form[i]].command_dirty = true;
+		if (pass == 0) {
+			pool_.run(chunks_, [&](int ch) { timers_stage(dt, tdt, ch); });
+			for (int ch = 0; ch < chunks_; ++ch) {
+				for (int i : wake_buf_[ch]) { stats.wakes++; formations[form[i]].command_dirty = true; push_event(EV_WAKE, i, -1); }
+				for (int i : getup_buf_[ch]) formations[form[i]].command_dirty = true;
+			}
+			rescue_stage(dt);
+			bleed_stage(tdt);
+			pt.timers = ms_since(t); t = Clock::now();
+		}
+
+		pool_.run(chunks_, [&](int ch) { contact_stage(ch); });
+		pt.contact += ms_since(t); t = Clock::now();
+
+		if (pass == 0) {
+			action_motion.resize(n);
+			cav_cand.resize(n, -1); cav_cand_vx.resize(n, 0.f); cav_cand_vy.resize(n, 0.f); // CAV-1 derived per-step buffers
+			for (int i = 0; i < n; ++i) action_motion[i] = {px[i], py[i], px[i], py[i]};
+		}
+		advance_siege_compounds(dt);
+		convoy_stage(dt); // convoy anchors advance before the crew are steered to their slots
+		plan_captive_follow(dt); // serial: captive wishes from start-of-step positions and captor headings
+		pool_.run(chunks_, [&](int ch) { soldier_stage(dt, ch); });
+		std::swap(px, nx); std::swap(py, ny);
+		capture_work_point_runners(); // Same ORIGINAL motion phase; before projectile/exchange death.
+		cav_settle(); // CAV-1 charge outcomes, serial in rider index order, after this step's motion
+		for (int i = 0; i < n; ++i) { action_motion[i].to_x = px[i]; action_motion[i].to_y = py[i]; }
+		pt.soldier += ms_since(t); t = Clock::now();
 	}
-	rescue_stage(dt);
-	bleed_stage(tdt);
-	pt.timers = ms_since(t); t = Clock::now();
-
-	pool_.run(chunks_, [&](int ch) { contact_stage(ch); });
-	pt.contact = ms_since(t); t = Clock::now();
-
-	action_motion.resize(n);
-	cav_cand.resize(n, -1); cav_cand_vx.resize(n, 0.f); cav_cand_vy.resize(n, 0.f); // CAV-1 derived per-step buffers
-	for (int i = 0; i < n; ++i) action_motion[i] = {px[i], py[i], px[i], py[i]};
-	advance_siege_compounds(dt);
-	convoy_stage(dt); // convoy anchors advance before the crew are steered to their slots
-	plan_captive_follow(dt); // serial: captive wishes from start-of-step positions and captor headings
-	pool_.run(chunks_, [&](int ch) { soldier_stage(dt, ch); });
-	std::swap(px, nx); std::swap(py, ny);
-	capture_work_point_runners(); // Same ORIGINAL motion phase; before projectile/exchange death.
-	cav_settle(); // CAV-1 charge outcomes, serial in rider index order, after this step's motion
-	for (int i = 0; i < n; ++i) { action_motion[i].to_x = px[i]; action_motion[i].to_y = py[i]; }
 	std::fill(housing_attendance_cell.begin(), housing_attendance_cell.end(), -1); // One host attendance reference serves fatigue then original motion, consumed for the next step.
-	pt.soldier = ms_since(t); t = Clock::now();
 
 	build_hash(); // arrivals, exchange and fire read the positions after this step's movement
 	projectiles_advance(dt); // flights already in the air; this step's new shots start next step
@@ -2589,15 +2625,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	command_stage(dt); // settle_combat_command
 	pt.command = ms_since(t); t = Clock::now();
 
-	for (int i = 0; i < n; ++i) {
-		if (state[i] != S_SLOT || slot[i] < 0 || is_convoy_crew(i)) continue; // convoy crew are not formation slot followers
-		// CAV-4a: a rider of a CHARGE cycle with an enemy within its engage radius is in the press, not a follower the
-		// formation waits for (the centre leads the form-up and rally walks out, and the riders work free and follow)
-		if (mounted[i] && target[i] >= 0 && formations[form[i]].order == Order::CHARGE) continue;
-		float dx = slot_tx_[i] - px[i], dy = slot_ty_[i] - py[i];
-		lag_acc_[form[i]] += std::sqrt(dx * dx + dy * dy);
-		lag_cnt_[form[i]]++;
-	}
+	accumulate_slot_lag();
 	for (size_t fi = 0; fi < formations.size(); ++fi) {
 		Formation &f = formations[fi];
 		f.compact_t -= dt;

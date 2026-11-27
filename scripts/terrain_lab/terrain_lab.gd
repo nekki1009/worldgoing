@@ -15945,7 +15945,12 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 					var own := false
 					for pool: Variant in native_charged:
 						if is_same(pool, group.original_pool): own = true; break
-					if not own or combat <= 0.0 and (plan_index == 0 or band_end >= run_floor): limit = band_end
+					# The upper plan adds the possible runners' effort: its boundary is one only they could reach, and nearer than
+					# the run floor it is not a cut for any pool. A work pool's upper boundary 1e-4 game seconds ahead (29.99999 of 30,
+					# the plan's 0.085/s where the native charged 0.5 % of it) cut every window again at a shrinking distance:
+					# windows of 6e-7 game seconds, which the Site clock does not count and the supply ledgers do, so a town's save
+					# was refused (供養時鐘超前 Site) and the world stood still (found 2026-11-27, fast-forward walking).
+					if (plan_index == 0 or band_end >= run_floor) and (not own or combat <= 0.0): limit = band_end
 				break
 		plan_index += 1
 	# A successful pulse sets the original formation's charged_this_step flag;

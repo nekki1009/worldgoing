@@ -3554,7 +3554,7 @@ static func _validate_supply(state: Dictionary, data: TerrainData = null, region
 		if supply.sustain.version != (2 if positional else 1) or positional and supply.has("inventory") or not positional and supply.has("locations"):
 			return Runtime.fail("CORRUPT_SAVE", "共糧格式不可雙份或混用舊開封量")
 		if float(supply.sustain.at) > site_seconds + 0.00001:
-			return Runtime.fail("CORRUPT_SAVE", "供養時鐘超前 Site")
+			return Runtime.fail("CORRUPT_SAVE", "供養時鐘超前 Site: team %s at %.6f, Site %.6f" % [str(key), float(supply.sustain.at), site_seconds])
 		if not supply.sustain.cohorts.is_empty() and float(supply.sustain.at) < site_seconds - 0.00001:
 			return Runtime.fail("CORRUPT_SAVE", "有成員的供養時鐘落後 Site，不能跳過缺糧或餐份時段")
 		if not (_saved_supply_locations(data, state, int(key), supply.get("locations")) if positional else _saved_resource_stack(supply.get("inventory"))) or not supply.get("training_order") is bool or not _integer(supply.get("training_requester"), -1, 2147483647) or not _integer(supply.get("revision"), 0, 2147483647):

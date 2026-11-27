@@ -687,6 +687,39 @@ static void test_site_clock() {
 	}
 }
 
+// Nekki 2026-11-27 (A): a fast-forward step out of combat moves its people as far as that many x1 steps; combat keeps one pass.
+static void test_fast_forward_motion() {
+	std::printf("[clock] x16 out of combat: one step walks as far as sixteen x1 steps; in combat one pass\n");
+	auto walk = [](double speed, int steps, double combat) {
+		Scene s(1, 64, 48);
+		s.w.combat_left = 0.0;
+		int a = s.formation(0, 10, 24, 0, 1, sword());
+		int b = s.formation(1, 60, 44, 0, 1, sword());
+		s.w.finalize();
+		for (int f : {a, b}) s.w.formations[f].ai_enabled = false;
+		s.w.order_hold(b);
+		s.w.order_move(a, 55.5f, 24.5f, 0); s.w.formations[a].order_delay = 0;
+		for (int k = 0; k < steps; ++k) checked_step_clock(s.w, DT, DT * 60.0 * speed, combat);
+		return std::vector<float>{s.w.px[0], s.w.py[0], (float)s.w.tick};
+	};
+	CHECK(World::MAX_MOTION_PASSES == 16, "sixteen passes at most");
+	const auto start = walk(1.0, 0, 0.0), slow = walk(1.0, 160, 0.0), fast = walk(16.0, 10, 0.0), fought = walk(16.0, 10, 100.0), once = walk(1.0, 10, 0.0);
+	const float slow_d = slow[0] - start[0], fast_d = fast[0] - start[0];
+	CHECK(slow_d > 8.f, "the x1 walk moves (%.2f cells in 160 steps)", slow_d);
+	CHECK(std::fabs(fast_d - slow_d) < 0.3f, "ten x16 steps walk as far as 160 x1 steps (%.2f vs %.2f)", fast_d, slow_d);
+	CHECK((int)fast[2] == 10, "the passes are one step each (tick %d)", (int)fast[2]);
+	CHECK(std::fabs(fought[0] - once[0]) < 0.05f, "in combat a x16 step moves one pass (%.3f vs %.3f)", fought[0], once[0]);
+	{   // the pass count reads the step's game time per action second
+		World w(1);
+		w.step_combat_start = 0.0;
+		CHECK(w.motion_passes(DT, DT * 60.0) == 1 && w.motion_passes(DT, DT * 30.0) == 1, "x1 and x0.5: one pass");
+		CHECK(w.motion_passes(DT, DT * 120.0) == 2 && w.motion_passes(DT, DT * 960.0) == 16, "x2: two passes, x16: sixteen");
+		CHECK(w.motion_passes(DT, DT * 6000.0) == 16, "never more than sixteen");
+		w.step_combat_start = 0.5;
+		CHECK(w.motion_passes(DT, DT * 960.0) == 1, "a step that starts in combat: one pass");
+	}
+}
+
 static void test_game_time_actions() {
 	std::printf("[clock] capture 4 game s, escape 30 game s, fatigue / morale resupply on game time\n");
 	{   // capture in peace completes in 4/60 action s
@@ -2537,6 +2570,7 @@ int main() {
 	test_round_fatigue_before_deaths();
 	test_move_encounter();
 	test_site_clock();
+	test_fast_forward_motion();
 	test_game_time_actions();
 	test_flow_order();
 	test_state_import_export();

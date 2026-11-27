@@ -490,7 +490,9 @@ func _run() -> void:
 	# TCM 11/16: crowd_core.hpp gained the runtime-only step_combat_start (not serialized); the KW21 layout is unchanged.
 	# CIV-A0 11/19 (2f454b0): Presentation gained the RenderActivity override (presentation only, cleared on load, not
 	# serialized); the KW21 layout is unchanged.
-	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "3a34c4a0e93394d82d0543e33026f5e24cfbaf19edc5f5cb4edf985ce08a8308", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
+	# 11/27 (快轉走路): World gained motion_passes / MAX_MOTION_PASSES and accumulate_slot_lag (step code only, nothing
+	# serialized); the KW21 layout is unchanged.
+	if not _require(FileAccess.get_sha256("res://native/crowd10k/src/crowd_core.hpp") == "680f73cf4408e85a2f36666ba95cf1f89e974252e6077afb2b0ab0deede9aad4", "fixed KW21 serializer crowd_core.hpp for typed byte comparison"): return
 	root.gui_embed_subwindows = true
 	var initial := _initial()
 	if failed: return

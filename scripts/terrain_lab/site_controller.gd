@@ -2784,7 +2784,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 	else:
 		_combat_ui_elapsed = 0.0
 	if not bool(data.site.paused) and not get_tree().paused:
-		advance_sleep() # TC2
+		_note_sleep_wake() # TC2: applied in finish_tick, after the step
 		vital_year_tick() # TC7
 		_civil_level_prestige() # W5
 		vehicles.settle_operators()
@@ -2830,6 +2830,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 
 func finish_tick() -> void:
 	if lab.restore_only: return
+	_finish_sleep_wake()
 	var fault: Dictionary = original_step_fault_guard()
 	if not fault.ok: return
 	if region_operation_pending():
@@ -15646,13 +15647,32 @@ func wake_up(reason: String = "醒來") -> void:
 	lab.simulation_speed = float(sleep_record.prior_speed)
 	sleep_record = {}
 	_sleep_minute = -1
+	_sleep_wake_pending = ""
 	if lab.terrain != null and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append(reason)
 	update_ui()
 
 ## Checked every frame: the target time, combat, a hit or knockout end the sleep; an enemy near is checked once per
 ## game minute.
 func advance_sleep() -> void:
-	if sleep_record.is_empty() or lab.terrain == null: return
+	var reason := sleep_wake_reason()
+	if not reason.is_empty(): wake_up(reason)
+
+## The step's tick (2026-11-27): a wake found inside a step waits for finish_tick. Restoring the speed there, not in
+## the middle of the step, keeps the step's game seconds equal to the ones its native work window was prepared with
+## (waking at the target time mid-step faulted CLOCK_NOT_READY, and the world stood still).
+var _sleep_wake_pending := ""
+func _note_sleep_wake() -> void:
+	if _sleep_wake_pending.is_empty(): _sleep_wake_pending = sleep_wake_reason()
+
+func _finish_sleep_wake() -> void:
+	if _sleep_wake_pending.is_empty(): return
+	var reason := _sleep_wake_pending
+	_sleep_wake_pending = ""
+	wake_up(reason)
+
+## Why the sleeper wakes now ("" = he sleeps on).
+func sleep_wake_reason() -> String:
+	if sleep_record.is_empty() or lab.terrain == null: return ""
 	var person: Dictionary = person_actions._person(int(lab.controlled_person_id()), false)
 	var minute := int(lab.terrain.site.get("minute", 0))
 	var reason := ""
@@ -15663,7 +15683,7 @@ func advance_sleep() -> void:
 	elif minute != _sleep_minute:
 		_sleep_minute = minute
 		reason = Sleep.wake_reason(lab, sleep_record, person)
-	if not reason.is_empty(): wake_up(reason)
+	return reason
 
 
 ## 時間與氣候 TC7: once per calendar year, every person on this Site ages; health (max HP) follows SiteVital, HP above it
