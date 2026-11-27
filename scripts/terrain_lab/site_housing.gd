@@ -150,9 +150,10 @@ static func leave(lab: Variant, identity: int, requester_id: int) -> Dictionary:
 
 ## `layouts` (optional) memoizes house layouts by house id for one read pass that changes no feature or terrain (a town's
 ## residents share houses; 2026-11-27, town frame time).
-static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}, layouts: Variant = null) -> bool:
+static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}, layouts: Variant = null, known_person: Dictionary = {}) -> bool:
 	var actions: RefCounted = lab.site_controller.person_actions
-	var person: Dictionary = actions._person(identity, false)
+	# `known_person`: the caller's own actions._person(identity, false) from this same pass (nothing written since).
+	var person: Dictionary = known_person if not known_person.is_empty() else actions._person(identity, false)
 	var registered := relation(lab, identity)
 	# The body's cell is read before the house layout (a 37-person town spent 3 ms a frame building layouts for residents
 	# away in their fields; 2026-11-27). Every check here only refuses, so the order changes no answer.
@@ -183,7 +184,7 @@ static func attendance_input(lab: Variant) -> Array[Dictionary]:
 		# native refuses an attendance row for him (can_act), and that refusal stopped every crowd step of the Site, its
 		# clock included, from the moment the first resident went in (found 2026-11-21, CA-05 household test).
 		if int(person.owner.crowd_site._absent_kind(int(person.unit))) != 0: continue
-		if not _attends(lab, int(identity), {}, layouts): continue
+		if not _attends(lab, int(identity), {}, layouts, person): continue
 		rows.append({"unit": int(person.unit), "cell": int(relation(lab, int(identity)).cell)})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.unit) < int(b.unit))
 	return rows
@@ -201,7 +202,7 @@ static func recovery_multiplier(lab: Variant, rows: Array) -> float:
 		if person.is_empty(): return 1.0
 		if float(person.hp) <= 0.0: continue
 		living += 1
-		if not _attends(lab, identity, {}, layouts): return 1.0
+		if not _attends(lab, identity, {}, layouts, person): return 1.0
 	return MULTIPLIER if living > 0 else 1.0
 
 static func shared_multiplier(lab: Variant, team: TerrainArmy) -> float:

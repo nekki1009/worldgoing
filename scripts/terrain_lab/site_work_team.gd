@@ -126,10 +126,20 @@ func _vehicle_task_ended(task: Dictionary) -> bool:
 	var field := "build" if str(task.get("action", "")) == "construct" else "repair"
 	return vehicle.is_empty() or float(vehicle.get("hp", 0.0)) <= 0.0 or vehicle.get(field, {}).is_empty()
 
+## A native worker's own row (the row _person returns for him), read without building his person view; {} for anyone
+## else. The refreshes below skip a worker whose row shows nothing to refresh: _person would give that same row or none,
+## and either way nothing changes (2026-11-27, town frame time).
+func _native_work_row(identity: int) -> Dictionary:
+	if not _native_active() or not lab.crowd_site.contains_person(identity): return {}
+	var owner_ref: Variant = lab.crowd_site.person_owner(identity)
+	return owner_ref.records.get(int(lab.crowd_site._index_by_id.get(identity, -1)), {}) if owner_ref != null else {}
+
 func refresh_vehicle_tasks() -> void:
 	# Workers share the original job. Completion in this slice clears every
 	# participant's reference before a same-frame save can see a finished job.
 	for identity: int in active_ids():
+		var row := _native_work_row(identity)
+		if not row.is_empty() and not _vehicle_task_ended(row.get("work_task", {})): continue
 		var person := _person(identity)
 		if person.is_empty(): continue
 		var task: Dictionary = person.row.get("work_task", {})
@@ -146,6 +156,8 @@ func refresh_vehicle_tasks() -> void:
 
 func refresh_ship_tasks() -> void:
 	for identity: int in active_ids():
+		var row := _native_work_row(identity)
+		if not row.is_empty() and (str(row.get("work_task", {}).get("action", "")) != "operate" or not str(row.get("work_task", {}).get("target", "")).begins_with("feature:")): continue
 		var person := _person(identity)
 		if person.is_empty(): continue
 		var task: Dictionary = person.row.get("work_task", {})
