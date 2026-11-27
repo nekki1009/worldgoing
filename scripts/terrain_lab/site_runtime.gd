@@ -4981,15 +4981,18 @@ static func house_layout(data: TerrainData, key: String) -> Dictionary:
 	if str(feature.get("kind", "")) != "house" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION:
 		return fail("NO_HOUSE", "需已知住宅布局")
 	var entrance := int(feature.get("entrance", -1))
+	# The door cells and the other buildings' entrances are read once (2026-11-27: a town's housing attendance spent 2 ms
+	# a frame rescanning every feature for every door cell; the same cells come out).
+	var doors: Array[Dictionary] = _building_entrances(data, feature.cells, int(feature.quarter))
+	var other_entrances := {}
+	for other_key: String in data.site.features:
+		if other_key != key: other_entrances[int(data.site.features[other_key].get("entrance", -1))] = true
 	var candidates := {}
-	for pair: Dictionary in _building_entrances(data, feature.cells, int(feature.quarter)):
+	for pair: Dictionary in doors:
 		var cell: Vector2i = pair.cell
 		var index := data.index(cell)
 		if not data.is_walkable(cell) or data.effective_height(cell) != int(feature.level) or int(data.feature_at[index]) != 0 or index == int(data.site.depot_cell): continue
-		var occupied_entry := false
-		for other_key: String in data.site.features:
-			if other_key != key and int(data.site.features[other_key].get("entrance", -1)) == index: occupied_entry = true; break
-		if not occupied_entry: candidates[index] = true
+		if not other_entrances.has(index): candidates[index] = true
 	var connected := {}
 	var pending: Array[int] = []
 	if candidates.has(entrance): connected[entrance] = true; pending.append(entrance)
@@ -5005,7 +5008,7 @@ static func house_layout(data: TerrainData, key: String) -> Dictionary:
 			connected[index] = true
 			pending.append(index)
 	var slots: Array[int] = []
-	for pair: Dictionary in _building_entrances(data, feature.cells, int(feature.quarter)):
+	for pair: Dictionary in doors:
 		var index := data.index(pair.cell)
 		if index != entrance and connected.has(index): slots.append(index)
 	return ok("住宅門前休息布局", {"id": key, "complete": str(feature.get("stage", "")) == "complete", "entry": data.cell_from_index(entrance), "slots": slots, "capacity": slots.size()})

@@ -3049,7 +3049,10 @@ func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary)
 		var teams: Array[TerrainArmy] = []
 		for team: TerrainArmy in combat_armies:
 			if team.combat_enabled and team.faction_id != faction: teams.append(team)
-		candidates[faction] = {"actors": actor_cells, "ships": ship_cells, "teams": teams, "probes": {}}
+		# 2026-11-27 (town frame time): with no awake actor, aboard body or combat team of another faction every probe below
+		# reads false; such a snapshot answers at once (a 37-person town spent 1.3 ms a frame probing 145 empty cells per worker).
+		candidates[faction] = {"actors": actor_cells, "ships": ship_cells, "teams": teams, "probes": {},
+			"quiet": actor_cells.is_empty() and ship_cells.is_empty() and teams.is_empty()}
 	if not candidates.has("flight_cells"):
 		var flight_cells := {}
 		for source: Node2D in _ranged_owners():
@@ -3060,6 +3063,7 @@ func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary)
 		candidates["flight_cells"] = flight_cells
 	if candidates.flight_cells.has(cell): return true
 	var snapshot: Dictionary = candidates[faction]
+	if bool(snapshot.get("quiet", false)): return false
 	var probes: Dictionary = snapshot.probes
 	for distance in range(9):
 		for dx in range(-distance, distance + 1):
@@ -15772,11 +15776,13 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 	if tactical_seconds > ACTION_TIME_EPSILON and tactical_seconds < action_seconds:
 		action_seconds = tactical_seconds
 		game_seconds = SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed
+	var cw: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var supplies: Dictionary = site_controller.shared_supply_event_limit(game_seconds)
 	if not supplies.ok: return supplies
 	game_seconds = minf(game_seconds, float(supplies.game_seconds))
 	var retry := float(site_controller.work_team.next_work_event_seconds())
 	if is_finite(retry) and retry > ACTION_TIME_EPSILON: game_seconds = minf(game_seconds, retry)
+	cw = _combat_profile_stage("cw_supply_retry", cw)
 	if 0.5 - site_controller._work_elapsed > ACTION_TIME_EPSILON:
 		action_seconds = minf(action_seconds, 0.5 - site_controller._work_elapsed)
 	var full_game_seconds: float = SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed
@@ -15796,24 +15802,32 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 		if native_active and crowd_site.contains_person(actor.person_id): continue
 		if actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id(): actor.advance_navigation()
 	_shared_movement_prepared = true
+	cw = _combat_profile_stage("cw_fatigue_movement", cw)
 	site_controller._shared_worker_inputs = site_controller._prepare_original_work_inputs()
+	cw = _combat_profile_stage("cw_worker_inputs", cw)
 	var owners: Array = site_controller.prepare_shared_owner_work_requests(game_seconds)
+	cw = _combat_profile_stage("cw_owner_requests", cw)
 	# Keep original caller order for the shared inventory reservation.
 	for request: Dictionary in owners:
 		if str(request.provider) == "runtime": _shared_work_requests.append(request)
 	var pa_requests: Array = site_controller.person_actions.work_requests(game_seconds)
+	cw = _combat_profile_stage("cw_person_action_requests", cw)
 	_shared_work_requests.append_array(site_controller.work_team.prepare_work_requests(game_seconds, action_seconds, pa_requests))
+	cw = _combat_profile_stage("cw_work_team_requests", cw)
 	_shared_work_requests.append_array(pa_requests)
 	for request: Dictionary in owners:
 		if str(request.provider) != "runtime": _shared_work_requests.append(request)
 	var admitted := _reserve_shared_work_payments(_shared_work_requests)
 	if not admitted.ok: return admitted
+	cw = _combat_profile_stage("cw_payments", cw)
 	var refreshed := _refresh_shared_work_preflight()
 	if not refreshed.ok: return refreshed
+	cw = _combat_profile_stage("cw_preflight", cw)
 	var groups := _capture_shared_vehicle_groups(_shared_work_requests)
 	if not groups.ok: return groups
 	var moving := _shared_movement_requests(game_seconds, _shared_work_requests)
 	_shared_work_requests.append_array(moving)
+	cw = _combat_profile_stage("cw_vehicles_movement", cw)
 	if native_active:
 		var runners: Dictionary = crowd_site.work_fatigue_run_requests(game_seconds, _shared_work_requests)
 		if not runners.ok: return runners
@@ -15821,6 +15835,7 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 		_shared_work_requests.append_array(_native_ship_crew_requests(game_seconds, _shared_work_requests))
 		var recovery: Dictionary = crowd_site.prepare_work_fatigue_recovery_inputs()
 		if not recovery.ok: return recovery
+		cw = _combat_profile_stage("cw_runners_recovery", cw)
 	_shared_work_action_seconds = action_seconds
 	_shared_work_game_seconds = game_seconds
 	return SiteRuntime.ok("", {"action_seconds": action_seconds, "game_seconds": game_seconds})

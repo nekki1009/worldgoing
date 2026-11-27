@@ -64,7 +64,7 @@ func _run() -> void:
 		if lab.combat_profile_enabled:
 			var stages: Array = lab.combat_profile_usec.keys()
 			stages.sort_custom(func(x: Variant, y: Variant) -> bool: return float(lab.combat_profile_usec[x]) > float(lab.combat_profile_usec[y]))
-			for stage: Variant in stages.slice(0, 25): print("EXISTING_PERSON_CAPTURE stage %s %.1f ms a frame" % [str(stage), float(lab.combat_profile_usec[stage]) / 1000.0 / measure])
+			for stage: Variant in stages.slice(0, 60): print("EXISTING_PERSON_CAPTURE stage %s %.1f ms a frame" % [str(stage), float(lab.combat_profile_usec[stage]) / 1000.0 / measure])
 	await RenderingServer.frame_post_draw
 	var image := root.get_texture().get_image()
 	var path := out.path_join(role + ".png")

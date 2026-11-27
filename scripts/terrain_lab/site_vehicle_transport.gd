@@ -1791,6 +1791,11 @@ static func ship_record_check(data: TerrainData, crowd: Variant) -> Dictionary:
 	return Runtime.ok()
 
 func ship_for_person(identity: int) -> Dictionary:
+	# Without a ship record nobody is aboard: skip building his person view (2026-11-27, town frame time).
+	var any_ship := false
+	for vehicle: Variant in records().values():
+		if is_ship(vehicle): any_ship = true; break
+	if not any_ship: return {}
 	var person := ship_person(identity)
 	if person.is_empty(): return {}
 	var vehicle: Dictionary = records().get(str(person.row.get("embarked_vehicle_id", "")), {})
