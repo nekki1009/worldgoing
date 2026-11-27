@@ -4204,6 +4204,7 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 		if int(candidate.version) == 2:
 			original_fields.append("technology")
 			if candidate.has("technology_operations"): original_fields.append("technology_operations")
+		if candidate.has("meals"): original_fields.append("meals") # 居民吃飯: an optional field of a fed settlement (SiteSettlement.validate)
 		if candidate.has("technology_operations") and not SiteSettlement.valid_technology_operations(lab.terrain, candidate.technology_operations): return Runtime.fail("CORRUPT_STATE")
 		if not Technology.keys(candidate, original_fields): return Runtime.fail("CORRUPT_STATE", "原聚落欄位不符")
 	candidate["technology"] = prepared.state
@@ -4212,6 +4213,7 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 		var fields: Array = SiteSettlement.FIELDS.duplicate()
 		fields.append("technology")
 		if candidate.has("technology_operations"): fields.append("technology_operations")
+		if candidate.has("meals"): fields.append("meals")
 		if not Technology.keys(candidate, fields) or not Technology.valid_scope_record(candidate.technology, "settlement"):
 			return Runtime.fail("CORRUPT_STATE", "原聚落科技候選欄位不符")
 	if scope == "family":

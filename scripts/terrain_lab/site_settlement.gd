@@ -521,9 +521,12 @@ static func found(lab: Variant, founder_id: int, cells: Array[int], options: Dic
 	var built := Runtime.request_build(data, "settlement_center", cells, occupied, settings)
 	if not built.ok: return built
 	var key := str(built.feature)
+	# 居民吃飯 (Nekki 2026-11-26 「玩家聚落當然也要開」): a settlement the player founds feeds its people from its stock
+	# (SiteResidentLife.ration_day) and its own fields yield by the work done on them (SiteRuntime.farm_productivity), as
+	# the scenario settlements. Settlements founded before keep their record.
 	data.site["settlement"] = {"version": VERSION, "settlement_id": "settlement_%s_%s" % [str(data.site.get("id", "site")).left(64), key],
 		"center_id": key, "level": 0, "name": settlement_name, "owner_faction": int(founder.faction),
-		"offices": SiteOffices.default_offices("settlement", founder_id, not bool(founder.player)), "fall_record": empty_fall_record()}
+		"offices": SiteOffices.default_offices("settlement", founder_id, not bool(founder.player)), "fall_record": empty_fall_record(), "meals": 1}
 	return Runtime.ok("已預留材料並排入聚落中心施工；完工即成為 1 級聚落", {"feature": key})
 
 static func request_upgrade(lab: Variant, requester_id: int, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:

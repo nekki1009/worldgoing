@@ -117,6 +117,10 @@ static func ration_day(controller: Variant) -> Dictionary:
 	var lab: Variant = controller.lab
 	var result := {"moved": 0, "short": 0, "shared": 0, "refused": []}
 	if lab == null or lab.terrain == null or not meals_on(lab.terrain.site): return result
+	# A travelling party's own Lab views its origin Site's state (settlement included) on the party's people; the
+	# settlement feeds only on its Site. Rationing there wrote a team ledger on the origin Site's clock into the party,
+	# whose upkeep counts world time: a tax team its settlement fed was refused INVALID_SUSTAIN on its first road step.
+	if lab.terrain.has_meta(&"region_party_owner"): return result
 	var state: Dictionary = lab.terrain.site
 	var owner := int(state.settlement.owner_faction)
 	_choose_recipes(state, owner)

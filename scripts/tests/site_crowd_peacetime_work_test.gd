@@ -19,6 +19,7 @@ const CASES := ["settlement_page_editable", "found_settlement_peace", "ecology_c
 	"construction_dispatch_peace", "manual_work_peace", "deposit_peace", "each_refused_in_combat", "saveload"]
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const SiteOffices = preload("res://scripts/terrain_lab/site_offices.gd")
 const SiteEnvironment = preload("res://scripts/terrain_lab/site_environment.gd")
 var lab: TerrainLab
@@ -111,6 +112,10 @@ func _settlement_case(soldier_id: int) -> void:
 	if not check(bool(founded.get("ok", false)), "the peaceful founding is accepted", founded): return
 	var key := str(founded.get("feature", ""))
 	if not check(not key.is_empty() and lab.terrain.site.has("settlement"), "the settlement record exists after founding", key): return
+	# Nekki 2026-11-26: the player's own settlement is fed and farmed as the scenario settlements are.
+	if not check(ResidentLife.meals_on(lab.terrain.site), "the founded settlement feeds its people (meals 1)", lab.terrain.site.settlement): return
+	var rations: Dictionary = ResidentLife.ration_day(controller)
+	if not check(rations.refused.is_empty(), "its first day's rations reach every team of its owner", rations): return
 	var offices: Dictionary = Settlement.offices(lab)
 	var garrison := str(offices.duties["settlement.garrison"])
 	# A real change: the second soldier takes the 營務官 seat (the founder keeps the head).

@@ -60,6 +60,11 @@ func _found_with_warehouse(owner: TerrainLab, founder: int, label: String) -> St
 	if not _check(not cells.is_empty(), "%s: ground for a centre" % label, person.cell): return ""
 	var founded: Dictionary = _owner_as(owner, founder, func() -> Dictionary: return TaxSettlement.found(owner, founder, cells, {"layout_version": 1, "quarter": 0}, owner.site_controller.reserves_cell, label))
 	if not _check(founded.get("ok", false) and _complete(data, str(founded.feature)) and int(TaxSettlement.record(data).get("level", 0)) >= 1, "%s: a level 1 settlement" % label, founded): return ""
+	# This remote-Nation fixture's Site clock runs ahead of its world (its Lab ran before the world began), which no real
+	# world has (a Site joins at the world's time). A fed settlement's team ledgers would carry that Site clock into the
+	# world-clock road upkeep (INVALID_SUSTAIN). Feeding is not under test here: since Nekki turned it on for founded
+	# settlements (2026-11-26), this one is left unfed.
+	data.site.settlement.erase("meals")
 	var key := ""
 	var centre := Vector2i(person.cell)
 	for radius: int in range(4, 12, 2):
