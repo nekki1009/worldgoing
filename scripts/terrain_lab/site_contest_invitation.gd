@@ -61,8 +61,18 @@ static func _other_organisations(lab: Variant, identities: Array) -> Array:
 		var target: Dictionary = lab._original_person_target(person_id)
 		var team_id := -1
 		if not target.is_empty() and target.owner is TerrainArmyType: team_id = int(target.owner.team_id)
+		# On a crowd Site (the default since 2026-11-02) the person's owner is its CrowdPersonOwner, whose team_id is the
+		# team's own; a person on his own (an actor, "solo" in CrowdSite.teams) has a synthetic one and no team, as an actor
+		# on the grid had none. Before this every crowd defector was listed with team -1.
+		elif not target.is_empty() and target.owner is CrowdPersonOwner and not _crowd_solo(lab, int(target.owner.team_id)): team_id = int(target.owner.team_id)
 		rows.append({"id": person_id, "team_id": team_id, "family_member": family_ids.has(person_id), "executed": false})
 	return rows
+
+static func _crowd_solo(lab: Variant, team_id: int) -> bool:
+	if lab.crowd_site == null: return true
+	for row: Dictionary in lab.crowd_site.teams:
+		if int(row.get("team_id", -1)) == team_id: return bool(row.get("solo", false))
+	return true
 
 static func _roster(lab: Variant, members: Array, episode: Dictionary) -> Array:
 	var roster: Array = []
