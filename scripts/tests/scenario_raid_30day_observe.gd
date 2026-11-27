@@ -3,6 +3,8 @@ extends SceneTree
 ## bands, 1 town) run step by step at speed 16 with the player idle on the start Site. Nothing is forced: no receipts, no
 ## orders. Prints once a game day the formula raids, the bands, their heat, the band parties on the map, the bound Sites and the battle log,
 ## and at the end how many raids left, how many battles were fought and who died in them. `--days=N` (default 30).
+## `--package=<path>` (2026-11-27) births a built package instead, e.g. the shipped res://assets/scenarios/demo_a/demo_a.json;
+## the world is saved at the end either way.
 ## Output: RAID_30DAY lines and RAID_30DAY_DONE; quit(1) on a step fault or the deadline.
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
@@ -40,13 +42,26 @@ func _days() -> int:
 		if arg.begins_with("--days="): return int(arg.trim_prefix("--days="))
 	return 30
 
+func _package() -> String:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("--package="): return arg.trim_prefix("--package=")
+	return ""
+
 func _run() -> void:
 	var folder := "user://raid_30day_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	if not _ok(DirAccess.make_dir_recursive_absolute(folder.path_join("demo_a")) == OK, "scratch folder"): return
-	var natural := RegionData.new()
-	if not _ok(bool(natural.load_manifest(RegionData.DEFAULT_MANIFEST).ok), "the Taiwan source loads"): return
-	var built: Dictionary = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", 6, 3, 1, 20261122)
-	if not _ok(built.get("ok", false), "the generator builds a small world", built): return
+	var built: Dictionary = {}
+	var shipped := _package()
+	if not shipped.is_empty():
+		var package := RegionData.new()
+		if not _ok(bool(package.load_manifest(shipped).get("ok", false)), "the package loads", shipped): return
+		var start: Array = package.author_initial_context().starting_site
+		built = {"ok": true, "path": shipped, "start": Vector2i(int(start[0]), int(start[1]))}
+	else:
+		var natural := RegionData.new()
+		if not _ok(bool(natural.load_manifest(RegionData.DEFAULT_MANIFEST).ok), "the Taiwan source loads"): return
+		built = Generator.generate(natural, folder.path_join("demo_a"), "demo_a.json", 6, 3, 1, 20261122)
+		if not _ok(built.get("ok", false), "the generator builds a small world", built): return
 	if not _ok(RegionEntry.request_new_world(built.start, {}, "三十日觀察", "", str(built.path)), "a new world is requested", RegionEntry.menu_message): return
 	change_scene_to_file(SITE)
 	var lab: TerrainLab = null
@@ -76,6 +91,7 @@ func _run() -> void:
 	var formula_raids := 0
 	var formula_wins := 0
 	var musters := 0
+	var seen_formula_day := int(slot.get_meta(&"bandit_formula_day", -1))
 	var started_ms := Time.get_ticks_msec()
 	var boot_ms := 0 # since the process started, birth included
 	for frame: int in range(2000000):
@@ -90,6 +106,18 @@ func _run() -> void:
 		for token: Variant in slot.region_registry().get("parties", {}):
 			var party: Dictionary = slot.region_registry().parties[token]
 			if not parties_seen.has(token): parties_seen[token] = Bandit.party_faction(party)
+		# A day pass runs at rest inside the step, sometimes in the same frame as the next day begins: read each pass when its
+		# day stamp changes (2026-11-27: sampled only at day boundaries, the shipped world's raids were overwritten unseen).
+		var formula_day := int(slot.get_meta(&"bandit_formula_day", -1))
+		if formula_day != seen_formula_day:
+			seen_formula_day = formula_day
+			var formula: Dictionary = slot.get_meta(&"bandit_formula_last", {})
+			if not formula.get("raids", []).is_empty() or not formula.get("mustered", []).is_empty():
+				print("RAID_30DAY FORMULA ", JSON.stringify(formula).left(600))
+				for raid: Dictionary in formula.get("raids", []):
+					formula_raids += 1
+					if bool(raid.get("won", false)): formula_wins += 1
+				musters += formula.get("mustered", []).size()
 		if day == last_day: continue
 		last_day = day
 		var bands: Array = []
@@ -100,13 +128,6 @@ func _run() -> void:
 			bands.append("%s:%s heat=%d hoard=%s fallen=%d" % [str(key), str(entry.status), int(table.get("heat", 0)), JSON.stringify(table.get("hoard", {})), int(table.get("fallen", 0))])
 		var log := RegionBattleLog.table(slot.control.faction_registry)
 		print("RAID_30DAY day=%d real_s=%d bands=[%s] parties=%d bound=%d battles=%d raids_open=%s" % [day - first_day, (Time.get_ticks_msec() - started_ms) / 1000, ", ".join(bands), slot.region_registry().get("parties", {}).size(), slot._region_original_labs.size(), log.records.size(), str(slot.get_meta(&"bandit_raids_open", {}))])
-		var formula: Dictionary = slot.get_meta(&"bandit_formula_last", {})
-		if not formula.get("raids", []).is_empty() or not formula.get("mustered", []).is_empty():
-			print("RAID_30DAY FORMULA ", JSON.stringify(formula).left(600))
-			for raid: Dictionary in formula.get("raids", []):
-				formula_raids += 1
-				if bool(raid.get("won", false)): formula_wins += 1
-			musters += formula.get("mustered", []).size()
 		if slot.has_meta(&"bandit_formula_refused"):
 			print("RAID_30DAY REFUSED ", JSON.stringify(slot.get_meta(&"bandit_formula_refused")).left(300))
 			slot.remove_meta(&"bandit_formula_refused")
@@ -132,6 +153,10 @@ func _run() -> void:
 			downs += int(battle.sides[side].kos)
 	print("RAID_30DAY SUMMARY formula_raids=%d won=%d musters=%d days=%d bands_on_the_map=%d battles=%d deaths=%d knockouts=%d bound_sites=%d" % [formula_raids, formula_wins, musters, last_day - first_day, band_parties, records.records.size(), deaths, downs, slot._region_original_labs.size()])
 	for battle: Dictionary in records.records: print("RAID_30DAY BATTLE ", JSON.stringify(battle).left(500))
+	var save_started := Time.get_ticks_msec()
+	var saved: Dictionary = controller.save_to(controller.save_path)
+	print("RAID_30DAY SAVE ok=%s ms=%d %s" % [str(saved.get("ok", false)), Time.get_ticks_msec() - save_started, "" if saved.get("ok", false) else JSON.stringify(saved).left(400)])
+	if not _ok(saved.get("ok", false), "the world saves at the end", saved): return
 	_finished = true
 	TerrainArmy.release_contact_source()
 	await process_frame

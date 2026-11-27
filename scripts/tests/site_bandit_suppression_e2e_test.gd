@@ -331,7 +331,7 @@ func _run() -> void:
 				same = 0
 			same += 1
 			# Fail fast: a refusal that is not waiting for the band or for the hold to settle does not change by itself.
-			if same >= 20 and str(homeward.get("reason", "")) not in ["BAND_HERE", "HOLDING"]: break
+			if same >= 20 and str(homeward.get("reason", "")) not in ["BAND_HERE", "BAND_NEAR", "HOLDING"]: break
 		for _frame: int in range(30):
 			await process_frame
 			if _finished: return

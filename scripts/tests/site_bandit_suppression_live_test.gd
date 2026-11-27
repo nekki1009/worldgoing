@@ -7,13 +7,16 @@ extends SceneTree
 ##   faction's next expedition is in cooldown;
 ## - the player's team stands with faction 1 (a faction 1 team beside a neutral one would fight); two more cadres stand as a
 ##   second team of faction 1 whose latest expedition's home is faction 1's second settlement Site: with no band person
-##   here, go_home sends them home on the same word; the player's own team is never sent;
+##   here, go_home sends them home on the same word; the player's own team is never sent; this Site stands as band 102's
+##   current lair with a hoard, so the team carries it (Nekki 2026-11-27 A): the goods are on its people, the hoard has
+##   them no more, and a caravan mission (spoils, phase back) takes them to the home settlement's warehouse;
 ## - the world saves.
 ## Output: SITE_BANDIT_SUPPRESSION_LIVE_PASS on success; quit(1) on any failure or the deadline.
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Generator = preload("res://scripts/scenarios/demo_a_generator.gd")
 const Suppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd")
+const Caravans = preload("res://scripts/region_lab/region_caravans.gd")
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Grid = preload("res://scripts/region_lab/region_grid.gd")
 
@@ -132,6 +135,11 @@ func _run() -> void:
 	for _frame: int in range(300): await process_frame # the native seats the new captain on its next step; the team regroups and stands still
 	var marked: Dictionary = Bandit.pursued(slot.control.faction_registry, 102, 1, today + 1, home, float(slot.control.logical_game_seconds))
 	if not _ok(marked.ok and controller._commit_diplomacy(marked, "").ok, "faction 1's latest expedition left from its second settlement %s" % home, marked): return
+	# Nekki 2026-11-27 A: from the band's current lair the expedition carries its hoard home. Here stands as band 102's lair.
+	var hoarded: Dictionary = Bandit._with_table(slot.control.faction_registry, 102, func(table: Dictionary) -> void:
+		table["lair"] = {"site_id": here, "cell": [int(table.lair.cell[0]), int(table.lair.cell[1])]}
+		table["hoard"] = {"grain": 30, "iron": 5}, float(slot.control.logical_game_seconds))
+	if not _ok(hoarded.ok and controller._commit_diplomacy(hoarded, "").ok, "band 102's lair is here with 30 grain and 5 iron", hoarded): return
 	var homeward: Dictionary = {}
 	for attempt: int in range(31):
 		homeward = Suppression.go_home(controller, today)
@@ -139,6 +147,16 @@ func _run() -> void:
 		for _frame: int in range(60): await process_frame
 	if not _ok(homeward.has("sent") and int(homeward.sent.faction) == 1 and int(homeward.sent.team) == returning and str(homeward.sent.home) == home, "the second team of faction 1 is sent home", homeward): return
 	if not _ok(slot.region_registry().parties.has(str(homeward.sent.token)) and not _standing(lab, returning) and _standing(lab, int(_team_of(lab, player).team_id)), "it is on its way home; the player's own team stays", homeward): return
+	var spoils: Dictionary = homeward.sent.get("spoils", {})
+	var left: Dictionary = RegionFactionQuery.bandit_of(slot.control.faction_registry, 102).get("hoard", {})
+	var taken_all := not spoils.is_empty()
+	for item: String in ["grain", "iron"]: taken_all = taken_all and int(spoils.get(item, 0)) + int(left.get(item, 0)) == {"grain": 30, "iron": 5}[item]
+	if not _ok(taken_all and int(spoils.get("grain", 0)) > 0, "it carries the band's hoard, food first (%s; the hoard keeps %s)" % [JSON.stringify(spoils), JSON.stringify(left)]): return
+	var mission: Dictionary = {}
+	for row: Dictionary in Caravans.missions(slot.region_registry()):
+		if str(row.token) == str(homeward.sent.token): mission = row
+	if not _ok(not mission.is_empty() and mission.get("spoils") == true and str(mission.phase) == "back" and str(mission.from_site) == home and not str(mission.warehouse).is_empty() and mission.goods == spoils,
+		"a caravan mission takes it to the home warehouse", mission): return
 	var none: Dictionary = Suppression.go_home(controller, today)
 	if not _ok(str(none.get("reason", "")) == "NONE", "nobody else here has a home elsewhere", none): return
 

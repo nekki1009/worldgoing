@@ -11,6 +11,15 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 
 const CARRY := 20
 const FOOD_FIRST := ["grain", "fish", "meat", "wild_food"]
+## Nekki 2026-11-27 「土匪搬種子依建議」: a band leaves the seed and the farm tools, so a raided village can still farm
+## (the shipped demo A lost its whole farming camp to the first raid).
+const LEFT_BEHIND := ["seeds", "tools"]
+
+## Whether `inventory` holds anything a band would carry off (LEFT_BEHIND is not). Pure.
+static func worth_taking(inventory: Dictionary) -> bool:
+	for item: Variant in inventory:
+		if not LEFT_BEHIND.has(str(item)) and int(inventory[item]) > 0: return true
+	return false
 
 static func _bands(registry: Dictionary) -> Array[int]:
 	var bands: Array[int] = []
@@ -25,7 +34,7 @@ static func plunder(inventory: Dictionary, standing: int) -> Dictionary:
 	var room := maxi(0, standing) * CARRY
 	var taken := {}
 	var order: Array = FOOD_FIRST.duplicate()
-	var rest: Array = inventory.keys().filter(func(item: Variant) -> bool: return not FOOD_FIRST.has(str(item)))
+	var rest: Array = inventory.keys().filter(func(item: Variant) -> bool: return not FOOD_FIRST.has(str(item)) and not LEFT_BEHIND.has(str(item)))
 	rest.sort()
 	order.append_array(rest)
 	for item: Variant in order:

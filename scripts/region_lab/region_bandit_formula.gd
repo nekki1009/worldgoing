@@ -466,7 +466,7 @@ static func day(controller: Variant) -> Dictionary:
 		for target: Dictionary in move.targets:
 			var row := target.duplicate()
 			if not bool(row.open): row["stock"] = _left(candidate, str(row.site_id), row.stock, slot)
-			if not row.stock.is_empty(): targets.append(row) # nothing to carry off: not worth the way
+			if Aftermath.worth_taking(row.stock): targets.append(row) # nothing to carry off (seed and tools stay): not worth the way
 		var chosen := Bandit.pick_raid(candidate, int(move.band), targets, float(move.attackers), today)
 		if chosen.is_empty(): continue
 		if bool(chosen.open):

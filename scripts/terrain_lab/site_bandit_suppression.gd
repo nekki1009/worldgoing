@@ -14,6 +14,10 @@ extends RefCounted
 const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd")
+const Aftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd")
+const Caravans = preload("res://scripts/region_lab/region_caravans.gd")
+const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const JoinFaction = preload("res://scripts/terrain_lab/site_join_faction.gd")
 
 const HEAT_PURSUE := 50
 const REACH := 2
@@ -102,8 +106,18 @@ static func day(controller: Variant) -> Dictionary:
 		# An expedition that stopped its attack to go home leaves on a later look of the same day.
 		if bool(controller.get_meta(&"suppress_home_wait", false)):
 			var later: Dictionary = go_home(controller, today)
-			if str(later.get("reason", "")) != "HOLDING": controller.set_meta(&"suppress_home_wait", false)
-			if later.has("sent"): return {"day": today, "home": later.sent}
+			if later.has("sent"):
+				controller.set_meta(&"suppress_home_wait", false)
+				return {"day": today, "home": later.sent}
+			# Nekki 2026-11-27: band people still in sight (or a lair not yet taken) are fought, once a game hour, until
+			# none is left in sight; then the expedition goes home on a later look the same day.
+			if str(later.get("reason", "")) in ["BAND_NEAR", "BAND_HERE"]:
+				var hour := int(controller.lab.terrain.site.get("minute", 0)) / 60
+				if int(controller.get_meta(&"suppress_attack_hour", -1)) != hour:
+					controller.set_meta(&"suppress_attack_hour", hour)
+					var again: Dictionary = attack(controller, today)
+					if not again.orders.is_empty(): return {"day": today, "attack": again.orders}
+			elif str(later.get("reason", "")) != "HOLDING": controller.set_meta(&"suppress_home_wait", false)
 		# The day's pass has run. An expedition that entered since (a team was added to this Site) attacks at once: a
 		# cold lair Site runs its day's pass at its bind, before the arriving expedition is put in. An order the Site
 		# could not take yet is asked again on the next look.
@@ -130,6 +144,7 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	var fight: Dictionary = attack(controller, today)
 	if not fight.orders.is_empty():
 		result["attack"] = fight.orders
+		result["home_wait"] = true # later looks today: go home once none is left in sight (Nekki 2026-11-27)
 		return result
 	if int(fight.get("wanted", 0)) > 0: result["attack_refused"] = true
 	# Stage 2: an expedition standing here (a lair Site has no settlement of its own) goes home.
@@ -140,11 +155,13 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	if str(homeward.get("reason", "")) == "HOLDING":
 		result["home_wait"] = true
 		return result
+	if str(homeward.get("reason", "")) in ["BAND_NEAR", "BAND_HERE"]: result["home_wait"] = true # later looks fight what is in sight
 	var settlement: Dictionary = Settlement.record(lab.terrain)
 	var faction := int(settlement.get("owner_faction", -1))
 	if settlement.is_empty() or not Attacked.official(registry, faction): return _with_reason(result, "NO_OFFICIAL_SETTLEMENT")
 	# The player's own faction (kind player) sends troops on the player's word, never on the AI's.
 	if str(registry.entries[str(faction)].get("kind", "")) == "player": return _with_reason(result, "PLAYER_FACTION")
+	if controller.player_led_faction() == faction: return _with_reason(result, "PLAYER_FACTION") # 選現成人物: he leads it
 	var here := str(lab.terrain.site.get("id", ""))
 	var player := int(lab.controlled_person_id())
 	var teams: Array = []
@@ -248,18 +265,38 @@ static func attack(controller: Variant, today: int) -> Dictionary:
 		var captain := int(controller.team_captain_of_team(int(team.team_id)))
 		var from: Dictionary = lab.crowd_site.combat_target(captain if captain > 0 else int(team.person_ids[0]))
 		if from.is_empty(): continue
-		var best: Dictionary = band_people[band][0]
+		# Nekki 2026-11-27: until the lair is taken (an official attack on the band since this expedition began) the team
+		# goes for the nearest band person anywhere here; after it, only for one it sees (SIGHT_CELLS): one out of sight is
+		# left, and the expedition goes home (go_home) instead of hunting a straggler across the Site.
+		var taken := lair_taken(registry, faction, band)
+		var best: Dictionary = {}
 		for foe: Dictionary in band_people[band]:
-			if Vector2(foe.cell - from.cell).length_squared() < Vector2(best.cell - from.cell).length_squared(): best = foe
+			if taken and Vector2(foe.cell - from.cell).length_squared() > SIGHT_CELLS * SIGHT_CELLS: continue
+			if best.is_empty() or Vector2(foe.cell - from.cell).length_squared() < Vector2(best.cell - from.cell).length_squared(): best = foe
+		if best.is_empty():
+			wanted -= 1
+			continue
 		var ordered: Dictionary = lab.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.ATTACK, best.cell, int(best.id), "suppress")
 		if ordered.ok: orders.append({"team": int(team.team_id), "faction": faction, "band": band, "target": int(best.id)})
 		else: controller.set_meta(&"suppress_refused", str(ordered.get("code", ""))) # why the last order was not taken (read by tests)
 	if not orders.is_empty() and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵進剿山寨")
 	return {"orders": orders, "wanted": wanted}
 
+## Nekki 2026-11-27 「剿匪把寨打下附近沒看到敵人就搬物資回程」: an expedition goes home once no living band person stands
+## within SIGHT_CELLS of any of its living people (a straggler hiding across the Site no longer holds it for ever).
+const SIGHT_CELLS := 25
+
+## Whether `faction`'s expedition has taken `band`'s lair: the band was officially attacked (attacked_day) on or after the
+## day this expedition began (pursued). A band this faction does not pursue counts as taken (only one in sight holds it).
+static func lair_taken(registry: Dictionary, faction: int, band: int) -> bool:
+	var table: Dictionary = RegionFactionQuery.bandit_of(registry, band)
+	var row: Variant = table.get("pursued", {}).get(str(faction)) if table.get("pursued") is Dictionary else null
+	if not row is Dictionary: return true
+	return int(table.get("attacked_day", -1)) >= int(row.get("day", 0))
+
 ## Stage 2: one of the expedition teams standing here goes home ({sent: {faction, team, home, token}} or {reason, detail?}).
-## Not while any living band person stands here; only teams of official non-player factions whose latest expedition's
-## home is another Site. A team still under its attack order is first told to hold (reason HOLDING): Travel takes only a
+## Not while a living band person stands within SIGHT_CELLS of it; only teams of official non-player factions whose latest
+## expedition's home is another Site. A team still under its attack order is first told to hold (reason HOLDING): Travel takes only a
 ## team standing at its post (found 2026-11-26: the order outlived the band, and the team never left).
 static func go_home(controller: Variant, today: int) -> Dictionary:
 	var lab: Variant = controller.lab
@@ -268,16 +305,31 @@ static func go_home(controller: Variant, today: int) -> Dictionary:
 	var here := str(lab.terrain.site.get("id", ""))
 	var player := int(lab.controlled_person_id())
 	var by_faction := {}
+	var band_cells: Array = [] # every living band person here: [team, cell]
+	for team: Dictionary in lab.crowd_site.teams:
+		if bool(team.get("departed", false)) or not RegionFactionQuery.is_bandit(registry, int(team.get("faction", -1))): continue
+		for person: Variant in team.get("person_ids", []):
+			var target: Dictionary = lab._original_person_target(int(person))
+			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: band_cells.append([int(team.team_id), target.cell, int(team.faction)])
 	for team: Dictionary in lab.crowd_site.teams:
 		if bool(team.get("departed", false)): continue
 		var faction := int(team.get("faction", -1))
+		if RegionFactionQuery.is_bandit(registry, faction): continue
 		var living := 0
+		var near := {}
 		for person: Variant in team.get("person_ids", []):
 			var target: Dictionary = lab._original_person_target(int(person))
-			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: living += 1
-		if RegionFactionQuery.is_bandit(registry, faction) and living > 0: return {"reason": "BAND_HERE", "team": int(team.team_id), "living": living}
+			if target.is_empty() or float(target.get("hp", 0.0)) <= 0.0: continue
+			living += 1
+			for foe: Array in band_cells:
+				# Before its lair is taken a band holds the expedition wherever its people stand here (BAND_HERE, as before).
+				if not lair_taken(registry, faction, int(foe[2])) or Vector2(foe[1] - target.cell).length_squared() <= SIGHT_CELLS * SIGHT_CELLS: near[int(foe[0])] = int(near.get(int(foe[0]), 0)) + 1
 		if bool(team.get("solo", false)) or living < 2 or team.get("person_ids", []).has(player) or not Attacked.official(registry, faction): continue
 		if str(registry.entries[str(faction)].get("kind", "")) == "player" or int(controller.team_captain_of_team(int(team.team_id))) <= 0: continue
+		if not near.is_empty():
+			var held_anywhere := false
+			for foe: Array in band_cells: held_anywhere = held_anywhere or not lair_taken(registry, faction, int(foe[2]))
+			return {"reason": "BAND_HERE" if held_anywhere else "BAND_NEAR", "team": int(team.team_id), "band_team": int(near.keys()[0]), "seen": near.values().reduce(func(a: int, b: int) -> int: return a + b, 0)}
 		var rows: Array = by_faction.get(faction, [])
 		rows.append({"team_id": int(team.team_id), "size": living, "formation": int(team.get("formation", -1))})
 		by_faction[faction] = rows
@@ -300,13 +352,117 @@ static func go_home(controller: Variant, today: int) -> Dictionary:
 		if not at.ok: return {"reason": str(at.get("code", ""))}
 		var component: int = RegionTravelSite.start_component(slot, at.site, person.cell, lab.terrain)
 		var token := "suppress_home_%s" % Crypto.new().generate_random_bytes(12).hex_encode()
+		var spoils: Dictionary = _load_spoils(controller, faction, team_id, captain, home, token, today)
+		if not spoils.ok: return {"reason": str(spoils.get("code", "SPOILS_REFUSED")), "detail": str(spoils.get("message", ""))}
 		var prepared: Dictionary = slot.prepare_npc_region_dispatch(lab, "captain:suppress", team_id, _coordinate(home), component, [], token)
-		if not prepared.ok: return {"reason": str(prepared.get("code", "DISPATCH_REFUSED")), "detail": prepared.get("preflight", str(prepared.get("message", "")))}
+		if not prepared.ok:
+			spoils.undo.call()
+			return {"reason": str(prepared.get("code", "DISPATCH_REFUSED")), "detail": prepared.get("preflight", str(prepared.get("message", "")))}
 		var committed: Dictionary = slot.commit_npc_region_dispatch(prepared)
-		if not committed.ok: return {"reason": str(committed.get("code", "DISPATCH_REFUSED"))}
-		if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵剿匪收兵回營")
-		return {"sent": {"faction": faction, "team": team_id, "home": home, "token": token}}
+		if not committed.ok:
+			if not slot.region_registry().get("parties", {}).has(token): spoils.undo.call() # else the team left: the goods travel with it
+			return {"reason": str(committed.get("code", "DISPATCH_REFUSED"))}
+		if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵剿匪收兵回營" if spoils.goods.is_empty() else "官兵剿匪收兵，帶走山寨物資")
+		return {"sent": {"faction": faction, "team": team_id, "home": home, "token": token, "spoils": spoils.goods}}
 	return {"reason": "NONE"}
+
+## Nekki 2026-11-27 「A」: from the band's current lair (this Site) the expedition takes what its living people carry of
+## the band's hoard (CARRY each, food first, then the rest by name) into their own cargo, and a caravan mission (phase
+## "back", spoils) brings it home: SiteCaravan.evaluate unloads it into the home settlement's warehouse when the captain
+## stands there; a team beaten on the way is a lost caravan and the goods lie with it. An old lair (the band moved), an
+## empty hoard, a home without a warehouse of the faction or a full caravan ledger carry nothing. Returns {ok, goods,
+## undo} (undo puts everything back) or a refusal; the hoard's change and the mission are saved before the departure.
+static func _load_spoils(controller: Variant, faction: int, team_id: int, captain: int, home: String, token: String, today: int) -> Dictionary:
+	var nothing := {"ok": true, "goods": {}, "undo": func() -> void: pass}
+	var lab: Variant = controller.lab
+	var slot: Variant = controller.region_slot
+	var here := str(lab.terrain.site.get("id", ""))
+	var registry: Dictionary = slot.control.faction_registry
+	var lairs: Array = []
+	for key: Variant in registry.get("entries", {}):
+		var band := int(registry.entries[key].faction_id)
+		if str(registry.entries[key].get("status", "")) != "active" or not RegionFactionQuery.is_bandit(registry, band): continue
+		var lair: Variant = RegionFactionQuery.bandit_of(registry, band).get("lair")
+		if lair is Dictionary and str(lair.site_id) == here: lairs.append(band)
+	var band := pursued_band(registry, faction, lairs, today)
+	if band < 0: return nothing
+	var hoard: Dictionary = RegionFactionQuery.bandit_of(registry, band).get("hoard", {})
+	var coordinate := _coordinate(home)
+	if hoard.is_empty() or coordinate.x == -2147483648 or Caravans.missions(slot.region_registry()).size() >= Caravans.MAX_ACTIVE: return nothing
+	var home_state: Dictionary = slot._load_checked(slot.site_path(coordinate), coordinate)
+	if not home_state.get("ok", false): return nothing
+	var stores: Array[String] = Aftermath.warehouses(home_state.data.site, faction)
+	if stores.is_empty(): return nothing
+	# What the team carries: CARRY each of its living people, food first.
+	var people: Array = []
+	for crowd_team: Dictionary in lab.crowd_site.teams:
+		if int(crowd_team.team_id) != team_id: continue
+		for person: Variant in crowd_team.get("person_ids", []):
+			var body: Dictionary = controller.person_actions._person(int(person), false)
+			if not body.is_empty() and float(body.get("hp", 0.0)) > 0.0: people.append(int(person))
+	var names: Array = Aftermath.FOOD_FIRST.filter(func(item: String) -> bool: return int(hoard.get(item, 0)) > 0)
+	var rest: Array = hoard.keys().filter(func(item: Variant) -> bool: return not Aftermath.FOOD_FIRST.has(str(item)))
+	rest.sort()
+	names.append_array(rest)
+	var goods := {}
+	var loads: Array = []
+	for person: int in people:
+		var body: Dictionary = controller.person_actions._person(person, false)
+		var room := Aftermath.CARRY - Runtime.inventory_size(body.cargo)
+		var share := {}
+		for item: Variant in names:
+			if room <= 0: break
+			var n := mini(int(hoard[item]) - int(goods.get(str(item), 0)), room)
+			if n <= 0: continue
+			share[str(item)] = n
+			goods[str(item)] = int(goods.get(str(item), 0)) + n
+			room -= n
+		if share.is_empty(): continue
+		Runtime.add_items(body.cargo, share)
+		if body.get("holder") is Dictionary and body.holder.has("version"): body.holder["version"] = int(body.holder.version) + 1
+		loads.append({"person": person, "share": share})
+	if goods.is_empty(): return nothing
+	var unload := func() -> void:
+		for step: Dictionary in loads:
+			var body: Dictionary = controller.person_actions._person(int(step.person), false)
+			Runtime.add_items(body.cargo, step.share, -1)
+			for item: String in step.share:
+				if int(body.cargo.get(item, 0)) <= 0: body.cargo.erase(item)
+			if body.get("holder") is Dictionary and body.holder.has("version"): body.holder["version"] = int(body.holder.version) + 1
+	var captain_ref: Dictionary = JoinFaction._world_ref(controller, captain)
+	if captain_ref.is_empty():
+		unload.call()
+		return nothing
+	var ledger_before: Variant = slot.region_registry().get("caravans")
+	ledger_before = ledger_before.duplicate(true) if ledger_before is Dictionary else null
+	var restore_ledger := func() -> void:
+		if ledger_before == null: slot.region_registry().erase("caravans")
+		else: slot.region_registry()["caravans"] = ledger_before
+	var added: Dictionary = Caravans.add(slot.region_registry(), {"token": token, "faction": faction, "from_site": home, "warehouse": stores[0],
+		"to_site": here, "captain_ref": captain_ref, "goods": goods, "phase": "back", "day": today, "spoils": true})
+	if not added.ok:
+		unload.call()
+		return nothing
+	var now := float(slot.control.logical_game_seconds)
+	var change := func(sign_value: int) -> Dictionary:
+		return Bandit._with_table(slot.control.faction_registry, band, func(table: Dictionary) -> void:
+			var held: Dictionary = table.get("hoard", {})
+			for item: String in goods:
+				var n := int(held.get(item, 0)) + sign_value * int(goods[item])
+				if n > 0: held[item] = mini(100000000, n)
+				else: held.erase(item)
+			if held.is_empty(): table.erase("hoard")
+			else: table["hoard"] = held, now)
+	var saved: Dictionary = controller.commit_registry(change.call(-1))
+	if not saved.ok:
+		restore_ledger.call()
+		unload.call()
+		return saved
+	var undo := func() -> void:
+		restore_ledger.call()
+		unload.call()
+		controller.commit_registry(change.call(1))
+	return {"ok": true, "goods": goods, "undo": undo}
 
 static func _with_reason(result: Dictionary, reason: String) -> Dictionary:
 	result["reason"] = reason

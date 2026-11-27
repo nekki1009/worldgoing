@@ -433,5 +433,5 @@ static func _unload(slot: Variant, lab: Variant, controller: Variant, mission: D
 		if not mission.goods.has(resource) or not source.get("used", {}).has(resource): continue
 		source.used[resource] = maxi(0, int(source.used[resource]) - mini(int(returned[resource]), int(mission.goods[resource])))
 	Caravans.remove(slot.region_registry(), int(mission.id))
-	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("商隊返回並卸貨")
+	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("官兵剿匪歸來，山寨物資入倉" if bool(mission.get("spoils", false)) else "商隊返回並卸貨")
 	return {"ok": true, "returned": returned}
