@@ -14877,7 +14877,7 @@ func _native_sustain_limit_rows() -> Dictionary:
 			var original: Variant = null
 			for plan: Dictionary in lab.crowd_site._original_team_plans:
 				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
-			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
+			if original == null and owner is CrowdPersonOwner and (owner.has_army() or members.is_empty()): original = owner # as _native_sustain_original_rows
 			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
 		rows.append({"state": entry.sustain, "members": members})
 	for owner_id: String in lab.terrain.site.get("person_supply", {}):
@@ -14931,7 +14931,10 @@ func _native_sustain_original_rows(seconds: float) -> Dictionary:
 			var original: Variant = null
 			for plan: Dictionary in lab.crowd_site._original_team_plans:
 				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
-			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
+			# A team left with nobody to feed (2026-11-27: an unwatched village's residents all called up into its garrison
+			# team, their own team empty and its pantry record kept) has no member to place: its own crowd owner reads the
+			# (empty) locations. It refused the whole step (STALE_SUPPLY_OWNER) and the world stood still.
+			if original == null and owner is CrowdPersonOwner and (owner.has_army() or members.is_empty()): original = owner
 			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
 			held["food_locations"] = ship_food_locations(original, members)
 		rows.append({"held": held})
