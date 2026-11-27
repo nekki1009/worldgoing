@@ -1,7 +1,32 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-27 10:05（台北）
-CURRENT 指揮中心：交接中（Nekki 11/27 09:59「準備開新的指揮中心討論區」）。交出者 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+更新：2026-11-27 16:00（台北）
+CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+
+## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（三個本機 commit：778e1a8、a38e223、5ce1cda，未推送）
+### 快轉走路（A）
+- 原生 `World::step_body`：不在戰鬥中、遊戲時間快於 1 倍（×2–×16）的一步，移動做 N 次（N＝倍數，最多 16），每次就是 1 倍的移動；計時器、救援、流血只做一次。1 倍和戰鬥中完全不變。新原生測試：×16 一步走得和 ×1 十六步一樣遠。
+- DLL 12e807f1…（build 2a643cb6…）；舊 0a38a4d5… 備份在 output/project_command_center/evidence/FASTWALK_native。舊 DLL 存的檔會被拒絕（Nekki 沒有存檔）。
+- 實測：×16 睡 6 小時 13.3 → 13.5 秒（同時段對照，不變慢）；鎮上開著跑一天，上午收成 0 批 → 2 批（穀 75 → 111）。
+- 路上修掉兩個舊問題：
+  1. 睡到時間醒來那一步改速度，原生工作窗對不上 → CLOCK_NOT_READY、世界停住。改成那一步走完（finish_tick）才醒。
+  2. `_native_begin_bound`：「可能跑步的人」那份上界計畫的疲勞邊界，在 30 前 0.0001 秒反覆切步（原生實際只累積 0.5%），步越切越小（6e-7 遊戲秒）；Site 時鐘略過這麼小的步、供餐帳照算 → 存檔被拒（供養時鐘超前 Site）→ 午夜停住。上界計畫的邊界改成和跑者規則一樣，近於 NATIVE_RUN_BAND_FLOOR（0.25 遊戲秒）不切。
+### 選現成人物 v1（規劃文件 https://claude.ai/artifact/AchZNwLwaXLgyQ6c9TuxFK，Nekki 第六節「1.開放 2.依建議 3.清單加地圖」）
+- 新遊戲地圖頁「選現成人物（劇本）」：清單（勢力首領 15、村長 15、寨主 15、隊長與軍官 33）加地圖；可改名字和外觀，能力與關係照劇本。
+- 開局在他的 Site，不另生玩家與幹部；村長分出成一人隊（保留房子、職位、首領身分）；寨主與隊長接手原隊。他當首領的勢力不再由電腦外交、剿匪派兵（`SiteController.player_led_faction`，也補上自建勢力被電腦代為外交的漏洞）。
+- 測試：scenario_existing_person_test（四種身分）、main_menu_existing_test、截圖 main_menu_existing_capture（output/main_menu_existing_1127）。做法見 memory existing-person-start-v1。
+### 其他
+- 劇本 A 出貨包 16 倍 15 遊戲日觀察（scenario_raid_30day_observe `--package=`）：905 秒、0 錯誤、存檔成功；第 1、11 天兩波公式劫掠 11 次（10 勝）。
+### 土匪與剿匪（5ce1cda）
+- Nekki 13:37「土匪搬種子依建議」：搶劫（公式與現場）不搬種子和農具；只剩這兩樣的村不算值得搶。
+- Nekki 13:39「剿匪把寨打下附近沒看到敵人就搬物資回程」＋14:00「A」：寨未打下（這次遠征後土匪還沒被官方打過）照舊追打整個 Site；打下後只打 25 格內看得到的，每遊戲小時重新找目標；看不到就回家。從土匪「現在的」寨，官兵把存糧背在身上（每人 20，先糧食），用商隊任務（spoils、phase back）到家卸進自家聚落倉庫；路上被打散就算商隊覆沒、東西留在原地。
+- 起因：快轉走路後剿匪全程測試失敗（全 Site 最後一名土匪不倒，遠征隊永遠不回家）。
+- 三個「舊失敗測試」（initial_world_transaction、person_allocator_lab、r7f2_contest_departure）bfab6c9 之後都已通過。
+- 回歸：FULL_FW（290 項：11/27 全套＋選單測試＋新測試，3 個並行）287 過；另 3 項（剿匪全程、共同步進重播釘住的標頭雜湊、範本選單測試的「尚未開放」）已在上面三個 commit 修好並重跑通過；土匪、商隊、剿匪、選單相關 FIX_SUP2 38／39 並行過（第 39 項單獨過），剿匪 5 項 SUP3 並行全過。
+- 推送等 Nekki 說。
+### 待辦
+- 有畫面跑一次劇本 A 選現成人物開局（截圖確認看得到他與他的村／寨）。
+- 快轉時船隻（GD 船身）、作業計時器仍是 1 倍；目前沒看到問題，沒動。
 
 ## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
 
