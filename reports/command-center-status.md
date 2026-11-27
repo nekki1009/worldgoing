@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-27 19:30（台北）
+更新：2026-11-27 20:20（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
 
 ## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（Nekki 18:25「Push 然後繼續做」：到 050cce3 已推送 PR #3）
@@ -30,8 +30,12 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/
 - 溪前鎮（37 人）有畫面每幀 93 ms：原生開步窗口每幀準備兩次（聯合區間預覽 24 ms＋真的 20 ms）。改成真的開步沿用預覽（_native_begin_preview_ticket），對不上照舊重算：每幀 93 → 71 ms（10.6 → 13.9 fps），Lab 63 → 43 ms。完整回歸 FULL_FW2 290 項：288 並行過，剿匪全程 --repeat=3 與冷山寨劫掠兩項單獨過（負載）。
 - 收集共同工作（40ed312，本機未推送）：每幀 13.0 → 9.0 ms，整幀 Lab 42.7 → 36.7 ms（14.1 → 15.5 fps）。答案都不變，只是少讀：四周沒有別勢力的人就直接答「無威脅」（原本每個工人逐格查 145 格）；住宅出席先看人在不在家門格、不給列的人（非群眾、在屋裡）先跳過、同一輪同一間房的佈局只算一次；房屋佈局只掃一次其他建築的門（原本每個門格都掃全部建築）；Site 沒有船就直接答沒上船。
 - 回歸 33 項（住宅、居民、工作隊、船、攻城、選現成人物、共同步進重播）：29 過；site_work_team_clock（已退役格子模擬）、site_fatigue_threat_fast（舊非交換路徑）、site_housing_crowd（要求房屋步進中原生存檔要拒絕，11/26 已改成可存）三項在沒有這次改動的版本上一樣失敗；site_housing_crowd 要 `--grid --crowd-test <新 id> --crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime`、visual。
-- 聚落佔領取樣（未 commit，回歸中）：群眾 Site 上若沒有任何「別勢力、敵對、不是土匪」的隊伍，直接答沒有攻方（原本每幀讀每個人和佔領圈）：原生開步界限 4.3 → 3.3 ms，整幀 Lab 35.2 ms、15.8 fps。
-- 下一塊：補給（_native_sustain_original_rows 每幀算三次，收集 1.2＋界限 1.2＋nb_sustain 1.9 ms）、工作隊選人 3.3 ms、住宅出席 1.8 ms（_ready 0.9 ms）。
+- 聚落佔領取樣（405c2a9）：群眾 Site 上若沒有任何「別勢力、敵對、不是土匪」的隊伍，直接答沒有攻方（原本每幀讀每個人和佔領圈）：1.4 → 0.1 ms。佔領／攻城／土匪／居民 23 項全過。
+- 唯讀補給上限（6196a31）：`_native_sustain_limit_rows` 只讀狀態和需要的人的血量，不再整份深複製補給來源：1.2 → 0.3 ms。補給／用餐／俘虜／群眾補給時鐘 15 項全過。
+- 畫面每幀整張重建（5b2af05）：每次發布工作前綴都把 environment_revision 加一，資源畫面看到就把每一列的節點全部拆掉重建（每次 6.7 ms，繪圖另計）。只動進度／產量計數（沒付款、沒修理、沒改階段）的那種另外記在 `environment_quiet_revision`，畫面只看到這種就不重建；其他讀 environment_revision 的快取照舊。Site tick 6.1 → 0.3 ms，每幀 p50 62 → 48.8 ms，15.3 → 19.1 fps（今天起點 10.6 fps）。
+- 畫面相關舊測試（不在完整回歸裡）site_resource_visual、site_natural_resource_art、site_ecology_contract、site_building_economy_ui、site_audio_contract、site_building_close_visual 在沒有這些改動的版本上一樣失敗，是舊問題。
+- 完整回歸 FULL_FQ（290 項，3 個並行）20:15 起跑。推送等 Nekki 說（40ed312 之後都在本機）。
+- 還能做的：每幀補給結算 settle_native_supply_begin_endpoint 1.2 ms 與 nb_sustain 2.0 ms（兩次整份建補給列）、工作隊選人 3.3 ms（不可用檢查、威脅、路徑）、住宅出席 1.8 ms（_ready 0.9 ms）、其他讀 environment_revision 的快取（聲音、作業用水）也被進度加一弄失效。
 - 快轉時船隻（GD 船身）、作業計時器仍是 1 倍；目前沒看到問題，沒動。
 
 ## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
