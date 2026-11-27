@@ -1897,7 +1897,13 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			var early_limit: float = site_controller.Settlement.capture_interval_limit(terrain, early_sample, early_window)
 			if early_limit > ACTION_TIME_EPSILON and early_limit < early_window - ACTION_TIME_EPSILON:
 				elapsed = RegionSaveSlot.GameplayClock.action_for_game(early_limit, simulation_speed, minf(elapsed, pre_step_combat_left))
-		native_begin = _prepare_native_begin_shared_window(elapsed, native_combat_left)
+		var ticket: Dictionary = _native_begin_preview_ticket
+		if not ticket.is_empty() and float(ticket.maximum) == elapsed and float(ticket.combat_begin) == native_combat_left and is_same(_native_begin_shared_window_prepared, ticket.result):
+			_native_begin_preview_ticket = {}
+			native_begin = ticket.result
+		else:
+			if not ticket.is_empty(): _clear_shared_work_step()
+			native_begin = _prepare_native_begin_shared_window(elapsed, native_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)
 		native_combat_left = float(native_begin.combat_begin)
@@ -8769,7 +8775,15 @@ var _shared_work_pools_committed := false
 var _shared_movement_prepared := false
 var _shared_runtime_consumed: Dictionary = {}
 
+## 2026-11-27 (town frame time): the joint Region interval previews the active crowd Site's native begin window to learn
+## how far the step may go, then the step prepared the same window again (a 37-person town spent 24 + 20 ms a frame).
+## A preview that did not narrow the interval now leaves its prepared window in place with this ticket {maximum,
+## combat_begin, result}; the step takes it when it asks for the same maximum and combat begin, and otherwise clears it
+## and prepares as before. Every clear drops the ticket.
+var _native_begin_preview_ticket: Dictionary = {}
+
 func _clear_shared_work_step() -> void:
+	_native_begin_preview_ticket = {}
 	_gd_mesh_work_point = {}
 	if site_controller != null: site_controller.person_actions.finish_gd_contact_job_prefix()
 	if site_controller != null: site_controller.discard_checked_runtime_work_prefix()
@@ -9915,16 +9929,22 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		# accepted joint interval. Cold crowd owners clip in their own replay pieces.
 		if original.crowd_site != null and original.crowd_site.active:
 			if original == self:
-				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, _native_combat_left())
-				_clear_shared_work_step()
-				if not window.get("ok", false): return _region_preflight_failure(originals, window)
+				if not _native_begin_preview_ticket.is_empty(): _clear_shared_work_step() # a step that never used its preview
+				var combat_now := _native_combat_left()
+				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, combat_now)
+				if not window.get("ok", false):
+					_clear_shared_work_step()
+					return _region_preflight_failure(originals, window)
 				limited = minf(limited, float(window.action_seconds))
+				if float(window.action_seconds) == accepted_action: _native_begin_preview_ticket = {"maximum": accepted_action, "combat_begin": combat_now, "result": window}
+				else: _clear_shared_work_step()
 			continue
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)
 		limited = minf(limited, float(work.action_seconds))
 	pmi = _combat_profile_stage("pmi_work", pmi)
 	if limited <= ACTION_TIME_EPSILON: return _region_preflight_failure(originals, SiteRuntime.fail("REGION_ZERO_ENDPOINT_REQUIRED"))
+	if limited < accepted_action and not _native_begin_preview_ticket.is_empty(): _clear_shared_work_step()
 	if limited < accepted_action - ACTION_TIME_EPSILON:
 		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
 		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
