@@ -1,6 +1,6 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-28 00:45（台北）
+更新：2026-11-28 01:15（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
 
 ## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（Nekki 18:25「Push 然後繼續做」：到 050cce3 已推送 PR #3）
@@ -42,7 +42,7 @@ CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/
 - 烘完之後鎮上的穩定幀：47.6 ms（約 21 fps），其中 Lab 模擬 40 ms（收集共同工作 13.3、生命結算兩段各約 4、共同窗口 3.6、原生開步界限 3.2、前綴擷取 3.0、工作預檢 2.9）。
 - 自動存檔每 30 秒（真實時間）一次，卡 0.6–1.0 秒，幾乎全是寫 Site 檔（530–750 ms）。
 - 圖集：Nekki 00:11「圖集不能在開遊戲前就處理嗎？」→ 00:13「好」。abaa00d（本機）：劇本 A 全部 46 Site、545 人，去掉武器盾牌只有 4 種被俘外觀，2 種要烘（男、女輕皮甲）。打包時用 `bake_captivity_appearances.gd --seed-out` 烘好存成種子（assets/characters/terrain_lab_army/captive_seed/v1，19 MB，LFS），TerrainLab 開啟時 `CaptiveAtlasSeed.seed()` 原樣複製進 user:// 快取；圖集讀取程式（女弓手指紋）沒動。鎮上 900 幀：不再背景烘、不再卡 5–6 秒，15.4 → 21.9 fps，p95 78 → 52.5 ms。人物美術或圖集程式改了，種子自動不算數、遊戲退回現場烘；要重做種子：先跑 `scenario_captive_looks_probe.gd` 列外觀，再有畫面跑烘焙工具 `--appearances res://output/captive_looks/demo_a.json --seed-out`。
-- 遊戲中換裝出現新組合時仍會現場烘那一種（約一分鐘背景＋結尾卡幾秒）；要不要把結尾拆多幀，等 Nekki。crowd_c2_atlas_visual_test 在沒有種子掛勾時一樣失敗（凍結的發佈 namespace 已和現在的來源不同，舊問題）。
+- 遊戲中換裝出現新組合時仍要現場烘那一種：Nekki 00:41「那就讓他卡好了，發生時遊戲暫停寫圖集烘焙中，烘好再繼續遊戲」→ 本機 commit（TerrainLab `_atlas_bake_pause`）：有圖集在烘就按遊戲自己的暫停、中央顯示「圖集烘焙中…新外觀第一次出現，烘好後自動繼續遊戲」，烘完自動繼續（玩家自己按的暫停不解）。實測不放種子：烘 85 秒、Site 時鐘不動、烘完自動繼續；有畫面相關 17 項全過。量測工具 `--no-seed --pause-check`。crowd_c2_atlas_visual_test 在沒有種子掛勾時一樣失敗（凍結的發佈 namespace 已和現在的來源不同，舊問題）。
 - 426dacc（本機）：工作隊兩個「重新檢查載具／船廠工作」先讀本人那一列、沒事就不建人物資料；住宅出席不重複查同一人。Lab 31.2 → 29.6 ms，p50 47.4 → 45.8 ms（同時段前 300 幀）。工作隊／住宅／居民／船／攻城／共同步進重播 27 項全過。
 - 平穩期剩下的大頭（工作預檢 2.9、前綴擷取 3.0、生命結算約 4、開步窗口 3.6）多半是刻意的「先純檢查、再實際做」雙重檢查；再大幅變快要改設計（例如同一幀內沒變就不檢第二次），要先給 Nekki 提案。自動存檔約 0.5 秒多半是寫完整份讀回驗證，保留。
 - 還能做的：每幀補給結算 settle_native_supply_begin_endpoint 1.2 ms 與 nb_sustain 2.0 ms（兩次整份建補給列）、工作隊選人 3.3 ms（不可用檢查、威脅、路徑）、住宅出席 1.8 ms（_ready 0.9 ms）、其他讀 environment_revision 的快取（聲音、作業用水）也被進度加一弄失效。
