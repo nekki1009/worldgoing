@@ -1,7 +1,31 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-26 05:55（台北）
-CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+更新：2026-11-27 10:05（台北）
+CURRENT 指揮中心：交接中（Nekki 11/27 09:59「準備開新的指揮中心討論區」）。交出者 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+
+## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
+
+### 目前狀態
+- PR #3（草稿，claude/project-thread-r6d8n4）已推到 3dbb792，說明已更新。本機 master 與它相同；工作區只有不屬於指揮中心的修改（.gitignore、幾份規格與計畫，照舊不要提交）。
+- 完整回歸 FULL_1127（276 項，在 c0d7a55 上）：273 並行過，3 個要新輸出資料夾的換名字重跑也過（RERUN_1127.json 的 id 已用掉，下次要再換）。之後的改動跑了相關家族：FAM_MEALS 62／62、FAM_TILES 16／16、收稅 6 種、商隊、開局交易、爭位邀請、和平建聚落 3 種、聚落科技 4 個。
+- 開局速度（Nekki 11/22「B」）：劇本 A 按「新世界」到進世界，無畫面 239 → 39 秒，真畫面 約 48 秒（選單檢查 5.2＋出生 42.8）。commit：3aac5b2、0436f92、87f55f3、c0d7a55、1cb0a6e、1a53d31、3dbb792。做法與數字見 memory birth-speed-b-progress。
+- 玩家聚落供餐（Nekki 11/26 20:13「玩家聚落當然也要開，缺水若太複雜就不要算了」）：0b7ebe8。玩家新建聚落帶 meals:1；之前建好的不變；補算不看水。路上修掉：旅途隊伍的模擬場照出發地聚落配糧（INVALID_SUSTAIN）、聚落科技專案不認 meals 欄位。計畫 V0.6：reports/scenario-village-livelihood-plan.md。
+- 舊失敗測試：bfab6c9（群眾模式找不到爭位支持者的隊伍＝遊戲錯；開局交易測試跟上技術樹 D10）、edcbdb6（兩個只跑格子戰鬥的測試退役，Nekki 11/14 A 規則）、f1a3134（生態治理存讀往返要 --grid）、f3d3ea5（r4 樣本畫面測試改讀正式 r4 地圖）。
+- 量測：db01a6d（×16 睡覺探針：無畫面 6 遊戲小時 12.8 秒，模擬不是瓶頸；有畫面時沒量）。
+
+### 待辦（新指揮中心可接）
+- 剩下的開局花費（快檔）：真畫面 captivity_capture→first_frame 約 7 秒、群眾身體 4.6 秒、居民外觀 3.7 秒、起點隊伍接觸外觀（無畫面 12.8 秒，真畫面被選單預熱藏住）——都在外觀圖集相關檔，碰之前要問 Nekki。46 個 Site 存檔＋讀回約 6.5 秒：只能靠並行存檔，路徑上有共用靜態快取，判斷風險高，沒做。
+- 有畫面時的 ×16 睡覺還沒量（scripts/tests/scenario_sleep_cost_probe.gd 改 visual 跑）。
+- 16 倍快轉時走路不隨之變快（村民通勤要好幾個遊戲小時）：Nekki 還沒決定。
+
+### 已知問題
+- region_cold_original_matrix_test（不在 FULL）：改動前就失敗，四個原生欄位差 1e-14 級浮點尾數；要過只能讓路徑位元相同或放寬成容許誤差。指揮中心建議先不動，協調者同意。
+- 機器快慢檔：同一份程式同一測試可差 2.2 倍（memory machine-speed-modes-timing）。比快慢只看同一次跑內的比例或同一時段前後對照；等價性用摘要探針（fixed_base_digest_probe、projection_digest_probe）。
+- 舊測試的正確跑法與狀態：memory old-failing-tests-outside-full。
+
+### 新工具
+- scripts/tests：fixed_base_digest_probe（`-- --parallel`）、projection_digest_probe、prebuild_scaling_probe、shared_tile_probe、author_package_cost_probe、build_stage_cost_probe、sample_cost_probe、projection_stage_cost_probe、manifest_cost_probe、scenario_sleep_cost_probe。
+- scenario_demo_trial_test 會清地形記憶、模擬選單人物預熱，並印出選單檢查秒數；`--perf-trace` 的段落用 scratchpad 的 perf_sum.py 加總（每次跑在 .godot-temp/godot_verify/<run>/appdata/…/perf/new_game_*.json）。
 
 ## 2026-11-26 05:55（台北）居民吃飯＋劇本村種田（Nekki 11/25 22:22「依建議」；11/26 02:47「沒問題就push，後面要繼續」）
 - 程式完成，完整回歸 FULL_LV2（274 項）05:31 起跑；全過就提交並推送 PR #3。計畫與結果：reports/scenario-village-livelihood-plan.md V0.3。
