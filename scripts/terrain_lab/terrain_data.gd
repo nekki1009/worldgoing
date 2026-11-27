@@ -45,6 +45,11 @@ var has_raised_surfaces := false
 var has_navigation_overrides := false
 var navigation_revision := 0
 var environment_revision := 0
+## The environment_revision bumps that change nothing the Site resource view draws: a work prefix that only moves a
+## progress or production counter (no payment, no repair, no stage change). The view skips its full rebuild when these
+## are the only bumps since it last refreshed (2026-11-27: a town's working people rebuilt every row every frame,
+## 6.7 ms). Every other reader of environment_revision is unchanged.
+var environment_quiet_revision := 0
 var ground_loot_at: Dictionary = {} # Rebuilt from site.ground_loot; never a second item owner.
 var ground_loot_dirty_rows: Dictionary = {} # Event-only presentation invalidation, never saved.
 # Original live owners register pure preflight/reference cleanup callbacks.

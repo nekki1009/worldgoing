@@ -14171,6 +14171,7 @@ static func settlement_food_paid_source_candidate(data: TerrainData, token: Dict
 static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	assert(prepared.ok and not prepared.published and is_same(prepared.data.site, prepared.site))
 	assert(is_equal_approx(float(prepared.unit.get(prepared.field, 0.0)), float(prepared.prior_progress)))
+	var stage_before: Variant = prepared.target.get("stage") if prepared.target is Dictionary else null
 	if not prepared.payment.is_empty():
 		assert(int(prepared.payment.holder.version) == int(prepared.payment.version))
 		add_items(prepared.payment.cargo, prepared.payment.cost, -1)
@@ -14198,6 +14199,9 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	if not is_same(prepared.task, prepared.site.get("manual", {})):
 		prepared.task.status = "原已核定工作前缀已提交；完成端点待原当前资格验收" if prepared.deferred_endpoint else "原工作者施工中"
 	prepared.data.environment_revision += 1
+	# Only the progress or production counter moved (see TerrainData.environment_quiet_revision).
+	var stage_after: Variant = prepared.target.get("stage") if prepared.target is Dictionary else null
+	if prepared.payment.is_empty() and prepared.repair.is_empty() and stage_before == stage_after: prepared.data.environment_quiet_revision += 1
 	prepared["published"] = true
 	_credit_skill_work(prepared)
 

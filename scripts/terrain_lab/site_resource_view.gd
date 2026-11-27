@@ -40,6 +40,7 @@ var heat := PackedColorArray()
 var animation_time := 0.0
 var _animation_elapsed := 0.0
 var _seen_revision := -1
+var _seen_quiet_revision := 0 # data.environment_quiet_revision at the last refresh
 var retain_static_rows := true # Same-owner reference switch; no resource state is cached.
 var building_preview: Dictionary = {} # Derived presentation, never added to Site features.
 var building_draws_by_row: Dictionary = {}
@@ -277,6 +278,7 @@ func step_display(budget_usec: int = 2000, max_units: int = 256) -> bool:
 		elif job.stage == "runs":
 			if int(job.row) >= rows.size():
 				_seen_revision = data.environment_revision
+				_seen_quiet_revision = data.environment_quiet_revision
 				queue_redraw()
 				if is_instance_valid(_building_ground): _building_ground.queue_redraw()
 				_display_job = {}; return true
@@ -367,6 +369,7 @@ func refresh() -> void:
 			color.a = 0.38
 			heat[i] = color
 	_seen_revision = data.environment_revision
+	_seen_quiet_revision = data.environment_quiet_revision
 	queue_redraw()
 	if is_instance_valid(_building_ground): _building_ground.queue_redraw()
 	for row: Node2D in rows:
@@ -406,7 +409,11 @@ func animate(delta: float) -> void:
 		rows[row].queue_redraw()
 	data.ground_loot_dirty_rows.clear()
 	if data.environment_revision != _seen_revision:
-		refresh()
+		# Bumps that only moved a work counter draw nothing new; any other bump rebuilds as before.
+		if data.environment_revision - data.environment_quiet_revision != _seen_revision - _seen_quiet_revision: refresh()
+		else:
+			_seen_revision = data.environment_revision
+			_seen_quiet_revision = data.environment_quiet_revision
 	if bool(data.site.paused):
 		return
 	animation_time += delta
