@@ -14833,12 +14833,12 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 	# Counterfactual BEGIN bounds call this READ-ONLY method. The original zero
 	# meal publisher runs once in shared_supply_event_limit before snapshot.
 	if not is_finite(maximum) or maximum <= 0.0: return Runtime.fail("INVALID_TIME")
-	var rows: Dictionary = _native_sustain_original_rows(0.0)
+	var rows: Dictionary = _native_sustain_limit_rows()
 	if not rows.ok: return rows
 	var limit: float = maximum
 	for row: Dictionary in rows.rows:
-		for cohort: Dictionary in row.held.state_values.cohorts:
-			var until: float = float(cohort.meal_until) - float(row.held.state_values.at)
+		for cohort: Dictionary in row.state.cohorts:
+			var until: float = float(cohort.meal_until) - float(row.state.at)
 			if not is_finite(until) or until <= 0.0: return Runtime.fail("SUPPLY_ENDPOINT_NOT_SETTLED")
 			limit = minf(limit, until)
 			var deficit: float = 1.0 - float(cohort.coverage)
@@ -14846,7 +14846,7 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 			var hunger: float = float(cohort.hunger)
 			if hunger < 48.0: limit = minf(limit, (48.0 - hunger) / deficit * Sustain.HOUR)
 			for identity: int in cohort.ids:
-				var hp: float = float(row.held.life.get(identity, {}).get("hp", 0.0))
+				var hp: float = _native_sustain_member_hp(row.members, identity)
 				if hp > 0.0: limit = minf(limit, (maxf(0.0, 48.0 - hunger) + hp) / deficit * Sustain.HOUR)
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled or _native_sustain_original_team(team): continue
@@ -14857,6 +14857,46 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 		limit = minf(limit, _shared_supply_state_limit(lab.terrain.site.person_supply[key], captivity_supply.personal_members_id(int(key)), maximum))
 	if not is_finite(limit) or limit <= 0.0: return Runtime.fail("INVALID_TIME")
 	return Runtime.ok("Original current supply boundary; no state/cost/time writes", {"game_seconds": limit})
+
+## The read-only supply boundary needs only each native sustain row's state and its members' hp. These are the rows of
+## _native_sustain_original_rows(0.0), in the same order and refused the same way, without the deep copies of states and
+## stocks, the ship food locations or a body read for every member (2026-11-27: a town spent 1.2 ms a frame on them).
+## `state` is the live record: nothing here writes it.
+func _native_sustain_limit_rows() -> Dictionary:
+	if not _crowd_active(): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var feeding: Dictionary = captivity_supply.feeding_index()
+	for owner: RefCounted in lab.crowd_site.person_owners():
+		var entry: Dictionary = _supply_entry(owner)
+		if entry.is_empty(): continue
+		var originals: Dictionary = {}
+		for index: int in owner.records: originals[owner.combat_identity(index)] = owner.records[index]
+		for index: int in owner.actors: originals[owner.combat_identity(index)] = _actor_supply_adapter(owner.actors[index])
+		var members: Dictionary = captivity_supply.team_members(owner, originals, feeding, lab.crowd_site._records)
+		if int(entry.get("version", 0)) == 3:
+			var original: Variant = null
+			for plan: Dictionary in lab.crowd_site._original_team_plans:
+				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
+			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
+			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
+		rows.append({"state": entry.sustain, "members": members})
+	for owner_id: String in lab.terrain.site.get("person_supply", {}):
+		var state: Dictionary = lab.terrain.site.person_supply[owner_id]
+		if state.is_empty(): continue
+		var person: Dictionary = _supply_person(int(owner_id))
+		if person.is_empty(): continue
+		var members: Dictionary = captivity_supply.personal_members_id(int(owner_id))
+		var includes_native: bool = lab.crowd_site.contains_person(int(person.person_id))
+		for identity: int in members: includes_native = includes_native or lab.crowd_site.contains_person(identity)
+		if not includes_native: continue
+		rows.append({"state": state, "members": members})
+	return Runtime.ok("", {"rows": rows})
+
+## A member's hp as _native_sustain_original_rows records it in `life` (0 for someone who is not a member).
+func _native_sustain_member_hp(members: Dictionary, identity: int) -> float:
+	if not members.has(identity): return 0.0
+	if lab.crowd_site.contains_person(identity): return float(lab.crowd_site.soldier_state(int(lab.crowd_site._index_by_id[identity])).hp)
+	return float(members[identity].hp)
 
 func _native_sustain_original_rows(seconds: float) -> Dictionary:
 	if not _crowd_active() or not is_finite(seconds) or seconds < 0.0: return Runtime.fail("CLOCK_NOT_READY")
