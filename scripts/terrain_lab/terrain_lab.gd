@@ -7,6 +7,7 @@ const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") 
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1e: off-screen days train and speed work.
 const CoarseSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const CaptiveAtlasSeed = preload("res://scripts/terrain_lab/captive_atlas_seed.gd") # Captive looks baked when the game was packed.
+const EquipmentAtlasReader = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd") # Read only: its bake in progress.
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
@@ -1659,6 +1660,7 @@ func _action_elapsed_input(delta: float) -> float:
 func _process(delta: float) -> void:
 	_audio_exchange_prune()
 	if restore_only: return
+	_atlas_bake_pause()
 	var process_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	delta = _action_elapsed_input(delta)
 	_combat_profile_stage("process_input", process_started)
@@ -1696,6 +1698,48 @@ func _process(delta: float) -> void:
 		_update_info()
 	_combat_profile_stage("update_info_outer", info_started)
 	_combat_profile_stage("process_total", process_started)
+
+## Nekki 2026-11-28: a look baked while the world is played (a new equipment combination, or a scenario without a
+## shipped seed) pauses the game with 「圖集烘焙中」 and resumes when the bake ends, instead of slowing every frame for a
+## minute and freezing at its end. The bake itself runs on frame signals and finishes while the tree is paused. A pause
+## the player made himself is left as it is; a player who resumes during the bake is paused again.
+var _atlas_pause: Dictionary = {}
+
+func _atlas_bake_pause() -> void:
+	var baking := is_instance_valid(EquipmentAtlasReader._preparation)
+	if baking:
+		if DisplayServer.get_name() == "headless" or site_controller == null or terrain == null or terrain.site.is_empty() or not site_controller._boot_request.is_empty(): return
+		if _atlas_pause.is_empty():
+			_atlas_pause = {"owned": not bool(terrain.site.get("paused", false)), "overlay": _atlas_bake_overlay()}
+			print("ATLAS_BAKE_PAUSE start: the game pauses while a look is baked (already paused: %s)" % str(not bool(_atlas_pause.owned)))
+		if bool(_atlas_pause.owned) and not bool(terrain.site.get("paused", false)): site_controller.toggle_pause()
+		return
+	if _atlas_pause.is_empty(): return
+	if bool(_atlas_pause.owned) and terrain != null and not terrain.site.is_empty() and bool(terrain.site.get("paused", false)) and site_controller != null: site_controller.toggle_pause()
+	print("ATLAS_BAKE_PAUSE end: resumed %s" % str(_atlas_pause.owned))
+	if is_instance_valid(_atlas_pause.get("overlay")): _atlas_pause.overlay.queue_free()
+	_atlas_pause = {}
+
+func atlas_bake_paused() -> bool:
+	return not _atlas_pause.is_empty()
+
+func _atlas_bake_overlay() -> CanvasLayer:
+	var layer := CanvasLayer.new()
+	layer.name = "AtlasBakeOverlay"
+	layer.layer = 120
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel := PanelContainer.new()
+	var label := Label.new()
+	label.text = "圖集烘焙中…\n新外觀第一次出現，烘好後自動繼續遊戲"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 22)
+	panel.add_child(label)
+	center.add_child(panel)
+	layer.add_child(center)
+	add_child(layer)
+	return layer
 
 func change_simulation_speed(direction: int) -> float:
 	if site_controller != null and site_controller.sleeping(): site_controller.wake_up("醒來") # the speed keys wake a sleeper

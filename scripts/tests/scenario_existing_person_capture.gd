@@ -12,6 +12,7 @@ const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const ScenarioPeople = preload("res://scripts/main_menu/scenario_people.gd")
 const PACKAGE := "res://assets/scenarios/demo_a/demo_a.json"
 const EquipmentAtlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
+const CaptiveAtlasSeed = preload("res://scripts/terrain_lab/captive_atlas_seed.gd")
 
 func _arg(name: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():
@@ -37,6 +38,8 @@ func _run() -> void:
 		print("EXISTING_PERSON_CAPTURE refused %s" % RegionEntry.menu_message)
 		quit(1)
 		return
+	# `--no-seed`: the shipped captive looks are not copied, so the opened town bakes them while it is played.
+	if "--no-seed" in OS.get_cmdline_user_args(): CaptiveAtlasSeed._seeded = true
 	change_scene_to_file(SITE)
 	var lab: TerrainLab = null
 	var deadline := Time.get_ticks_msec() + 420000
@@ -51,6 +54,33 @@ func _run() -> void:
 		quit(1)
 		return
 	for _frame: int in range(90 + int(_arg("skip", "0"))): await process_frame # `--skip=N`: N more frames before measuring
+	# `--pause-check` (with --no-seed): a bake in play pauses the game with its overlay, the Site clock stands still while
+	# it runs, and the game resumes on its own when it ends (Nekki 2026-11-28). Prints PAUSE_CHECK PASS or FAIL.
+	if "--pause-check" in OS.get_cmdline_user_args():
+		var started_at := Time.get_ticks_msec()
+		while not is_instance_valid(EquipmentAtlas._preparation) and Time.get_ticks_msec() - started_at < 60000: await process_frame
+		var during_ok := is_instance_valid(EquipmentAtlas._preparation)
+		for _settle: int in range(5): await process_frame
+		var minute_during := SiteRuntime.now(lab.terrain)
+		var site_paused := bool(lab.terrain.site.get("paused", false))
+		var tree_paused := paused
+		var owned_during := lab.atlas_bake_paused()
+		var paused_during := site_paused and tree_paused and owned_during
+		var overlay_during := lab.get_node_or_null("AtlasBakeOverlay") != null
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png(ProjectSettings.globalize_path(out.path_join("atlas_bake_pause.png")))
+		var waited := Time.get_ticks_msec()
+		while is_instance_valid(EquipmentAtlas._preparation) and Time.get_ticks_msec() - waited < 400000: await process_frame
+		var minute_end := SiteRuntime.now(lab.terrain)
+		var bake_s := float(Time.get_ticks_msec() - waited) / 1000.0
+		for _settle: int in range(30): await process_frame
+		var minute_after := SiteRuntime.now(lab.terrain)
+		var resumed := not bool(lab.terrain.site.get("paused", false)) and not paused and not lab.atlas_bake_paused() and lab.get_node_or_null("AtlasBakeOverlay") == null
+		var ok := during_ok and paused_during and overlay_during and is_equal_approx(minute_during, minute_end) and resumed and minute_after > minute_end
+		print("PAUSE_CHECK %s: bake seen %s, Site paused %s, tree paused %s, owned pause %s, overlay %s, Site minute %.4f -> %.4f during %.1f s of bake, resumed %s, minute after %.4f" % ["PASS" if ok else "FAIL", str(during_ok), str(site_paused), str(tree_paused), str(owned_during), str(overlay_during), minute_during, minute_end, bake_s, str(resumed), minute_after])
+		if not ok:
+			quit(1)
+			return
 	# `--wait-atlas`: wait (at most 5 minutes) until no look is being baked into user://equipment_atlas for 60 frames in a row;
 	# an isolated verifier user folder bakes every look again, and that bake runs inside the frames measured below.
 	if "--wait-atlas" in OS.get_cmdline_user_args():
