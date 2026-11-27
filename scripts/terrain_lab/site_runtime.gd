@@ -3890,6 +3890,22 @@ static func feature_work_slots(data: TerrainData, feature: Dictionary) -> Array[
 			result.append({"slot": result.size(), "cell": data.index(cell), "service_cells": service})
 	return result
 
+## feature_work_slots for the work preflight, which only reads them. A farm's or pasture's slots depend on its cells
+## and the map width alone, so equal cells give equal slots; they are kept by value (2026-11-28, town frame time: each
+## work preflight cut the field into slots again, 0.8 ms a frame). Shipyards and other features are not kept.
+static var _preflight_slot_cache: Dictionary = {}
+
+static func _preflight_work_slots(data: TerrainData, feature: Dictionary) -> Array[Dictionary]:
+	if feature.has("technology_shipyard_work") or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or str(feature.kind) not in FARM_KINDS + PASTURE_KINDS or not feature.get("cells") is Array:
+		return feature_work_slots(data, feature)
+	var key := [data.size, feature.cells]
+	var cached: Variant = _preflight_slot_cache.get(key)
+	if cached != null: return cached
+	if _preflight_slot_cache.size() >= 512: _preflight_slot_cache.clear()
+	var slots := feature_work_slots(data, feature)
+	_preflight_slot_cache[[data.size, feature.cells.duplicate()]] = slots
+	return slots
+
 static func work_claim_key(task: Dictionary) -> String:
 	var target := str(task.get("target", ""))
 	var slot := int(task.get("work_slot", -1))
@@ -7153,7 +7169,7 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	var service: Array = []
 	var slot := int(task.get("work_slot", -1))
 	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and (kind in FARM_KINDS + PASTURE_KINDS or feature.has("technology_shipyard_work")):
-		var slots := feature_work_slots(data, feature)
+		var slots := _preflight_work_slots(data, feature)
 		if slot < 0 or slot >= slots.size(): return fail("UNREACHABLE")
 		expected = int(slots[slot].cell)
 		service = slots[slot].service_cells
