@@ -6767,6 +6767,7 @@ static func same_author_initial_context(left: Variant, right: Variant) -> bool:
 	if not RegionTerrainAdapter.same_author_identity(left.author_identity, right.author_identity) or not _initial_site_same(left.starting_site, right.starting_site): return false
 	if left.start.mode != right.start.mode or not _initial_site_same(left.start.site, right.start.site) or not _initial_site_same(left.start.cell, right.start.cell): return false
 	if left.start.mode == "existing_person" and int(left.start.person_id) != int(right.start.person_id): return false
+	if left.start.mode == "scenario_person" and str(left.start.name) != str(right.start.name): return false
 	# P5C-S2: the birth set is a set. Compare canonical order, not the stored list order.
 	return author_initial_site_order(left) == author_initial_site_order(right)
 
@@ -13416,8 +13417,11 @@ func _check_author_initial_state(data: TerrainData, record: Dictionary, coordina
 	var context: Dictionary = _initialization.author_context
 	var bodies: Dictionary = RegionTravel._body_records(state)
 	var controlled: int = int(state.get("controlled_person_id", -1))
-	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not _initial_site_same(bodies[controlled].get("cell"), context.start.cell) or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
-	if context.start.mode == "created_player":
+	# 選現成人物: a scenario person stands where the scenario put him (his house or his team), found by his name.
+	var placed: bool = str(bodies[controlled].get("name", "")) == str(context.start.name) if bodies.has(controlled) and context.start.mode == "scenario_person" else bodies.has(controlled) and _initial_site_same(bodies[controlled].get("cell"), context.start.cell)
+	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not placed or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	if context.start.mode == "scenario_person": pass # his body was checked above; no created player exists
+	elif context.start.mode == "created_player":
 		# Neutral part 2: the created player is roster unit 0 and formal commander of a one-person neutral team, not an actor.
 		if controlled != 1 or not state.get("actors", {}).is_empty() or not _created_player_team(state, controlled): return fail("INVALID_INITIAL_POPULATION")
 	elif controlled != int(context.start.person_id): return fail("INVALID_INITIAL_POPULATION")

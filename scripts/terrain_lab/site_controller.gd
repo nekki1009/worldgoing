@@ -10391,6 +10391,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	var loaded: Dictionary = source.load_manifest(manifest_path)
 	PerfTrace.mark("manifest_done")
 	if not loaded.ok: return loaded
+	# 選現成人物 v1 (Nekki 2026-11-27): a new game that takes over a scenario person is born on his Site.
+	var existing: Variant = _boot_request.get("existing", {}) if create_new else {}
+	if existing is Dictionary and not existing.is_empty():
+		source.author_start_override = {"mode": "scenario_person", "site": [int(existing.site[0]), int(existing.site[1])],
+			"cell": [int(existing.cell[0]), int(existing.cell[1])], "name": str(existing.name)}
 	var request := _initial_world_request(manifest_path, world_id, slot_id, starting_site, create_new, initial_scenario_id)
 	var location := "user://region_lab/worlds/%s/slots/%s" % [world_id, slot_id]
 	var candidate: RegionSaveSlot
@@ -10535,9 +10540,11 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
 	# 技能 K1c: a world created from the menu seeds its people's starting proficiency by age (old saves stay at 50).
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["skills_start"] = true
+	var existing: Dictionary = request.existing if request.get("existing") is Dictionary else {}
 	if result.ok and not request.get("character", {}).is_empty():
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
-		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
+		var applied := Runtime.fail("INVALID_INITIAL_SCENARIO")
+		if bool(request.get("create_new", false)): applied = apply_existing_look(request.character) if not existing.is_empty() else apply_created_character(appearance)
 		if not applied.ok: result = applied
 	# 示範劇本 step 1: a scenario package names and types its factions (before any start faction is founded).
 	if result.ok and bool(request.get("create_new", false)) and region_slot != null and region_slot.source != null and region_slot.source.has_method("author_scenario"):
@@ -10545,6 +10552,11 @@ func _settle_boot_request(result: Dictionary) -> void:
 		if not scenario.is_empty():
 			var named := apply_scenario_factions(scenario.get("factions", []), scenario.get("teams", []), scenario.get("offices", []))
 			if not named.ok: result = named
+	# 選現成人物 v1 (Nekki 11/27 第六節 2「依建議」): a settlement head leaves the residents' work team and captains his own
+	# one-person team of his faction (the 11/11 leave rule), keeping his house, his post and his faction headship.
+	if result.ok and not existing.is_empty() and str(existing.get("role", "")) in ["leader", "head"]:
+		var own: Dictionary = take_existing_person_team()
+		if not own.ok: result = own
 	# 隊伍範本: the cadre cards (each card checked as its cadre is written; nothing else changes on a refusal).
 	if result.ok and bool(request.get("create_new", false)) and request.get("cadres") is Array and not request.cadres.is_empty():
 		var cadres_applied := apply_created_cadres(request.cadres)
@@ -10561,7 +10573,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and str(start_faction.get("mode", "neutral")) in ["found", "bandit"]:
 		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
 		if not founded.ok: result = founded
-	if result.ok and bool(request.get("create_new", false)): _start_finance(str(start_faction.get("mode", "neutral")))
+	if result.ok and bool(request.get("create_new", false)): _start_finance("existing" if not existing.is_empty() else str(start_faction.get("mode", "neutral")))
 	if result.ok and bool(request.get("create_new", false)): _start_climate()
 	if result.ok:
 		lab._audio_boot_complete()
@@ -11181,13 +11193,14 @@ func npc_diplomacy_day() -> Dictionary:
 	var settled: Dictionary = RegionDiplomacy.settle(registry, now)
 	if settled.ok: registry = settled.registry
 	var player_faction := diplomacy_head_faction()
+	var player_led := player_led_faction() # 選現成人物 / 自建勢力: the faction the player leads acts on his word only
 	var strength := visible_strength()
 	var factions: Array[int] = []
 	for key: Variant in registry.get("entries", {}):
 		var entry: Dictionary = registry.entries[key]
 		var id := int(entry.faction_id)
 		# Bandit bands have no diplomacy (bandit spec §3.2); their daily choice is a separate rule set (B4).
-		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and not RegionFactionQuery.is_bandit(registry, id) and RegionPeerage.head_of(registry, id).ok: factions.append(id)
+		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and id != player_led and not RegionFactionQuery.is_bandit(registry, id) and RegionPeerage.head_of(registry, id).ok: factions.append(id)
 	factions.sort()
 	var changed := false
 	var ids: Array = RegionDiplomacy.table(registry).proposals.keys()
@@ -11861,6 +11874,55 @@ func apply_family_blueprint(family_name: String) -> Dictionary:
 	var head: Dictionary = family_continuity.appoint_head(player, player)
 	if not head.ok: return head
 	return family_continuity.establish_identity(player, family_name.strip_edges())
+
+## 選現成人物 v1 (Nekki 11/27: 他的勢力不再由電腦決定): the active faction whose registry head is the world's controlled
+## person (the active Site's), -1 when he leads none. A bound cold Site asks the active Site's controller.
+func player_led_faction() -> int:
+	if region_slot == null: return -1
+	var active: SiteController = registry_saver()
+	var player := int(active.lab.controlled_person_id()) if active != null and active.lab != null else -1
+	if player <= 0: return -1
+	var ref: Dictionary = JoinFaction._world_ref(active, player)
+	if ref.is_empty(): return -1
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	for key: Variant in registry.get("entries", {}):
+		var entry: Dictionary = registry.entries[key]
+		if str(entry.get("status", "")) == "active" and RegionPeerage.same_ref(entry.get("leader_ref"), ref): return int(entry.faction_id)
+	return -1
+
+## 選現成人物 v1: the person a scenario birth named (its names are unique): the first body of that name on the Site.
+func _scenario_person_named(state: Dictionary, person_name: String) -> int:
+	for army: Variant in state.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and str(unit.get("name", "")) == person_name: return int(unit.get("person_id", -1))
+	for actor: Variant in state.get("actors", {}).values():
+		if actor is Dictionary and str(actor.get("name", "")) == person_name: return int(actor.get("person_id", -1))
+	return -1
+
+## 選現成人物 v1 (Nekki 11/27: 能力與關係照劇本，可改名字與外觀): only the name and the look of the menu's character are
+## written onto the scenario person; his abilities, skills and personality stay the scenario's.
+func apply_existing_look(data: Dictionary) -> Dictionary:
+	var identity := int(lab.controlled_person_id())
+	if lab.crowd_site == null or not lab.crowd_site.active or not lab.crowd_site._records.has(identity) or lab.crowd_site._actors.has(identity):
+		return Runtime.fail("NO_TARGET", "新世界找不到所選人物")
+	var look := {}
+	for key: String in ["name", "body", "face", "hair", "hair_dye", "hair_dyed"]:
+		if data.has(key): look[key] = data[key]
+	if str(look.get("name", "")).strip_edges().is_empty(): look.erase("name") # keeps his scenario name
+	if look.is_empty(): return Runtime.ok()
+	var written: Dictionary = _write_created_crowd_person(identity, look)
+	if not written.ok: return written
+	return save_to(save_path)
+
+## 選現成人物 v1: a settlement head taken over leaves the residents' work team for his own one-person team of his faction
+## (CrowdSite.leave_to_own_team, the 11/11 rule); he keeps his house, his settlement post and his faction headship.
+func take_existing_person_team() -> Dictionary:
+	var identity := int(lab.controlled_person_id())
+	if lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "群眾未啟用")
+	var left: Dictionary = lab.crowd_site.leave_to_own_team(identity)
+	if not left.ok and str(left.get("code", "")) != "WHOLE_TEAM": return left
+	return save_to(save_path)
 
 ## Neutral part 2: the shown name of a controlled person: an actor's display_name, or a crowd/roster row's saved name.
 func _controlled_display_name(controlled: Dictionary) -> String:
@@ -12672,6 +12734,24 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			if not RegionTravel._able(person) or not RegionSaveSlot._initial_site_same(person.get("cell"), author.start.cell): return Runtime.fail("NO_BIRTH_GROUND")
 			opened.data.site["controlled_person_id"] = int(author.start.person_id)
 			birth = Runtime.ok("", {"data": opened.data})
+		elif not author.is_empty() and author.start.mode == "scenario_person":
+			# 選現成人物 v1: the start Site's scenario people are born as a companion's are (no created player, no cadres);
+			# control goes to the one named.
+			var person_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
+			birth = lab.prepare_initial_resident_roster(opened.data) if not opened.data.site.get("residents", []).is_empty() else Runtime.ok("", {"data": opened.data})
+			PerfTrace.mark("init_residents")
+			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, person_site))
+			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", person_site), _scenario_rows_of(candidate, "stock", person_site), _scenario_rows_of(candidate, "livelihood", person_site))
+			if birth.ok:
+				var chosen := _scenario_person_named(birth.data.site, str(author.start.name))
+				if chosen <= 0: birth = Runtime.fail("NO_TARGET", "劇本裡找不到所選人物：%s" % str(author.start.name))
+				else:
+					birth.data.site["controlled_person_id"] = chosen
+					# As the created start (prepare_fresh_initial_population): every person is a roster row, and the
+					# Lab's template actor is explicitly absent (without this it bound as a second person #1).
+					birth.data.site["actors"] = {}
+					birth.data.site["actor_presence_version"] = 1
+			if birth.ok: _note_scenario_leaders(person_site, birth.data)
 		elif initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
 			PerfTrace.mark("init_population")
@@ -15617,7 +15697,7 @@ func _start_climate() -> void:
 
 ## 軍餉與稅收 P4 (§7): a new game starts with the scenario's coin in the camp (a neutral one-person team 10, a founded
 ## faction or band 30) and the player's team gets its finance record (paydays start once a pay source is bound).
-const START_COIN := {"neutral": 10, "found": 30, "bandit": 30}
+const START_COIN := {"neutral": 10, "found": 30, "bandit": 30, "existing": 0} # 選現成人物: his own stock is the scenario's
 func _start_finance(mode: String) -> void:
 	if lab.terrain == null: return
 	var coin := int(START_COIN.get(mode, 10))

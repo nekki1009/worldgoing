@@ -30,6 +30,8 @@ const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leade
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K5: the start template's points
 const Templates = preload("res://scripts/main_menu/character_templates.gd") # 開局流程規劃 §2: the template library
 const TeamTemplates = preload("res://scripts/main_menu/team_templates.gd") # 隊伍範本（幹部卡）, Nekki 11/22
+const ScenarioPeople = preload("res://scripts/main_menu/scenario_people.gd") # 選現成人物 v1, Nekki 11/27
+const ScenarioPeopleMap = preload("res://scripts/main_menu/scenario_people_map.gd")
 const PerfTrace = preload("res://scripts/terrain_lab/perf_trace.gd") # 開始遊戲效能計畫 P0 (--perf-trace only)
 const DEFAULT_HAIR_DYE := "9b775dff"
 ## The project renders at 2560×1440 and scales to the window; size UI for that.
@@ -102,6 +104,19 @@ var _team_slot_rows: Array = [] # the usable character templates the slot menus 
 var _team_error: Label
 var _start_team: OptionButton
 var _start_team_rows: Array = []
+# 選現成人物 v1 (Nekki 2026-11-27): the list and the map of a scenario's people, the picked one's new name.
+var _existing_scenario: OptionButton
+var _existing_packages: Array = []
+var _existing_list: ItemList
+var _existing_map: Control
+var _existing_rows: Array = [] # list item index -> person row, or {} for a group header
+var _existing_name: LineEdit
+var _existing_info: Label
+var _existing_error: Label
+var _existing_back_page := "pick_character"
+var _character_form: VBoxContainer
+var _look_section_end := 0 # form children from here on are not the look (hidden for a scenario person)
+var _confirm_new_only: Array = [] # confirm page controls a scenario person's start does not use
 
 func _ready() -> void:
 	get_tree().paused = false
@@ -145,6 +160,7 @@ func _ready() -> void:
 	_build_confirm_page(column)
 	_build_templates_page(column)
 	_build_pick_character_page(column)
+	_build_pick_existing_page(column)
 	_build_team_template_page(column)
 	_build_loading_page(column)
 	var step := str(RegionEntry.draft.get("step", ""))
@@ -163,11 +179,13 @@ func show_page(page: String) -> void:
 	elif page == "character":
 		_refresh_character_mode()
 		if _character_mode == "new_game": _restore_character_draft()
+		elif _character_mode == "existing": _restore_existing_look()
 	elif page == "templates":
 		_refresh_templates()
 		_refresh_team_templates()
 	elif page == "team_template": _refresh_team_editor()
 	elif page == "pick_character": _refresh_pick()
+	elif page == "pick_existing": _refresh_existing()
 	elif page == "confirm": _refresh_summary()
 	_set_preview_active(page == "character")
 
@@ -371,6 +389,11 @@ func _build_map_page(parent: Node) -> void:
 	var row := _row(page)
 	_button(row, "返回", "MapBack", func() -> void: show_page("main"))
 	_button(row, "下一步：選擇起點", "PickStart", _pick_start)
+	# 選現成人物 v1: a scenario's own person starts on his own Site, so no start pick comes first.
+	var existing := _button(row, "選現成人物（劇本）", "MapPickExisting", func() -> void:
+		_existing_back_page = "map"
+		show_page("pick_existing"))
+	existing.visible = not RegionEntry.scenario_packages().is_empty()
 
 
 func _pick_start() -> void:
@@ -450,6 +473,8 @@ func _build_character_page(parent: Node) -> void:
 		_dye_toggle.button_pressed = true
 		_update_preview())
 	row.add_child(_dye_picker)
+	_character_form = form
+	_look_section_end = form.get_child_count()
 	form.add_child(HSeparator.new())
 	# 開局流程規劃 §2 家族 (v1): the family blueprint, the head himself and the family name.
 	_label(form, "家族（開局時你是家長）", 20)
@@ -637,18 +662,22 @@ func _character_entry_page() -> String:
 	return "pick_character" if (not drafted is Dictionary or drafted.is_empty()) and not _usable_templates().is_empty() else "character"
 
 func _character_back_pressed() -> void:
-	if _usable_templates().is_empty(): _pick_start()
+	if _character_mode == "existing": show_page("pick_existing")
+	elif _usable_templates().is_empty(): _pick_start()
 	else: show_page("pick_character")
 
 func _refresh_character_mode() -> void:
 	var editing := _character_mode == "template"
-	_character_title.text = "編輯人物範本" if editing else "建立人物"
+	var existing := _character_mode == "existing" # 選現成人物: only his name and look change
+	_character_title.text = "編輯人物範本" if editing else ("改名字與外觀" if existing else "建立人物")
 	_template_title_row.visible = editing
 	_character_back.visible = not editing
-	_character_back.text = "上一步：重選起點" if _usable_templates().is_empty() else "上一步：選人物"
+	_character_back.text = "上一步：選人物" if existing or not _usable_templates().is_empty() else "上一步：重選起點"
 	_character_next_button.visible = not editing
 	_template_editor_back.visible = editing
 	_character_save_template.text = "儲存範本" if editing else "存成範本"
+	_character_save_template.visible = not existing
+	for at: int in range(_look_section_end, _character_form.get_child_count()): _character_form.get_child(at).visible = not existing
 	_character_error.text = ""
 
 ## The form at its defaults: abilities, lines and aptitudes 50, 學業 0, personality neutral, no family, no name.
@@ -926,8 +955,10 @@ func _build_pick_character_page(parent: Node) -> void:
 	var row := _row(page)
 	_button(row, "用這個範本", "PickTemplateUse", _use_picked_template)
 	_button(row, "新建人物", "PickCharacterNew", _new_game_character)
-	var existing := _button(row, "選現成人物（尚未開放）", "PickExisting", func() -> void: pass)
-	existing.disabled = true # 開局流程規劃 §3: the scenario's ready-made people come later
+	var existing := _button(row, "選現成人物", "PickExisting", func() -> void:
+		_existing_back_page = "pick_character"
+		show_page("pick_existing"))
+	existing.disabled = RegionEntry.scenario_packages().is_empty() # 選現成人物 v1 (Nekki 11/27): a scenario's own people
 	_button(page, "上一步：重選起點", "PickCharacterBack", _pick_start)
 
 func _refresh_pick() -> void:
@@ -951,6 +982,150 @@ func _new_game_character() -> void:
 	_character_mode = "new_game"
 	_reset_character_form()
 	show_page("character")
+
+# --- 選現成人物 v1 (Nekki 2026-11-27 「都依建議」; 第六節「1.開放 2.依建議 3.清單加地圖」): a scenario's people on a list
+# beside a map of its Sites. Picking one takes his Site as the start; only his name and look may change.
+
+func _build_pick_existing_page(parent: Node) -> void:
+	var page := _page(parent, "pick_existing")
+	_label(page, "選現成人物", 24)
+	_label(page, "接手劇本裡的一個人：他的勢力、職位、家族與隊伍照劇本，能力與關係不能改，可以改名字和外觀。點清單或地圖上的 Site 都可以選。", 14)
+	_existing_scenario = OptionButton.new()
+	_existing_scenario.name = "ExistingScenario"
+	_existing_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_existing_scenario.item_selected.connect(func(_index: int) -> void: _load_existing_people())
+	page.add_child(_existing_scenario)
+	var body := _row(page)
+	_existing_list = ItemList.new()
+	_existing_list.name = "ExistingPeopleList"
+	_existing_list.custom_minimum_size = Vector2(520, 420) * UI
+	_existing_list.item_selected.connect(func(index: int) -> void: _existing_select(index))
+	body.add_child(_existing_list)
+	_existing_map = ScenarioPeopleMap.new()
+	_existing_map.name = "ExistingPeopleMap"
+	_existing_map.custom_minimum_size = Vector2(420, 420) * UI
+	_existing_map.site_clicked.connect(_existing_site_clicked)
+	body.add_child(_existing_map)
+	_existing_info = _label(page, "", 15)
+	_existing_info.name = "ExistingInfo"
+	var row := _row(page)
+	_label(row, "名字", 16).custom_minimum_size.x = 72 * UI
+	_existing_name = LineEdit.new()
+	_existing_name.name = "ExistingName"
+	_existing_name.max_length = TerrainTestCharacter.MAX_NAME_LENGTH
+	_existing_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_existing_name)
+	_existing_error = _label(page, "", 15)
+	_existing_error.modulate = Color("f0a0a0")
+	var buttons := _row(page)
+	_button(buttons, "上一步", "ExistingBack", func() -> void:
+		if _existing_back_page == "map": show_page("map")
+		else: show_page("pick_character"))
+	_button(buttons, "改外觀", "ExistingLook", _existing_look)
+	_button(buttons, "下一步：確認", "ExistingNext", _existing_next)
+
+func _refresh_existing() -> void:
+	_existing_packages = RegionEntry.scenario_packages()
+	var keep := str(RegionEntry.draft.get("existing", {}).get("package", "")) if RegionEntry.draft.get("existing") is Dictionary else ""
+	_existing_scenario.clear()
+	for package: Dictionary in _existing_packages:
+		_existing_scenario.add_item("劇本：%s（%s）" % [str(package.name), str(package.description)])
+		if str(package.path) == keep: _existing_scenario.select(_existing_scenario.item_count - 1)
+	_load_existing_people()
+
+func picked_existing_package() -> Dictionary:
+	var at := _existing_scenario.selected if _existing_scenario != null else -1
+	return _existing_packages[at] if at >= 0 and at < _existing_packages.size() else {}
+
+func _load_existing_people() -> void:
+	_existing_list.clear()
+	_existing_rows = []
+	_existing_error.text = ""
+	var package := picked_existing_package()
+	var listed: Dictionary = ScenarioPeople.people(str(package.get("path", ""))) if not package.is_empty() else {"ok": false, "message": "沒有劇本"}
+	if not listed.get("ok", false):
+		_existing_error.text = str(listed.get("message", "讀不到劇本人物"))
+		_existing_map.show_sites({}, [])
+		return
+	var group := ""
+	for person: Dictionary in listed.people:
+		if str(person.role) != group:
+			group = str(person.role)
+			_existing_list.add_item("— %s —" % str(ScenarioPeople.ROLE_LABELS[group]))
+			_existing_list.set_item_disabled(_existing_list.item_count - 1, true)
+			_existing_list.set_item_selectable(_existing_list.item_count - 1, false)
+			_existing_rows.append({})
+		_existing_list.add_item("%s　%s　(%d, %d)　%d 人" % [str(person.name), str(person.title), person.site.x, person.site.y, int(person.people)])
+		_existing_rows.append(person)
+	_existing_map.show_sites(listed.sites, listed.people)
+	var drafted: Dictionary = RegionEntry.draft.existing if RegionEntry.draft.get("existing") is Dictionary else {}
+	for at: int in _existing_rows.size():
+		if not _existing_rows[at].is_empty() and str(_existing_rows[at].name) == str(drafted.get("name", "")) and str(drafted.get("package", "")) == str(package.path):
+			_existing_list.select(at)
+			_existing_select(at, false)
+			var look: Dictionary = RegionEntry.draft.get("character", {}) if RegionEntry.draft.get("character") is Dictionary else {}
+			_existing_name.text = str(look.get("name", drafted.name))
+
+## The person of list item `index`: his Site on the map, his facts, his name to edit; the draft remembers him.
+func _existing_select(index: int, reset_name: bool = true) -> void:
+	if index < 0 or index >= _existing_rows.size() or _existing_rows[index].is_empty(): return
+	var person: Dictionary = _existing_rows[index]
+	_existing_map.pick(person.site)
+	_existing_info.text = "%s：%s。所在 Site (%d, %d)，%s %d 人。" % [str(person.name), str(person.title), person.site.x, person.site.y,
+		"聚落居民" if str(person.role) in ["leader", "head"] else "隊中", int(person.people)]
+	var package := picked_existing_package()
+	var drafted: Dictionary = RegionEntry.draft.existing if RegionEntry.draft.get("existing") is Dictionary else {}
+	if str(drafted.get("name", "")) != str(person.name):
+		RegionEntry.draft.erase("character")
+		RegionEntry.draft.erase("existing_look")
+	RegionEntry.draft["existing"] = {"name": str(person.name), "role": str(person.role), "title": str(person.title), "site": [person.site.x, person.site.y],
+		"people": int(person.people), "package": str(package.path), "scenario_name": str(package.name), "record": package.record.duplicate(true)}
+	if reset_name: _existing_name.text = str(person.name)
+	_existing_error.text = ""
+
+## A click on the map: the first person of that Site in the list.
+func _existing_site_clicked(site: Vector2i) -> void:
+	for at: int in _existing_rows.size():
+		if not _existing_rows[at].is_empty() and _existing_rows[at].site == site:
+			_existing_list.select(at)
+			_existing_list.ensure_current_is_visible()
+			_existing_select(at)
+			return
+
+func _existing_draft_ok() -> bool:
+	if not RegionEntry.draft.get("existing") is Dictionary:
+		_existing_error.text = "請先選一個人。"
+		return false
+	if _existing_name.text.strip_edges().is_empty():
+		_existing_error.text = "名字不能空白。"
+		return false
+	var look: Dictionary = RegionEntry.draft.get("character", {}) if RegionEntry.draft.get("character") is Dictionary else {}
+	look["name"] = _existing_name.text.strip_edges()
+	RegionEntry.draft["character"] = look
+	return true
+
+func _existing_look() -> void:
+	if not _existing_draft_ok(): return
+	_character_mode = "existing"
+	show_page("character")
+
+func _existing_next() -> void:
+	if not _existing_draft_ok(): return
+	RegionEntry.draft["step"] = "confirm"
+	show_page("confirm")
+
+## The character page for a scenario person: his drafted look (if one was made) and his name.
+func _restore_existing_look() -> void:
+	var look: Dictionary = RegionEntry.draft.get("character", {}) if RegionEntry.draft.get("character") is Dictionary else {}
+	if bool(RegionEntry.draft.get("existing_look", false)):
+		_body_select.select(int(look.get("body", 0)))
+		_fill_hair(0)
+		_select_metadata(_hair_select, str(look.get("hair", "")))
+		_select_metadata(_face_select, str(look.get("face", "")))
+		_dye_picker.color = Color(str(look.get("hair_dye", DEFAULT_HAIR_DYE)))
+		_dye_toggle.button_pressed = bool(look.get("hair_dyed", false))
+	_name_input.text = str(look.get("name", RegionEntry.draft.get("existing", {}).get("name", "")))
+	_update_preview()
 
 # --- 開局流程規劃 §8 step 6 / 開始遊戲效能 P1-5 (first step): opening a world blocks the main thread for a while, so
 # the menu first draws a loading page and the window holds that page instead of the frozen menu.
@@ -978,6 +1153,14 @@ static func _select_metadata(select: OptionButton, id: String) -> void:
 
 func _character_next() -> void:
 	var data := character_data()
+	if _character_mode == "existing": # 選現成人物: the look and the name only
+		var look := {}
+		for key: String in ["name", "body", "face", "hair", "hair_dye", "hair_dyed"]: look[key] = data[key]
+		if str(look.name).is_empty(): look.name = str(RegionEntry.draft.get("existing", {}).get("name", ""))
+		RegionEntry.draft["character"] = look
+		RegionEntry.draft["existing_look"] = true
+		show_page("pick_existing")
+		return
 	if str(data.name).is_empty():
 		_character_error.text = "請輸入名字。"
 		return
@@ -1050,17 +1233,18 @@ func _build_confirm_page(parent: Node) -> void:
 	row.add_child(_world_name)
 	_build_initial_scenario_choice(page)
 	# 隊伍範本: the start cadres from a team template, or generated as before.
-	_label(page, "開局幹部", 16)
+	_confirm_new_only.append(_label(page, "開局幹部", 16))
 	_start_team = OptionButton.new()
 	_start_team.name = "StartTeam"
 	_start_team.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page.add_child(_start_team)
+	_confirm_new_only.append(_start_team)
 	_start_team.item_selected.connect(func(_index: int) -> void: _refresh_summary())
 	_summary = _label(page, "", 16)
 	_summary.name = "NewGameSummary"
 	_summary.custom_minimum_size.x = 560 * UI
 	var buttons := _row(page)
-	_button(buttons, "上一步", "ConfirmBack", func() -> void: show_page("character"))
+	_button(buttons, "上一步", "ConfirmBack", func() -> void: show_page("pick_existing" if RegionEntry.draft.get("existing") is Dictionary else "character"))
 	_button(buttons, "開始", "StartGame", start_new_game)
 
 ## The usable team templates in the New Game choice (item 0 = 自動產生), keeping the current pick.
@@ -1082,6 +1266,26 @@ func start_team_choice() -> Dictionary:
 
 func _refresh_summary() -> void:
 	if _start_team != null: _refresh_start_team() # keeps the current pick
+	var existing: Dictionary = RegionEntry.draft.existing if RegionEntry.draft.get("existing") is Dictionary else {}
+	for node: Control in _confirm_new_only: node.visible = existing.is_empty()
+	if not existing.is_empty():
+		_start_faction_name.visible = false
+		var look: Dictionary = RegionEntry.draft.get("character", {}) if RegionEntry.draft.get("character") is Dictionary else {}
+		var new_name := str(look.get("name", existing.name))
+		if _world_name.text.is_empty(): _world_name.text = "%s %s" % [str(existing.get("scenario_name", "劇本")), Time.get_date_string_from_system()]
+		_summary.text = "劇本：%s
+接手：%s %s%s
+起點 Site：(%d, %d)
+手下：%d 人
+外觀：%s
+家族：%s家
+能力、熟練、性格與關係照劇本。" % [
+			str(existing.get("scenario_name", "")), str(existing.title), str(existing.name),
+			"（改名為 %s）" % new_name if new_name != str(existing.name) else "",
+			int(existing.site[0]), int(existing.site[1]), int(existing.get("people", 0)),
+			"自訂" if bool(RegionEntry.draft.get("existing_look", false)) else "照劇本", new_name.left(1)]
+		return
+	_start_faction_name.visible = str(_start_faction.get_item_metadata(_start_faction.selected)) in ["found", "bandit"] if _start_faction != null and _start_faction.selected >= 0 else false
 	var data: Dictionary = RegionEntry.draft.get("character", {})
 	var site: Vector2i = RegionEntry.draft.get("site", Vector2i(-1, -1))
 	if _world_name.text.is_empty():
@@ -1141,6 +1345,25 @@ func picked_package() -> Dictionary:
 	return {}
 
 func start_new_game() -> void:
+	var existing: Dictionary = RegionEntry.draft.existing if RegionEntry.draft.get("existing") is Dictionary else {}
+	if not existing.is_empty():
+		# 選現成人物 v1: his Site and his scenario package; the menu's character carries only his new name and look.
+		var look: Dictionary = RegionEntry.draft.get("character", {}) if RegionEntry.draft.get("character") is Dictionary else {}
+		var new_name := str(look.get("name", existing.name)).strip_edges()
+		if new_name.is_empty(): new_name = str(existing.name)
+		if not bool(RegionEntry.draft.get("existing_look", false)): look = {}
+		look["name"] = new_name
+		var record := {"free_points": false, "template": "", "scenario": existing.record.duplicate(true)}
+		if not RegionEntry.request_new_world(Vector2i(int(existing.site[0]), int(existing.site[1])), look, _world_name.text, "", str(existing.package), {"mode": "neutral"},
+			{"surname": new_name.left(1)}, record, [], {"name": str(existing.name)}):
+			_message.text = RegionEntry.menu_message
+			_message.visible = true
+			return
+		RegionEntry.draft = {}
+		PerfTrace.mark("start_pressed")
+		await _show_loading("正在建立新世界…")
+		get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+		return
 	var data: Dictionary = RegionEntry.draft.get("character", {})
 	var site: Variant = RegionEntry.draft.get("site")
 	if data.is_empty() or not site is Vector2i:
@@ -1169,7 +1392,7 @@ func start_new_game() -> void:
 
 
 func _build_initial_scenario_choice(parent: Node) -> void:
-	_label(parent, "劇本", 16) # 開局流程規劃 §3: the scenario field; today only the empty scenario
+	_confirm_new_only.append(_label(parent, "劇本", 16)) # 開局流程規劃 §3: the scenario field
 	_initial_scenario = OptionButton.new()
 	_initial_scenario.name = "InitialArtisanScenario"
 	_initial_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1182,15 +1405,16 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 		_initial_scenario.add_item("劇本：%s（%s）" % [str(package.name), str(package.description)])
 		_initial_scenario.set_item_metadata(_initial_scenario.item_count - 1, "pkg:" + str(package.path))
 	parent.add_child(_initial_scenario)
+	_confirm_new_only.append(_initial_scenario)
 	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))
 	for index: int in _initial_scenario.item_count:
 		if str(_initial_scenario.get_item_metadata(index)) == draft_id: _initial_scenario.select(index)
 	_initial_scenario.item_selected.connect(func(index: int) -> void:
 		RegionEntry.draft["initial_scenario_id"] = str(_initial_scenario.get_item_metadata(index)))
-	_label(parent, "你是隊長；幹部都是軍官，可以各自帶人分隊。起點須能合法安置整隊。", 14)
+	_confirm_new_only.append(_label(parent, "你是隊長；幹部都是軍官，可以各自帶人分隊。起點須能合法安置整隊。", 14))
 	# Nekki 2026-11-04 (C): start neutral, or found your own faction (you are its head; hostile to all by default).
 	# Joining a scenario faction appears once the world has scenario factions.
-	_label(parent, "開局勢力", 16)
+	_confirm_new_only.append(_label(parent, "開局勢力", 16))
 	_start_faction = OptionButton.new()
 	_start_faction.name = "StartFaction"
 	_start_faction.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1202,6 +1426,7 @@ func _build_initial_scenario_choice(parent: Node) -> void:
 	_start_faction.add_item("落草（你是土匪頭目；與所有人敵對，不能外交、佔領或受封，信譽 −20）")
 	_start_faction.set_item_metadata(2, "bandit")
 	parent.add_child(_start_faction)
+	_confirm_new_only.append(_start_faction)
 	_start_faction_name = LineEdit.new()
 	_start_faction_name.name = "StartFactionName"
 	_start_faction_name.placeholder_text = "勢力或山寨名稱（1–32 字）"

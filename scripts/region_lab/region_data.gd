@@ -86,6 +86,10 @@ static func _publish_shared_tile(key: String, tile: Dictionary) -> void:
 	_shared_tile_mutex.unlock()
 var _author_pin: Dictionary = {}
 var _author_document: Dictionary = {}
+## 選現成人物 v1 (Nekki 2026-11-27): the start a new game picked instead of the package's own, {mode "scenario_person",
+## site, cell, name} (RegionTerrainAdapter.author_start_valid). Set on this loaded source only, for one birth; the
+## package files never change. {} = the package's start.
+var author_start_override: Dictionary = {}
 ## 示範劇本 (reports: 示範劇本 A 開墾之地): the package's scenario document, {} when it has none (author_scenario_valid).
 var _author_scenario: Dictionary = {}
 
@@ -1488,7 +1492,7 @@ static func export_author_initial_package(folder: String, package_name: String, 
 
 func author_initial_context() -> Dictionary:
 	if _author_pin.is_empty(): return {}
-	var start: Dictionary = _author_document.start.duplicate(true)
+	var start: Dictionary = author_start_override.duplicate(true) if not author_start_override.is_empty() else _author_document.start.duplicate(true)
 	var sites: Array = []
 	var keys: Array = _author_initial.keys()
 	keys.sort()

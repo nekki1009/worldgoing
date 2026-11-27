@@ -243,6 +243,10 @@ static func author_pair_valid(value: Variant, low: int, high: int) -> bool:
 static func author_start_valid(value: Variant) -> bool:
 	if not value is Dictionary or not author_pair_valid(value.get("site"), -10000000, 10000000) or not author_pair_valid(value.get("cell"), 0, SIDE - 1): return false
 	if value.get("mode") == "created_player": return value.size() == 3
+	# 選現成人物 v1 (Nekki 2026-11-27): a scenario's own person, found by his unique scenario name at birth; never in a
+	# package file, only RegionData.author_start_override (the menu's pick). `cell` is a walkable team cell of his Site.
+	if value.get("mode") == "scenario_person":
+		return value.size() == 4 and value.get("name") is String and not str(value.name).strip_edges().is_empty() and str(value.name).length() <= 32
 	return value.get("mode") == "existing_person" and value.size() == 4 and author_integer(value.get("person_id"), 1, 2147483647) and int(value.person_id) != 1000000000
 
 static func boundary_cell(direction: int, offset: int) -> Vector2i:
