@@ -6,6 +6,7 @@ const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C6: grievance and slow work offline.
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1e: off-screen days train and speed work.
 const CoarseSocial = preload("res://scripts/terrain_lab/site_social.gd")
+const CaptiveAtlasSeed = preload("res://scripts/terrain_lab/captive_atlas_seed.gd") # Captive looks baked when the game was packed.
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
@@ -229,6 +230,9 @@ func _region_original_ready() -> void:
 		set_meta(&"fire_lab_fixture", {"version": FIRE_LAB_FIXTURE_VERSION, "seed": 12345})
 		set_meta(&"fire_lab_boot", true)
 	crowd_startup_requested = not restore_only and CrowdSiteScript.requested()
+	# 2026-11-28 (Nekki 「好」): the captive looks a shipped scenario needs are copied into the user atlas cache before any
+	# Site opens, so the crowd does not bake them while the world is played. Once a process; headless never draws them.
+	if not restore_only and DisplayServer.get_name() != "headless": CaptiveAtlasSeed.seed()
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if not restore_only: RenderingServer.set_default_clear_color(Color("1d242b"))
 	renderer = TerrainRenderer.new()

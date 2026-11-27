@@ -1,0 +1,4 @@
+# The captive look seed is built on this machine (scripts/tools/bake_captivity_appearances.gd --seed-out), not kept in git
+# (Nekki 2026-11-28 C: the repository has no LFS budget left; a fresh clone bakes the looks once, with the game paused).
+*
+!.gitignore
