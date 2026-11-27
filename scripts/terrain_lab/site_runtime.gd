@@ -4536,7 +4536,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	var water: Dictionary = data.site.water_status.get(key, {})
 	if not service.is_empty():
 		water = water.get("slots", {}).get(str(slot_id), {})
-	var demand := float(water.get("demand", water_demand(feature)))
+	var demand := float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var water_ratio := 1.0
 	if demand > 0.0:
 		water_ratio = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0)
@@ -7235,7 +7235,8 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 		return ok("只准原Camp供水投影；仍須完整含水預檢", {"operating_slot_projection": true})
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {})
 	if not service.is_empty(): water = water.get("slots", {}).get(str(slot), {})
-	var demand := float(water.get("demand", water_demand(feature)))
+	# The default is computed only when the status has no demand (a .get default is evaluated on every call; 2026-11-28).
+	var demand := float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var ratio := clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0) if demand > 0.0 else 1.0
 	if ratio <= 0.0: return fail("NO_WATER")
 	var productivity := 1.0
@@ -10730,7 +10731,7 @@ static func _farm_trial_protocol_capture_paid(data: TerrainData, key: String, fe
 
 static func _farm_trial_protocol_conditions(data: TerrainData, key: String, feature: Dictionary, slot: int) -> Dictionary:
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {}).get("slots", {}).get(str(slot), {})
-	var demand: float = float(water.get("demand", water_demand(feature)))
+	var demand: float = float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var ratio: float = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0) if demand > 0.0 else 1.0
 	var soil: Array[Dictionary] = []
 	for cell: int in feature_work_slots(data, feature)[slot].service_cells: soil.append({"cell": cell, "fertility": float(data.fertility[cell])})
