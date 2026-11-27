@@ -42,6 +42,30 @@ var peak_cache_bytes := 0
 ## them holds this (reentrant) lock. Everything else a build reads is fixed once the manifest is loaded.
 var _cache_mutex := Mutex.new()
 const PREBUILD_WORKERS := 6
+## 開局速度 (2026-11-27): tiles already read and checked in this process, shared by every RegionData of the same pinned
+## manifest (a new world loads it twice: the menu's package check, then the game). Same results. One tile (about 10 MB
+## kept after its RegionData is gone; region_lab_real_map_test bounds static growth at 16 MiB): a scenario lies in one.
+const SHARED_TILE_LIMIT := 1
+static var _shared_tiles: Dictionary = {}
+static var _shared_tile_order: Array[String] = []
+static var _shared_tile_mutex := Mutex.new()
+
+static func _shared_tile(key: String) -> Variant:
+	_shared_tile_mutex.lock()
+	var found: Variant = _shared_tiles.get(key)
+	if found != null:
+		_shared_tile_order.erase(key)
+		_shared_tile_order.append(key)
+	_shared_tile_mutex.unlock()
+	return found
+
+static func _publish_shared_tile(key: String, tile: Dictionary) -> void:
+	_shared_tile_mutex.lock()
+	if not _shared_tiles.has(key):
+		_shared_tiles[key] = tile
+		_shared_tile_order.append(key)
+		while _shared_tile_order.size() > SHARED_TILE_LIMIT: _shared_tiles.erase(_shared_tile_order.pop_front())
+	_shared_tile_mutex.unlock()
 var _author_pin: Dictionary = {}
 var _author_document: Dictionary = {}
 ## 示範劇本 (reports: 示範劇本 A 開墾之地): the package's scenario document, {} when it has none (author_scenario_valid).
@@ -712,6 +736,16 @@ func _load_tile_locked(tile: Dictionary) -> Dictionary:
 		var oldest: String = _lru.pop_front()
 		_cache_bytes -= int(_tiles[oldest].bytes_used)
 		_tiles.erase(oldest)
+	# The same pinned manifest's tile, read and checked by another RegionData in this process: the same bytes and checks
+	# (about 1.4 s a tile for its million cells), so its result is taken.
+	var shared_key := "" if manifest_hash.is_empty() else manifest_hash + "|" + identity
+	var shared: Variant = null if shared_key.is_empty() else _shared_tile(shared_key)
+	if shared is Dictionary and int(shared.get("bytes_used", -1)) == needed:
+		_tiles[identity] = shared
+		_lru.append(identity)
+		_cache_bytes += needed
+		peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
+		return shared
 	var elevation := _read_verified(_folder, tile, count * stride + 65536)
 	if not elevation.ok:
 		return elevation
@@ -792,6 +826,7 @@ func _load_tile_locked(tile: Dictionary) -> Dictionary:
 	var result := {"ok": true, "elevation": elevation.bytes, "levels": levels.bytes, "water": water.bytes, "quality": quality, "water_bodies": bodies, "fine_index": fine_index, "fine_bank": fine_bank, "stride": stride, "bytes_used": needed}
 	_tiles[identity] = result
 	_lru.append(identity)
+	if not shared_key.is_empty(): _publish_shared_tile(shared_key, result)
 	_cache_bytes += needed
 	peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
 	return result
