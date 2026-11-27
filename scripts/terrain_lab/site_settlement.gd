@@ -642,6 +642,27 @@ static func _bandit(lab: Variant, faction: int) -> bool:
 	if controller == null or controller.region_slot == null: return false
 	return RegionFactionQuery.is_bandit(controller.region_slot.control.get("faction_registry", {}), faction)
 
+## On a crowd Site every person read below carries his crowd owner's faction. When no owner of the Site's people is a
+## faction other than the settlement's owner that is hostile to it and not a band, nobody can count as an attacker in
+## capture_sample, and the sample has none (2026-11-27: a 37-person town spent 1.4 ms a frame reading every person and
+## the capture ring for that answer). A person read another way sends the sample down its full path.
+static func _no_possible_attacker(lab: Variant, owner: int) -> bool:
+	if not _crowd_active(lab): return false
+	var site: Variant = lab.crowd_site
+	var checked := {}
+	for owner_ref: RefCounted in site.person_owners():
+		for unit: int in owner_ref.combat_units:
+			var identity := int(owner_ref.combat_identity(unit))
+			if identity <= 0: continue
+			if not site.contains_person(identity): return false
+			var resolved: Variant = site.person_owner(identity)
+			if resolved == null: return false
+			var faction := int(resolved.faction_id)
+			if faction == owner or checked.has(faction): continue
+			checked[faction] = true
+			if _hostile_to_owner(lab, faction, owner) and not _bandit(lab, faction): return false
+	return true
+
 ## Eligibility is sampled before the interval. The original fall_record owns
 ## elapsed progress; handoff never resamples old time using a new roster.
 static func capture_sample(lab: Variant) -> Dictionary:
@@ -649,6 +670,7 @@ static func capture_sample(lab: Variant) -> Dictionary:
 	var settlement := record(data)
 	if settlement.is_empty() or int(settlement.level) <= 0: return {}
 	var owner := int(settlement.owner_faction)
+	if _no_possible_attacker(lab, owner): return {"owner": owner, "attacker": -1, "leader": -1}
 	var defended := false
 	var attackers := {}
 	var first_attacker := {}
