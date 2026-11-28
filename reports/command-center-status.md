@@ -1,7 +1,13 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-28 17:10（台北）
+更新：2026-11-28 20:25（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+
+## 2026-11-28 17:30–20:25（台北）換 Site 長跑：一人隊職位紀錄（本機 8a1cc10，未推送）
+- 探針加 `--index=N`（選該身分第 N 個人，換 Site）。第 8 位隊長 10 天過；第 4 位首長第 1 天、第 6 位村長第 1–5 天都撞到腳本錯誤 site_duty_ai.gd:470（`team_offices(true).duty_ai` 讀到 {}），遊戲停在暫停；村長那次隨後 CLOCK_CONTRACT。
+- 原因：離隊自成一人隊（CrowdSite.detach_to_new_team）、拆隊出發（split_army_snapshot）、旅途幹部單飛（RegionTravel._detach_row）建立的隊伍職位把首長本人存進「首長」職位；隊伍規則是首長由正式隊長推出、不存（validate team stored_head_holder false），紀錄被判無效。
+- 8a1cc10：三處改成不存首長；職責 AI 與戰鬥位階讀到無效紀錄就跳過。新探針 scenario_team_offices_probe（40 遊戲小時 0 無效，修前第 26 小時 1 筆）。相關 9 測試過；FULL_FX 295 項全部並行通過（含第 4 位首長 10 天、第 5 位寨主 15 天每日存檔）。
+- 接著：新版重跑第 6 位村長 15 天，另跑第 9 位寨主、第 11 位村長。
 
 ## 2026-11-28 12:50–17:10（台北）長跑再抓到兩個（本機 d086f8d、0a3f112，未推送）
 - 長跑：寨主 20 天、隊長 8 天過；首長（溪前鎮）6–10 天三種問題，都是早上 190d3fd 的後續：
