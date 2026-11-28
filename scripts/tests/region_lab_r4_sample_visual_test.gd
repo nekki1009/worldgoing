@@ -3,7 +3,9 @@ extends SceneTree
 # Isolated r4 Lanyu sample through the actual RegionLab canvas and renderer.
 const SCENE := "res://scenes/region_lab/RegionLab.tscn"
 const TestSource = preload("res://scripts/tests/region_lab_test_source.gd")
-const MANIFEST := "res://tools/region_lab/.tmp/r4_sample/manifest.json"
+## The shipped r4 source (the r4 sample under tools/region_lab/.tmp was the pre-publication copy; it lacks the source
+## quality of this Lanyu Site: SAMPLE_SITE_NOT_MIXED_ESTIMATED). Run with -- --region-capture-run=<fresh id>.
+const MANIFEST := "res://assets/region_lab/earth_tw_tm2_121_v1_r4/manifest.json"
 const SITE := Vector2i(1545, 12170)
 const CAPTURE := "res://.visual_captures/region_lab/r4_sample_lanyu_final_20260927.png"
 const REPORT := "res://.visual_captures/region_lab/r4_sample_lanyu_final_20260927.json"

@@ -663,6 +663,10 @@ static func _stringify_crowd_payload(payload: Dictionary) -> String:
 	if not batch.encode(): return JSON.stringify(payload, "", false, true)
 	return "".join(batch.parts)
 
+## False while a Site is opened for play in the background (TerrainLab._region_gameplay_owner_lab): the atlas sources were
+## checked when the player's own Site was loaded, and checking them anew takes two seconds (2026-11-25).
+static var recheck_assets := true
+
 static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable = Callable(), crowd_workers: int = 1, preserve_simulation: bool = false) -> Dictionary:
 	var decoded := _read(path)
 	if not decoded.ok:
@@ -764,7 +768,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	var vehicle_validation := _validate_vehicles(data, data.site, true, region_loaded.get("context", {}))
 	if not vehicle_validation.ok:
 		return vehicle_validation
-	var army_assets := _validate_army_assets(data, data.site, true)
+	var army_assets := _validate_army_assets(data, data.site, recheck_assets and not preserve_simulation)
 	if not army_assets.ok:
 		return army_assets
 	# Earlier format-3 deaths may have left real opened food at their private
@@ -1360,6 +1364,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		state["team_supply"] = {}
 	if not state.has("housing"): state["housing"] = {}
 	Households.normalize(state) # 平民 C0: an old save gets its households from the housing registrations.
+	(load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("normalize_shares", state) # 產出三成歸戶
 	Settlement.normalize(state)
 	ResearchInstitutions.normalize(state)
 	Schools.normalize(state)
@@ -3494,6 +3499,11 @@ static func _saved_supply_locations(data: TerrainData, state: Dictionary, team_i
 		if str(key).begins_with("shore:"):
 			var index := int(str(key).trim_prefix("shore:"))
 			if not _valid_cell(data, index) or not data.is_walkable(data.cell_from_index(index)): return false
+		elif str(key).begins_with("house:"):
+			# 平民 C1b, 居民吃飯 F1 (2026-11-25: a pantry could not be saved at all). A house that is gone keeps its key until the
+			# next day's rations return what it held (SiteResidentLife.ration_day).
+			var house: Variant = state.get("features", {}).get(str(key).trim_prefix("house:"))
+			if house is Dictionary and str(house.get("kind", "")) != "house": return false
 		else:
 			var vehicle: Variant = state.get("vehicles", {}).get(str(key).trim_prefix("vehicle:"))
 			if not vehicle is Dictionary or not Vehicles.is_ship(vehicle) or int(vehicle.get("team_id", -1)) != team_id: return false
@@ -3544,7 +3554,7 @@ static func _validate_supply(state: Dictionary, data: TerrainData = null, region
 		if supply.sustain.version != (2 if positional else 1) or positional and supply.has("inventory") or not positional and supply.has("locations"):
 			return Runtime.fail("CORRUPT_SAVE", "共糧格式不可雙份或混用舊開封量")
 		if float(supply.sustain.at) > site_seconds + 0.00001:
-			return Runtime.fail("CORRUPT_SAVE", "供養時鐘超前 Site")
+			return Runtime.fail("CORRUPT_SAVE", "供養時鐘超前 Site: team %s at %.6f, Site %.6f" % [str(key), float(supply.sustain.at), site_seconds])
 		if not supply.sustain.cohorts.is_empty() and float(supply.sustain.at) < site_seconds - 0.00001:
 			return Runtime.fail("CORRUPT_SAVE", "有成員的供養時鐘落後 Site，不能跳過缺糧或餐份時段")
 		if not (_saved_supply_locations(data, state, int(key), supply.get("locations")) if positional else _saved_resource_stack(supply.get("inventory"))) or not supply.get("training_order") is bool or not _integer(supply.get("training_requester"), -1, 2147483647) or not _integer(supply.get("revision"), 0, 2147483647):
@@ -3824,6 +3834,8 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	# with the registrations on load (normalize) and by the owners that change a registration.
 	var household_validation := Households.validate(state)
 	if not household_validation.ok: return household_validation
+	var share_validation: Dictionary = (load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("validate_shares", state) # 產出三成歸戶
+	if not share_validation.ok: return share_validation
 	var settlement_validation := Settlement.validate(data, state, housing_people)
 	if not settlement_validation.ok: return settlement_validation
 	var institution_validation := ResearchInstitutions.validate(state, people)

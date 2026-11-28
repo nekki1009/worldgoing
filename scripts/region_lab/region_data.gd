@@ -37,10 +37,65 @@ var _tile_index: Dictionary = {}
 var _lru: Array[String] = []
 var _cache_bytes := 0
 var peak_cache_bytes := 0
+## 開局速度 (2026-11-27): the source caches above (_tiles/_lru/_cache_bytes, _fine_masks/_fine_lru, _resource_region/
+## _resource_cover, peak_cache_bytes) are shared by the parallel Site builds of prebuild_fixed_bases; every read-modify of
+## them holds this (reentrant) lock. Everything else a build reads is fixed once the manifest is loaded.
+var _cache_mutex := Mutex.new()
+const PREBUILD_WORKERS := 6
+## 開局速度 (2026-11-27): tiles already read and checked in this process, shared by every RegionData of the same pinned
+## manifest (a new world loads it twice: the menu's package check, then the game). Same results. One tile (about 10 MB
+## kept after its RegionData is gone; region_lab_real_map_test bounds static growth at 16 MiB): a scenario lies in one.
+const SHARED_TILE_LIMIT := 1
+static var _shared_tiles: Dictionary = {}
+static var _shared_tile_order: Array[String] = []
+static var _shared_tile_mutex := Mutex.new()
+
+static func _shared_tile(key: String) -> Variant:
+	_shared_tile_mutex.lock()
+	var found: Variant = _shared_tiles.get(key)
+	if found != null:
+		_shared_tile_order.erase(key)
+		_shared_tile_order.append(key)
+	_shared_tile_mutex.unlock()
+	return found
+
+## The summary, content-scope and source-quality bytes (4.56 million each) passed their value range for this SHA-256 in
+## this process: a second load of the same source skips the loops (Taiwan r4: 512 -> 376 ms a load). The bytes are the file's, proven
+## by _read_verified against the same record's SHA-256 first.
+static var _checked_ranges: Dictionary = {}
+
+static func _bytes_below(bytes: PackedByteArray, record: Dictionary, limit: int) -> bool:
+	var key := "%s|%d|%d" % [str(record.get("sha256", "")), bytes.size(), limit]
+	_shared_tile_mutex.lock()
+	var known := _checked_ranges.has(key)
+	_shared_tile_mutex.unlock()
+	if known: return true
+	for value: int in bytes:
+		if value >= limit: return false
+	_shared_tile_mutex.lock()
+	_checked_ranges[key] = true
+	_shared_tile_mutex.unlock()
+	return true
+
+static func _publish_shared_tile(key: String, tile: Dictionary) -> void:
+	_shared_tile_mutex.lock()
+	if not _shared_tiles.has(key):
+		_shared_tiles[key] = tile
+		_shared_tile_order.append(key)
+		while _shared_tile_order.size() > SHARED_TILE_LIMIT: _shared_tiles.erase(_shared_tile_order.pop_front())
+	_shared_tile_mutex.unlock()
 var _author_pin: Dictionary = {}
 var _author_document: Dictionary = {}
+## 選現成人物 v1 (Nekki 2026-11-27): the start a new game picked instead of the package's own, {mode "scenario_person",
+## site, cell, name} (RegionTerrainAdapter.author_start_valid). Set on this loaded source only, for one birth; the
+## package files never change. {} = the package's start.
+var author_start_override: Dictionary = {}
+## 示範劇本 (reports: 示範劇本 A 開墾之地): the package's scenario document, {} when it has none (author_scenario_valid).
+var _author_scenario: Dictionary = {}
 
 const AUTHOR_MANIFEST_BYTES := 256 * 1024
+## 示範劇本 A (46 Sites, an initial and a static file each, plus the scenario): raised from 64.
+const AUTHOR_MAX_FILES := 128
 const AUTHOR_FILE_BYTES := 32 * 1024 * 1024
 const AUTHOR_PACKAGE_BYTES := 64 * 1024 * 1024
 const AUTHOR_DEPENDENCY_BYTES := 64 * 1024 * 1024
@@ -54,6 +109,108 @@ func author_identity_matches(value: Variant) -> bool:
 
 func author_document() -> Dictionary:
 	return _author_document.duplicate(true)
+
+func author_scenario() -> Dictionary:
+	return _author_scenario.duplicate(true)
+
+## 示範劇本: one optional "scenario" file per package (kind "scenario", site = the start Site):
+##   {format: 1, factions: [faction], teams?: [team]} with at most MAX_SCENARIO_FACTIONS factions (ids unique) and at
+##   most MAX_SCENARIO_TEAMS teams;
+##   team (step 2): {site: [x, y], faction_id (a scenario faction), cell: [x, y] (where it stands), members: [{name,
+##     role "officer" | "soldier"}] (1..MAX_TEAM_MEMBERS, the first an officer: the captain)}; a bandit faction's
+##     first team captain is its chief;
+##   offices? (step 3): [{site: [x, y], head: resident name, duties: {duty_id: resident name}}], one per Site: the
+##     settlement's head seat and the seats of those duties take those residents of that Site; a head is his faction's leader;
+##   stock? (step 3): [{site: [x, y], feature: feature key, items: {resource: 1..1000000}}]: a warehouse's opening stock;
+##   faction: {id (1..MAX_ID, never the neutral 255), name (1–32 characters), kind "npc" | "bandit",
+##     bandit (only for kind bandit): {lair: {site: [x, y], cell: [x, y]}, heat 0..100, raid_ai bool, hoard {item: 1..100000000}}}.
+## The ids are the faction ids the package's Sites use (settlement owner_faction, residents' faction_id); a new world
+## names and types those factions after its birth (SiteController.apply_scenario_factions).
+const MAX_SCENARIO_FACTIONS := 32 # 示範劇本 A: 15 village factions and 15 bands
+const MAX_SCENARIO_TEAMS := 64 # 30 militia teams and the bands' teams
+const MAX_TEAM_MEMBERS := 20
+const MAX_SCENARIO_OFFICES := 64 # one per settlement Site
+static func author_scenario_valid(document: Variant) -> bool:
+	if not document is Dictionary or not Adapter.author_integer(document.get("format"), 1, 1) or not document.get("factions") is Array: return false
+	for key: Variant in document:
+		if not str(key) in ["format", "factions", "teams", "offices", "stock", "livelihood"]: return false
+	if not _scenario_offices_valid(document.get("offices", [])) or not _scenario_stock_valid(document.get("stock", [])) or not _scenario_livelihood_valid(document.get("livelihood", [])): return false
+	if document.factions.size() > MAX_SCENARIO_FACTIONS: return false
+	var ids := {}
+	for faction: Variant in document.factions:
+		if not faction is Dictionary or not Adapter.author_integer(faction.get("id"), 1, RegionFactionQuery.MAX_ID) or int(faction.id) == RegionFactionQuery.NEUTRAL_FACTION_ID: return false
+		if ids.has(int(faction.id)): return false
+		ids[int(faction.id)] = true
+		if not _author_text_valid(faction.get("name"), 32, true) or faction.get("kind") not in ["npc", "bandit"]: return false
+		var allowed := ["id", "name", "kind"] + (["bandit"] if faction.kind == "bandit" else [])
+		for key: Variant in faction:
+			if not str(key) in allowed: return false
+		if faction.kind != "bandit": continue
+		var band: Variant = faction.get("bandit")
+		if not band is Dictionary or not band.get("lair") is Dictionary or not Adapter.author_pair_valid(band.lair.get("site"), -10000000, 10000000) \
+			or not Adapter.author_pair_valid(band.lair.get("cell"), 0, Adapter.SIDE - 1) or band.lair.size() != 2: return false
+		if not Adapter.author_integer(band.get("heat"), 0, 100) or not band.get("raid_ai") is bool or not band.get("hoard") is Dictionary or band.hoard.size() > 64: return false
+		for key: Variant in band:
+			if not str(key) in ["lair", "heat", "raid_ai", "hoard"]: return false
+		for item: Variant in band.hoard:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(band.hoard[item], 1, 100000000): return false
+	if not document.has("teams"):
+		return not _scenario_bandits(document).values().has(false)
+	if not document.teams is Array or document.teams.size() > MAX_SCENARIO_TEAMS: return false
+	for team: Variant in document.teams:
+		if not team is Dictionary or team.size() != 4 or not Adapter.author_pair_valid(team.get("site"), -10000000, 10000000) or not Adapter.author_pair_valid(team.get("cell"), 0, Adapter.SIDE - 1): return false
+		if not Adapter.author_integer(team.get("faction_id"), 1, RegionFactionQuery.MAX_ID) or not ids.has(int(team.faction_id)): return false
+		if not team.get("members") is Array or team.members.is_empty() or team.members.size() > MAX_TEAM_MEMBERS: return false
+		for at: int in range(team.members.size()):
+			var member: Variant = team.members[at]
+			if not member is Dictionary or member.size() != 2 or not _author_text_valid(member.get("name"), 16, true) or member.get("role") not in ["officer", "soldier"]: return false
+			if at == 0 and member.role != "officer": return false
+	return not _scenario_bandits(document).values().has(false)
+
+static func _scenario_offices_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > MAX_SCENARIO_OFFICES: return false
+	var sites := {}
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not _author_text_valid(row.get("head"), 16, true) or not row.get("duties") is Dictionary: return false
+		var key := "%d:%d" % [int(row.site[0]), int(row.site[1])]
+		if sites.has(key) or row.duties.size() > 16: return false
+		sites[key] = true
+		for duty: Variant in row.duties:
+			if not duty is String or not SiteOffices.duty_ids("settlement").has(str(duty)) or not _author_text_valid(row.duties[duty], 16, true): return false
+	return true
+
+static func _scenario_stock_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > 64: return false
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not _author_text_valid(row.get("feature"), 64, true) or not row.get("items") is Dictionary: return false
+		if row.items.is_empty() or row.items.size() > 32: return false
+		for item: Variant in row.items:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(row.items[item], 1, 1000000): return false
+	return true
+
+## 居民吃飯 L1: the settlements whose people are fed and farm: {site, farms [feature key], camp {item: n}}, one row a Site.
+static func _scenario_livelihood_valid(rows: Variant) -> bool:
+	if not rows is Array or rows.size() > MAX_SCENARIO_OFFICES: return false
+	var sites := {}
+	for row: Variant in rows:
+		if not row is Dictionary or row.size() != 3 or not Adapter.author_pair_valid(row.get("site"), -10000000, 10000000) or not row.get("farms") is Array or not row.get("camp") is Dictionary: return false
+		var key := "%d:%d" % [int(row.site[0]), int(row.site[1])]
+		if sites.has(key) or row.farms.size() > 16 or row.camp.size() > 16: return false
+		sites[key] = true
+		for farm: Variant in row.farms:
+			if not _author_text_valid(farm, 64, true): return false
+		for item: Variant in row.camp:
+			if not item is String or str(item).is_empty() or not Adapter.author_integer(row.camp[item], 1, 1000000): return false
+	return true
+
+## Every bandit faction of a scenario: {id: has a team (its chief)}.
+static func _scenario_bandits(document: Dictionary) -> Dictionary:
+	var result := {}
+	for faction: Dictionary in document.get("factions", []):
+		if faction.get("kind") == "bandit": result[int(faction.id)] = false
+	for team: Variant in document.get("teams", []):
+		if team is Dictionary and result.has(int(team.get("faction_id", 0))): result[int(team.faction_id)] = true
+	return result
 
 static func _author_path_valid(path: Variant) -> bool:
 	if not path is String or path.is_empty() or path.length() > 512 or path.is_absolute_path() or path.contains(":") or path.contains("\\"): return false
@@ -84,7 +241,7 @@ static func _author_manifest_shape(raw: Variant) -> bool:
 	if not Adapter.author_integer(raw.format, 1, 1) or raw.source_kind != "fixed_tw_author" or raw.atlas_id != Grid.ATLAS_ID or not Adapter.author_integer(raw.grid_contract_version, Grid.CONTRACT_VERSION, Grid.CONTRACT_VERSION): return false
 	if not Adapter.author_id_valid(raw.scenario_id) or not Adapter.author_integer(raw.revision, 1, 2147483647) or not Adapter.author_digest_valid(raw.package_digest) or not Adapter.author_start_valid(raw.start): return false
 	if not _author_text_valid(raw.name, 64, true) or not _author_text_valid(raw.description, 4096): return false
-	if not Adapter.author_id_valid(raw.natural_source) or not raw.dependencies is Array or raw.dependencies.is_empty() or raw.dependencies.size() > 32 or not raw.files is Array or raw.files.size() > 64: return false
+	if not Adapter.author_id_valid(raw.natural_source) or not raw.dependencies is Array or raw.dependencies.is_empty() or raw.dependencies.size() > 32 or not raw.files is Array or raw.files.size() > AUTHOR_MAX_FILES: return false
 	var ids := {}
 	var paths := {}
 	var total := 0
@@ -98,7 +255,7 @@ static func _author_manifest_shape(raw: Variant) -> bool:
 	var roles := {}
 	total = 0
 	for entry: Variant in raw.files:
-		if not _author_file_shape(entry, AUTHOR_FILE_BYTES) or entry.size() != 5 or entry.get("kind") not in ["static", "initial"] or not _author_path_valid(entry.path) or not Adapter.author_pair_valid(entry.get("site"), -10000000, 10000000): return false
+		if not _author_file_shape(entry, AUTHOR_FILE_BYTES) or entry.size() != 5 or entry.get("kind") not in ["static", "initial", "scenario"] or not _author_path_valid(entry.path) or not Adapter.author_pair_valid(entry.get("site"), -10000000, 10000000): return false
 		var role := "%s:%d:%d" % [entry.kind, int(entry.site[0]), int(entry.site[1])]
 		if paths.has(str(entry.path).to_lower()) or roles.has(role): return false
 		paths[str(entry.path).to_lower()] = true; roles[role] = true
@@ -200,13 +357,21 @@ func load_author_package(path: String) -> Dictionary:
 				if bodies.has(identity) and bodies[identity] != body or body_ids.has(body.id) and body_ids[body.id] != identity: return fail("AUTHOR_WATER_ID_CONFLICT", "跨Site水體映射不同")
 				bodies[identity] = body; body_ids[body.id] = identity
 			candidate._author_static[key] = author_static_normalized(content)
+		elif entry.kind == "scenario":
+			if not candidate._author_scenario.is_empty() or not author_scenario_valid(content): return fail("INVALID_AUTHOR_SCENARIO", "劇本資料格式非法")
+			candidate._author_scenario = content.duplicate(true)
 		else: candidate._author_initial[key] = content.duplicate(true)
 	candidate._author_pin = {"scenario_id": str(parsed.scenario_id), "scenario_revision": int(parsed.revision), "scenario_package_sha256": str(parsed.package_digest)}
 	candidate._author_document = parsed.duplicate(true)
+	# Every static layer must build on its Site. 開局速度 (2026-11-27): the build goes through RegionRoute's fixed-base memo
+	# (keyed by the natural source and this package's identity, both already on the candidate), so a birth that follows
+	# takes these Sites from it instead of building them again (30 Sites, about 16 of the 22 s the demo A load took).
+	var static_sites: Array = []
 	for key: String in candidate._author_static:
 		var pair: PackedStringArray = key.split(":")
-		var built: Dictionary = candidate.make_terrain_data(int(pair[0]), int(pair[1]))
-		if not bool(built.get("ok", false)): return built
+		static_sites.append(Vector2i(int(pair[0]), int(pair[1])))
+	var built: Dictionary = candidate.prebuild_fixed_bases(static_sites) # 開局速度: on worker threads, refusal in this order
+	if not bool(built.get("ok", false)): return built
 	# Stage on the same owner, then replace only script state after every check.
 	for property: Dictionary in candidate.get_property_list():
 		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
@@ -236,9 +401,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	var bytes: PackedByteArray = loaded.bytes
 	if bytes.size() != int(summary.size[0]) * int(summary.size[1]):
 		return fail("INVALID_SUMMARY", "地理摘要長度與格網不符")
-	for value: int in bytes:
-		if value < 0 or value >= CLASS_NAMES.size():
-			return fail("INVALID_SUMMARY", "地理摘要含未知分類")
+	if not _bytes_below(bytes, summary, CLASS_NAMES.size()):
+		return fail("INVALID_SUMMARY", "地理摘要含未知分類")
 	var scope_bytes := PackedByteArray()
 	if parsed.has("content_scope"):
 		var scope_result := _read_verified(path.get_base_dir(), parsed.content_scope, MAX_SUMMARY_BYTES)
@@ -247,9 +411,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 		scope_bytes = scope_result.bytes
 		if scope_bytes.size() != bytes.size():
 			return fail("INVALID_SCOPE", "內容範圍長度與地理摘要不同")
-		for value: int in scope_bytes:
-			if value > 5:
-				return fail("INVALID_SCOPE", "內容範圍包含未知分類")
+		if not _bytes_below(scope_bytes, parsed.content_scope, 6):
+			return fail("INVALID_SCOPE", "內容範圍包含未知分類")
 	var quality_bytes := PackedByteArray()
 	if parsed.has("source_quality"):
 		var quality_result := _read_verified(path.get_base_dir(), parsed.source_quality, MAX_SUMMARY_BYTES)
@@ -258,9 +421,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 		quality_bytes = quality_result.bytes
 		if quality_bytes.size() != bytes.size():
 			return fail("INVALID_QUALITY", "來源品質長度與地理摘要不同")
-		for value: int in quality_bytes:
-			if value > 4:
-				return fail("INVALID_QUALITY", "來源品質包含未知分類")
+		if not _bytes_below(quality_bytes, parsed.source_quality, 5):
+			return fail("INVALID_QUALITY", "來源品質包含未知分類")
 	var resource_layer := _read_resource_manifest(text.sha256_text())
 	if not resource_layer.ok:
 		return resource_layer
@@ -306,8 +468,10 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 				_tile_index[key].append(tile)
 	_author_pin = {}
 	_author_document = {}
+	_author_scenario = {}
 	_author_static = {}
 	_author_initial = {}
+	_author_neighbour_bodies = {}
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
 
 func _read_resource_manifest(geography_hash: String) -> Dictionary:
@@ -339,6 +503,12 @@ func _read_resource_manifest(geography_hash: String) -> Dictionary:
 	return {"ok": true, "manifest": parsed, "sha256": text.sha256_text()}
 
 func site_resource_cover(site: Vector2i) -> Dictionary:
+	_cache_mutex.lock()
+	var cover := _site_resource_cover_locked(site)
+	_cache_mutex.unlock()
+	return cover
+
+func _site_resource_cover_locked(site: Vector2i) -> Dictionary:
 	if _resource_manifest.is_empty():
 		return {"ok": true, "enabled": false}
 	var region := Grid.region_of(site)
@@ -557,6 +727,12 @@ func _tile_at(easting: float, northing: float) -> Dictionary:
 	return {}
 
 func _load_tile(tile: Dictionary) -> Dictionary:
+	_cache_mutex.lock()
+	var loaded := _load_tile_locked(tile)
+	_cache_mutex.unlock()
+	return loaded
+
+func _load_tile_locked(tile: Dictionary) -> Dictionary:
 	var identity := str(tile.id)
 	if _tiles.has(identity):
 		if _lru.back() != identity:
@@ -579,6 +755,16 @@ func _load_tile(tile: Dictionary) -> Dictionary:
 		var oldest: String = _lru.pop_front()
 		_cache_bytes -= int(_tiles[oldest].bytes_used)
 		_tiles.erase(oldest)
+	# The same pinned manifest's tile, read and checked by another RegionData in this process: the same bytes and checks
+	# (about 1.4 s a tile for its million cells), so its result is taken.
+	var shared_key := "" if manifest_hash.is_empty() else manifest_hash + "|" + identity
+	var shared: Variant = null if shared_key.is_empty() else _shared_tile(shared_key)
+	if shared is Dictionary and int(shared.get("bytes_used", -1)) == needed:
+		_tiles[identity] = shared
+		_lru.append(identity)
+		_cache_bytes += needed
+		peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
+		return shared
 	var elevation := _read_verified(_folder, tile, count * stride + 65536)
 	if not elevation.ok:
 		return elevation
@@ -659,25 +845,56 @@ func _load_tile(tile: Dictionary) -> Dictionary:
 	var result := {"ok": true, "elevation": elevation.bytes, "levels": levels.bytes, "water": water.bytes, "quality": quality, "water_bodies": bodies, "fine_index": fine_index, "fine_bank": fine_bank, "stride": stride, "bytes_used": needed}
 	_tiles[identity] = result
 	_lru.append(identity)
+	if not shared_key.is_empty(): _publish_shared_tile(shared_key, result)
 	_cache_bytes += needed
 	peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
 	return result
 
-func _fine_water_at(easting: float, northing: float, tile: Dictionary) -> Dictionary:
+## `build_cache` (one Site build's centre_cache, or null): 開局速度 (2026-11-27) keeps the loaded tile and the fine masks
+## that build has read under the keys &"tiles" and &"fine_masks", so its 10,404 samples take the shared caches' lock
+## once per tile and mask instead of twice per sample (parallel builds contended on it). Same values either way.
+func _fine_water_at(easting: float, northing: float, tile: Dictionary, build_cache: Variant = null) -> Dictionary:
 	if not tile.get("derived", {}).has("water_detail"):
 		return {"ok": true, "available": false}
-	var loaded := _load_tile(tile)
-	if not loaded.ok:
-		return loaded
+	var tiles: Dictionary = {}
+	var masks: Dictionary = {}
+	if build_cache != null:
+		if not build_cache.has(&"tiles"):
+			build_cache[&"tiles"] = {}
+			build_cache[&"fine_masks"] = {}
+		tiles = build_cache[&"tiles"]
+		masks = build_cache[&"fine_masks"]
+	var loaded: Dictionary = tiles.get(tile.id, {})
+	if loaded.is_empty():
+		loaded = _load_tile(tile)
+		if not loaded.ok:
+			return loaded
+		if build_cache != null: tiles[tile.id] = loaded
 	var site := Grid.site_from_meters(easting, northing)
 	var region := Grid.region_of(site)
 	var local_site := site - region * 100
 	var key := str((99 - local_site.y) * 100 + local_site.x)
 	if not loaded.fine_index.has(key):
 		return {"ok": true, "available": false}
+	var mask: Variant = masks.get(site)
+	if mask == null:
+		_cache_mutex.lock()
+		mask = _fine_mask_locked(site, loaded.fine_index[key], loaded.fine_bank)
+		_cache_mutex.unlock()
+		if mask is Dictionary:
+			return mask
+		if build_cache != null: masks[site] = mask
+	var cell := Grid.local_from_mm(roundi(easting * 1000.0), roundi(northing * 1000.0))
+	var body := int((mask as PackedByteArray).decode_u32((cell.y * 100 + cell.x) * 4))
+	return {"ok": true, "available": true, "water_body": body,
+		"water_kind": 0 if body == 0 else (2 if body == 1 else int(_water_body_kinds[_water_bodies[body]])),
+		"water_id": "" if body == 0 else ("ocean" if body == 1 else _water_body_sources[_water_bodies[body]])}
+
+## The fine shoreline mask of `site` from the cache (read, checked and cached on a miss), touching its LRU place, or a
+## refusal Dictionary. Called with _cache_mutex held.
+func _fine_mask_locked(site: Vector2i, segment: Dictionary, fine_bank: PackedByteArray) -> Variant:
 	if not _fine_masks.has(site):
-		var segment: Dictionary = loaded.fine_index[key]
-		var compressed: PackedByteArray = loaded.fine_bank.slice(int(segment.offset), int(segment.offset) + int(segment.compressed_bytes))
+		var compressed: PackedByteArray = fine_bank.slice(int(segment.offset), int(segment.offset) + int(segment.compressed_bytes))
 		var hasher := HashingContext.new()
 		hasher.start(HashingContext.HASH_SHA256)
 		hasher.update(compressed)
@@ -697,11 +914,7 @@ func _fine_water_at(easting: float, northing: float, tile: Dictionary) -> Dictio
 		_fine_lru.erase(site)
 	_fine_lru.append(site)
 	peak_cache_bytes = maxi(peak_cache_bytes, _cache_bytes + _fine_masks.size() * FINE_MASK_BYTES + _resource_cover.size())
-	var cell := Grid.local_from_mm(roundi(easting * 1000.0), roundi(northing * 1000.0))
-	var body := int(_fine_masks[site].decode_u32((cell.y * 100 + cell.x) * 4))
-	return {"ok": true, "available": true, "water_body": body,
-		"water_kind": 0 if body == 0 else (2 if body == 1 else int(_water_body_kinds[_water_bodies[body]])),
-		"water_id": "" if body == 0 else ("ocean" if body == 1 else _water_body_sources[_water_bodies[body]])}
+	return _fine_masks[site]
 
 func _sample_center(easting: float, northing: float) -> Dictionary:
 	var tile := _tile_at(easting, northing)
@@ -753,7 +966,7 @@ func _sample_meters(easting: float, northing: float, centre_cache: Variant) -> D
 	var tile := _tile_at(easting, northing)
 	if tile.is_empty():
 		return _sea_sample(easting, northing)
-	var detail := _fine_water_at(easting, northing, tile)
+	var detail := _fine_water_at(easting, northing, tile, centre_cache)
 	if not detail.ok:
 		return detail
 	if detail.available and int(detail.water_kind) == 2:
@@ -817,6 +1030,30 @@ func _sample_meters(easting: float, northing: float, centre_cache: Variant) -> D
 	return result
 
 func make_terrain_data(site_x: int, site_y: int) -> Dictionary:
+	var open := _site_open(site_x, site_y)
+	if not open.ok: return open
+	return Adapter.build(self, Vector2i(site_x, site_y))
+
+## 開局速度 (2026-11-27): builds `sites` (Vector2i) into RegionRoute's fixed-base memo on up to PREBUILD_WORKERS worker
+## threads, so the callers that build them one by one next find them built. {ok} or the first refusal in the given order
+## (what building them in that order would have stopped at). Off the main thread, or on one core, it builds in order.
+## Each build is the unchanged make_terrain_data; the source caches it shares are locked (_cache_mutex).
+func prebuild_fixed_bases(sites: Array, max_workers: int = PREBUILD_WORKERS) -> Dictionary:
+	var results: Array = []
+	results.resize(sites.size())
+	var workers := mini(sites.size(), clampi(int(OS.get_processor_count() / 2.0), 1, max_workers))
+	# Only the memoized source (RegionRoute.fresh_fixed_base: the exact RegionData script) keeps what a worker builds.
+	if workers > 1 and Thread.is_main_thread() and get_script() == RegionData and not manifest_hash.is_empty():
+		var build_one := func(index: int) -> void: results[index] = RegionRoute.fresh_fixed_base(self, sites[index])
+		var group := WorkerThreadPool.add_group_task(build_one, sites.size(), workers, true, "Fixed Site builds")
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	for index: int in range(sites.size()):
+		if results[index] == null: results[index] = RegionRoute.fresh_fixed_base(self, sites[index])
+		if not bool(results[index].get("ok", false)): return results[index]
+	return {"ok": true}
+
+## The source checks make_terrain_data runs before a Site's tile build: {ok} or its refusal.
+func _site_open(site_x: int, site_y: int) -> Dictionary:
 	var summary := get_site_summary(site_x, site_y)
 	if not summary.ok:
 		return summary
@@ -824,7 +1061,7 @@ func make_terrain_data(site_x: int, site_y: int) -> Dictionary:
 		return fail("OUTSIDE_CONTENT", "此地點保留真實地理背景，目前尚未開放")
 	if summary.class_id == 0:
 		return fail("MISSING_DATA", "此Site尚無地理來源；保留目前檢視")
-	return Adapter.build(self, Vector2i(site_x, site_y))
+	return {"ok": true}
 
 func refresh_boundary(data: TerrainData, site: Vector2i, neighbour_query: Callable = Callable()) -> Dictionary:
 	if data == null or data.size != Vector2i(100, 100):
@@ -907,6 +1144,11 @@ func cache_stats() -> Dictionary:
 		"limit_tiles": MAX_CACHE_TILES, "limit_bytes": MAX_CACHE_BYTES}
 
 func clear_cache() -> void:
+	_cache_mutex.lock()
+	_clear_cache_locked()
+	_cache_mutex.unlock()
+
+func _clear_cache_locked() -> void:
 	_resource_region = ""
 	_resource_cover = PackedByteArray()
 	_tiles.clear()
@@ -926,6 +1168,11 @@ const AUTHOR_BODY_MIN := 1000000000
 const AUTHOR_LAND_FIELDS := ["fertility", "moisture", "drainage", "foundation", "groundwater"]
 var _author_static: Dictionary = {}
 var _author_initial: Dictionary = {}
+## 示範劇本 birth speed: an author package's neighbour bodies, built once per package load. project_terrain reads a
+## neighbour only for its boundary heights and water (never changes it), and every Site of a birth projects its eight
+## neighbours, so a 46-Site birth rebuilt and revalidated the same bodies more than ten times each. The projected Site
+## itself is always built fresh (refresh_boundary changes it and the caller keeps it). Failures are not kept.
+var _author_neighbour_bodies: Dictionary = {}
 
 static func author_cell_key(value: Variant) -> bool:
 	return value is String and value.is_valid_int() and str(int(value)) == value and Adapter.author_integer(int(value), 0, 9999)
@@ -1053,7 +1300,7 @@ func make_author_draft(site: Vector2i, raw: Dictionary, revision: int) -> Dictio
 	return candidate.make_terrain_data(site.x, site.y)
 
 func _initial_body(site: Vector2i) -> Dictionary:
-	var built: Dictionary = make_terrain_data(site.x, site.y)
+	var built: Dictionary = RegionRoute.fresh_fixed_base(self, site) # a private copy of the Site's one tile build (開局速度)
 	if not bool(built.get("ok", false)): return built
 	var key: String = "%d:%d" % [site.x, site.y]
 	var data: TerrainData = built.data
@@ -1078,19 +1325,53 @@ func _initial_body(site: Vector2i) -> Dictionary:
 	var navigation: TerrainData = SiteEnvironment.navigation_for_state(data, state)
 	return {"ok": true, "data": navigation, "base": built.base, "metadata": built.metadata}
 
+## The authored initial state of `site` as the package holds it (a copy), {} where the package authors none. Nothing is
+## checked here: a projection checks it where the body is used. For what needs only the state's people
+## (RegionSaveSlot._open_person_allocator; 開局速度, 2026-11-27: projecting every Site there cost a minute of a birth).
+func author_initial_state(site: Vector2i) -> Dictionary:
+	var key := "%d:%d" % [site.x, site.y]
+	return _author_initial[key].duplicate(true) if _author_initial.has(key) else {}
+
+## 示範劇本 birth speed: an authored Site body (its state validated by _initial_body), read only and shared, for checks
+## that never change it (RegionSaveSlot.open_map's resident-house check). {ok, data, base, metadata} or a refusal.
+func author_initial_body(site: Vector2i) -> Dictionary:
+	if _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "initial須有作者來源")
+	return _initial_neighbour_body(site)
+
+## A read-only neighbour body for project_terrain, built once per package load (_author_neighbour_bodies).
+func _initial_neighbour_body(site: Vector2i) -> Dictionary:
+	var key := "%d:%d" % [site.x, site.y]
+	if _author_neighbour_bodies.has(key): return _author_neighbour_bodies[key]
+	var built: Dictionary = _initial_body(site)
+	if bool(built.get("ok", false)): _author_neighbour_bodies[key] = built
+	return built
+
 func project_terrain(site: Vector2i, mode: String = "base") -> Dictionary:
 	if mode == "base": return make_terrain_data(site.x, site.y)
 	if mode != "author_initial" or _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "current必須由原Slot provider提供；initial須有作者來源")
 	# Validate all referenced neighbours once in this projection call, before any edge commit.
+	# 開局速度 (2026-11-27): a neighbour the package neither authors nor changes (no static layer, no initial state) is
+	# not built: refresh_boundary reads only its border cells' height and water, which its build takes unchanged from the
+	# source samples, so they are read from the samples (sample_meters, refresh_boundary's own default). Its source
+	# checks still refuse as its build did. A scenario birth built about a hundred such Sites, half a second each, only
+	# for these 404 values (PROJECTION_DIGEST probe: same projections before and after).
 	var neighbours := {}
+	var plain := {}
 	for offset: Vector2i in [Vector2i.ZERO, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN, Vector2i(-1,-1), Vector2i(-1,1), Vector2i(1,-1), Vector2i(1,1)]:
 		var coordinate: Vector2i = site + offset
-		var built: Dictionary = _initial_body(coordinate)
+		var coordinate_key := "%d:%d" % [coordinate.x, coordinate.y]
+		if offset != Vector2i.ZERO and not _author_initial.has(coordinate_key) and not _author_static.has(coordinate_key):
+			var open := _site_open(coordinate.x, coordinate.y)
+			if not open.ok: return open
+			plain[coordinate] = true
+			continue
+		var built: Dictionary = _initial_body(coordinate) if offset == Vector2i.ZERO else _initial_neighbour_body(coordinate)
 		if not bool(built.get("ok", false)): return built
 		neighbours[coordinate] = built
 	var result: Dictionary = neighbours[site]
 	var data: TerrainData = result.data
 	var refreshed: Dictionary = refresh_boundary(data, site, func(at: Vector2i, cell: Vector2i) -> Dictionary:
+		if plain.has(at): return sample_meters((at.x * Grid.SITE_MM + cell.x * Grid.CELL_MM + 1000) / 1000.0, (at.y * Grid.SITE_MM + (99 - cell.y) * Grid.CELL_MM + 1000) / 1000.0)
 		if not neighbours.has(at): return fail("MISSING_AUTHOR_NEIGHBOUR", "初始鄰圖缺失")
 		var other: TerrainData = neighbours[at].data
 		return {"ok": true, "level": int(other.height_levels[other.index(cell)]), "water_kind": int(other.water_kind[other.index(cell)])})
@@ -1146,7 +1427,8 @@ static func author_static_normalized(raw: Dictionary) -> Dictionary:
 ## Initial world admission is completed by the original Slot transaction, after full state validation.
 ## `dependencies`: [{path, id}] (res:// or user://); `initial_states`: {"x:y": state} with state.id a String and no
 ## world_pin, region_snapshot, initial_scenario or crowd (the guards in _initial_body).
-static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary, static_states: Dictionary = {}) -> Dictionary:
+## `scenario` (示範劇本): the optional scenario document (author_scenario_valid), written as "scenario.json" on the start Site.
+static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary, static_states: Dictionary = {}, scenario: Dictionary = {}) -> Dictionary:
 	if not DirAccess.dir_exists_absolute(folder) or not _author_path_valid(package_name): return fail("EXPORT_FOLDER", folder)
 	var dependency_rows: Array = []
 	for dependency: Variant in dependencies:
@@ -1181,6 +1463,14 @@ static func export_author_initial_package(folder: String, package_name: String, 
 		hash.update(bytes)
 		file_rows.append({"path": file_name, "site": [int(pair[0]), int(pair[1])], "kind": "initial", "sha256": hash.finish().hex_encode(), "bytes": bytes.size()})
 		file_texts.append({"path": file_name, "bytes": bytes})
+	if not scenario.is_empty():
+		if not author_scenario_valid(scenario) or not start.get("site") is Array: return fail("INVALID_AUTHOR_SCENARIO", "劇本資料格式非法")
+		var scenario_bytes := JSON.stringify(scenario, "", true, true).to_utf8_buffer()
+		var scenario_hash := HashingContext.new()
+		if scenario_hash.start(HashingContext.HASH_SHA256) != OK: return fail("AUTHOR_HASH_ERROR", "scenario.json")
+		scenario_hash.update(scenario_bytes)
+		file_rows.append({"path": "scenario.json", "site": [int(start.site[0]), int(start.site[1])], "kind": "scenario", "sha256": scenario_hash.finish().hex_encode(), "bytes": scenario_bytes.size()})
+		file_texts.append({"path": "scenario.json", "bytes": scenario_bytes})
 	var manifest := {"format": 1, "source_kind": "fixed_tw_author", "scenario_id": scenario_id, "revision": revision,
 		"name": name_text, "description": description, "atlas_id": Grid.ATLAS_ID, "grid_contract_version": Grid.CONTRACT_VERSION,
 		"natural_source": natural_id, "dependencies": dependency_rows, "files": file_rows, "start": start, "package_digest": "0".repeat(64)}
@@ -1202,7 +1492,7 @@ static func export_author_initial_package(folder: String, package_name: String, 
 
 func author_initial_context() -> Dictionary:
 	if _author_pin.is_empty(): return {}
-	var start: Dictionary = _author_document.start.duplicate(true)
+	var start: Dictionary = author_start_override.duplicate(true) if not author_start_override.is_empty() else _author_document.start.duplicate(true)
 	var sites: Array = []
 	var keys: Array = _author_initial.keys()
 	keys.sort()

@@ -21,6 +21,7 @@ func run() -> void:
 	assert(Rules.exchange_stun("spear_01_steel") == 8.0)
 	assert(Rules.exchange_stun("longsword_01_stone") == 12.0)
 	assert(Rules.exchange_stun("hammer_01_wood") == 35.0)
+	assert(Rules.exchange_stun("none") == 14.0 and Rules.attack_profile(&"attack_unarmed").kind == "blunt", "bare hands stun less than a hammer")
 	var tier_weapons := ["none", "longsword_01_wood", "longsword_01_stone", "longsword_01", "longsword_01_steel"]
 	var tier_armors := ["none", "outfit_medieval_chinese_01", "armor_light_leather_01", "armor_iron_01", "armor_mingguang_01"]
 	for weapon_tier in range(tier_weapons.size()):
@@ -74,15 +75,15 @@ func run() -> void:
 	assert(Rules.exchange_result({"facility": 6.0}, {}).winner == 1)
 	assert(Rules.exchange_result({"armorbonus": 6.0}, {}).winner == 1)
 	var power := Rules.exchange_result({"skill": "power"}, {})
-	assert(power.winner == 1 and power.hp == 1.0 and power.stun == 45.0 and power.stun_b == 45.0)
+	assert(power.winner == 1 and power.hp == 1.0 and power.stun == 24.0 and power.stun_b == 24.0)
 	var power_big := Rules.exchange_result({"ability": 60.0, "skill": "power"}, {})
-	assert(power_big.kind == "big" and power_big.hp == 2.0 and power_big.stun == 45.0)
+	assert(power_big.kind == "big" and power_big.hp == 2.0 and power_big.stun == 24.0)
 	var braced := Rules.exchange_result({"ability": 100.0}, {"skill": "brace"})
 	assert(braced.kind == "big" and braced.hp == 2.0 and not braced.knockback, "Brace suppresses displacement, not HP or stagger")
-	assert(braced.stun == 35.0 and braced.stagger == 0.65)
-	assert(Rules.exchange_result({"skill": "power"}, {"ability": 100.0}).stun == 35.0, "A losing power never changes the winner's stun")
+	assert(braced.stun == 14.0 and braced.stagger == 0.65)
+	assert(Rules.exchange_result({"skill": "power"}, {"ability": 100.0}).stun == 14.0, "A losing power never changes the winner's stun")
 	var skilled_draw := Rules.exchange_result({"skill": "power"}, {"skill": "brace"})
-	assert(skilled_draw.stun == 0.0 and skilled_draw.stun_a == 35.0 and skilled_draw.stun_b == 35.0)
+	assert(skilled_draw.stun == 0.0 and skilled_draw.stun_a == 14.0 and skilled_draw.stun_b == 14.0)
 	assert(Rules.exchange_result({"skill": "unknown"}, {}) == Rules.exchange_result({}, {}))
 	var combinations := 0
 	for ability_a in range(0, 101, 10):

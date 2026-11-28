@@ -77,22 +77,32 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			if not FileAccess.file_exists(unborn_location.path_join("manifest.json")) and not FileAccess.file_exists(unborn_location.path_join("manifest.pending.json")) and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(unborn_location)): return fail("AUTHOR_MULTI_SITE_UNSUPPORTED")
 		# P5C-S2: every expected initial Site projects before any file IO, so a
 		# damaged companion never leaves a partial birth behind.
+		# 開局速度 (2026-11-27): their tile builds first, on worker threads (RegionData.prebuild_fixed_bases); a refusal is
+		# left to the loop below, which meets it in the same order and refuses as before.
+		if map_data.get_script() == RegionData: map_data.prebuild_fixed_bases(author_initial_site_order(author_context))
 		for coordinate: Vector2i in author_initial_site_order(author_context):
-			var projected: Dictionary = map_data.project_terrain(coordinate, "author_initial")
+			# 示範劇本 birth speed: the check reads each authored body once (validated, read only) instead of projecting it
+			# with its eight neighbours; the birth projects every Site again before it writes anything.
+			var projected: Dictionary = map_data.author_initial_body(coordinate)
+			PerfTraceSlot.mark("open_body")
 			if not projected.ok: return projected
 			# P5C-S3C: every authored resident must name a house that exists on its own Site, refused before any IO.
 			var residents: Array = projected.data.site.get("residents", [])
 			if not residents.is_empty():
-				# Same view the birth roster uses: navigation rebuilds the indexes that house_layout reads.
-				var housed: TerrainData = Env.navigation_for_state(projected.data, projected.data.site.duplicate(true))
+				# Same view the birth roster uses: the authored body is already the navigation view of its state
+				# (RegionData._initial_body ends with navigation_for_state), whose indexes house_layout reads; it is
+				# only read here.
 				for row: Variant in residents:
-					if not row is Dictionary or not Runtime.house_layout(housed, str(row.get("house", ""))).ok: return fail("AUTHOR_RESIDENT_HOUSE_MISSING", "居民住宅不存在；未寫入")
+					if not row is Dictionary or not Runtime.house_layout(projected.data, str(row.get("house", ""))).ok: return fail("AUTHOR_RESIDENT_HOUSE_MISSING", "居民住宅不存在；未寫入")
+				PerfTraceSlot.mark("open_housed")
 		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
 		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
 		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
+		PerfTraceSlot.mark("open_start_projected")
 		if not initial.ok: return initial
 		if not initial.data.site.is_empty():
 			var buildings: Dictionary = Runtime.validate_author_buildings(initial.data)
+			PerfTraceSlot.mark("open_start_buildings")
 			if not buildings.ok: return buildings
 		if not initial.data.contains(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))) or not initial.data.is_walkable(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))): return fail("NO_BIRTH_GROUND")
 	elif initial_context.get("mode") == "author": return fail("INITIAL_PIN_CONFLICT")
@@ -193,7 +203,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 	pin = expected
 	folder = location
 	_initialization = pending_record
+	PerfTraceSlot.mark("open_pinned")
 	var recovered := _recover_control()
+	PerfTraceSlot.mark("open_recovered")
 	if not recovered.ok: return recovered
 	if not manifest_exists and _initialization.is_empty():
 		# Never treat an arbitrary partial directory as a new world. This path
@@ -221,7 +233,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			if not finalized.ok: return finalized
 		elif not prepare_new:
 			return fail("INITIALIZATION_PENDING", "原開局尚無已提交世代，請接續同一建立請求")
+	PerfTraceSlot.mark("open_initialized")
 	var persons: Dictionary = _open_person_allocator(prepare_new)
+	PerfTraceSlot.mark("open_persons")
 	if not persons.ok: return persons
 	return {"ok": true, "person_upgrade": persons.get("upgrade_refused", {}), "path": manifest_path, "initialization_pending": initialization_pending(), "initialization_committed": not _marker.is_empty()}
 
@@ -316,10 +330,20 @@ func _resolve_foreign_region_barrier(data: TerrainData, context: Dictionary) -> 
 	return Store.validate_region_snapshot(data, {}).ok
 
 
+## The Site file whose catch-up is being settled slice by slice: {key: [path, sha256, target], data}. Every slice used to read,
+## rebuild and check the same file again (2.8 of 3.05 seconds a slice, measured 2026-11-25). The data is the loaded body as
+## it was read; a settlement works on its own detached copy. Static: a resumed arrival opens the slot anew for each retry.
+static var _open_pending: Dictionary = {}
+
 func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	if pin.is_empty() or source == null:
 		return fail("INVALID_SLOT", "存檔尚未開啟")
 	var path := site_path(site)
+	var pending_key: Array = [ProjectSettings.globalize_path(path), str(_marker.get("sites", {}).get(_site_key(site), {}).get("sha256", "")), float(control.logical_game_seconds)]
+	if not str(pending_key[1]).is_empty() and _open_pending.get("key") == pending_key and FileAccess.file_exists(path):
+		var going := _settle_cold_candidate(_open_pending.data, float(control.logical_game_seconds))
+		if str(going.get("code", "")) != "PENDING": _open_pending = {}
+		return {"ok": true, "data": going.data} if going.ok else going
 	if FileAccess.file_exists(path):
 		var loaded: Dictionary = Store.load_site(path, func(saved_base: Dictionary) -> Dictionary:
 			if not _matches_base(saved_base, site):
@@ -351,6 +375,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 					loaded["region_commit"] = region_bind_proof(loaded.data)
 					return loaded
 		var settled := _settle_cold_candidate(loaded.data, float(control.logical_game_seconds))
+		_open_pending = {"key": pending_key, "data": loaded.data} if str(settled.get("code", "")) == "PENDING" and not str(pending_key[1]).is_empty() else {}
 		if not settled.ok: return settled
 		loaded.data = settled.data
 		return loaded
@@ -492,12 +517,15 @@ func _coordinate(data: TerrainData) -> Dictionary:
 
 func _load_checked(path: String, site: Vector2i) -> Dictionary:
 	var loaded := Store.load_site(path, func(base: Dictionary) -> Dictionary:
+		PerfTraceSlot.mark("load_parsed") # 示範劇本 birth speed (--perf-trace only): parse / base rebuild / state checks
 		if not _matches_base(base, site): return fail("SAVE_VERSION", "提交候選使用另一固定地圖")
 		var rebuilt: Dictionary = RegionRoute.fresh_fixed_base(source, site)
+		PerfTraceSlot.mark("load_base_rebuilt")
 		if not bool(rebuilt.get("ok", false)) or not _matches_base(rebuilt.get("base", {}), site) \
 				or str(rebuilt.base.terrain_fingerprint) != str(base.get("terrain_fingerprint", "")):
 			return fail("SAVE_VERSION", "提交候選的固定來源不可重建")
 		return rebuilt, 1, true)
+	PerfTraceSlot.mark("load_done")
 	if not loaded.ok: return loaded
 	var policy_guard := _admit_world_pin(loaded.data)
 	return loaded if policy_guard.ok else policy_guard
@@ -589,6 +617,11 @@ func _file_entry(path: String) -> Dictionary:
 func _generation_path(generation: int, site: Vector2i) -> String:
 	return folder.path_join("generations/%020d_%d_%d_%d.json" % [generation, site.x, site.y, Time.get_ticks_usec()])
 
+## A commit record holds the whole control clock. A scenario world's fire journal passed the 1 MB every other document may
+## have within two game days: the record was written, could not be read back and every later save was refused SAVE_IO
+## (found 2026-11-25). The journal is compacted now; the limit is what a file may reasonably be.
+const COMMIT_DOCUMENT_BYTES := 64 * 1024 * 1024
+
 func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > maximum: return fail("SAVE_IO", "存檔槽記錄無法讀取")
@@ -672,7 +705,7 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 	files.sort()
 	# A fully renamed marker is a commit. Corruption of its selected generation
 	# is an error; falling back would resurrect ownership from an older Site.
-	var latest := _read_document(folder.path_join("commits").path_join(files.back()))
+	var latest := _read_document(folder.path_join("commits").path_join(files.back()), COMMIT_DOCUMENT_BYTES)
 	if not latest.ok: return latest
 	var recorded: Dictionary = latest.payload
 	if recorded.size() != 7 or not _whole(recorded.get("format"), 1, 2) \
@@ -817,7 +850,7 @@ static func _normalize_journey(value: Dictionary) -> Dictionary:
 ## The control a given commit recorded, decoded and checked as _recover_read_latest
 ## checks the latest one. Read-only: nothing here touches the live control.
 func region_commit_control(generation: int) -> Dictionary:
-	var document := _read_document(folder.path_join("commits").path_join("%020d.json" % generation))
+	var document := _read_document(folder.path_join("commits").path_join("%020d.json" % generation), COMMIT_DOCUMENT_BYTES)
 	if not document.ok: return document
 	var recorded: Dictionary = document.payload
 	if not _whole(recorded.get("generation"), 1, 2147483647) or int(recorded.generation) != generation or not _same_pin(recorded.get("pin"), pin) \
@@ -872,6 +905,9 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		next_clock.fire_clock.base_action_seconds = 0.0
 	var fire_clock_check := validate_fire_clock(next_clock.get("fire_clock"), next_clock.get("logical_game_seconds"))
 	if not fire_clock_check.ok: return fire_clock_check
+	if compact_fire_journal(next_clock.fire_clock, float(next_clock.logical_game_seconds) - FIRE_JOURNAL_EXACT_SECONDS) > 0:
+		fire_clock_check = validate_fire_clock(next_clock.fire_clock, next_clock.logical_game_seconds)
+		if not fire_clock_check.ok: return fire_clock_check
 	var next_fire_clock: Dictionary = next_clock.fire_clock
 	var previous_active := str(control.get("active_site_id", ""))
 	var next_active := str(next_clock.get("active_site_id", ""))
@@ -883,7 +919,9 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		for value: Dictionary in next_clock.region_gameplay.modes.values():
 			value.generation = generation
 			if not value.activation.is_empty(): value.activation.generation = generation
+	PerfTraceSlot.mark("publish_scan_begin")
 	var faction_scan: Dictionary = _faction_scan(sites, next_clock, journey, next_clock.get("faction_registry", {}), [], true, person_allocator_enabled() or control.has("person_allocator"))
+	PerfTraceSlot.mark("publish_scanned")
 	if not faction_scan.ok: return faction_scan
 	next_clock.faction_registry = faction_scan.registry
 	if person_allocator_enabled() or control.has("person_allocator"):
@@ -1269,7 +1307,7 @@ func _was_committed(token: String) -> bool:
 	if commits == null: return false
 	for name: String in commits.get_files():
 		if not name.ends_with(".json") or not name.trim_suffix(".json").is_valid_int(): continue
-		var document := _read_document(folder.path_join("commits").path_join(name))
+		var document := _read_document(folder.path_join("commits").path_join(name), COMMIT_DOCUMENT_BYTES)
 		if document.ok and str(document.payload.get("transfer_token", "")) == token: return true
 	return false
 
@@ -1280,7 +1318,7 @@ func _was_cancelled(token: String) -> bool:
 	if commits == null: return false
 	for name: String in commits.get_files():
 		if not name.ends_with(".json") or not name.trim_suffix(".json").is_valid_int(): continue
-		var document := _read_document(folder.path_join("commits").path_join(name))
+		var document := _read_document(folder.path_join("commits").path_join(name), COMMIT_DOCUMENT_BYTES)
 		if document.ok and str(document.payload.get("transfer_token", "")) == receipt: return true
 	return false
 
@@ -2062,8 +2100,15 @@ func preview_region_interval(elapsed: float, scale: float, local_tactical: float
 func _prune_recoverable_fire_journal() -> int:
 	if folder.is_empty(): return prune_fire_clock_prefix(control.fire_clock) # Isolated legacy clock tests.
 	var clock: Dictionary = control.fire_clock
-	var recovery: Dictionary = clock.duplicate(true)
 	var durable: Dictionary = _marker.get("control", {}).get("fire_clock", {}).get("index", {})
+	# Nothing to prune while the oldest Site has not passed the base: the journal copy below grows with every unopened
+	# Site's dormant day (a scenario world: 3.4 MB on day 3, copied at every step; found 2026-11-25).
+	if clock.get("index", {}).is_empty(): return 0
+	var oldest := int(clock.sequence)
+	for identity: String in clock.index:
+		oldest = mini(oldest, mini(int(clock.index[identity].sequence), int(durable.get(identity, {}).get("sequence", clock.get("base_sequence", 0)))))
+	if oldest <= int(clock.get("base_sequence", 0)): return 0
+	var recovery: Dictionary = clock.duplicate(true)
 	for identity: String in recovery.index:
 		# Volatile completion is not a restartable snapshot. Keep history through
 		# the oldest durable original, including newly registered owners at base.
@@ -2916,6 +2961,10 @@ func commit_ground_crossing(request: Dictionary, source_data: TerrainData, compl
 # OUTPUT ONLY / NOT RUN. Append to the ORIGINAL RegionSaveSlot owner.
 # Journal records completed original intervals. It never advances simulation.
 const FIRE_CLOCK_VERSION := 1
+## Rows the journal may hold (about 280 bytes each). A Site nobody opens keeps the journal's first rows, so in a scenario
+## world it grows by about 4000 rows a game day at speed 16: at 65536 such a world ended in CORRUPT_FIRE_CLOCK on day 16
+## (found 2026-11-25). Raised to a year; what pins the rows is a known issue of its own.
+const FIRE_JOURNAL_LIMIT := 1048576
 const FIRE_CLOCK_FIELDS := ["version", "epoch", "action_seconds", "sequence", "base_game_seconds", "journal", "index"]
 const FIRE_CLOCK_BASE_FIELDS := ["base_sequence", "base_action_seconds"]
 const FIRE_CLOCK_SEGMENT_FIELDS := ["first_sequence", "last_sequence", "action_begin", "action_end", "game_begin", "game_end", "scale", "tactical_seconds", "steps"]
@@ -2936,7 +2985,7 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 		or not has_base_sequence and value.size() != FIRE_CLOCK_FIELDS.size(): return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點欄位")
 	if not _whole(value.version, 1, FIRE_CLOCK_VERSION) or not value.epoch is String or value.epoch.is_empty() \
 		or not _seconds(value.action_seconds) or not _whole(value.sequence, 0, 2147483647) \
-		or not _seconds(value.base_game_seconds) or not value.journal is Array or value.journal.size() > 65536 \
+		or not _seconds(value.base_game_seconds) or not value.journal is Array or value.journal.size() > FIRE_JOURNAL_LIMIT \
 		or not value.index is Dictionary or value.index.size() > 65536: return _fail("CORRUPT_FIRE_CLOCK", "火攻共同時間版本")
 	if not _whole(value.get("base_sequence", 0), 0, int(value.sequence)) or not _seconds(value.get("base_action_seconds", 0.0)):
 		return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點型別非法")
@@ -3001,7 +3050,8 @@ static func validate_fire_settlement(state: Dictionary, clock: Dictionary) -> Di
 	if journal is Array and not journal.is_empty():
 		var last: Variant = journal.back()
 		if last is Dictionary: clock_game = last.get("game_end")
-	var clock_check: Dictionary = validate_fire_clock(clock, clock_game)
+	# Each bound cold Site is checked at every step's commit, on the same live clock (2026-11-25).
+	var clock_check: Dictionary = validate_fire_clock_grown(clock, clock_game)
 	if not clock_check.ok: return clock_check
 	if not _whole(value.version, 1, 1) or value.epoch != clock.epoch \
 		or not _whole(value.sequence, 0, int(clock.sequence)) or not _seconds(value.action_seconds) or not _seconds(value.game_seconds) \
@@ -3051,8 +3101,92 @@ static func fire_replay_segments(state: Dictionary, clock: Dictionary, world_gam
 	if next_sequence != int(clock.sequence) + 1: return _fail("MISSING_FIRE_HISTORY", "冷地點雙時鐘區間不連續")
 	return {"ok": true, "from_sequence": sequence, "to_sequence": int(clock.sequence), "segments": segments}
 
+## validate_fire_clock for the clock a live step previews, several times a step. The journal only grows at its end (the last
+## row is extended or a row is appended; pruning replaces the array), so rows checked before are not read again: only from
+## the last row the previous check ended on. The index and the whole fields are checked every time. A different clock, a
+## different journal array or anything else than growth takes the full check, and so does every 512th call; loads, saves
+## and restores always take the full check themselves. Before, every preview read the whole journal, several times a
+## step: a scenario world grew by 38 ms a frame every quarter game day (found 2026-11-25).
+static var _fire_clock_memo: Dictionary = {}
+
+static func validate_fire_clock_grown(value: Variant, world_game: Variant) -> Dictionary:
+	if not value is Dictionary or not value.get("journal") is Array: return validate_fire_clock(value, world_game)
+	var memo := _fire_clock_memo
+	var journal: Array = value.journal
+	var known: bool = memo.get("clock") is Dictionary and is_same(memo.clock, value) and memo.get("journal") is Array and is_same(memo.journal, journal) \
+		and int(memo.rows) <= journal.size() and int(memo.calls) < 512 \
+		and memo.base == [value.get("base_sequence", 0), value.get("base_action_seconds", 0.0), value.get("base_game_seconds", 0.0), value.get("epoch", "")]
+	if not known:
+		var full := validate_fire_clock(value, world_game)
+		_fire_clock_memo = {} if not full.ok else {"clock": value, "journal": journal, "rows": journal.size(), "calls": 0,
+			"base": [value.get("base_sequence", 0), value.get("base_action_seconds", 0.0), value.get("base_game_seconds", 0.0), value.get("epoch", "")]}
+		if full.ok: _fire_clock_memo_tail(value)
+		return full
+	# The rows up to the one before the last known row are unchanged; the last known row may have been extended.
+	var from := maxi(0, int(memo.rows) - 1)
+	var checked := _fire_journal_rows(value, world_game, from, memo)
+	if not checked.ok: return checked
+	memo.rows = journal.size()
+	memo.calls = int(memo.calls) + 1
+	_fire_clock_memo_tail(value)
+	return {"ok": true}
+
+## Remembers where the row before the last one ends, the start of the next incremental check.
+static func _fire_clock_memo_tail(value: Dictionary) -> void:
+	var journal: Array = value.journal
+	var keep := journal.size() - 1
+	if keep <= 0:
+		_fire_clock_memo["previous"] = [int(value.get("base_sequence", 0)), float(value.get("base_action_seconds", 0.0)), float(value.base_game_seconds)]
+		return
+	var row: Dictionary = journal[keep - 1]
+	_fire_clock_memo["previous"] = [int(row.last_sequence), float(row.action_end), float(row.game_end)]
+
+## The same row rules as validate_fire_clock for the rows from `from` on, and the same end and index checks.
+static func _fire_journal_rows(value: Dictionary, world_game: Variant, from: int, memo: Dictionary) -> Dictionary:
+	if not _seconds(world_game) or not _whole(value.version, 1, FIRE_CLOCK_VERSION) or not _seconds(value.action_seconds) or not _whole(value.sequence, 0, 2147483647) \
+		or value.journal.size() > FIRE_JOURNAL_LIMIT or not value.index is Dictionary or value.index.size() > 65536: return _fail("CORRUPT_FIRE_CLOCK", "火攻共同時間版本")
+	var base_sequence := int(value.get("base_sequence", 0))
+	var base_action := float(value.get("base_action_seconds", 0.0))
+	if base_sequence > int(value.sequence) or base_action > float(value.action_seconds) or float(value.base_game_seconds) > float(world_game): return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點非法")
+	var previous: Array = memo.previous if from > 0 else [base_sequence, base_action, float(value.base_game_seconds)]
+	var previous_sequence := int(previous[0])
+	var previous_action := float(previous[1])
+	var previous_game := float(previous[2])
+	for at: int in range(from, value.journal.size()):
+		var row: Variant = value.journal[at]
+		if not row is Dictionary or row.size() != FIRE_CLOCK_SEGMENT_FIELDS.size(): return _fail("CORRUPT_FIRE_JOURNAL", "區間欄位")
+		for field: String in FIRE_CLOCK_SEGMENT_FIELDS:
+			if not row.has(field): return _fail("CORRUPT_FIRE_JOURNAL", "區間欄位")
+		for field: String in ["action_begin", "action_end", "game_begin", "game_end", "tactical_seconds", "scale"]:
+			if not _seconds(row[field]): return _fail("CORRUPT_FIRE_JOURNAL", "區間非有限秒")
+		if not _whole(row.first_sequence, 1, 2147483647) or not _whole(row.last_sequence, 1, 2147483647) \
+			or not _whole(row.steps, 1, 2147483647) or int(row.first_sequence) != previous_sequence + 1 \
+			or int(row.last_sequence) - int(row.first_sequence) + 1 != int(row.steps) \
+			or float(row.action_begin) != previous_action or float(row.game_begin) != previous_game \
+			or float(row.action_end) <= previous_action or float(row.game_end) <= previous_game \
+			or float(row.scale) not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
+			or float(row.tactical_seconds) > float(row.action_end) - previous_action + 0.000000001:
+			return _fail("CORRUPT_FIRE_JOURNAL", "區間不連續或倍率非法")
+		var expected := (float(row.action_end) - previous_action) * 60.0 * float(row.scale)
+		if not Runtime.interval_game_ok(float(row.game_end) - previous_game, float(row.action_end) - previous_action, float(row.tactical_seconds), float(row.scale), maxf(0.00000001, expected * 0.000000001)): return _fail("CORRUPT_FIRE_JOURNAL", "區間時鐘不符")
+		previous_sequence = int(row.last_sequence)
+		previous_action = float(row.action_end)
+		previous_game = float(row.game_end)
+	if previous_sequence != int(value.sequence) or previous_action != float(value.action_seconds) or previous_game != float(world_game): return _fail("CORRUPT_FIRE_JOURNAL", "共同完成端點不一致")
+	for identity: Variant in value.index:
+		var entry: Variant = value.index[identity]
+		if not identity is String or identity.is_empty() or not entry is Dictionary or entry.size() not in [5, 6] \
+			or not entry.get("coordinate") is Array or entry.coordinate.size() != 2 \
+			or not entry.get("active") is bool or not _whole(entry.get("sequence"), base_sequence, previous_sequence) \
+			or entry.size() == 6 and not entry.get("fire_active") is bool \
+			or not _seconds(entry.get("action_seconds")) or not _seconds(entry.get("game_seconds")) \
+			or float(entry.action_seconds) > previous_action + maxf(0.00000001, previous_action * 0.000000001) \
+			or float(entry.game_seconds) > previous_game + maxf(0.00000001, previous_game * 0.000000001):
+			return _fail("CORRUPT_FIRE_INDEX", "原 Site 活動索引非法")
+	return {"ok": true}
+
 static func preview_fire_interval(clock: Dictionary, game_begin: float, action_seconds: float, scale: float, tactical_seconds: float) -> Dictionary:
-	var clock_check := validate_fire_clock(clock, game_begin)
+	var clock_check := validate_fire_clock_grown(clock, game_begin)
 	if not clock_check.ok: return clock_check
 	if not _seconds(action_seconds) or action_seconds <= 0.0 \
 		or action_seconds > 1.0 / 30.0 + 0.000000001 or scale not in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] \
@@ -3105,6 +3239,40 @@ static func _fire_row_width(last: Dictionary, interval: Dictionary) -> float:
 		if steps > 1 and absf((float(last.action_end) - float(last.action_begin)) / steps - width) >= 0.0000000001: continue
 		return width
 	return 0.0
+
+## How much of the journal keeps every step's width: a Site away shorter than a day replays it exactly.
+const FIRE_JOURNAL_EXACT_SECONDS := 2.0 * 86400.0
+
+## Joins neighbouring quiet rows (no tactical time, the same speed) that ended before `before_game` and stand between no
+## Site's watermarks. A Site that still needs them has been away longer than a day and is settled by day and hour steps
+## (Nekki 2026-11-16 A), which need where the quiet time begins and ends, not each step's width. An unopened Site pins the
+## journal for as long as it stays unopened; without this a scenario world's save grew by about 1.1 MB a game day.
+## Returns how many rows went.
+static func compact_fire_journal(clock: Dictionary, before_game: float) -> int:
+	var marks := {}
+	for value: Variant in clock.get("index", {}).values():
+		if not value is Dictionary or not _whole(value.get("sequence"), 0, 2147483647): return 0
+		marks[int(value.sequence)] = true
+	var kept: Array = []
+	for source_row: Variant in clock.journal:
+		var row: Dictionary = source_row
+		var last: Dictionary = kept.back() if not kept.is_empty() else {}
+		# A watermark inside either row is measured by that row's own steps (validate_fire_settlement): such a row stays as it is.
+		if not last.is_empty() and float(row.game_end) <= before_game and float(last.tactical_seconds) == 0.0 and float(row.tactical_seconds) == 0.0 \
+				and float(last.scale) == float(row.scale) and not marks.has(int(last.last_sequence)) and not _marked_inside(marks, last) and not _marked_inside(marks, row):
+			last["last_sequence"] = int(row.last_sequence)
+			last["action_end"] = float(row.action_end)
+			last["game_end"] = float(row.game_end)
+			last["steps"] = int(last.steps) + int(row.steps)
+		else: kept.append(row.duplicate())
+	var removed: int = clock.journal.size() - kept.size()
+	if removed > 0: clock["journal"] = kept
+	return removed
+
+static func _marked_inside(marks: Dictionary, row: Dictionary) -> bool:
+	for mark: int in marks:
+		if mark >= int(row.first_sequence) and mark < int(row.last_sequence): return true
+	return false
 
 static func prune_fire_clock_prefix(clock: Dictionary) -> int:
 	# Every indexed Fire Site must have reached the prefix; a dormant old Site pins it safely.
@@ -4040,7 +4208,12 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	# moves. The probe is the bind preflight's own canonical source check, so the
 	# publish decision and the bind decision share one capture rule.
 	var source_check: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
-	if not source_check.ok and str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]:
+	# (2026-11-25: a cold owner bound from its unopened file, a lair going out on its first raid, was refused
+	# REGION_BACKEND_UNADMITTED: that file still carries the retired grid's capture, or none at all. It is published first
+	# too, as an arrival there does.)
+	var dispatch_behind: bool = not source_check.ok and (str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY", "REGION_BACKEND_UNADMITTED"] \
+		or str(source_check.get("code", "")) == "CORRUPT_REGION_SNAPSHOT" and str(source_check.get("check", "")) == "size" and int(source_check.get("snapshot_size", -1)) == 0)
+	if dispatch_behind:
 		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
 		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_dispatch", "token": token})
@@ -4203,6 +4376,18 @@ func commit_npc_region_dispatch(prepared: Dictionary) -> Dictionary:
 		var fault := fail("COMMITTED_UNBOUND", "移交已提交，原完整 bind 未完成；凍結至真 bind")
 		prepared.lab.site_controller.latch_original_step_fault(fault)
 		return fault
+	# A cold owner its last people left has another backend now (no crowd): its mode follows, as at a bind
+	# (TerrainLab._region_gameplay_owner_lab), or every later check of it is refused REGION_BACKEND_UNADMITTED (2026-11-25).
+	var source_id := str(prepared.lab.terrain.site.id)
+	var source_mode: Dictionary = region_registry().modes.get(source_id, {})
+	if source_id != str(control.active_site_id) and str(source_mode.get("mode", "")) == "cold_exact" and str(source_mode.get("backend", "")) != prepared.lab.region_backend_expected():
+		var receipt: Dictionary = prepared.lab.region_bind_receipt(prepared.lab.terrain)
+		if not receipt.get("complete", false): return receipt
+		receipt["mode"] = "cold_exact"
+		receipt["consumer"] = str(source_mode.consumer)
+		receipt["generation"] = int(_marker.get("generation", 0))
+		var reactivated := activate_region_mode(source_id, "cold_exact", str(source_mode.consumer), receipt, str(receipt.backend))
+		if not reactivated.ok: return reactivated
 	_region_npc_party_runtime[token] = prepared.party
 	_region_npc_plan_runtime[token] = prepared.plan
 	return {"ok": true, "token": token, "generation": published.generation, "binding": bound}
@@ -4242,6 +4427,11 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var identity := Grid.site_id(str(pin.atlas_id), to)
 	var requested_mode := "live" if identity == str(control.active_site_id) else "cold_exact"
 	var original: Dictionary = region_owner_lab.call(identity, requested_mode)
+	# A destination nobody has opened since it was last settled (a scenario Site since the birth) first catches up by
+	# its own bounded cold replay; that PENDING result is the dispatcher's retained endpoint
+	# (TerrainLab._region_original_cold_pending retries it), not a failed bind. Found 2026-11-24: a 官方剿匪 expedition
+	# entering a lair Site unopened since the birth latched COMMITTED_UNBOUND as a step fault.
+	if not original.get("ok", false) and str(original.get("code", "")) == "PENDING" and original.get("cold_replay") is Dictionary: return original
 	if not original.get("ok", false) or not original.get("lab") is TerrainLab: return fail("COMMITTED_UNBOUND", "目的地原 owner 尚未完整 bind")
 	var lab: TerrainLab = original.lab
 	if str(lab.terrain.site.id) != identity: return fail("WRONG_SITE", "到站原 owner 不同")
@@ -4251,10 +4441,44 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	# A cold destination advanced by accepted intervals since its last joint
 	# publication is published at this same point first; no clock moves. The
 	# bind preflight below still requires that exact published frame.
-	if requested_mode == "cold_exact" and _region_cold_unpublished(lab):
+	# A cold owner bound just now from its own cold replay (a destination nobody had opened) stands at the world clock, so
+	# the time test above reads it as published, yet its selected publication is still the older file, or the plain body
+	# of the scenario birth, which was never a region checkpoint: the bind preflight below then refused it for ever
+	# (STALE_REGION_SOURCE_BODY, or CORRUPT_REGION_SNAPSHOT size 0 for the plain body; found 2026-11-24). It is published
+	# here like any cold owner whose publication is behind, as the live branch below already does by the same reading.
+	var cold_behind: bool = requested_mode == "cold_exact" and _region_cold_unpublished(lab)
+	if requested_mode == "cold_exact" and not cold_behind:
+		# Read as the live branch reads it: the owner's body is captured first (the capture the insertion below takes
+		# anyway), then its selected publication is compared with it.
+		var cold_capture: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+			{"npc_arrival": true, "token": token, "event": str(event.get("id", ""))}, token)
+		if not cold_capture.ok: return cold_capture
+		var cold_source: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
+		var cold_code := str(cold_source.get("code", ""))
+		# A Site nobody ever visited has no file at all (2026-11-25: UNSELECTED_REGION_SOURCE stopped the world when a
+		# household that left, or a band on its way to the lair it moved to, arrived there).
+		cold_behind = not cold_source.get("ok", false) and (cold_code in ["UNSELECTED_REGION_SOURCE", "STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"] or cold_code == "CORRUPT_REGION_SNAPSHOT" and str(cold_source.get("check", "")) == "size" and int(cold_source.get("snapshot_size", -1)) == 0)
+	if cold_behind:
 		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
 		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
+		# The joint publication captures the active Site too. While that Site's own completed point is still open (this
+		# arrival is dispatched inside it), a Site that carries fire state (always, in a world with climate) stands with
+		# that state at the interval's end and its settlement a step behind, and its capture is refused
+		# (INVALID_FIRE_BARRIER; found 2026-11-24). Only then the active Site's point is closed, and the cold owners'
+		# points, as a live arrival and a live departure do, and the publication is taken again. A publication that
+		# went through is left as it was (the active Site keeps its open point's progress for its own next publication).
+		if published is Dictionary and not published.get("ok", false) and str(published.get("code", "")) == "INVALID_FIRE_BARRIER":
+			var active_owner: Variant = region_owner_lab.call(str(control.active_site_id), "live") if not str(control.active_site_id).is_empty() else {}
+			if active_owner is Dictionary and active_owner.get("ok", false) and active_owner.get("lab") is TerrainLab:
+				var active_lab: TerrainLab = active_owner.lab
+				if not active_lab._region_point_pending.is_empty() and not active_lab._region_point_consuming:
+					var active_closed: Dictionary = active_lab.region_close_point_for_transfer()
+					if not active_closed.ok: return active_closed
+					var behind_points: Dictionary = _close_original_cold_region_points()
+					if not behind_points.get("ok", false): return behind_points
+					if not behind_points.get("complete", false): return fail("REGION_POINT_INCOMPLETE", "原冷 owner endpoint 尚未完成，未移交")
+					published = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
 		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
 		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "到站前發布不得推進時鐘")
 	# A live destination (the Site the player stands in) first closes its own completed point, then publishes the progress
@@ -4567,6 +4791,32 @@ func _profile_stage(stage: String, started: int) -> int:
 	profile_usec[stage] = int(profile_usec.get(stage, 0)) + now - started
 	return now
 
+## Queues an event the travelling NPC party `token` is forecast to meet inside the coming step. The step may still be cut
+## short before it (a work point, fatigue, a seam), and the next step forecasts it again: the same event then stands a last
+## digit apart, or elsewhere after a change of pace, and was refused REGION_EVENT_CONFLICT at every later frame, the world
+## standing still (found 2026-11-25). Nothing has used an event that lies ahead: the new forecast takes its place.
+func _queue_region_forecast(kept: Dictionary, identity: String, kind: String, at: float, owner: String, payload: Dictionary, player: bool = false) -> Dictionary:
+	kept[identity] = true
+	var events: Array = region_registry().events
+	for index: int in events.size():
+		var prior: Dictionary = events[index]
+		if str(prior.id) != identity: continue
+		if str(prior.status) == "pending" and float(prior.at) > float(control.logical_game_seconds) + 0.00000001 \
+				and (float(prior.at) != at or str(prior.kind) != kind or str(prior.owner) != owner or bool(prior.player) != player or prior.payload != payload):
+			events.remove_at(index)
+		break
+	return queue_region_event(identity, kind, at, owner, payload, player)
+
+## The forecasts of an earlier, cut step that the coming one no longer makes (the party was held up) lie ahead unused: they go.
+func _drop_region_forecasts(token: String, kept: Dictionary) -> void:
+	var events: Array = region_registry().events
+	var now := float(control.logical_game_seconds) + 0.00000001
+	for index: int in range(events.size() - 1, -1, -1):
+		var prior: Dictionary = events[index]
+		var id := str(prior.id)
+		if str(prior.status) != "pending" or float(prior.at) <= now or kept.has(id): continue
+		if id.begins_with("npc:%s:arrival" % token) or id.begins_with("npc:%s:life:" % token) or id.begins_with("npc:%s:player-contact:" % token): events.remove_at(index)
+
 func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictionary = {}) -> Dictionary:
 	var qe: int = Time.get_ticks_usec() if profile_enabled else 0 # Optional counters only.
 	var retried := _region_retry_blocked_npc_land_entries()
@@ -4578,6 +4828,7 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 	for token: String in tokens:
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
 		qe = _profile_stage("qe_misc", qe)
+		var kept := {} # the ids of this step's own forecasts
 		var forecast := _preview_npc_party_to(token, unclipped_game_end, interval)
 		qe = _profile_stage("qe_preview", qe)
 		if not forecast.ok: return forecast
@@ -4593,19 +4844,20 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 			# A band's earlier stop at this same node is complete (paid and expired): the next one is a new event.
 			if _region_toll_band(token) >= 0 and registry.events.any(func(prior: Dictionary) -> bool: return str(prior.id) == contact_identity and str(prior.status) == "complete"):
 				contact_identity += ":day%d" % _region_toll_day()
-			var queued_contact := queue_region_event(contact_identity,
+			var queued_contact := _queue_region_forecast(kept, contact_identity,
 				"player_encounter", float(contact.at), str(contact.site_id), {"token": token, "site": contact.site.duplicate(), "component": int(contact.component), "contact_receipt": contact.get("contact_receipt", {}).duplicate(true)}, true)
 			if not queued_contact.ok: return queued_contact
 		for event: Dictionary in forecast.events:
-			var queued := queue_region_event("npc:%s:life:%d" % [token, int(event.sequence)], "life", float(event.at), "travel:" + token,
+			var queued := _queue_region_forecast(kept, "npc:%s:life:%d" % [token, int(event.sequence)], "life", float(event.at), "travel:" + token,
 				{"token": token, "event": event.duplicate(true)})
 			if not queued.ok: return queued
 		if bool(forecast.arrived):
 			var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(forecast.position.site[0]), int(forecast.position.site[1])))
 			var player_present := owner == str(control.active_site_id)
-			var queued := queue_region_event(_region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
+			var queued := _queue_region_forecast(kept, _region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
 				{"token": token, "site": forecast.position.site.duplicate(), "component": int(forecast.position.component)}, player_present)
 			if not queued.ok: return queued
+		_drop_region_forecasts(token, kept)
 	qe = _profile_stage("qe_party_events", qe)
 	for first_index: int in tokens.size():
 		for second_index: int in range(first_index + 1, tokens.size()):
@@ -4778,7 +5030,7 @@ func advance_prepared_region_formula_progress(prepared: Dictionary) -> Dictionar
 		var original: TerrainLab = prepared.cold_labs[owner]
 		var progressed: Dictionary = region_formula_progress.call(original, {}, prepared.interval)
 		if not progressed.get("ok", false): return progressed
-		if not progressed.get("complete", false): return fail("INCOMPLETE_REGION_PROGRESS", "原 cold stages 未完成共同區間")
+		if not progressed.get("complete", false): return fail("INCOMPLETE_REGION_PROGRESS", "原 cold stages 未完成共同區間 %s %s" % [owner, JSON.stringify(progressed).left(600)])
 	for token: String in prepared.parties:
 		var candidate: Dictionary = prepared.parties[token]
 		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
@@ -5137,6 +5389,87 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 		# Capture verifies the same party bytes; checkpoint publication must retain
 		# its runtime identity for original callers spanning this common marker.
 	return {"ok": true}
+
+## Game seconds a bound cold Site must have been of no use before it is released.
+const IDLE_RELEASE_SECONDS := 6.0 * 3600.0
+var _idle_since: Dictionary = {} # Site id -> the game second since which nothing needed its bound Lab.
+var _idle_checked := -INF # the last look (once a game minute)
+
+## Why the bound cold Site `owner` may not be released now ("" when it may). Anything that still needs its live bodies keeps
+## it: combat, fire, a region battle or an open event there, a traveller's team on its way there, a guest team standing
+## there (an expedition or a raid that has to go home), an open raid, unfinished effects or a resting point.
+func idle_release_block(owner: String) -> String:
+	if owner == str(control.active_site_id): return "ACTIVE"
+	var original: TerrainLab = _region_original_labs.get(owner)
+	if not is_instance_valid(original) or original.terrain == null or str(original.terrain.site.id) != owner: return "NOT_BOUND"
+	if str(region_registry().modes.get(owner, {}).get("mode", "")) != "cold_exact": return "NOT_COLD"
+	if not original._region_point_pending.is_empty() or original._region_point_consuming or original._region_point_dispatching: return "POINT_OPEN"
+	if float(original.terrain.site.get("combat_left", 0.0)) > 0.0 or original._fire_activity() or bool(control.fire_clock.get("index", {}).get(owner, {}).get("fire_active", false)): return "COMBAT"
+	if not original.site_controller._pending_deaths.is_empty() or not original.site_controller.battle_effects_due.is_empty(): return "EFFECTS"
+	if original.crowd_site != null and original.crowd_site.active and original.crowd_site.battle.open: return "BATTLE_OPEN"
+	for battle: Dictionary in region_registry().battles.values():
+		if str(battle.get("phase", "")) != "finished" and str(battle.get("site_id", "")) == owner: return "REGION_BATTLE"
+	for event: Dictionary in region_registry().events:
+		if str(event.get("owner", "")) == owner and str(event.get("status", "")) == "pending" and str(event.get("kind", "")) != "evaluation": return "EVENT"
+	# Teams on their way to it, or sent from it (they come back): binding it again when they arrive costs far more.
+	for token: String in region_registry().parties:
+		var party: Dictionary = region_registry().parties[token]
+		if str(party.get("phase", "")) not in ["travelling", "pending_life", "materializing"]: continue
+		var from: Variant = party.get("origin")
+		if not from is Array or from.size() != 2 or Grid.site_id(str(pin.atlas_id), Vector2i(int(from[0]), int(from[1]))) == owner: return "PARTY_OUT"
+		var plan := _region_npc_plan(token)
+		if not plan.ok: return "PARTY"
+		var last: Array = plan.plan.steps.back().site
+		if Grid.site_id(str(pin.atlas_id), Vector2i(int(last[0]), int(last[1]))) == owner: return "PARTY"
+	for mission: Dictionary in region_registry().get("caravans", {}).get("missions", []):
+		if owner in [str(mission.get("from_site", "")), str(mission.get("to_site", ""))]: return "CARAVAN"
+	for route: Dictionary in region_registry().get("tax_routes", {}).get("routes", []):
+		if owner == str(route.get("home_site", "")) or route.get("stops", []).has(owner): return "TAX"
+	for raid: Dictionary in get_meta(&"bandit_raids_open", {}).values():
+		if str(raid.get("site_id", "")) == owner and not bool(raid.get("done", false)): return "RAID"
+	# A lair bound to go out (region_bandit_formula.gd) keeps its bodies over the next day's move.
+	if int(float(control.logical_game_seconds) / 86400.0) - int(get_meta(&"bandit_musters", {}).get(owner, -100)) <= 1: return "MUSTER"
+	var settlement_owner := int(original.terrain.site.get("settlement", {}).get("owner_faction", -1))
+	if original.crowd_site != null and original.crowd_site.active:
+		for team: Dictionary in original.crowd_site.teams:
+			if bool(team.get("departed", false)) or team.get("person_ids", []).is_empty(): continue
+			var faction := int(team.get("faction", -1))
+			if faction == settlement_owner or faction == RegionFactionQuery.NEUTRAL_FACTION_ID: continue
+			var lair: Variant = RegionFactionQuery.bandit_of(control.faction_registry, faction).get("lair") if RegionFactionQuery.is_bandit(control.faction_registry, faction) else null
+			if lair is Dictionary and str(lair.get("site_id", "")) == owner: continue # a band at home
+			return "GUESTS"
+	return ""
+
+## Releases bound cold Sites that nobody has needed for IDLE_RELEASE_SECONDS, one a call: every bound Site is published
+## together with the active one, then its Lab is freed and forgotten. A later need binds it again from its saved file,
+## as after loading a save. Called at rest by the active Site's owner. Returns {released: owner} or {}.
+func release_idle_cold_owner() -> Dictionary:
+	if not region_original_endpoint_checkpoint.is_valid() or str(control.active_site_id).is_empty(): return {}
+	var now := float(control.logical_game_seconds)
+	if now - _idle_checked < 60.0: return {}
+	_idle_checked = now
+	for owner: String in _region_original_labs.keys():
+		if idle_release_block(owner) != "" or not _idle_since.has(owner):
+			_idle_since[owner] = now
+			continue
+		var since := float(_idle_since[owner])
+		if now - since < IDLE_RELEASE_SECONDS: continue
+		# Its hourly evaluations end with it: a due one would bind it again at once. They return with the next bind.
+		var registry := region_registry()
+		var events: Array = registry.events
+		registry["events"] = events.filter(func(event: Dictionary) -> bool: return not (str(event.owner) == owner and str(event.kind) == "evaluation" and str(event.status) == "pending"))
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "idle_release", "token": owner})
+		if not published is Dictionary or not published.get("ok", false):
+			region_registry()["events"] = events
+			_idle_since[owner] = now # not again at every step: the next try is IDLE_RELEASE_SECONDS away
+			return {"refused": owner, "result": published}
+		var original: TerrainLab = _region_original_labs[owner]
+		_region_original_labs.erase(owner)
+		_fire_cold_candidates.erase(owner)
+		_idle_since.erase(owner)
+		original.queue_free()
+		return {"released": owner}
+	return {}
 
 func _close_original_cold_region_points() -> Dictionary:
 	for owner: String in _region_original_labs:
@@ -6405,9 +6738,10 @@ static func _initial_context_ok(context: Variant) -> bool:
 	if author_initial_context_valid(context): return true
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
 
-# P5C-S1: schema cap for one authored birth package. open_map still admits
-# exactly one Site until the P5C-S2 birth transaction lands.
-const AUTHOR_INITIAL_SITE_LIMIT := 16
+# P5C-S1: schema cap for one authored birth package. 示範劇本 A (Nekki 11/22: 30 settlements and 15 bands, 46 Sites
+# with the start) raised it from 16 to 64; a package's files (a static and an initial file per Site) stay within
+# RegionData.AUTHOR_MAX_FILES (128).
+const AUTHOR_INITIAL_SITE_LIMIT := 64
 
 static func author_initial_context_valid(context: Variant) -> bool:
 	# This schema is admitted only with the same loaded package identity and start.
@@ -6433,6 +6767,7 @@ static func same_author_initial_context(left: Variant, right: Variant) -> bool:
 	if not RegionTerrainAdapter.same_author_identity(left.author_identity, right.author_identity) or not _initial_site_same(left.starting_site, right.starting_site): return false
 	if left.start.mode != right.start.mode or not _initial_site_same(left.start.site, right.start.site) or not _initial_site_same(left.start.cell, right.start.cell): return false
 	if left.start.mode == "existing_person" and int(left.start.person_id) != int(right.start.person_id): return false
+	if left.start.mode == "scenario_person" and str(left.start.name) != str(right.start.name): return false
 	# P5C-S2: the birth set is a set. Compare canonical order, not the stored list order.
 	return author_initial_site_order(left) == author_initial_site_order(right)
 
@@ -6604,6 +6939,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 		for other: Vector2i in _initial_site_coordinates():
 			if other == coordinate.site: continue
 			var companion: Dictionary = _author_companion_candidate(other)
+			PerfTraceSlot.mark("slot_companion_candidate")
 			if not companion.ok: return companion
 			companions.append(companion)
 	var original_control := control.duplicate(true)
@@ -6635,6 +6971,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 			return companion_saved
 		var companion_entry: Dictionary = _file_entry(companion_path)
 		sites[_site_key(prepared_companion.coordinate)] = companion_entry
+		_initial_readbacks[companion_path] = {"sha256": str(companion_entry.sha256), "data": companion_saved.data}
 		written.append({"coordinate": prepared_companion.coordinate, "path": companion_path, "sha256": str(companion_entry.sha256),
 			"id": str(prepared_companion.data.site.id), "fire": prepared_companion.data.site.fire_settlement.duplicate(true)})
 	var record: Dictionary = {"format": 1, "generation": 1, "pin": pin.duplicate(true), "sites": sites,
@@ -6685,7 +7022,9 @@ func _initial_site_coordinates() -> Array:
 # P5C-S2: companion birth state. Terrain only; any authored population is refused
 # here and waits for P5C-S3. Mirrors open_site's fresh genesis for an uncontrolled Site.
 func _author_companion_candidate(site: Vector2i) -> Dictionary:
+	PerfTraceSlot.mark("candidate_begin")
 	var projected: Dictionary = source.project_terrain(site, "author_initial")
+	PerfTraceSlot.mark("candidate_projected")
 	if not projected.ok: return projected
 	if not _matches_base(projected.base, site): return fail("SAVE_VERSION", "固定地圖版本已變更")
 	var data: TerrainData = projected.data
@@ -6701,7 +7040,9 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 	var refreshed: Dictionary = _refresh_boundaries(data, site)
 	if not refreshed.ok: return refreshed
 	data.site.world_pin = pin.duplicate(true)
+	PerfTraceSlot.mark("candidate_refreshed")
 	var genesis: Dictionary = _settle_cold_candidate(data, float(control.logical_game_seconds))
+	PerfTraceSlot.mark("candidate_settled")
 	if not genesis.ok: return genesis
 	data = genesis.data
 	if not _fire_history_empty(data.site): return fail("INVALID_NEW_SITE", "新地點已存在原火攻歷史")
@@ -6721,13 +7062,32 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 
 
 # P5C-S2: checks one companion file of the generation-1 record.
+## 示範劇本 birth speed (Nekki 11/22 B): a birth's companion checks, by file path. _check_initial_record runs four or five
+## times in one birth (publish guard, commit, manifest, finish) and each run loaded and validated every companion file
+## again; a passed check of the same bytes (same path and sha256, checked again each call) is not repeated. Its data is
+## only read (person ids). Cleared when the birth finishes.
+var _initial_companion_checks: Dictionary = {}
+## The read-back body of each companion file this birth wrote (_save_checked already loads every written file back
+## through _load_checked), by path with its sha256: the first companion check reads it instead of loading the same
+## bytes again. Cleared when the birth finishes.
+var _initial_readbacks: Dictionary = {}
+
 func _check_author_companion_state(record: Dictionary, coordinate: Vector2i) -> Dictionary:
 	var key: String = _site_key(coordinate)
 	if not record.sites.has(key): return fail("INVALID_INITIAL_GENERATION")
 	var entry: Dictionary = record.sites[key]
 	var path: String = folder.path_join(str(entry.get("path", "")))
 	if not str(entry.get("path", "")).begins_with("generations/") or FileAccess.get_sha256(path) != str(entry.get("sha256", "")): return fail("INVALID_INITIAL_GENERATION")
-	var loaded: Dictionary = _load_checked(path, coordinate)
+	var cached: Dictionary = _initial_companion_checks.get(path, {})
+	if str(cached.get("sha256", "")) == str(entry.sha256) and str(cached.get("control", "")) == JSON.stringify(record.control.get("fire_clock", {})): return cached.result
+	var checked := _check_author_companion_file(record, coordinate, path)
+	if checked.ok: _initial_companion_checks[path] = {"sha256": str(entry.sha256), "control": JSON.stringify(record.control.get("fire_clock", {})), "result": checked}
+	return checked
+
+func _check_author_companion_file(record: Dictionary, coordinate: Vector2i, path: String) -> Dictionary:
+	var readback: Dictionary = _initial_readbacks.get(path, {})
+	var same_bytes: bool = not readback.is_empty() and str(readback.sha256) == str(record.sites[_site_key(coordinate)].get("sha256", ""))
+	var loaded: Dictionary = {"ok": true, "data": readback.data} if same_bytes else _load_checked(path, coordinate)
 	if not loaded.ok: return loaded
 	var state: Dictionary = loaded.data.site
 	if state.has("initial_scenario") or state.has("crowd") or state.has("family") or int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0: return fail("INVALID_INITIAL_POPULATION")
@@ -6757,7 +7117,9 @@ func commit_initial_site() -> Dictionary:
 		var fire: Dictionary = companion.fire
 		clock.fire_clock.index[str(companion.id)] = {"coordinate": [companion.coordinate.x, companion.coordinate.y], "active": false, "fire_active": false,
 			"sequence": int(fire.sequence), "action_seconds": float(fire.action_seconds), "game_seconds": float(fire.game_seconds)}
+	PerfTraceSlot.mark("commit_hashed")
 	var committed: Dictionary = _publish(sites, clock)
+	PerfTraceSlot.mark("commit_published")
 	if not committed.ok: return committed
 	return _check_initial_record(_marker)
 
@@ -6783,6 +7145,8 @@ func finish_initial_birth(receipt: Dictionary) -> Dictionary:
 		if not completed.ok: return completed
 	_initialization = {}
 	_initial_candidate = {}
+	_initial_companion_checks = {}
+	_initial_readbacks = {}
 	return {"ok": true, "generation": 1}
 
 # _publish anchor edits, AFTER constructing record and BEFORE _write_new_document:
@@ -9121,6 +9485,9 @@ func _region_land_route_preview(party: Dictionary, plan: Dictionary, path: Strin
 			if not probe.ok: return probe
 			if float(probe.metres) < remaining: low = middle
 			else: high = middle
+		# A crossing found within the interval's own tolerance of its end is at its end: the party's clock must be the
+		# world's to the last digit, or its body is refused STALE_REGION_PARTY_BODY where it arrives (2026-11-25).
+		if end - high <= 0.0000001: high = end
 		outcome = RegionTravel.advance_upkeep(input, high, options)
 		if not outcome.ok: return outcome
 	var candidate: Dictionary = outcome.party
@@ -12567,7 +12934,10 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String, with_p
 			if Store.faction_summary_serial() == int(shared_record.serial):
 				if with_persons: _remember_person_source(key, shared.persons)
 				return _faction_remember(key, shared.summary)
-	var loaded: Dictionary = _load_checked(path, site)
+	# 示範劇本 birth speed: the birth's commit scans every companion file it has just written and read back
+	# (_initial_readbacks, the same bytes by sha256); the scan summarises that read-back instead of loading it again.
+	var readback: Dictionary = _initial_readbacks.get(path, {})
+	var loaded: Dictionary = {"ok": true, "data": readback.data} if not readback.is_empty() and str(readback.sha256) == checksum else _load_checked(path, site)
 	if _faction_file_sha256(path) != checksum:
 		Store.invalidate_faction_summary_path(path)
 		return fail("CORRUPT_SAVE", "faction source changed during validation")
@@ -12783,7 +13153,10 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 				persons.bodies = []
 				persons.erase("pending_remap")
 			person_sources.append({"projection": persons, "location": {"kind": "party", "id": str(summary.owner)}})
-		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": summary.at, "complete": true})
+		# A party carried to its interval's end may stand a last digit past the world's clock (the sum of the steps): it is now.
+		var as_of: Variant = summary.at
+		if _seconds(as_of) and float(as_of) > float(clock.logical_game_seconds) and float(as_of) <= float(clock.logical_game_seconds) + 0.00000001: as_of = float(clock.logical_game_seconds)
+		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": as_of, "complete": true})
 		if with_organization_sources: organization_sources.append({"kind": "party", "owner": str(summary.owner), "path": folder.path_join(path), "checksum": checksum, "historical": historical, "phase": str(reference.get("phase", "travelling")), "original_receipt": receipts.back().duplicate(true)})
 	# Battle participant fields and remote claims are projected by their original registry/Sites.
 	var political_ids := {}
@@ -12853,7 +13226,10 @@ func checkpoint_faction_migration(data: TerrainData, prepared: Dictionary, conte
 	return checkpoint_region_site(data, context, owners, current.registry)
 
 func prepare_faction_creation(data: TerrainData, expected_revision: int, reserved_ids: Array = [], fields: Dictionary = {}) -> Dictionary:
-	if data == null or str(data.site.get("id", "")) != str(control.active_site_id): return fail("REGION_SOURCE")
+	var owner := str(data.site.get("id", "")) if data != null else ""
+	# A bound cold Site founds too (2026-11-25): its candidate is saved through the active Site (SiteController.commit_registry).
+	var bound: TerrainLab = _region_original_labs.get(owner)
+	if data == null or owner != str(control.active_site_id) and (not is_instance_valid(bound) or bound.terrain != data): return fail("REGION_SOURCE")
 	if int(control.get("faction_registry", {}).get("revision", 0)) != expected_revision: return fail("CONFLICT")
 	var all_reserved: Array = reserved_ids.duplicate()
 	var current_ids := {}
@@ -13041,8 +13417,11 @@ func _check_author_initial_state(data: TerrainData, record: Dictionary, coordina
 	var context: Dictionary = _initialization.author_context
 	var bodies: Dictionary = RegionTravel._body_records(state)
 	var controlled: int = int(state.get("controlled_person_id", -1))
-	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not _initial_site_same(bodies[controlled].get("cell"), context.start.cell) or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
-	if context.start.mode == "created_player":
+	# 選現成人物: a scenario person stands where the scenario put him (his house or his team), found by his name.
+	var placed: bool = str(bodies[controlled].get("name", "")) == str(context.start.name) if bodies.has(controlled) and context.start.mode == "scenario_person" else bodies.has(controlled) and _initial_site_same(bodies[controlled].get("cell"), context.start.cell)
+	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not placed or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	if context.start.mode == "scenario_person": pass # his body was checked above; no created player exists
+	elif context.start.mode == "created_player":
 		# Neutral part 2: the created player is roster unit 0 and formal commander of a one-person neutral team, not an actor.
 		if controlled != 1 or not state.get("actors", {}).is_empty() or not _created_player_team(state, controlled): return fail("INVALID_INITIAL_POPULATION")
 	elif controlled != int(context.start.person_id): return fail("INVALID_INITIAL_POPULATION")
@@ -13203,11 +13582,13 @@ func _open_person_allocator(prepare_new: bool) -> Dictionary:
 	if _marker.is_empty() and prepare_new:
 		var sources: Array = []
 		for pair: Array in source.author_initial_context().get("expected_initial_sites", []):
-			var initial: Dictionary = source.project_terrain(Vector2i(int(pair[0]), int(pair[1])), "author_initial")
-			if not initial.ok: return initial
-			var projection: Dictionary = person_projection(initial.data.site)
+			var at := Vector2i(int(pair[0]), int(pair[1]))
+			# Only the authored state's people count here. Its projection (a tile build and the state checks, about half a
+			# second a Site, 46 at a scenario birth plus their neighbours) runs where the body is used (開局速度 2026-11-27).
+			var state: Dictionary = source.author_initial_state(at)
+			var projection: Dictionary = person_projection(state)
 			if projection.bodies.is_empty(): projection.next_person_id = 1
-			sources.append({"projection": projection, "location": {"kind": "site", "id": str(initial.data.site.get("id", initial.base.site_id))}})
+			sources.append({"projection": projection, "location": {"kind": "site", "id": str(state.get("id", Grid.site_id(str(pin.atlas_id), at)))}})
 		prepared = person_migration(str(pin.world_instance_id), sources)
 	else: prepared = prepare_person_migration()
 	if not prepared.ok:

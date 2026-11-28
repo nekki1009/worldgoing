@@ -614,15 +614,26 @@ static func _preserve_connectivity(data: TerrainData) -> void:
 					labels[data.index(next)] = start
 					component.append(data.index(next))
 		var origin := -1
+		# 開局速度 (2026-11-27): the same openings in the same order as before, counted instead of rescanned. "Missing" (an
+		# open cell of this platform not yet reached) is open_cells > reached_open: every reached cell is open, and an
+		# opening is opened and reached at once. Rescanning the platform after every opening, and the linear barrier
+		# lookup, cost up to 0.4 s a wooded Site build (FIXED_DIGEST probe: same bases before and after).
+		var open_cells := 0
 		for i: int in component:
 			if data.static_blocked[i] == 0:
-				origin = i
-				break
+				if origin < 0: origin = i
+				open_cells += 1
 		if origin < 0:
 			continue
-		var reached := {origin: true}
+		var reached := PackedByteArray()
+		reached.resize(labels.size())
+		reached[origin] = 1
+		var reached_open := 1
 		var queue: Array[int] = [origin]
 		var barriers: Array[int] = []
+		var barrier_seen := PackedByteArray()
+		barrier_seen.resize(labels.size())
+		var next_barrier := 0
 		head = 0
 		while true:
 			while head < queue.size():
@@ -634,27 +645,28 @@ static func _preserve_connectivity(data: TerrainData) -> void:
 					if not data.contains(next):
 						continue
 					var j := data.index(next)
-					if reached.has(j) or not data.can_terrain_step(reachable_cell, next):
+					if reached[j] != 0 or not data.can_terrain_step(reachable_cell, next):
 						continue
 					if data.static_blocked[j] != 0:
-						if not barriers.has(j):
+						if barrier_seen[j] == 0:
+							barrier_seen[j] = 1
 							barriers.append(j)
 						continue
-					reached[j] = true
+					reached[j] = 1
+					if labels[j] == start: reached_open += 1
 					queue.append(j)
-			var missing := false
-			for i: int in component:
-				if data.static_blocked[i] == 0 and not reached.has(i):
-					missing = true
-					break
-			if not missing or barriers.is_empty():
+			if open_cells <= reached_open or next_barrier >= barriers.size():
 				break
-			var opening: int = barriers.pop_front()
+			var opening: int = barriers[next_barrier]
+			next_barrier += 1
 			for key: String in data.resources_at.get(opening, []):
 				if bool(data.resource_base[key].blocks) and int(data.resource_base[key].cell) == opening:
 					data.resource_base.erase(key)
 			data.static_blocked[opening] = 0
-			reached[opening] = true
+			if labels[opening] == start:
+				open_cells += 1
+				reached_open += 1
+			reached[opening] = 1
 			queue.append(opening)
 
 static func work_cells(data: TerrainData, key: String) -> Array[Vector2i]:

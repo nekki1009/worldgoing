@@ -1611,6 +1611,17 @@ static func max_building_productivity() -> float:
 
 # Production minutes one work step adds; the SAME value advances production and,
 # for workshop batches, the batch's effective work.
+## A farm's production minutes per work minute on its served cells: the cells' average fertility / 60 (0.25 to 1.5) for
+## each of them. A field of a settlement that feeds its people (`meals`, the scenario villages) yields by its worker
+## instead, one production minute a work minute, as its long absences are settled (SiteResidentWork.daily_production;
+## 2026-11-26 A: watched, a village field gave 36 times that, so a village seen and unseen were not the same village).
+static func farm_productivity(data: TerrainData, feature: Dictionary, served: Array) -> float:
+	var settlement: Variant = data.site.get("settlement", {})
+	if settlement is Dictionary and int(settlement.get("meals", 0)) == 1 and int(feature.get("owner_faction", -1)) == int(settlement.get("owner_faction", -2)): return 1.0
+	var fertility := 0.0
+	for index: int in served: fertility += float(data.fertility[index])
+	return clampf(fertility / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+
 static func feature_production_minutes(minutes: float, water_ratio: float, productivity: float) -> float:
 	return minutes * water_ratio * productivity
 
@@ -3879,6 +3890,22 @@ static func feature_work_slots(data: TerrainData, feature: Dictionary) -> Array[
 			result.append({"slot": result.size(), "cell": data.index(cell), "service_cells": service})
 	return result
 
+## feature_work_slots for the work preflight, which only reads them. A farm's or pasture's slots depend on its cells
+## and the map width alone, so equal cells give equal slots; they are kept by value (2026-11-28, town frame time: each
+## work preflight cut the field into slots again, 0.8 ms a frame). Shipyards and other features are not kept.
+static var _preflight_slot_cache: Dictionary = {}
+
+static func _preflight_work_slots(data: TerrainData, feature: Dictionary) -> Array[Dictionary]:
+	if feature.has("technology_shipyard_work") or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or str(feature.kind) not in FARM_KINDS + PASTURE_KINDS or not feature.get("cells") is Array:
+		return feature_work_slots(data, feature)
+	var key := [data.size, feature.cells]
+	var cached: Variant = _preflight_slot_cache.get(key)
+	if cached != null: return cached
+	if _preflight_slot_cache.size() >= 512: _preflight_slot_cache.clear()
+	var slots := feature_work_slots(data, feature)
+	_preflight_slot_cache[[data.size, feature.cells.duplicate()]] = slots
+	return slots
+
 static func work_claim_key(task: Dictionary) -> String:
 	var target := str(task.get("target", ""))
 	var slot := int(task.get("work_slot", -1))
@@ -4183,7 +4210,14 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 	# Float residue below the clock epsilon is the same finished combat; left in place it reaches the native begin
 	# window as a sub-representable prefix that makes no progress (site_fire_native_admission_test, DIAG8).
 	if float(data.site.combat_left) <= 0.000000000001: data.site["combat_left"] = 0.0
-	while minutes > 0.00000001:
+	# Every accepted window is Site time, however short. The loop once stopped at 1e-8 minutes (6e-7 game s): a native
+	# begin window that short (the action residual to an exchange query boundary, 2.4e-10 action s at x16) moved the
+	# supply ledgers and not the minute phase. The phase then lay under its grid, the next boundaries it bounds came
+	# short, and their residues were cut as windows that short again: a town at x16 ground through frames where the Site
+	# clock stood still while its ledgers ran 4.6e-5 s ahead, and every later save was refused (供養時鐘超前 Site; found
+	# 2026-11-28, 選現成人物 captain in 溪前鎮, day 2). The loop ends: a slice either takes all that is left or closes
+	# the minute (1 - phase >= 1e-8 after the snap below).
+	while minutes > 0.0:
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
 		data.site["phase"] = float(data.site.phase) + slice
 		if checked_point:
@@ -4194,7 +4228,14 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 				crew_work.call(slice * 60.0) # Same original legacy phase.
 			advance_ship_builds(data, occupied)
 		minutes -= slice
-		if float(data.site.phase) >= 0.99999999:
+		# The minute closes when a slice reached its end (a float residue under 1e-12 minutes) or when the phase would
+		# pass the saved range (0.999999999). It once closed within 1e-8 minutes of the end, so a step ending up to
+		# 6e-7 s before the minute moved the Site clock that much ahead; with every window counted (above) nothing took
+		# it back, the Site ran ahead of the Region grid and a grid-aligned step then overran the minute the shared
+		# point checks (prepare_shared_runtime_work_prefix, INVALID_INTERVAL on every frame: the world stood still, found
+		# 2026-11-28, leader start in 溪前鎮 at x16, day 5). A step ending earlier inside the minute's last 6e-7 s keeps its
+		# phase; the next step's minute limit cuts the rest (_region_owner_action_limit) and closes it exactly.
+		if float(data.site.phase) >= 1.0 - 0.000000000001 or float(data.site.phase) > 0.999999999:
 			data.site["phase"] = 0.0
 			data.site["minute"] = int(data.site.minute) + 1
 			if checked_point: checked_clock["minute_due"] = true
@@ -4509,7 +4550,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	var water: Dictionary = data.site.water_status.get(key, {})
 	if not service.is_empty():
 		water = water.get("slots", {}).get(str(slot_id), {})
-	var demand := float(water.get("demand", water_demand(feature)))
+	var demand := float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var water_ratio := 1.0
 	if demand > 0.0:
 		water_ratio = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0)
@@ -4521,11 +4562,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		return
 	var productivity := 1.0
 	if kind in FARM_KINDS:
-		var fertility_total := 0.0
-		var served: Array = feature.cells if service.is_empty() else service
-		for index: int in served:
-			fertility_total += float(data.fertility[index])
-		productivity = clampf(fertility_total / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+		productivity = farm_productivity(data, feature, feature.cells if service.is_empty() else service)
 	elif kind in PASTURE_KINDS and not service.is_empty():
 		var total_service := 0
 		for slot: Dictionary in _operating_slots(data, key, feature):
@@ -4974,15 +5011,18 @@ static func house_layout(data: TerrainData, key: String) -> Dictionary:
 	if str(feature.get("kind", "")) != "house" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION:
 		return fail("NO_HOUSE", "需已知住宅布局")
 	var entrance := int(feature.get("entrance", -1))
+	# The door cells and the other buildings' entrances are read once (2026-11-27: a town's housing attendance spent 2 ms
+	# a frame rescanning every feature for every door cell; the same cells come out).
+	var doors: Array[Dictionary] = _building_entrances(data, feature.cells, int(feature.quarter))
+	var other_entrances := {}
+	for other_key: String in data.site.features:
+		if other_key != key: other_entrances[int(data.site.features[other_key].get("entrance", -1))] = true
 	var candidates := {}
-	for pair: Dictionary in _building_entrances(data, feature.cells, int(feature.quarter)):
+	for pair: Dictionary in doors:
 		var cell: Vector2i = pair.cell
 		var index := data.index(cell)
 		if not data.is_walkable(cell) or data.effective_height(cell) != int(feature.level) or int(data.feature_at[index]) != 0 or index == int(data.site.depot_cell): continue
-		var occupied_entry := false
-		for other_key: String in data.site.features:
-			if other_key != key and int(data.site.features[other_key].get("entrance", -1)) == index: occupied_entry = true; break
-		if not occupied_entry: candidates[index] = true
+		if not other_entrances.has(index): candidates[index] = true
 	var connected := {}
 	var pending: Array[int] = []
 	if candidates.has(entrance): connected[entrance] = true; pending.append(entrance)
@@ -4998,7 +5038,7 @@ static func house_layout(data: TerrainData, key: String) -> Dictionary:
 			connected[index] = true
 			pending.append(index)
 	var slots: Array[int] = []
-	for pair: Dictionary in _building_entrances(data, feature.cells, int(feature.quarter)):
+	for pair: Dictionary in doors:
 		var index := data.index(pair.cell)
 		if index != entrance and connected.has(index): slots.append(index)
 	return ok("住宅門前休息布局", {"id": key, "complete": str(feature.get("stage", "")) == "complete", "entry": data.cell_from_index(entrance), "slots": slots, "capacity": slots.size()})
@@ -7011,7 +7051,9 @@ static func _technology_actions(data: TerrainData) -> Variant:
 static func _technology_policy(data: TerrainData) -> Dictionary:
 	if not data.site.has("world_pin"): return TechnologyPolicy.new_policy()
 	var pin: Variant = data.site.world_pin
-	if not pin is Dictionary or not Technology.integer(pin.get("format"), 1, 2): return fail("INVALID_TECH_POLICY", "原固定世界政策容器失效")
+	# An author-map world (format 3, P5B) keeps the policy of a new world (format 2); before 2026-11-26 it was refused here
+	# and nobody in a scenario world could work on a live Site.
+	if not pin is Dictionary or not Technology.integer(pin.get("format"), 1, 3): return fail("INVALID_TECH_POLICY", "原固定世界政策容器失效")
 	return TechnologyPolicy.candidate(pin, int(pin.format) == 1)
 
 static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int = 0, occupied: Callable = Callable(), checked_prefix: Dictionary = {}) -> Dictionary:
@@ -7141,7 +7183,7 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	var service: Array = []
 	var slot := int(task.get("work_slot", -1))
 	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and (kind in FARM_KINDS + PASTURE_KINDS or feature.has("technology_shipyard_work")):
-		var slots := feature_work_slots(data, feature)
+		var slots := _preflight_work_slots(data, feature)
 		if slot < 0 or slot >= slots.size(): return fail("UNREACHABLE")
 		expected = int(slots[slot].cell)
 		service = slots[slot].service_cells
@@ -7199,7 +7241,7 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"): return fail("BUSY")
 	if not definition.has("cycle"): return fail("NO_TARGET")
 	if feature.has("species") and (int(feature.residents) > grazing_capacity(data, feature.cells) or int(feature.residents) < (2 if str(feature.species) == "horse" else 1)): return fail("NO_RESIDENTS")
-	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
+	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity, person) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
 	if not recipe_guard.ok: return recipe_guard
 	if operating_projection_only:
 		var projection_inputs: Dictionary = _production_input_preflight(data, feature, key, definition, cargo, carry_limit)
@@ -7207,16 +7249,15 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 		return ok("只准原Camp供水投影；仍須完整含水預檢", {"operating_slot_projection": true})
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {})
 	if not service.is_empty(): water = water.get("slots", {}).get(str(slot), {})
-	var demand := float(water.get("demand", water_demand(feature)))
+	# The default is computed only when the status has no demand (a .get default is evaluated on every call; 2026-11-28).
+	var demand := float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var ratio := clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0) if demand > 0.0 else 1.0
 	if ratio <= 0.0: return fail("NO_WATER")
 	var productivity := 1.0
 	if kind in FARM_KINDS:
-		var fertility := 0.0
 		var served: Array = feature.cells if service.is_empty() else service
 		if served.is_empty(): return fail("NO_WORK_CELLS")
-		for index: int in served: fertility += float(data.fertility[index])
-		productivity = clampf(fertility / float(served.size()) / 60.0, 0.25, 1.5) * float(served.size())
+		productivity = farm_productivity(data, feature, served)
 	elif kind in PASTURE_KINDS and not service.is_empty():
 		var total_service := 0
 		for original_slot: Dictionary in _operating_slots(data, key, feature): total_service += original_slot.service_cells.size()
@@ -7541,10 +7582,12 @@ static func _technology_payment_source(data: TerrainData, feature: Dictionary, k
 # REPLACE pay_feature_inputs body; the optional task argument preserves callers.
 
 
-static func technology_batch_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, original_identity: int = 0) -> Dictionary:
+## `known_operator`: the caller's own actions._technology_operator_for_task(task, original_identity) from this same
+## preflight, nothing written since (2026-11-28, town frame time: the work preflight looked the operator up twice).
+static func technology_batch_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, original_identity: int = 0, known_operator: Variant = null) -> Dictionary:
 	var token: Dictionary = feature.get("tech_trial", {})
 	var actions: Variant = _technology_actions(data)
-	var person: Dictionary = actions._technology_operator_for_task(task, original_identity) if actions != null else {}
+	var person: Dictionary = known_operator if known_operator is Dictionary else actions._technology_operator_for_task(task, original_identity) if actions != null else {}
 	if not token.is_empty():
 		if person.is_empty() or int(person.person_id) != int(token.person.person_id) or feature.get("tech_batch", {}).get("token", token) != token: return fail("WAITING", "原具名試作者未在本工位；本項目整批暫停")
 		if actions == null or not actions.has_method("technology_phase_active_guard"): return fail("UNSUPPORTED")
@@ -7670,7 +7713,7 @@ static func prepare_feature_output(data: TerrainData, feature: Dictionary, worke
 		if receipt.is_empty(): return fail("STALE_SOURCE", "原農事試驗須有真原paid/output完成收據")
 		protocol_prepared = prepare_farm_trial_protocol_output(data, key, feature, worker, person, receipt)
 		if not protocol_prepared.ok: return protocol_prepared
-	return ok("", {"feature_key": key, "farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
+	return ok("", {"feature_key": key, "operator": original_identity, "farm_protocol": protocol_prepared.packet, "state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
 		"cargo_ref": cargo, "cargo_before": cargo.duplicate(true), "output": output.duplicate(true), "products": item_prepared,
 		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared, "public_operation": public_prepared, "military_operation": military_prepared, "settlement_operation": processing_prepared})
 
@@ -7682,8 +7725,11 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	if deposit.is_empty():
 		# 軍餉與稅收 P2: a settlement building's batch pays its production tax as it is published (only with a levy).
 		var kept: Dictionary = prepared.output
+		# 產出三成歸戶 (civilian plan §4.4): a household working its own main job keeps its share of the food first.
+		if data.site.get("settlement") is Dictionary and int(data.site.settlement.get("meals", 0)) == 1:
+			kept = (load("res://scripts/terrain_lab/site_resident_life.gd") as Script).call("share_batch", data.site, str(prepared.get("feature_key", "")), int(prepared.get("operator", 0)), kept)
 		if data.site.has("finance") and not str(prepared.get("feature_key", "")).is_empty():
-			kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, str(prepared.feature_key), prepared.feature_ref, prepared.output)
+			kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, str(prepared.feature_key), prepared.feature_ref, kept)
 		add_items(prepared.cargo_ref, kept)
 	else:
 		add_items(deposit.cargo, prepared.output)
@@ -10699,7 +10745,7 @@ static func _farm_trial_protocol_capture_paid(data: TerrainData, key: String, fe
 
 static func _farm_trial_protocol_conditions(data: TerrainData, key: String, feature: Dictionary, slot: int) -> Dictionary:
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {}).get("slots", {}).get(str(slot), {})
-	var demand: float = float(water.get("demand", water_demand(feature)))
+	var demand: float = float(water["demand"]) if water.has("demand") else water_demand(feature)
 	var ratio: float = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0) if demand > 0.0 else 1.0
 	var soil: Array[Dictionary] = []
 	for cell: int in feature_work_slots(data, feature)[slot].service_cells: soil.append({"cell": cell, "fertility": float(data.fertility[cell])})
@@ -14158,6 +14204,7 @@ static func settlement_food_paid_source_candidate(data: TerrainData, token: Dict
 static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	assert(prepared.ok and not prepared.published and is_same(prepared.data.site, prepared.site))
 	assert(is_equal_approx(float(prepared.unit.get(prepared.field, 0.0)), float(prepared.prior_progress)))
+	var stage_before: Variant = prepared.target.get("stage") if prepared.target is Dictionary else null
 	if not prepared.payment.is_empty():
 		assert(int(prepared.payment.holder.version) == int(prepared.payment.version))
 		add_items(prepared.payment.cargo, prepared.payment.cost, -1)
@@ -14185,6 +14232,9 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	if not is_same(prepared.task, prepared.site.get("manual", {})):
 		prepared.task.status = "原已核定工作前缀已提交；完成端点待原当前资格验收" if prepared.deferred_endpoint else "原工作者施工中"
 	prepared.data.environment_revision += 1
+	# Only the progress or production counter moved (see TerrainData.environment_quiet_revision).
+	var stage_after: Variant = prepared.target.get("stage") if prepared.target is Dictionary else null
+	if prepared.payment.is_empty() and prepared.repair.is_empty() and stage_before == stage_after: prepared.data.environment_quiet_revision += 1
 	prepared["published"] = true
 	_credit_skill_work(prepared)
 

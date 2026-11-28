@@ -1,5 +1,6 @@
 extends RefCounted
-## 土匪 B4d-3c (bandit spec §5.1, §11): raids on another Site. The chief knows another Site's strength only from what he
+## 土匪 B4d-3c (bandit spec §5.1, §11): raids on another Site. The chief knows the settlements within REACH_SITES and their
+## rough strength (Nekki 2026-11-25 A, region_bandit_formula.gd); of others he knows only what he
 ## or someone who told him saw there (RegionSiteStrength receipts, object = that Site, value.settlement_owner). A known
 ## settlement of another faction within the band's reach is a raid target with the strength seen there of its owner's
 ## faction. Raiding it sends every multi-person team of the band from the lair Site toward it on its captain's word
@@ -9,6 +10,7 @@ const Bandit = preload("res://scripts/region_lab/region_bandit.gd")
 const Strength = preload("res://scripts/region_lab/region_site_strength.gd")
 const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Formula = preload("res://scripts/region_lab/region_bandit_formula.gd")
 
 ## Settlements of other Sites the chief knows, as raid targets: [{kind "settlement", id, site_id, strength, faction, far}].
 static func targets(controller: Variant, band: int, chief: int) -> Array:
@@ -17,12 +19,17 @@ static func targets(controller: Variant, band: int, chief: int) -> Array:
 	var slot: Variant = controller.region_slot
 	var scope := str(lab.terrain.site.id)
 	var now := float(slot.control.logical_game_seconds)
+	var near := {}
+	for target: Dictionary in Formula.known_settlements(slot, band, scope):
+		if str(target.site_id) == scope: continue # this Site's own settlement: BanditDay.raid_facts
+		near[str(target.site_id)] = true
+		result.append(target)
 	var known := RegionAI.view(slot.region_registry(), chief, now, scope, RegionAI.person_ref(lab.terrain.site, chief))
 	var objects: Array = known.keys()
 	objects.sort()
 	for object: String in objects:
 		var receipt: Dictionary = known[object]
-		if receipt.get("observation_kind") != Strength.KIND or object == scope: continue
+		if receipt.get("observation_kind") != Strength.KIND or object == scope or near.has(object): continue
 		var owner := int(receipt.value.get("settlement_owner", -1))
 		if owner < 0 or owner == band: continue
 		var strength := float(int(receipt.value.get("factions", {}).get(str(owner), 0)))
@@ -62,6 +69,6 @@ static func raid(controller: Variant, band: int, target: Dictionary) -> Dictiona
 	if sent.is_empty(): return {"ok": false, "code": "NO_DEPARTURE", "refusals": refusals}
 	var registry: Dictionary = slot.control.faction_registry
 	var hotter := Bandit.set_heat(registry, band, Bandit.heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "raid"), float(slot.control.logical_game_seconds))
-	var saved: Dictionary = controller._commit_diplomacy(hotter, "") if hotter.ok else hotter
+	var saved: Dictionary = controller.registry_saver()._commit_diplomacy(hotter, "") if hotter.ok else hotter
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("土匪出寨劫掠")
 	return {"ok": true, "sent": sent, "heat_saved": bool(saved.get("ok", false)), "refusals": refusals}

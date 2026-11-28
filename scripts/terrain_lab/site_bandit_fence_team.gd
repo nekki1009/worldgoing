@@ -182,7 +182,7 @@ static func send(controller: Variant, band: int, target: Dictionary) -> Dictiona
 		return _done(added)
 	# The hoard's change, the loads and the mission are saved first: the departure's preparation captures the Site its
 	# commit binds (as a caravan's reservation, SiteCaravan._dispatch).
-	var saved: Dictionary = controller._commit_diplomacy(_hoard_change(registry, band, goods, -1, 0, now), "")
+	var saved: Dictionary = controller.commit_registry(_hoard_change(registry, band, goods, -1, 0, now))
 	if not saved.ok:
 		restore_ledger.call()
 		unload.call()
@@ -190,7 +190,7 @@ static func send(controller: Variant, band: int, target: Dictionary) -> Dictiona
 	var undo := func(reason: Dictionary) -> Dictionary:
 		restore_ledger.call()
 		unload.call()
-		var back: Dictionary = controller._commit_diplomacy(_hoard_change(slot.control.faction_registry, band, goods, 1, 0, float(slot.control.logical_game_seconds)), "")
+		var back: Dictionary = controller.commit_registry(_hoard_change(slot.control.faction_registry, band, goods, 1, 0, float(slot.control.logical_game_seconds)))
 		reason["restored"] = bool(back.get("ok", false))
 		return _done(reason)
 	var here: Dictionary = slot._coordinate(lab.terrain)
@@ -325,7 +325,7 @@ static func home(controller: Variant, band: int) -> Dictionary:
 		var sold: bool = not mission.get("sold", {}).is_empty()
 		var ledger_before: Dictionary = slot.region_registry().get("caravans", {}).duplicate(true)
 		Caravans.remove(slot.region_registry(), int(mission.id))
-		var saved: Dictionary = controller._commit_diplomacy(_hoard_change(slot.control.faction_registry, band, returned, 1, 1 if sold else 0, float(slot.control.logical_game_seconds)), "")
+		var saved: Dictionary = controller.commit_registry(_hoard_change(slot.control.faction_registry, band, returned, 1, 1 if sold else 0, float(slot.control.logical_game_seconds)))
 		if not saved.ok:
 			slot.region_registry()["caravans"] = ledger_before
 			for step: Dictionary in taken:

@@ -48,6 +48,11 @@ func _daily_settlement() -> bool:
 	var founded: Dictionary = _as(nation_head, func() -> Dictionary: return DailySettlement.found(lab, nation_head, cells, {"layout_version": 1, "quarter": 0}, controller.reserves_cell, "商隊村"))
 	if not _check(founded.get("ok", false), "the head founds a settlement", founded): return false
 	if not _check(_daily_complete(str(founded.feature)) and int(DailySettlement.record(data).get("level", 0)) >= 1, "its centre is built: a level 1 settlement", DailySettlement.record(data).get("level")): return false
+	# This remote-Nation fixture's Site clock runs ahead of its world (its Lab ran before the world began), which no real
+	# world has (a Site joins at the world's time). A fed settlement's team ledgers would carry that Site clock into the
+	# world-clock road upkeep (INVALID_SUSTAIN). Feeding is not under test here: since Nekki turned it on for founded
+	# settlements (2026-11-26), this one is left unfed.
+	data.site.settlement.erase("meals")
 	var key := ""
 	var centre := Vector2i(head.cell)
 	for radius: int in range(4, 12, 2):

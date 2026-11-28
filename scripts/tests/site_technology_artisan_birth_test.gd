@@ -83,8 +83,16 @@ func _check_formal_menu_entry_selection() -> void:
 	root.add_child(menu)
 	var choice := menu.find_child("InitialArtisanScenario", true, false) as OptionButton
 	# Nekki 2026-11-03: the menu starts with cadres, not artisans; artisan scenarios stay reachable through the Entry API.
-	_check(choice != null and choice.item_count == 1, "Actual original New Game page exposes only the cadre start")
-	_check(str(choice.get_item_metadata(choice.selected)) == "", "The menu's only start is the fresh cadre birth (no artisan scenario)")
+	# 示範劇本 (2026-11-22): packaged scenarios follow the cadre start in the same list; none is an artisan scenario.
+	var packaged_only := choice != null and choice.item_count >= 1 and str(choice.get_item_metadata(0)) == ""
+	if packaged_only:
+		for index: int in range(1, choice.item_count): packaged_only = packaged_only and str(choice.get_item_metadata(index)).begins_with("pkg:")
+	_check(packaged_only, "Actual original New Game page exposes the cadre start, then only packaged scenarios")
+	_check(str(choice.get_item_metadata(choice.selected)) == "", "The menu starts on the fresh cadre birth (no artisan scenario)")
+	# The scenario choice refreshes the confirm page's summary (2026-11-22), which reads the drafted character as the
+	# menu's own Next button writes it.
+	Entry.draft["character"] = menu.call("character_data")
+	Entry.draft["family"] = menu.call("family_data")
 	choice.item_selected.emit(0)
 	_check(Entry.draft.get("initial_scenario_id") == "", "Original scene-change draft carries the cadre start")
 	var character := {"test_payload": "kept by original request"}

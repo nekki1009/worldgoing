@@ -53,7 +53,10 @@ static var _table_memo: Dictionary = {} # key|cover|effective -> table Dictionar
 ## (manifest + resource hashes, rule revisions, author identity) plus the Site.
 ## Entries are never handed out; every caller receives a fresh deep copy because
 ## SiteStore.load_site mutates the TerrainData it is given.
-const FIXED_BASE_MEMO_LIMIT := 16
+## 開局速度 (2026-11-27): a scenario birth touches its 46 Sites and their neighbours, about 120, three or four times each
+## (people count, companion population, companion check, every load). At 16 the order evicted each before its next use
+## and every use rebuilt it from the tiles (about half a second a Site).
+const FIXED_BASE_MEMO_LIMIT := 160
 static var _fixed_base_memo: Dictionary = {} # key -> make_terrain_data result (private copy)
 static var _fixed_base_memo_order: Array[String] = []
 const _PACKED_TYPES := [TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY,

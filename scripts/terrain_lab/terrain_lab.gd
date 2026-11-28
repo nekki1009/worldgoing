@@ -6,6 +6,8 @@ const ResidentWork = preload("res://scripts/terrain_lab/site_resident_work.gd")
 const ResidentMood = preload("res://scripts/terrain_lab/site_resident_mood.gd") # 平民 C6: grievance and slow work offline.
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1e: off-screen days train and speed work.
 const CoarseSocial = preload("res://scripts/terrain_lab/site_social.gd")
+const CaptiveAtlasSeed = preload("res://scripts/terrain_lab/captive_atlas_seed.gd") # Captive looks baked when the game was packed.
+const EquipmentAtlasReader = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd") # Read only: its bake in progress.
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
@@ -21,6 +23,9 @@ const ACTION_FRAME_BUDGET_USEC := 20000 # Leave rendering time while bounded cat
 ## catch-up still reports PENDING at once; each continuation runs a 250 ms slice.
 const COLD_REPLAY_CONTINUE_BUDGET_USEC := 250000
 const ACTION_TIME_EPSILON := 0.000000000001
+## A travelling party against the world clock: the party is carried to the interval's end, the clock is the sum of the steps and
+## may stand a last digit away (4.5e-13 at one game hour, 1.2e-10 after ten days; found 2026-11-25). As every other party check.
+const PARTY_CLOCK_EPSILON := 0.00000001
 ## Accumulated minute-phase drift admitted at a step's end (action seconds); see _region_owner_action_limit.
 const PHASE_BOUNDARY_TOLERANCE := 0.00000001
 const SIMULATION_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
@@ -63,6 +68,7 @@ var _fire_replay_epoch := ""
 var _fire_replay_keep_tactical := false
 var _fire_replay_segments: Array[Dictionary] = []
 var _fire_replay_boundaries: Array = [] # Per segment: the live action clock values A_0..A_n.
+var _fire_replay_averaged: Dictionary = {} # Segment index -> true: joined quiet rows standing on their average width.
 var _fire_replay_boundaries_unrecoverable := false # Legacy rows: exact path only, no quiet prefix.
 var _region_quiet_formal_steps: Array = [] # Live boundaries one quiet prefix replaces.
 var _fire_replay_segment_index := 0
@@ -225,6 +231,9 @@ func _region_original_ready() -> void:
 		set_meta(&"fire_lab_fixture", {"version": FIRE_LAB_FIXTURE_VERSION, "seed": 12345})
 		set_meta(&"fire_lab_boot", true)
 	crowd_startup_requested = not restore_only and CrowdSiteScript.requested()
+	# 2026-11-28 (Nekki 「好」): the captive looks a shipped scenario needs are copied into the user atlas cache before any
+	# Site opens, so the crowd does not bake them while the world is played. Once a process; headless never draws them.
+	if not restore_only and DisplayServer.get_name() != "headless": CaptiveAtlasSeed.seed()
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if not restore_only: RenderingServer.set_default_clear_color(Color("1d242b"))
 	renderer = TerrainRenderer.new()
@@ -1651,6 +1660,7 @@ func _action_elapsed_input(delta: float) -> float:
 func _process(delta: float) -> void:
 	_audio_exchange_prune()
 	if restore_only: return
+	_atlas_bake_pause()
 	var process_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	delta = _action_elapsed_input(delta)
 	_combat_profile_stage("process_input", process_started)
@@ -1671,6 +1681,8 @@ func _process(delta: float) -> void:
 		_combat_profile_stage("process_total", process_started)
 		return
 	var finish_started := Time.get_ticks_usec() if combat_profile_enabled else 0
+	# After every step of the frame (each path advances its ledgers and the Site clock by then); not while a point waits.
+	if site_controller != null and _region_point_pending.is_empty() and not site_controller.region_operation_pending(): _reanchor_supply_ledgers()
 	if site_controller != null:
 		site_controller.finish_tick()
 	_combat_profile_stage("finish_tick_outer", finish_started)
@@ -1688,6 +1700,48 @@ func _process(delta: float) -> void:
 		_update_info()
 	_combat_profile_stage("update_info_outer", info_started)
 	_combat_profile_stage("process_total", process_started)
+
+## Nekki 2026-11-28: a look baked while the world is played (a new equipment combination, or a scenario without a
+## shipped seed) pauses the game with 「圖集烘焙中」 and resumes when the bake ends, instead of slowing every frame for a
+## minute and freezing at its end. The bake itself runs on frame signals and finishes while the tree is paused. A pause
+## the player made himself is left as it is; a player who resumes during the bake is paused again.
+var _atlas_pause: Dictionary = {}
+
+func _atlas_bake_pause() -> void:
+	var baking := is_instance_valid(EquipmentAtlasReader._preparation)
+	if baking:
+		if DisplayServer.get_name() == "headless" or site_controller == null or terrain == null or terrain.site.is_empty() or not site_controller._boot_request.is_empty(): return
+		if _atlas_pause.is_empty():
+			_atlas_pause = {"owned": not bool(terrain.site.get("paused", false)), "overlay": _atlas_bake_overlay()}
+			print("ATLAS_BAKE_PAUSE start: the game pauses while a look is baked (already paused: %s)" % str(not bool(_atlas_pause.owned)))
+		if bool(_atlas_pause.owned) and not bool(terrain.site.get("paused", false)): site_controller.toggle_pause()
+		return
+	if _atlas_pause.is_empty(): return
+	if bool(_atlas_pause.owned) and terrain != null and not terrain.site.is_empty() and bool(terrain.site.get("paused", false)) and site_controller != null: site_controller.toggle_pause()
+	print("ATLAS_BAKE_PAUSE end: resumed %s" % str(_atlas_pause.owned))
+	if is_instance_valid(_atlas_pause.get("overlay")): _atlas_pause.overlay.queue_free()
+	_atlas_pause = {}
+
+func atlas_bake_paused() -> bool:
+	return not _atlas_pause.is_empty()
+
+func _atlas_bake_overlay() -> CanvasLayer:
+	var layer := CanvasLayer.new()
+	layer.name = "AtlasBakeOverlay"
+	layer.layer = 120
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel := PanelContainer.new()
+	var label := Label.new()
+	label.text = "圖集烘焙中…\n新外觀第一次出現，烘好後自動繼續遊戲"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 22)
+	panel.add_child(label)
+	center.add_child(panel)
+	layer.add_child(center)
+	add_child(layer)
+	return layer
 
 func change_simulation_speed(direction: int) -> float:
 	if site_controller != null and site_controller.sleeping(): site_controller.wake_up("醒來") # the speed keys wake a sleeper
@@ -1852,6 +1906,12 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if bool(permit.get("cold_fire_active", false)): pre_step_combat_left = maxf(pre_step_combat_left, elapsed)
 	if _siege_tactical_active(): pre_step_combat_left = maxf(pre_step_combat_left, 10.0)
 	if fire_active_at_start: pre_step_combat_left = maxf(pre_step_combat_left, SiteRuntime.COMBAT_GRACE)
+	# The native crowd's combat clock is this Site's own countdown in every step (_native_combat_left). The joint Region
+	# interval's tactical share below is at most the interval's own width and shared by the whole world: handed to the
+	# native it left 0 at the end of a whole step, and the native ran the Site's combat mechanics (run fatigue, recovery,
+	# knockouts, bleeding, capture, morale) at the world rate, 60 times the rate decided for TCM (M2 A, M3 A; found
+	# 2026-11-24, run fatigue measured 0.1 against 0.001667 per game second). The share stays in the clock journal.
+	var native_combat_left := pre_step_combat_left
 	if region_callers:
 		region_request_slot = site_controller.region_slot
 		pre_prof = _combat_profile_stage("pre_misc", pre_prof)
@@ -1887,10 +1947,21 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			var early_limit: float = site_controller.Settlement.capture_interval_limit(terrain, early_sample, early_window)
 			if early_limit > ACTION_TIME_EPSILON and early_limit < early_window - ACTION_TIME_EPSILON:
 				elapsed = RegionSaveSlot.GameplayClock.action_for_game(early_limit, simulation_speed, minf(elapsed, pre_step_combat_left))
-		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
+		var ticket: Dictionary = _native_begin_preview_ticket
+		if not ticket.is_empty() and float(ticket.maximum) == elapsed and float(ticket.combat_begin) == native_combat_left and is_same(_native_begin_shared_window_prepared, ticket.result):
+			_native_begin_preview_ticket = {}
+			native_begin = ticket.result
+		else:
+			if not ticket.is_empty(): _clear_shared_work_step()
+			native_begin = _prepare_native_begin_shared_window(elapsed, native_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
 		elapsed = float(native_begin.action_seconds)
-		pre_step_combat_left = float(native_begin.combat_begin)
+		native_combat_left = float(native_begin.combat_begin)
+		# The journal's share takes a volley fired in this window as before; outside Region steps it is the one clock.
+		if region_callers or not fire_replay_interval.is_empty():
+			var volley: PackedFloat64Array = native_begin.ranged.preview
+			for offset: int in range(0, volley.size(), 10): pre_step_combat_left = maxf(pre_step_combat_left, float(volley[offset + 9]))
+		else: pre_step_combat_left = native_combat_left
 	shared_prof = _combat_profile_stage("shared_native_begin_prepare", shared_prof)
 	# Classify/clip before the first body/work mutation. All consumers below
 	# receive exactly the same accepted original action and game interval.
@@ -1937,7 +2008,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		var pending_game_seconds := float(window.pending)
 		var time_tolerance := maxf(0.00000001, pending_game_seconds * 0.000000001)
 		if completed_game_seconds - pending_game_seconds > time_tolerance:
-			return _region_preflight_failure(region_originals, SiteRuntime.fail("INVALID_TIME", "補算原步進超過固定目標"))
+			return _region_preflight_failure(region_originals, SiteRuntime.fail("INVALID_TIME", "補算原步進超過固定目標 %.15f > %.15f (%s)" % [completed_game_seconds, pending_game_seconds, str(terrain.site.get("id", ""))]))
 		completed_game_seconds = minf(completed_game_seconds, pending_game_seconds)
 	if formula_interval:
 		if not replaying or not _region_owner_interval_active or fire_replay_interval.is_empty(): return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_FORMULA_CONTRACT"))
@@ -1991,7 +2062,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if not replaying and not _shared_movement_prepared: _advance_movement_input()
 	_combat_profile_stage("movement_input", movement_started)
 	var combat_prof: int = Time.get_ticks_usec() if combat_profile_enabled else 0
-	_advance_combat(elapsed, pre_step_combat_left)
+	_advance_combat(elapsed, native_combat_left if not native_begin.is_empty() else pre_step_combat_left)
 	shared_prof = _combat_profile_stage("advance_combat", combat_prof)
 	_fatigue_work_seconds.clear()
 	fault = site_controller.original_step_fault_guard()
@@ -2070,8 +2141,11 @@ func _fire_replay_consume_step(result: Dictionary) -> void:
 ## Lab advances by action_end - action_begin. Rebuild the same values by the same
 ## sum from an exact live value (the Site watermark, then each row end). The
 ## rebuilt step must land bit-exactly on the row end; otherwise refuse.
-func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: float) -> Dictionary:
+## `averaged`: this replay is a long absence's (settled by day and hour steps), so a quiet row that compaction joined from
+## rows of other widths (RegionSaveSlot.compact_fire_journal) may stand on its average width; its ends are exact.
+func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: float, averaged: bool = false) -> Dictionary:
 	var result: Array = []
+	var joined := {}
 	var begin := start_action
 	for index: int in segments.size():
 		var segment: Dictionary = segments[index]
@@ -2091,12 +2165,33 @@ func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: fl
 				at += width
 				values.append(at)
 			if at != end: continue
-			if not found.is_empty() and found != values: return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "ambiguous width")
+			if not found.is_empty() and found != values:
+				if averaged: continue # the live width found first stands
+				return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "ambiguous width")
 			found = values
+		if found.is_empty() and averaged and float(segment.get("tactical_seconds", 0.0)) == 0.0:
+			for step: int in steps + 1: found.append(begin + (end - begin) * float(step) / float(steps))
+			found[0] = begin
+			found[steps] = end
+			joined[index] = true
 		if found.is_empty(): return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "no live width reproduces the row end")
 		result.append(found)
 		begin = end
-	return SiteRuntime.ok("", {"boundaries": result})
+	return SiteRuntime.ok("", {"boundaries": result, "averaged": joined})
+
+## Neighbouring quiet segments (no tactical time, the same speed) that end before `before_game`, joined.
+static func _join_quiet_segments(segments: Array[Dictionary], before_game: float) -> Array[Dictionary]:
+	var joined: Array[Dictionary] = []
+	for segment: Dictionary in segments:
+		var last: Dictionary = joined.back() if not joined.is_empty() else {}
+		if not last.is_empty() and float(segment.game_end) <= before_game and float(last.tactical_seconds) == 0.0 and float(segment.tactical_seconds) == 0.0 \
+				and float(last.scale) == float(segment.scale):
+			last["last_sequence"] = int(segment.last_sequence)
+			last["action_end"] = float(segment.action_end)
+			last["game_end"] = float(segment.game_end)
+			last["steps"] = int(last.steps) + int(segment.steps)
+		else: joined.append(segment.duplicate())
+	return joined
 
 ## One exact replay step. A formal replay reproduces the live cold owner bit for
 ## bit, and live drives that owner by advance_region_cold_stages: the same original
@@ -2104,8 +2199,16 @@ func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: fl
 ## boundary the interval's clock width overshoots by ulps). It keeps this replay's
 ## own target so pending time is still measured. Every other replay is unchanged.
 func _fire_replay_exact_step(action_step: float, target: float, interval: Dictionary) -> Dictionary:
+	# A joined quiet row has no live steps to be reproduced: its steps replay as any cold step does, cut where a person's work
+	# or fatigue ends (the formal path below refuses a step it would have to cut).
 	if _region_cold_formal.is_empty() or interval.is_empty():
 		return _advance_original_shared_step(action_step, target, interval)
+	if _fire_replay_averaged.has(_fire_replay_segment_index):
+		var plain := _advance_original_shared_step(action_step, target, interval)
+		if plain.get("ok", false) and plain.get("completed", false) and not _region_point_pending.is_empty():
+			var closed := consume_region_point(false)
+			if not closed.get("ok", false) or not closed.get("complete", false): return closed
+		return plain
 	var guarded := _region_original_interval_guard(interval)
 	if not guarded.ok: return guarded
 	var elapsed := float(interval.action_end) - float(interval.action_begin)
@@ -2113,7 +2216,11 @@ func _fire_replay_exact_step(action_step: float, target: float, interval: Dictio
 		return SiteRuntime.fail("REGION_OWNER_UNCLIPPED_ENDPOINT")
 	_region_owner_interval_active = true
 	_region_formula_active = false # advance_region_cold_stages: suppress_melee false.
-	var result := _advance_original_shared_step(elapsed, target, interval, not (crowd_site != null and crowd_site.active))
+	# A native step that work or fatigue cuts inside the interval goes on to the interval's end, as live's does: the next
+	# piece is no interval of its own, and the guard above refused it (REGION_OWNER_FIRE_SOURCE; found 2026-11-25, a
+	# settlement whose residents work its fields could not be opened after a day).
+	var native: bool = crowd_site != null and crowd_site.active
+	var result := _advance_native_region_interval(interval, target) if native else _advance_original_shared_step(elapsed, target, interval, true)
 	_region_owner_interval_active = false
 	# Live then finishes this cold owner's point with consume_region_point(false)
 	# (_finish_original_cold_region_points); the replay finishes it the same way.
@@ -2197,7 +2304,14 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		_region_formal_duty_due(_replay_target - pending)
 		var fire_interval := _next_fire_replay_interval() if _fire_replay_tracking else {}
 		if _fire_replay_tracking and fire_interval.is_empty():
-			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒，但原火攻 journal 已耗盡")
+			# The journal is used up with the Site clock within the clock agreement of its target (the Site's minute and phase
+			# accumulators drift from the world clock): the replay is complete. Found 2026-11-26: 1e-9 s was left at 90120 s,
+			# one step partition in a few (parallel runs only), and the raided village could not be opened.
+			if pending <= _replay_clock_agreement_tolerance():
+				pending = 0.0
+				break
+			var last_row: Dictionary = _fire_replay_segments.back() if not _fire_replay_segments.is_empty() else {}
+			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒 %.9f（目標 %.6f，Site %.6f），但原火攻 journal 已耗盡：%d 段，第 %d 段第 %d 步，末段 game %.6f..%.6f action %.6f..%.6f，cursor %.9f，partial %.9f" % [pending, _replay_target, SiteRuntime.now(terrain) * 60.0, _fire_replay_segments.size(), _fire_replay_segment_index, _fire_replay_segment_offset, float(last_row.get("game_begin", -1.0)), float(last_row.get("game_end", -1.0)), float(last_row.get("action_begin", -1.0)), float(last_row.get("action_end", -1.0)), fire_action_cursor, _fire_replay_partial_cursor])
 		# Recreate the world-wide tactical permit recorded by this original interval.
 		if _fire_replay_tracking:
 			SiteRuntime.start_combat(terrain.site, float(fire_interval.tactical_seconds))
@@ -2657,6 +2771,36 @@ func resolve_structure_change(result: Dictionary) -> void:
 		combat_movement_coordinator.request_occupancy_rebuild()
 	queue_redraw()
 
+const SustainLedger = preload("res://scripts/terrain_lab/site_sustain.gd")
+## The supply ledgers and the Site clock take the same accepted windows, but a ledger adds each to a large absolute time
+## (at + seconds: ~3e-11 s of rounding at 4e5 s, of one sign for long runs) and the minute clock closes a minute a step
+## ends within 1e-8 minutes of. Measured 2026-11-28 (溪前鎮 at x16, after the Site clock counted every window): the two
+## parted by ~1e-9 s an hour, 1.5e-7 s in five days; a year in one Site reaches the save's 1e-5 s (供養時鐘超前／落後
+## Site). So after a frame's steps a ledger within LEDGER_CLOCK_TOLERANCE of the Site clock reads it, as a Region
+## frame's ledgers read its frame clock (_region_advance_original_party_body). It never moves a ledger across a meal: the
+## new time keeps every cohort's meal_until at or after it and within its next meal (SiteSustain.validate), and stays in
+## the same meal period, else the ledger waits for the next frame.
+const LEDGER_CLOCK_TOLERANCE := 0.000001
+
+func _reanchor_supply_ledgers() -> void:
+	if terrain == null or terrain.site.is_empty(): return
+	var site_seconds := (float(terrain.site.get("minute", 0)) + float(terrain.site.get("phase", 0.0))) * 60.0
+	for supply: Variant in terrain.site.get("team_supply", {}).values():
+		if supply is Dictionary and supply.get("sustain") is Dictionary: _reanchor_supply_ledger(supply.sustain, site_seconds)
+	for personal: Variant in terrain.site.get("person_supply", {}).values():
+		if personal is Dictionary: _reanchor_supply_ledger(personal, site_seconds)
+
+static func _reanchor_supply_ledger(sustain: Dictionary, site_seconds: float) -> void:
+	var at: Variant = sustain.get("at")
+	if not (at is float or at is int) or float(at) == site_seconds or absf(float(at) - site_seconds) > LEDGER_CLOCK_TOLERANCE: return
+	if floorf(float(at) / SustainLedger.MEAL) != floorf(site_seconds / SustainLedger.MEAL): return
+	var next_meal: float = SustainLedger._next_meal(site_seconds)
+	for cohort: Variant in sustain.get("cohorts", []):
+		if not cohort is Dictionary: return
+		var until: Variant = cohort.get("meal_until")
+		if not (until is float or until is int) or float(until) < site_seconds or float(until) > next_meal + SustainLedger.EPS: return
+	sustain["at"] = site_seconds
+
 ## `seconds` is world game time (meals, supply, work, person actions); `tactical` the combat-mechanics clock for a
 ## present actor's own fatigue outside work (TCM M3). A negative `tactical` derives it from the Site's combat flag.
 func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false, tactical: float = -1.0) -> void:
@@ -2985,7 +3129,10 @@ func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary)
 		var teams: Array[TerrainArmy] = []
 		for team: TerrainArmy in combat_armies:
 			if team.combat_enabled and team.faction_id != faction: teams.append(team)
-		candidates[faction] = {"actors": actor_cells, "ships": ship_cells, "teams": teams, "probes": {}}
+		# 2026-11-27 (town frame time): with no awake actor, aboard body or combat team of another faction every probe below
+		# reads false; such a snapshot answers at once (a 37-person town spent 1.3 ms a frame probing 145 empty cells per worker).
+		candidates[faction] = {"actors": actor_cells, "ships": ship_cells, "teams": teams, "probes": {},
+			"quiet": actor_cells.is_empty() and ship_cells.is_empty() and teams.is_empty()}
 	if not candidates.has("flight_cells"):
 		var flight_cells := {}
 		for source: Node2D in _ranged_owners():
@@ -2996,6 +3143,7 @@ func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary)
 		candidates["flight_cells"] = flight_cells
 	if candidates.flight_cells.has(cell): return true
 	var snapshot: Dictionary = candidates[faction]
+	if bool(snapshot.get("quiet", false)): return false
 	var probes: Dictionary = snapshot.probes
 	for distance in range(9):
 		for dx in range(-distance, distance + 1):
@@ -6159,6 +6307,19 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			_cold_replay_lab.free()
 			_cold_replay_lab = null
 			return restored
+		# 時間與氣候 TC9: the world's climate switch reaches a Site at its bind through the slot's registry (bind_terrain). A
+		# replay Lab has no slot, so the body it completed lacked the switch, and the cold owner bound from that body added
+		# it to a hash-checked region snapshot: CORRUPT_REGION_SNAPSHOT inside the bind, retried silently every frame (found
+		# 2026-11-24: no NPC party could enter a scenario Site unopened since the birth). The replay Lab's own bound body
+		# takes the switch here, after its bind; the source body stays untouched (its selected bind proof reads it).
+		var world_registry: Variant = site_controller.region_slot.control.get("faction_registry", {}) if site_controller != null and site_controller.region_slot != null else {}
+		if _cold_replay_lab.terrain != null and not _cold_replay_lab.terrain.site.has("climate_enabled") and world_registry is Dictionary and world_registry.get("climate") is Dictionary and world_registry.climate.get("enabled") == true:
+			_cold_replay_lab.terrain.site["climate_enabled"] = true
+		# 公式遠征 (Nekki 2026-11-25 B): what bands took from this Site while nobody looked leaves it on the day of the raid
+		# (the hour steps of a long absence), the rest after its catch-up. The replay Lab's own body changes; the source body
+		# stays untouched.
+		if site_controller != null and site_controller.region_slot != null and _cold_replay_lab.terrain != null:
+			_cold_replay_lab._coarse_raids = SiteController.BanditFormula.debts(site_controller.region_slot, identity).rows
 		_cold_replay_lab._fire_replay_tracking = data.site.has("fire_settlement")
 		_cold_replay_lab._fire_replay_epoch = str(data.site.get("fire_settlement", {}).get("epoch", ""))
 		var indexed_fire_site: Dictionary = site_controller.region_slot.control.get("fire_clock", {}).get("index", {}).get(identity, {}) if _cold_replay_lab._fire_replay_tracking else {}
@@ -6170,11 +6331,19 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 				_cold_replay_lab = null
 				return SiteRuntime.fail("CORRUPT_FIRE_JOURNAL", "原火攻回放區間格式非法")
 			replay_segments.append(segment)
+		# A long absence is settled by hour steps: its quiet rows before the exact tail are joined, or every step would end at
+		# the next row (a scenario world writes about four thousand a game day; found 2026-11-25).
+		var long_absence: bool = data.site.has("fire_settlement") and target_seconds - float(data.site.fire_settlement.game_seconds) >= _coarse_min_seconds(data.site) + COARSE_TAIL_SECONDS
+		if long_absence: replay_segments = _join_quiet_segments(replay_segments, target_seconds - COARSE_TAIL_SECONDS)
 		_cold_replay_lab._fire_replay_segments = replay_segments
 		_cold_replay_lab._fire_replay_boundaries = []
+		_cold_replay_lab._fire_replay_averaged = {}
 		if _cold_replay_lab._fire_replay_tracking:
-			var built := _cold_replay_lab._fire_replay_build_boundaries(replay_segments, float(data.site.fire_settlement.action_seconds))
-			if built.ok: _cold_replay_lab._fire_replay_boundaries = built.boundaries
+			var built := _cold_replay_lab._fire_replay_build_boundaries(replay_segments, float(data.site.fire_settlement.action_seconds),
+				long_absence)
+			if built.ok:
+				_cold_replay_lab._fire_replay_boundaries = built.boundaries
+				_cold_replay_lab._fire_replay_averaged = built.averaged
 			# An older save's tolerance-merged rows: replay every step on the exact path.
 			elif str(built.get("code", "")) == "REPLAY_STEP_UNRECOVERABLE": _cold_replay_lab._fire_replay_boundaries_unrecoverable = true
 			else:
@@ -6187,6 +6356,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		_cold_replay_lab._fire_replay_end_sequence = int(fire_replay.get("to_sequence", -1))
 		_cold_replay_lab._fire_replay_end_action = float(site_controller.region_slot.control.get("fire_clock", {}).get("action_seconds", 0.0)) if _cold_replay_lab._fire_replay_tracking else 0.0
 		_cold_replay_lab._fire_replay_end_game = target_seconds if _cold_replay_lab._fire_replay_tracking else 0.0
+		_replay_trace("begin %s to %.4f" % [identity, target_seconds])
 		_cold_replay_id = identity
 		_cold_replay_target = target_seconds
 		_cold_replay_signature = signature
@@ -6200,6 +6370,8 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	if advanced.ok and str(advanced.status) == "PENDING":
 		return {"ok": false, "code": "PENDING", "message": "原地點補算續作中；旅程尚未提交",
 			"pending": advanced.pending, "target": target_seconds, "site_id": identity, "source_sha256": signature, "cold_replay": cold_receipt}
+	if not advanced.ok: _replay_trace("failed %s %s" % [identity, JSON.stringify(advanced).left(700)])
+	elif str(advanced.status) != "PENDING": _replay_trace("done %s %s" % [identity, JSON.stringify(cold_receipt).left(250)])
 	if not advanced.ok:
 		if str(advanced.get("code", "")) != "PENDING":
 			_cold_replay_lab.free()
@@ -6209,6 +6381,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 			_cold_replay_signature = ""
 		return advanced
 	var completed_data: TerrainData = advanced.data
+	if site_controller != null and site_controller.region_slot != null: SiteController.BanditFormula.leave_news(site_controller.region_slot, identity)
 	# A crowd replay ran its native World; the completed candidate carries that World's capture, as a crowd checkpoint
 	# writes it (capture_region_checkpoint), not the section it was loaded from (2026-11-08).
 	if _cold_replay_lab.crowd_site != null and _cold_replay_lab.crowd_site.active and completed_data == _cold_replay_lab.terrain:
@@ -6233,7 +6406,15 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 	_cold_replay_signature = ""
 	return SiteRuntime.ok("冷地點已沿原步進結算", {"data": completed_data, "cold_replay": cold_receipt})
 
+## `--replay-trace` (a test's user argument) prints every catch-up of an unopened Site: its begin, its end, its refusal. A
+## bind that fails is tried again in silence, frame after frame; this shows it.
+static var _replay_traced := -1
+static func _replay_trace(text: String) -> void:
+	if _replay_traced < 0: _replay_traced = int("--replay-trace" in OS.get_cmdline_user_args())
+	if _replay_traced == 1: print("REPLAY_TRACE %d ms %s" % [Time.get_ticks_msec(), text])
+
 func cancel_cold_site_replay(source_sha256: String) -> Dictionary:
+	_replay_trace("cancel %s %s" % [_cold_replay_id, str(get_stack().slice(1, 4))])
 	# Only the original pending transaction may retire its uncommitted scene.
 	# Input Site/committed files/arriving original crew were never modified.
 	if not is_instance_valid(_cold_replay_lab): return SiteRuntime.ok()
@@ -8678,7 +8859,15 @@ var _shared_work_pools_committed := false
 var _shared_movement_prepared := false
 var _shared_runtime_consumed: Dictionary = {}
 
+## 2026-11-27 (town frame time): the joint Region interval previews the active crowd Site's native begin window to learn
+## how far the step may go, then the step prepared the same window again (a 37-person town spent 24 + 20 ms a frame).
+## A preview that did not narrow the interval now leaves its prepared window in place with this ticket {maximum,
+## combat_begin, result}; the step takes it when it asks for the same maximum and combat begin, and otherwise clears it
+## and prepares as before. Every clear drops the ticket.
+var _native_begin_preview_ticket: Dictionary = {}
+
 func _clear_shared_work_step() -> void:
+	_native_begin_preview_ticket = {}
 	_gd_mesh_work_point = {}
 	if site_controller != null: site_controller.person_actions.finish_gd_contact_job_prefix()
 	if site_controller != null: site_controller.discard_checked_runtime_work_prefix()
@@ -9817,6 +10006,20 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if float(stop.at) < float(interval.game_end) - 0.0000001:
 			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
 	pmi = _combat_profile_stage("pmi_npc_preview", pmi)
+	# Perf (2026-11-28, a town at x16 headless): the live crowd Site's preview below keeps its prepared window for the step
+	# only when it did not narrow the interval. A minute boundary, a capture or a party stop had usually narrowed it
+	# already (most steps above x1), and the step prepared the same window again: 46 of 223 s a game day. With no GD
+	# original to prepare and retime, the interval is clipped to those limits first, so the preview is asked for the width
+	# the step asks for. The clipped interval is the one the late clip below makes from the same limit.
+	var gd_originals := false
+	for original: TerrainLab in originals: gd_originals = gd_originals or not (original.crowd_site != null and original.crowd_site.active)
+	if not gd_originals and limited < accepted_action - ACTION_TIME_EPSILON:
+		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
+		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
+		accepted_action = float(interval.action_end) - float(interval.action_begin)
+		accepted_game = SiteRuntime.game_seconds(accepted_action, float(interval.tactical_seconds)) * simulation_speed
+		limited = accepted_action
+	pmi = _combat_profile_stage("pmi_early_clip", pmi)
 	for original: TerrainLab in originals:
 		# A native crowd original prepares its own work inside its native begin window (as the live crowd does), never here.
 		# The live crowd Site's begin window still clips the joint interval (2026-11-08): it is previewed here and only
@@ -9824,16 +10027,22 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		# accepted joint interval. Cold crowd owners clip in their own replay pieces.
 		if original.crowd_site != null and original.crowd_site.active:
 			if original == self:
-				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, float(interval.tactical_seconds))
-				_clear_shared_work_step()
-				if not window.get("ok", false): return _region_preflight_failure(originals, window)
+				if not _native_begin_preview_ticket.is_empty(): _clear_shared_work_step() # a step that never used its preview
+				var combat_now := _native_combat_left()
+				var window: Dictionary = _prepare_native_begin_shared_window(accepted_action, combat_now)
+				if not window.get("ok", false):
+					_clear_shared_work_step()
+					return _region_preflight_failure(originals, window)
 				limited = minf(limited, float(window.action_seconds))
+				if float(window.action_seconds) == accepted_action: _native_begin_preview_ticket = {"maximum": accepted_action, "combat_begin": combat_now, "result": window}
+				else: _clear_shared_work_step()
 			continue
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)
 		limited = minf(limited, float(work.action_seconds))
 	pmi = _combat_profile_stage("pmi_work", pmi)
 	if limited <= ACTION_TIME_EPSILON: return _region_preflight_failure(originals, SiteRuntime.fail("REGION_ZERO_ENDPOINT_REQUIRED"))
+	if limited < accepted_action and not _native_begin_preview_ticket.is_empty(): _clear_shared_work_step()
 	if limited < accepted_action - ACTION_TIME_EPSILON:
 		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
 		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
@@ -9893,7 +10102,7 @@ func _region_original_interval_guard(interval: Dictionary) -> Dictionary:
 	if not _region_point_pending.is_empty() or not terrain.get_meta(&"fire_boundary", {}).is_empty(): return SiteRuntime.fail("REGION_ENDPOINT_PENDING")
 	if not is_finite(fire_action_cursor) or absf(fire_action_cursor - float(interval.action_begin)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "owner fire cursor %.12f, interval begin %.12f" % [fire_action_cursor, float(interval.action_begin)])
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
-	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
+	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE", "Site clock " + JSON.stringify({"interval": [interval.get("epoch"), interval.get("sequence"), interval.get("game_begin"), interval.get("action_begin")], "site": [fire.get("epoch"), fire.get("sequence"), fire.get("game_seconds"), fire.get("action_seconds")]}))
 	var fire_guard := _fire_step_guard()
 	if not fire_guard.ok: return fire_guard
 	var demand := minf(elapsed, maxf(0.0, float(terrain.site.get("combat_left", 0.0))))
@@ -9936,19 +10145,42 @@ func _advance_region_original_stages(interval: Dictionary, suppress_melee: bool)
 	result.complete = result.get("ok", false) and result.get("completed", false)
 	return result
 
+## The combat clock a crowd Site's native step starts with: the Site's own countdown (the native's contact marks put it
+## up, the Site clock counts it down), with the same siege and fire floors as _advance_original_shared_step.
+func _native_combat_left() -> float:
+	var left := float(terrain.site.get("combat_left", 0.0))
+	if _siege_tactical_active(): left = maxf(left, 10.0)
+	if _fire_activity(): left = maxf(left, SiteRuntime.COMBAT_GRACE)
+	return left
+
 ## A native crowd replay step can stop before the interval end (native begin query cadence, work boundary).
 ## The grid path resumes such a step from the fire cursor; this resumes the same interval until the cursor
 ## reaches action_end, so the fire settlement, cursor and watermark are stamped once, by the final piece.
-func _advance_native_region_interval(interval: Dictionary) -> Dictionary:
+## `target` is a replay's own fixed time (the interval's end for a live one).
+func _advance_native_region_interval(interval: Dictionary, target: float = -1.0) -> Dictionary:
 	var end_action := float(interval.action_end)
+	if target < 0.0: target = float(interval.game_end)
+	var last: Dictionary = {"ok": true, "completed": true}
 	for _round: int in range(4096):
 		var remaining := end_action - fire_action_cursor
-		if remaining <= ACTION_TIME_EPSILON: return {"ok": true, "completed": true}
+		if remaining <= ACTION_TIME_EPSILON: return last
 		var piece: Dictionary = interval.duplicate(true)
 		piece["action_begin"] = fire_action_cursor
 		piece["tactical_seconds"] = minf(float(interval.tactical_seconds), remaining)
-		var result: Dictionary = _advance_original_shared_step(remaining, float(interval.game_end), piece, false)
+		var result: Dictionary = _advance_original_shared_step(remaining, target, piece, false)
 		if not result.get("ok", false) or not result.get("completed", false): return result
+		last = result
+		# The step takes what is within 1e-8 action of the interval's end for the end: it has stamped the interval's fire
+		# settlement and its game time. The cursor lands there too, as a party frame's does; one more piece of 1e-10 action
+		# has no game time left to consume (INVALID_TIME on every later step; found 2026-11-26).
+		if not bool(result.get("fire_partial", false)):
+			if not _region_point_pending.is_empty() and _region_point_pending.has("fire_action_end") and absf(float(_region_point_pending.fire_action_end) - end_action) <= PHASE_BOUNDARY_TOLERANCE:
+				_region_point_pending.fire_action_end = end_action
+				var boundary: Variant = terrain.get_meta(&"fire_boundary", {})
+				if boundary is Dictionary and boundary.has("action_end") and absf(float(boundary.action_end) - end_action) <= PHASE_BOUNDARY_TOLERANCE: boundary["action_end"] = end_action
+			if absf(fire_action_cursor - end_action) <= PHASE_BOUNDARY_TOLERANCE:
+				fire_action_cursor = end_action
+				return last
 	return SiteRuntime.fail("REGION_CROWD_REPLAY_STALLED")
 
 var _region_owner_interval_active := false
@@ -10152,7 +10384,9 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 	var original: TerrainLab = slot._region_original_labs.get(site_id)
 	var restored_now := not is_instance_valid(original)
 	if restored_now:
+		SiteStore.recheck_assets = false
 		var opened: Dictionary = slot.open_site(coordinate, not travel_destination)
+		SiteStore.recheck_assets = true
 		if not opened.get("ok", false): return opened
 		var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 		if scene == null: return SiteRuntime.fail("MISSING_ORIGINAL_SCENE")
@@ -10509,7 +10743,12 @@ func _region_bootstrap_bind_child(child: TerrainLab, data: TerrainData, stage_cr
 	child.bind_terrain(data, staged)
 	var receipt: Dictionary = child._region_bind_receipt_value
 	child._region_owner_bind_tickets.erase(token)
-	if crowd_saved and (child.crowd_site == null or not child.crowd_site.active): return SiteRuntime.fail("REGION_CHILD_BIND_FAILED", "群眾原生內容未在冷補算中啟用")
+	if crowd_saved and (child.crowd_site == null or not child.crowd_site.active):
+		# The child's own refusal travels with the failure (2026-11-24: this one hid why an unopened scenario Site never bound).
+		var crowd_refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED", "群眾原生內容未在冷補算中啟用")
+		crowd_refused["cause"] = child.get_meta(&"last_refused_result", {})
+		crowd_refused["crowd_cause"] = child.crowd_site.last_event_error if child.crowd_site != null else {"code": "NO_CROWD_SITE"}
+		return crowd_refused
 	if child.terrain != data or child._region_bound_data != data or receipt.get("owners_restored") != true:
 		var refused := SiteRuntime.fail("REGION_CHILD_BIND_FAILED")
 		refused["cause"] = child.get_meta(&"last_refused_result", {}) # The child's own refusal, when its bind showed one.
@@ -10640,8 +10879,10 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	# native capture, exactly as site_controller.capture_region_checkpoint admits a live crowd.
 	var crowd_admitted: bool = child.crowd_site != null and child.crowd_site.active
 	var crowd_captured := {}
+	# A Site whose last people leave with this departure has no crowd any more: its capture is a plain one, whatever the
+	# source's was (2026-11-25: a whole band could never leave its lair, REGION_BACKEND_UNADMITTED).
+	context["backend"] = "native" if crowd_admitted else "gd"
 	if crowd_admitted:
-		context["backend"] = "native"
 		crowd_captured = child.crowd_site.capture_save(true)
 		if not crowd_captured.ok: child.free(); return crowd_captured
 	child.site_controller._capture_positions()
@@ -10920,6 +11161,8 @@ func _region_finish_cold_replay(target_game_seconds: float) -> Dictionary:
 	if not restore_only or terrain == null or terrain != _region_bound_data or _replay_target != target_game_seconds \
 		or absf(SiteRuntime.now(terrain) * 60.0 - target_game_seconds) > _replay_clock_agreement_tolerance() \
 		or _region_point_consuming or not _region_point_pending.is_empty(): return SiteRuntime.fail("REGION_REPLAY_PENDING", "REGION_REPLAY_PENDING：finish restore_only=%s bound=%s target=%s replay_target=%s now=%s (now-target=%s) consuming=%s pending_points=%d" % [restore_only, terrain != null and terrain == _region_bound_data, target_game_seconds, _replay_target, SiteRuntime.now(terrain) * 60.0 if terrain != null else -1.0, SiteRuntime.now(terrain) * 60.0 - target_game_seconds if terrain != null else 0.0, _region_point_consuming, _region_point_pending.size()])
+	# 公式遠征 (Nekki 2026-11-25 B): the loot of the raids of the meantime that is still here leaves before the body is captured.
+	if not _coarse_raids.is_empty(): SiteController.BanditFormula.take_rest(terrain, _coarse_raids, _coarse_raids_done)
 	var settled := RegionSaveSlot.validate_settlement(terrain.site, target_game_seconds)
 	# The settlement's pending is GAME seconds: the replay loop finished it at its game-second residue tolerance (found
 	# 2026-11-13: a 7e-12 game-second residue, below the loop's 6e-11, was refused against the 1e-12 action epsilon).
@@ -11432,9 +11675,7 @@ func _region_party_original_action_limit(maximum: float) -> float:
 	# query pulse, work and ranged transitions) clips the interval here, as the joint planner previews a live crowd Site.
 	# The frame converts on its first planned interval; a refused conversion is reported by the step itself.
 	if _region_party_frame_native().ok and crowd_site != null and crowd_site.active and limit > ACTION_TIME_EPSILON:
-		var tactical := limit if _fire_activity() or _siege_tactical_active() or _region_melee_tactical_demand() \
-			else minf(limit, float(terrain.site.get("combat_left", 0.0)))
-		var window: Dictionary = _prepare_native_begin_shared_window(limit, tactical)
+		var window: Dictionary = _prepare_native_begin_shared_window(limit, _native_combat_left())
 		_clear_shared_work_step()
 		if window.get("ok", false): limit = minf(limit, float(window.action_seconds))
 	return limit
@@ -11542,6 +11783,12 @@ static func _region_party_diff_keys(a: Dictionary, b: Dictionary) -> Array[Strin
 								if var_to_bytes(x.units[u].get(k)) != var_to_bytes(y.units[u].get(k)) and not result.has("units[%d].%s=%s/%s" % [u, k, str(x.units[u].get(k)), str(y.units[u].get(k))]) and result.size() < 40: result.append("units[%d].%s=%s:%d/%s:%d" % [u, k, str(x.units[u].get(k)).left(60), typeof(x.units[u].get(k)), str(y.units[u].get(k)).left(60), typeof(y.units[u].get(k))])
 					if var_to_bytes(x.get("combat_batches")) != var_to_bytes(y.get("combat_batches")): result.append("batches=%s/%s" % [str(x.get("combat_batches")), str(y.get("combat_batches"))])
 				if a.content.armies.size() != b.content.armies.size(): result.append("armies.size %d/%d" % [a.content.armies.size(), b.content.armies.size()])
+		elif key == "upkeep" and a.get(key) is Dictionary and b.get(key) is Dictionary:
+			for field: Variant in a.upkeep.keys() + b.upkeep.keys():
+				if var_to_bytes(a.upkeep.get(field)) == var_to_bytes(b.upkeep.get(field)): continue
+				var apart := " (%.20f apart)" % (float(a.upkeep[field]) - float(b.upkeep[field])) if a.upkeep.get(field) is float and b.upkeep.get(field) is float else ""
+				var told := "upkeep.%s=%s/%s%s" % [str(field), str(a.upkeep.get(field)).left(300), str(b.upkeep.get(field)).left(300), apart]
+				if not result.has(told): result.append(told)
 		elif var_to_bytes(a.get(key)) != var_to_bytes(b.get(key)) and not result.has(str(key)): result.append(str(key))
 	return result
 
@@ -11708,6 +11955,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if not TechnologyPolicy.birth_categories_admitted(policy.policy): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
 	if not new_data.site.get("actors", {}).is_empty() or not new_data.site.get("armies", []).is_empty() or new_data.site.has("family") or new_data.site.has("crowd") or new_data.site.has("initial_scenario") or not new_data.site.get("captivity", {}).is_empty() or not new_data.site.get("vehicles", {}).is_empty() or not new_data.site.get("item_records", {}).is_empty() or int(new_data.site.get("minute", -1)) != 0 or float(new_data.site.get("phase", -1.0)) != 0.0 or bool(new_data.site.get("paused", false)) or float(new_data.site.get("combat_left", 0.0)) != 0.0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO")
 	var candidate := SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	PerfTrace.mark("pop_navigation") # 開局速度: the parts of the start population (--perf-trace)
 	var start := candidate.cell_from_index(int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell))))
 	if not candidate.is_walkable(start): return SiteRuntime.fail("NO_BIRTH_GROUND")
 	var staging := Node2D.new()
@@ -11731,6 +11979,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	snapshot.appearance.parts.cape = "none"
 	starter.restore_state(snapshot)
 	snapshot = starter.capture_state()
+	PerfTrace.mark("pop_starter")
 	# Neutral part 2 (shape b): the player is born as roster unit 0 and formal commander of a neutral team, never as a
 	# separate actor body. Nekki 2026-11-03: the start brings INITIAL_CADRES cadres (officers), not artisans. Bind restores
 	# this team and the crowd conversion (convert_existing) turns it into a crowd roster whose captain is the host-controlled
@@ -11751,8 +12000,11 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	team.set_process(false)
 	var player_cells := _initial_team_cells(candidate, start, player_ids.size())
 	if player_cells.size() != player_ids.size(): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND", "玩家隊伍出生格不足；未改變"))
-	if not team.deploy_at(candidate, null, null, player_cells) or not team.enable_combat(false) or team.combat_units.size() != player_ids.size() or team.combat_identity(0) != starter.person_id:
+	var deployed := team.deploy_at(candidate, null, null, player_cells)
+	PerfTrace.mark("pop_deploy_at")
+	if not deployed or not team.enable_combat(false) or team.combat_units.size() != player_ids.size() or team.combat_identity(0) != starter.person_id:
 		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍無法出生；未改變"))
+	PerfTrace.mark("pop_team_deployed")
 	# enable_combat seats unit 0 as the formal commander (an officer); the player keeps that seat.
 	if team.formal_commander != 0: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "玩家隊伍沒有隊長；未改變"))
 	# The cadres: every other row is an officer holding an officer-service seat, with its own standard gear.
@@ -11790,6 +12042,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 					seated = true
 					break
 		if not seated: return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_SPACE", "隊伍職位不足以安置開局幹部；未改變"))
+	PerfTrace.mark("pop_cadres")
 	var body: Dictionary = team.combat_units[0]
 	body["military_role"] = "officer"
 	body["appearance"] = snapshot.appearance.duplicate(true)
@@ -11803,6 +12056,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if not equipped.ok: return _initial_artisan_birth_dispose(staging, equipped)
 	if not TerrainArmy.prepare_contact_source_for(SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)):
 		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("MISSING_ASSET", "玩家外觀接觸資源未備妥；未改變"))
+	PerfTrace.mark("pop_contact_source")
 	var player_team: Dictionary = team.capture_combat_state()
 	candidate.site["actors"] = {}
 	candidate.site["armies"] = [player_team]
@@ -11810,7 +12064,9 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	candidate.site["controlled_person_id"] = starter.person_id
 	candidate.site["next_person_id"] = maxi(int(player_ids.max()) + 1, int(candidate.site.get("next_person_id", 1)))
 	candidate.site["army_next_team"] = team.team_id + 1
+	PerfTrace.mark("pop_team_captured")
 	if not TerrainArmy.valid_combat_state(player_team, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_ARMY", "玩家一人隊快照非法；未改變"))
+	PerfTrace.mark("pop_team_checked")
 	for checked: Dictionary in [SiteStore._validate_actors(candidate, candidate.site), SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_armies(candidate, candidate.site, true), SiteStore._validate_items(candidate, candidate.site), SiteStore._validate_cape_roles(candidate.site)]:
 		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
 	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))
@@ -11834,6 +12090,122 @@ func _resident_army_present(site: Dictionary) -> bool:
 		for unit: Variant in army.get("units", []):
 			if unit is Dictionary and housing.has(str(int(unit.get("person_id", -1)))): return true
 	return false
+
+## 示範劇本 step 2 (RegionData.author_scenario_valid "teams"): the scenario's armed teams of this Site are born, each a
+## combat team of its faction standing at its cell (the nearest free cells, as the start team): the first member is the
+## captain (officer), every member has standard gear and his name. Fresh births only, after the residents; the candidate
+## is changed only when every team deploys. `rows` = the scenario teams whose site is this Site.
+func prepare_initial_author_teams(new_data: TerrainData, rows: Array) -> Dictionary:
+	if rows.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
+	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
+	if new_data.site.has("crowd") or int(new_data.site.get("minute", -1)) != 0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO", "原已進行世界不補發劇本隊伍")
+	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	var staging := Node2D.new()
+	staging.name = "InitialScenarioTeams"
+	staging.visible = false
+	staging.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(staging)
+	var claimed := {}
+	for army_row: Variant in candidate.site.get("armies", []):
+		if not army_row is Dictionary: continue
+		for unit: Variant in army_row.get("units", []):
+			if unit is Dictionary and unit.get("cell") is Array: claimed[candidate.index(Vector2i(int(unit.cell[0]), int(unit.cell[1])))] = true
+	claimed[int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell)))] = true
+	for row: Dictionary in rows:
+		var members: Array = row.members
+		var team_floor := 1
+		for army_row: Variant in candidate.site.get("armies", []):
+			if army_row is Dictionary: team_floor = maxi(team_floor, int(army_row.get("team_id", 0)) + 1)
+		var wanted := Vector2i(int(row.cell[0]), int(row.cell[1]))
+		var cells: Array[Vector2i] = []
+		for cell: Vector2i in _initial_team_cells(candidate, wanted, members.size() * 4 + 8):
+			if claimed.has(candidate.index(cell)): continue
+			cells.append(cell)
+			if cells.size() == members.size(): break
+		if cells.size() != members.size(): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("NO_BIRTH_GROUND", "劇本隊伍出生格不足；未改變"))
+		for cell: Vector2i in cells: claimed[candidate.index(cell)] = true
+		var team := TerrainArmy.new()
+		team.name = "scenario_team"
+		team.team_id = maxi(int(candidate.site.get("army_next_team", 1)), team_floor)
+		team.faction_id = int(row.faction_id)
+		team.role = "combat"
+		team.roster_size = members.size()
+		team.exchange_enabled = exchange_enabled
+		team.presentation_off = true # captured into the Site; the crowd conversion draws it
+		team.person_id_allocator = _allocate_army_person_ids_for.bind(candidate, [], [])
+		staging.add_child(team)
+		team.set_process(false)
+		if not team.deploy_at(candidate, null, null, cells) or not team.enable_combat(false) or team.combat_units.size() != members.size() or team.formal_commander != 0:
+			return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED", "劇本隊伍無法出生；未改變"))
+		for index: int in range(team.combat_units.size()):
+			var body: Dictionary = team.combat_units[index]
+			body["military_role"] = str(members[index].role)
+			body["name"] = str(members[index].name)
+			# A further officer serves under the captain, as a start cadre does; the captain (unit 0) holds the command seat.
+			if str(members[index].role) == "officer" and index > 0:
+				if not team.officer_service.has(index): team.officer_service.append(index)
+				if not team.officer_order.has(index): team.officer_order.append(index)
+			body["cargo"] = {}
+			body["item_state"] = {}
+			var items: Dictionary = SiteRuntime.seed_person_equipment(candidate, body.item_state, team.combat_identity(index), body.appearance)
+			if not items.ok: return _initial_artisan_birth_dispose(staging, items)
+		var state: Dictionary = team.capture_combat_state()
+		if not candidate.site.get("armies") is Array: candidate.site["armies"] = []
+		candidate.site.armies.append(state)
+		candidate.site["army_next_team"] = team.team_id + 1
+		var highest := 0
+		for unit: Dictionary in state.units: highest = maxi(highest, int(unit.person_id))
+		candidate.site["next_person_id"] = maxi(int(candidate.site.get("next_person_id", 1)), highest + 1)
+		if not TerrainArmy.valid_combat_state(state, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_ARMY", "劇本隊伍快照非法；未改變"))
+	for checked: Dictionary in [SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_armies(candidate, candidate.site, true), SiteStore._validate_items(candidate, candidate.site)]:
+		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
+	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("", {"data": candidate, "changed": true}))
+
+## 示範劇本 step 3: this Site's scenario offices and warehouse stock (RegionData.author_scenario_valid "offices",
+## "stock"), after its residents are born. The head seat and the named duties' seats take the residents of those names;
+## each stocked warehouse gets its storage and items. Fresh births only; unchanged on any refusal.
+func prepare_initial_scenario_settlement(new_data: TerrainData, offices: Array, stock: Array, livelihood: Array = []) -> Dictionary:
+	if offices.is_empty() and stock.is_empty() and livelihood.is_empty(): return SiteRuntime.ok("", {"data": new_data, "changed": false})
+	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	var named := {}
+	for army: Variant in candidate.site.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and unit.has("name"): named[str(unit.name)] = int(unit.person_id)
+	for row: Dictionary in offices:
+		var settlement: Variant = candidate.site.get("settlement", {})
+		if not settlement is Dictionary or settlement.is_empty() or not settlement.get("offices") is Dictionary: return SiteRuntime.fail("NO_TARGET", "劇本職位所在 Site 沒有聚落")
+		var head: Dictionary = SiteOffices.head_position(settlement.offices)
+		if head.is_empty() or not named.has(str(row.head)): return SiteRuntime.fail("NO_TARGET", "劇本首長「%s」不是這個 Site 的居民" % str(row.head))
+		head["holder"] = int(named[str(row.head)])
+		for duty: String in row.duties:
+			var seat_id := str(settlement.offices.get("duties", {}).get(duty, ""))
+			var seat: Dictionary = SiteOffices.position(settlement.offices, seat_id)
+			if seat.is_empty() or bool(seat.get("head", false)) or not named.has(str(row.duties[duty])): return SiteRuntime.fail("NO_TARGET", "劇本職位「%s」無法安排" % duty)
+			seat["holder"] = int(named[str(row.duties[duty])])
+		if not SiteOffices.validate(settlement.offices, "settlement", true): return SiteRuntime.fail("INVALID", "劇本聚落職位不合法")
+	for row: Dictionary in stock:
+		var feature: Dictionary = candidate.site.get("features", {}).get(str(row.feature), {})
+		var stored: Dictionary = SiteStockpiles.ensure_storage(candidate, str(row.feature), int(feature.get("owner_faction", -1)))
+		if not stored.ok: return SiteRuntime.fail("NO_TARGET", "劇本倉庫「%s」無法存貨" % str(row.feature))
+		SiteRuntime.add_items(stored.stock.cargo, row.items)
+		var endpoint: Dictionary = SiteStockpiles.stock_endpoint(candidate, str(row.feature))
+		if endpoint.is_empty() or int(endpoint.get("capacity", 0)) >= 0 and SiteRuntime.inventory_size(stored.stock.cargo) > int(endpoint.capacity): return SiteRuntime.fail("STORAGE_FULL", "劇本倉庫「%s」存貨超過容量" % str(row.feature))
+	# 居民吃飯 L1 (reports/scenario-village-livelihood-plan.md): its people are fed from its stock; its fields are worked.
+	for row: Dictionary in livelihood:
+		var fed: Variant = candidate.site.get("settlement", {})
+		if not fed is Dictionary or fed.is_empty(): return SiteRuntime.fail("NO_TARGET", "劇本供餐所在 Site 沒有聚落")
+		fed["meals"] = 1
+		var owner := int(fed.get("owner_faction", -1))
+		for key: Variant in row.farms:
+			var farm: Dictionary = candidate.site.get("features", {}).get(str(key), {})
+			if str(farm.get("kind", "")) != "farm" or str(farm.get("stage", "")) != "complete" or int(farm.get("owner_faction", -1)) != owner: return SiteRuntime.fail("NO_TARGET", "劇本農田「%s」無效" % str(key))
+			candidate.site.zones.append({"cells": farm.cells.duplicate(), "kind": -1, "action": "operate", "feature": str(key), "active": true})
+		SiteRuntime.add_items(candidate.site.inventory, row.camp)
+		if SiteRuntime.inventory_size(candidate.site.inventory) > int(candidate.site.get("capacity", 0)): return SiteRuntime.fail("STORAGE_FULL", "劇本營地放不下起始物資")
+		SiteController.Households.reconcile(candidate.site)
+		ResidentWork.apply(candidate.site, ResidentWork.plan(candidate.site, owner, true))
+	return SiteRuntime.ok("", {"data": candidate, "changed": true})
 
 func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
@@ -11894,6 +12266,10 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	team.role = "work"
 	team.roster_size = rows.size()
 	team.exchange_enabled = exchange_enabled
+	# 開局速度 (2026-11-27): captured into the Site below and thrown away with staging, as the start and scenario teams
+	# are; it never draws, so it builds no 3D sources or sprites, as a headless birth. With the renderer the demo A
+	# birth spent 71.5 s of 113 s building them for 316 residents.
+	team.presentation_off = true
 	team.person_id_allocator = _allocate_army_person_ids_for.bind(candidate, [], [])
 	staging.add_child(team)
 	team.set_process(false)
@@ -12339,15 +12715,31 @@ func _region_run_due_daily_hooks() -> void:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null or restore_only or str(slot.control.active_site_id) != str(terrain.site.get("id", "")): return
 	if site_controller.daily_hooks_due: site_controller.run_daily_hooks()
+	site_controller.run_rest_hooks()
 	# 土匪 B5b: a fence sale's heat waits for the Site at rest, as the daily hooks do (SiteBanditFence.flush).
 	if site_controller.has_meta(&"fence_heat_due"): SiteController.TradeSession.Fence.flush(site_controller)
+	if slot.has_meta(&"bandit_attacked_due"): SiteController.BanditAttacked.flush(site_controller) # Nekki 2026-11-22 B
+	site_controller.flush_battle_effects()
+	SiteController.BanditEnded.check(site_controller, site_controller)
+	SiteController.BanditRaidField.watch(site_controller, site_controller)
+	SiteController.BanditFormula.tell(site_controller)
+	SiteController.BanditFormula.settle_fallen(site_controller, site_controller)
+	if float(terrain.site.get("combat_left", 0.0)) <= 0.0: # each may save (a second or two of stillness): never in a fight
+		SiteController.BanditFormula.day(site_controller)
+		var released: Dictionary = slot.release_idle_cold_owner()
+		if not released.is_empty(): set_meta(&"idle_release_last", released)
 	var owners: Array = slot._region_original_labs.keys()
 	owners.sort()
 	for owner: String in owners:
 		var original: Variant = slot._region_original_labs[owner]
-		if not is_instance_valid(original) or original == self or original.site_controller == null or not original.site_controller.daily_hooks_due: continue
+		if not is_instance_valid(original) or original == self or original.site_controller == null: continue
 		if not original._region_point_pending.is_empty() or original._region_point_consuming: continue
-		original.site_controller.run_daily_hooks()
+		SiteController.BanditEnded.check(original.site_controller, site_controller)
+		SiteController.BanditRaidField.watch(original.site_controller, site_controller)
+		SiteController.BanditFormula.settle_fallen(original.site_controller, site_controller)
+		if original.site_controller.daily_hooks_due: original.site_controller.run_daily_hooks()
+		original.site_controller.run_rest_hooks()
+		original.site_controller.flush_battle_effects(site_controller)
 
 
 func _region_gameplay_endpoint_checkpoint(payload: Dictionary = {}) -> Dictionary:
@@ -12690,13 +13082,29 @@ func region_cold_original_inputs() -> Dictionary:
 			and not actor.guarding and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 \
 			and actor.projectiles.is_empty() and not site_controller.person_actions.is_busy(actor.person_id)
 		p0_stable = p0_stable and actor.hp > 0.0
+	# A crowd Site's teams are rosters of native people: their rest is read from the native bodies (2026-11-25: with the
+	# rosters counted as marching grid teams no Site with people ever took the long-absence steps, and a village nobody had
+	# opened for a day and a half was replayed step by step for minutes).
+	# Only for a long absence: a shorter one replays every step, as before.
+	var crowd_here: bool = crowd_site != null and crowd_site.active and bool(_region_cold_isolated.get("coarse", false))
 	for team: TerrainArmy in combat_armies:
-		if team.has_army(): actions_stable = false
+		if team.has_army() and not (crowd_here and (_native_original_army(team) or not team.combat_enabled)): actions_stable = false
+	if crowd_here: actions_stable = actions_stable and _region_cold_crowd_quiet()
 	var formal_slot: RegionSaveSlot = _region_cold_formal.get("slot")
 	var generation := int(formal_slot._marker.get("generation", -1)) if formal_slot != null else int(bind.get("generation", -1))
 	return SiteRuntime.ok("", {"inputs": {"p0_stable": p0_stable, "actions_stable": actions_stable,
 		"owner_generation": generation, "source_owner_id": get_instance_id(),
 		"site_id": str(terrain.site.id), "backend": str(bind.backend)}})
+
+## Nobody living in the native crowd is down or getting up, nothing flies and no battle is open: nothing there needs its
+## steps one by one. The dead lie where they lie and prisoners stay held; positions, orders and schedules go on from where
+## they stand in the exact tail.
+func _region_cold_crowd_quiet() -> bool:
+	if crowd_site.battle.open or crowd_site.has_projectiles(): return false
+	for identity: Variant in crowd_site._index_by_id:
+		var state: Dictionary = crowd_site.soldier_state(int(crowd_site._index_by_id[identity]))
+		if float(state.get("hp", 0.0)) > 0.0 and (float(state.get("ko", 0.0)) > 0.0 or float(state.get("getup", 0.0)) > 0.0): return false
+	return true
 
 func _region_cold_quiet_admission() -> Dictionary:
 	var original := region_cold_original_inputs()
@@ -12739,6 +13147,14 @@ func _region_cold_quiet_admission() -> Dictionary:
 func _region_cold_idle_fire_proof(data: TerrainData) -> Dictionary:
 	if data != terrain or data != _region_bound_data or not restore_only or site_controller == null:
 		return SiteRuntime.fail("COLD_ORIGINAL_OWNER_REQUIRED")
+	# A long absence asks that nothing burns and nothing flies. Fire state as such is always there in a world with climate
+	# (the weather's history), and so is the count of arrows shot long ago (2026-11-25).
+	if bool(_region_cold_isolated.get("coarse", false)):
+		if _fire_activity() or not fire_projectiles.is_empty() or not fire_reservations.is_empty() or not siege_projectiles.is_empty() or _fire_committing or _fire_advancing:
+			return SiteRuntime.fail("COLD_ACTIVE_FIRE")
+		var held := capture_fire_owner_state()
+		if not held.ok: return held
+		return SiteRuntime.ok() if held.state.is_empty() else SiteRuntime.fail("COLD_ACTIVE_FIRE_OWNER")
 	if not terrain.site.get("fire", {}).is_empty() or not fire_projectiles.is_empty() or not fire_reservations.is_empty() \
 		or not siege_projectiles.is_empty() or _fire_committing or _fire_advancing:
 		return SiteRuntime.fail("COLD_ACTIVE_FIRE")
@@ -12778,7 +13194,7 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	if not fire_guard.ok: return fire_guard
 	var action_seconds := game_seconds / (60.0 * simulation_speed)
 	if not is_finite(action_seconds) or action_seconds <= 0.0 \
-		or absf(SiteRuntime.game_seconds(action_seconds, combat_left) * simulation_speed - game_seconds) > ACTION_TIME_EPSILON:
+		or absf(SiteRuntime.game_seconds(action_seconds, combat_left) * simulation_speed - game_seconds) > (maxf(ACTION_TIME_EPSILON, game_seconds * 0.000000001) if coarse else ACTION_TIME_EPSILON):
 		return SiteRuntime.fail("CLOCK_CONTRACT")
 	var original := terrain
 	var action_begin := fire_action_cursor
@@ -12803,6 +13219,8 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 			ResidentMood.day(self)
 			CoarseSocial.settle_site(self)
 			ResidentWork.daily_production(terrain.site, _coarse_work_minutes, terrain, _coarse_work_factor, _coarse_skill_work)
+			SiteController.ResidentLife.ration_day(site_controller) # 居民吃飯 F2
+			SiteController.BanditFormula.take_due(terrain, _coarse_raids, _coarse_raids_done)
 		_exchange_phase = fposmod(_exchange_phase + action_seconds, EXCHANGE_QUERY_STEP)
 		for actor: TerrainTestCharacter in combat_actors:
 			if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
@@ -12894,7 +13312,13 @@ func _region_cold_replaced_steps(begin: float, end: float) -> int:
 
 ## Long-absence catch-up (Nekki 11/16 A).
 const COARSE_MIN_SECONDS := 86400.0
+const COARSE_TAIL_SECONDS := 7200.0 # the exact tail (advance_region_cold_actual_fixed's default)
 const COARSE_STEP_SECONDS := 3600.0
+## A settlement whose people farm and eat (居民吃飯) has no quiet hours: a shorter absence was replayed step by step with
+## everybody walking to work, 285 s for a town of 37 over one day (measured 2026-11-26). Its absences are settled by hours
+## and days from one hour up; anything that fights or burns stays exact as everywhere.
+static func _coarse_min_seconds(site: Dictionary) -> float:
+	return COARSE_STEP_SECONDS if SiteController.ResidentLife.meals_on(site) else COARSE_MIN_SECONDS
 ## 平民 C6: a registered resident's work speed offline, as on the live work step (SiteResidentMood).
 func _coarse_work_factor(identity: int) -> float:
 	var person: Dictionary = site_controller.person_actions._person(identity, false)
@@ -12909,6 +13333,9 @@ func _coarse_skill_work(identity: int, line: String, seconds: float) -> float:
 
 ## Work minutes each household put into its job during the coarse prefix (runtime; ResidentWork.daily_production).
 var _coarse_work_minutes: Dictionary = {}
+## The formula raids on this Site since its file (a replay Lab's; RegionBanditFormula.debts) and what they took already.
+var _coarse_raids: Array = []
+var _coarse_raids_done: Dictionary = {}
 
 ## Offline, residents on scheduled work stop (the daily formula stands for their work). Returns whether any stopped.
 func _coarse_release_residents() -> bool:
@@ -12921,7 +13348,15 @@ func _coarse_release_residents() -> bool:
 	return released
 
 ## Hunger that would start to hurt (48 h of deficit) stops the coarse prefix: the exact path settles deaths.
+const COARSE_HUNGER_HELD := 38.0
 func _coarse_hunger_stop() -> String:
+	# 居民吃飯: a settlement that feeds its people and has run out scrapes by while nobody looks (hunger is held just under
+	# what hurts) instead of being replayed step by step, hours for a town over a month; opened, it starves as anywhere.
+	if SiteController.ResidentLife.meals_on(terrain.site):
+		for entry: Variant in terrain.site.get("team_supply", {}).values():
+			if not entry is Dictionary: continue
+			for cohort: Variant in entry.get("sustain", {}).get("cohorts", []):
+				if cohort is Dictionary and float(cohort.get("hunger", 0.0)) > COARSE_HUNGER_HELD: cohort["hunger"] = COARSE_HUNGER_HELD
 	for entry: Variant in terrain.site.get("team_supply", {}).values():
 		if not entry is Dictionary: continue
 		for cohort: Variant in entry.get("sustain", {}).get("cohorts", []):
@@ -13003,7 +13438,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 			"logic_action_origin": fire_action_cursor,
 			# Long-absence catch-up (Nekki 2026-11-16 A, NPC AI §10A D5): a gap over a day lets a developed Site take the
 			# quiet prefix in hour steps by its original daily owners; politics (duty AI) does not run offline.
-			"coarse": maxf(float(window.from), target - tail_seconds) - float(window.from) >= COARSE_MIN_SECONDS}
+			"coarse": maxf(float(window.from), target - tail_seconds) - float(window.from) >= _coarse_min_seconds(terrain.site)}
 	if _region_cold_isolated.data != terrain or float(_region_cold_isolated.target) != target or float(_region_cold_isolated.tail) != tail_seconds:
 		return SiteRuntime.fail("BUSY", "原隔離來源／固定目標仍在補算")
 	var steps := 0
@@ -13082,8 +13517,19 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		window = RegionSaveSlot.replay_window(terrain.site, target)
 		if not window.ok: return window
 	var replay: Dictionary = SiteRuntime.ok("", {"status": "PENDING", "pending": float(window.pending), "steps": 0, "data": terrain})
+	if not str(_region_cold_isolated.fallback).is_empty() and not _region_cold_isolated.has("traced"):
+		_region_cold_isolated["traced"] = true
+		var at_fallback: Dictionary = terrain.site.get("fire_settlement", {})
+		var next_row := _next_fire_replay_interval() if _fire_replay_tracking else {}
+		_replay_trace("exact from %.3f of %.3f because %s; cursor %.9f settlement action %.9f game %.6f seq %d; next row %s; coarse %s; prefix steps %d" % [float(window.from), target, str(_region_cold_isolated.fallback),
+			fire_action_cursor, float(at_fallback.get("action_seconds", -1.0)), float(at_fallback.get("game_seconds", -1.0)), int(at_fallback.get("sequence", -1)),
+			JSON.stringify(next_row).left(300), str(_region_cold_isolated.get("coarse", false)), int(_region_cold_isolated.get("prefix_steps", 0))])
 	if (float(window.from) + ACTION_TIME_EPSILON >= float(_region_cold_isolated.prefix_end) or not str(_region_cold_isolated.fallback).is_empty()) \
 		and steps < max_steps and Time.get_ticks_usec() < deadline:
+		# Once the prefix or its exact quanta consumed journal rows, the tail continues the same fixed target: replay_site_to's
+		# saved-boundary guard is for a fresh start. A quantum cut by work leaves the cursor inside its row, ahead of the last
+		# stamped watermark (found 2026-11-26: FIRE_CLOCK_MISMATCH 86.5625 against 86.5439 opening a raided village).
+		if _replay_target < 0.0 and int(_region_cold_isolated.get("prefix_steps", 0)) + int(_region_cold_isolated.get("exact_steps", 0)) > 0: _replay_target = target
 		replay = replay_site_to(target, maxi(1, deadline - Time.get_ticks_usec()), max_steps - steps)
 		if not replay.ok: return replay
 		steps += int(replay.steps)
@@ -13118,7 +13564,9 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 		return SiteRuntime.fail("STALE_COLD_TRANSACTION")
 	if _region_cold_formal.is_empty():
 		var selected := parent._region_selected_bind_source(source_data, slot)
-		if not selected.ok: return replay_site_to(target, budget_usec, max_steps)
+		if not selected.ok:
+			if _replay_target < 0.0: _replay_trace("unselected %s %s" % [str(identity.site_id), JSON.stringify(selected).left(200)])
+			return replay_site_to(target, budget_usec, max_steps)
 		_region_cold_formal = {"slot": slot, "parent": parent, "source_data": source_data,
 			"source_sha256": str(identity.source_sha256), "selected_proof": selected.proof.duplicate(true),
 			"generation": int(slot._marker.get("generation", -1)), "target": target}
@@ -13209,17 +13657,22 @@ func _region_cold_formal_admission() -> Dictionary:
 	if str(slot.control.active_site_id) == site_id: return SiteRuntime.fail("PLAYER_BARRIER")
 	var mode: Dictionary = slot.region_registry().modes.get(site_id, {})
 	var activation: Dictionary = mode.get("activation", {})
-	if str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != region_backend_expected() \
+	# A Site nobody ever opened has no mode yet: its long absence is settled all the same (2026-11-25).
+	var never_opened: bool = mode.is_empty() and bool(_region_cold_isolated.get("coarse", false))
+	if not never_opened and (str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != region_backend_expected() \
 		or str(mode.get("consumer", "")) != "original_replay" or int(mode.get("generation", -1)) != int(_region_cold_formal.generation) \
 		or activation.get("complete") != true or activation.get("owners_restored") != true \
-		or str(activation.get("owner", "")) != site_id or int(activation.get("generation", -1)) != int(_region_cold_formal.generation):
+		or str(activation.get("owner", "")) != site_id or int(activation.get("generation", -1)) != int(_region_cold_formal.generation)):
 		return SiteRuntime.fail("COLD_FORMAL_MODE_REQUIRED")
 	if _region_owner_restore_receipt.get("owners_restored") != true or _region_owner_restore_receipt.get("effects_complete") != true \
 		or bool(_region_bind_receipt_value.get("zero_world_only", false)):
 		return SiteRuntime.fail("COLD_EFFECTS_PENDING")
-	# A deferred original world endpoint is never swept through by an idle macro.
+	# A deferred original world endpoint is never swept through by an idle macro. The hour steps of a long absence end at
+	# their prefix, two hours before the target: an event at the target itself (the arrival this catch-up is made for) lies
+	# in the exact tail. Until 2026-11-26 it sent every catch-up for an arriving party down the step-by-step path.
+	var swept_to := float(_region_cold_isolated.prefix_end) if bool(_region_cold_isolated.get("coarse", false)) else float(_region_cold_formal.target)
 	for event: Dictionary in slot.pending_region_events():
-		if float(event.get("at", INF)) <= float(_region_cold_formal.target) + ACTION_TIME_EPSILON:
+		if float(event.get("at", INF)) <= swept_to + ACTION_TIME_EPSILON:
 			return SiteRuntime.fail("COLD_WORLD_ENDPOINT_PENDING")
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
 	var interval := _next_fire_replay_interval()
@@ -13254,9 +13707,11 @@ func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 	result["game_end"] = float(row.game_end) if count == remaining else float(first.game_begin) + game_step * count
 	result["tactical_seconds"] = 0.0
 	result["consumed_steps"] = count
-	if float(result.game_end) - float(result.game_begin) > maximum_game_seconds + ACTION_TIME_EPSILON \
+	# An hour out of joined rows carries the rounding of thousands of steps: measured as the journal itself is.
+	var tolerance: float = maxf(ACTION_TIME_EPSILON, maximum_game_seconds * 0.000000001) if coarse else ACTION_TIME_EPSILON
+	if float(result.game_end) - float(result.game_begin) > maximum_game_seconds + tolerance \
 		or absf((float(result.action_end) - float(result.action_begin)) * 60.0 * simulation_speed \
-			- (float(result.game_end) - float(result.game_begin))) > ACTION_TIME_EPSILON:
+			- (float(result.game_end) - float(result.game_begin))) > tolerance:
 		return SiteRuntime.fail("CLOCK_CONTRACT")
 	if _fire_replay_segment_index < _fire_replay_boundaries.size():
 		result["action_end"] = float(_fire_replay_boundaries[_fire_replay_segment_index][_fire_replay_segment_offset + count])
@@ -13982,8 +14437,8 @@ func _region_validate_party_graph(data: TerrainData, party: Dictionary, graph: D
 	if not lab_cursor.ok: return lab_cursor
 	var fire := SiteRuntime.validate_fire_snapshot(data, transport.fire_state, float(lab_cursor.value.fire_action_cursor))
 	if not fire.ok: return fire
-	if absf(float(party.upkeep.get("at", -1.0)) - float(context.game_seconds)) > ACTION_TIME_EPSILON \
-			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > ACTION_TIME_EPSILON:
+	if absf(float(party.upkeep.get("at", -1.0)) - float(context.game_seconds)) > PARTY_CLOCK_EPSILON \
+			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > PARTY_CLOCK_EPSILON:
 		return SiteRuntime.fail("UNSETTLED_PARTY_GRAPH")
 	var scene := validate_region_owner_bind_payload(data, _region_party_scene_owners(owners), context)
 	if not scene.ok: return scene
@@ -14003,14 +14458,14 @@ func capture_region_party_owner_graph(token: String, party: Dictionary, slot: Re
 		return SiteRuntime.fail("STALE_REGION_PARTY_OWNER")
 	var clock := _region_party_capture_clock(context)
 	if not clock.ok or not clock.party: return clock if not clock.ok else SiteRuntime.fail("INVALID_REGION_PARTY_CAPTURE")
-	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(context.game_seconds)) > ACTION_TIME_EPSILON \
-			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > ACTION_TIME_EPSILON:
+	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(context.game_seconds)) > PARTY_CLOCK_EPSILON \
+			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(context.action_seconds)) > PARTY_CLOCK_EPSILON:
 		return SiteRuntime.fail("UNSETTLED_PARTY")
 	# Verify the actual ORIGINAL sparse body/holder closure before serialization.
 	# _capture_positions records existing bodies and does not progress any work.
 	var old_hash := _region_party_input_hash
 	var old_owner: Dictionary = terrain.get_meta(&"region_party_owner", {}).duplicate(true)
-	var original: Dictionary = _region_capture_original_party(self, party, slot, -1.0, -1.0, read_only)
+	var original: Dictionary = _region_capture_original_party(self, party, slot, float(party.upkeep.at), float(party.upkeep.owner_action_seconds), read_only)
 	if not read_only:
 		_region_party_input_hash = old_hash
 		terrain.set_meta(&"region_party_owner", old_owner)
@@ -14968,7 +15423,8 @@ func _capture_shared_vehicle_groups(requests: Array) -> Dictionary:
 				"target_id": facts.target_id, "action": facts.action, "field": facts.field, "sources": [], "person_ids": [],
 				"required_skills": [], "eligible_by_id": {}, "remaining": float(facts.physical_remaining)}
 			_shared_vehicle_groups.append(group)
-		if not is_finite(float(facts.physical_remaining)) or float(facts.physical_remaining) < 0.0 or absf(float(group.remaining) - float(facts.physical_remaining)) > PersonFatigue.WORK_PLAN_EPS: return SiteRuntime.fail("STALE_SHARED_WORK")
+		if not is_finite(float(facts.physical_remaining)) or float(facts.physical_remaining) < 0.0 or absf(float(group.remaining) - float(facts.physical_remaining)) > PersonFatigue.WORK_PLAN_EPS:
+			return SiteRuntime.fail("STALE_SHARED_WORK", "共同工作量不一致 %s：已有 %.9f，%s 的 %.9f（%d 個來源，%s）" % [str(group.key), float(group.remaining), str(request.get("provider", "")), float(facts.physical_remaining), group.sources.size(), str(facts.person_ids)])
 		for identity: int in facts.person_ids:
 			if group.person_ids.has(identity): return SiteRuntime.fail("DUPLICATE_SHARED_WORKER")
 			group.person_ids.append(identity)
@@ -15076,7 +15532,9 @@ func _plan_shared_vehicle_work_interval(requests: Array, seconds: float, project
 		var participants: Array = []
 		var maximum := seconds
 		for source: Dictionary in group.sources:
-			if not _gd_mesh_group_source_accepted(source) and not source.owner.valid_shared_vehicle_work_request_facts(source.request, source.facts): return SiteRuntime.fail("STALE_SHARED_WORK")
+			if not _gd_mesh_group_source_accepted(source) and not source.owner.valid_shared_vehicle_work_request_facts(source.request, source.facts):
+				var change: String = source.owner.shared_vehicle_request_facts_change(source.request, source.facts) if source.owner.has_method("shared_vehicle_request_facts_change") else ""
+				return SiteRuntime.fail("STALE_SHARED_WORK", "共同工作在收集後已變更 %s：%s" % [str(group.key), change])
 			for participant: Dictionary in source.request.participants:
 				participants.append(projection.get(int(participant.person_id), participant))
 			maximum = minf(maximum, maxf(0.0, float(source.request.max_game_seconds) - float(_gd_mesh_work_point.get("elapsed", 0.0))))
@@ -15177,6 +15635,10 @@ func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) ->
 
 func _prepare_native_begin_shared_window_body(maximum: float, combat_begin: float) -> Dictionary:
 	var nb: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
+	# A plain Site's step wraps its phase by subtraction and can leave -1e-14: that is the round's own beginning. A Site
+	# that becomes a crowd again (a band back in the lair it left empty) was refused INVALID_NATIVE_BEGIN_WINDOW at every
+	# later step (found 2026-11-25).
+	if _exchange_phase < 0.0 and _exchange_phase >= -ACTION_TIME_EPSILON: _exchange_phase = 0.0
 	_wire_fire_ranged()
 	nb = _combat_profile_stage("nb_wire_fire", nb)
 	var input_batches: Array[Dictionary] = []
@@ -15408,11 +15870,13 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 	if tactical_seconds > ACTION_TIME_EPSILON and tactical_seconds < action_seconds:
 		action_seconds = tactical_seconds
 		game_seconds = SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed
+	var cw: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var supplies: Dictionary = site_controller.shared_supply_event_limit(game_seconds)
 	if not supplies.ok: return supplies
 	game_seconds = minf(game_seconds, float(supplies.game_seconds))
 	var retry := float(site_controller.work_team.next_work_event_seconds())
 	if is_finite(retry) and retry > ACTION_TIME_EPSILON: game_seconds = minf(game_seconds, retry)
+	cw = _combat_profile_stage("cw_supply_retry", cw)
 	if 0.5 - site_controller._work_elapsed > ACTION_TIME_EPSILON:
 		action_seconds = minf(action_seconds, 0.5 - site_controller._work_elapsed)
 	var full_game_seconds: float = SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed
@@ -15432,24 +15896,32 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 		if native_active and crowd_site.contains_person(actor.person_id): continue
 		if actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id(): actor.advance_navigation()
 	_shared_movement_prepared = true
+	cw = _combat_profile_stage("cw_fatigue_movement", cw)
 	site_controller._shared_worker_inputs = site_controller._prepare_original_work_inputs()
+	cw = _combat_profile_stage("cw_worker_inputs", cw)
 	var owners: Array = site_controller.prepare_shared_owner_work_requests(game_seconds)
+	cw = _combat_profile_stage("cw_owner_requests", cw)
 	# Keep original caller order for the shared inventory reservation.
 	for request: Dictionary in owners:
 		if str(request.provider) == "runtime": _shared_work_requests.append(request)
 	var pa_requests: Array = site_controller.person_actions.work_requests(game_seconds)
+	cw = _combat_profile_stage("cw_person_action_requests", cw)
 	_shared_work_requests.append_array(site_controller.work_team.prepare_work_requests(game_seconds, action_seconds, pa_requests))
+	cw = _combat_profile_stage("cw_work_team_requests", cw)
 	_shared_work_requests.append_array(pa_requests)
 	for request: Dictionary in owners:
 		if str(request.provider) != "runtime": _shared_work_requests.append(request)
 	var admitted := _reserve_shared_work_payments(_shared_work_requests)
 	if not admitted.ok: return admitted
+	cw = _combat_profile_stage("cw_payments", cw)
 	var refreshed := _refresh_shared_work_preflight()
 	if not refreshed.ok: return refreshed
+	cw = _combat_profile_stage("cw_preflight", cw)
 	var groups := _capture_shared_vehicle_groups(_shared_work_requests)
 	if not groups.ok: return groups
 	var moving := _shared_movement_requests(game_seconds, _shared_work_requests)
 	_shared_work_requests.append_array(moving)
+	cw = _combat_profile_stage("cw_vehicles_movement", cw)
 	if native_active:
 		var runners: Dictionary = crowd_site.work_fatigue_run_requests(game_seconds, _shared_work_requests)
 		if not runners.ok: return runners
@@ -15457,6 +15929,7 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 		_shared_work_requests.append_array(_native_ship_crew_requests(game_seconds, _shared_work_requests))
 		var recovery: Dictionary = crowd_site.prepare_work_fatigue_recovery_inputs()
 		if not recovery.ok: return recovery
+		cw = _combat_profile_stage("cw_runners_recovery", cw)
 	_shared_work_action_seconds = action_seconds
 	_shared_work_game_seconds = game_seconds
 	return SiteRuntime.ok("", {"action_seconds": action_seconds, "game_seconds": game_seconds})
@@ -15499,6 +15972,34 @@ func _native_begin_runner_only_pools(all_requests: Array, run_requests: Array, p
 		if band_end > PersonFatigue.WORK_PLAN_EPS: band_limit = minf(band_limit, band_end)
 	return {"kept": kept, "band_limit": band_limit}
 
+## A fatigue band boundary only possible runners could reach (nobody runs yet) cuts a peaceful window when it lies at
+## least this many game seconds ahead; nearer than that it is not a cut. A fixed length, not a share of the window: the
+## accepted window is bounded again over its own width and must come back the same (NATIVE_BEGIN_WINDOW_CHANGED).
+const NATIVE_RUN_BAND_FLOOR := 0.25
+
+## The pools of `planned` whose fatigue the native World charges by itself: a native formation's pool in which no work
+## participant of `requests` has seconds. crowd_site.prepare_native_begin_work_point sends the native only the pools
+## with work ("NO WORK RUN/recovery stays in World"); a pool of runners alone is charged by World::fatigue_stage on the
+## native's own tactical clock.
+func _native_begin_native_charged_pools(planned: Dictionary, requests: Array, projection: Dictionary) -> Array:
+	var pools := {} # formation -> the plan's pool
+	var worked := {}
+	for request: Dictionary in requests:
+		var seconds: Dictionary = planned.jobs.get(str(request.provider), {}).get(str(request.key), {}).get("participant_seconds", {})
+		for raw: Dictionary in request.participants:
+			var snapshot: Variant = raw.get("native_snapshot")
+			if not snapshot is Dictionary: continue
+			var formation := int(snapshot.get("formation", -1))
+			if str(raw.get("native_effort_kind", "work")) == "work" and float(seconds.get(int(raw.person_id), 0.0)) > 0.0: worked[formation] = true
+			if pools.has(formation): continue
+			var participant: Dictionary = projection.get(int(raw.person_id), raw)
+			var pool: Variant = PersonFatigue._work_plan_body(participant.get("body")).get("original_pool")
+			if pool is Dictionary: pools[formation] = pool
+	var result: Array = []
+	for formation: Variant in pools:
+		if not worked.has(formation): result.append(pools[formation])
+	return result
+
 func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, preview: PackedFloat64Array) -> Dictionary:
 	var pb := Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional sub-stage counters (combat_profile_usec).
 	var combat: float = combat_begin
@@ -15537,9 +16038,26 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 	if not lower.ok: return lower
 	var upper: Dictionary = _plan_shared_vehicle_work_interval(runner_split.kept, seconds, projection)
 	if not upper.ok: return upper
-	limit = minf(limit, float(runner_split.band_limit))
+	# A band boundary cuts the window so that a plan the native takes from here (a pool with work: its fatigue is this
+	# plan's, charged per world game second) changes band at a step's end. A pool of runners alone is not such a plan:
+	# the native World charges it by itself, on its tactical clock (World::tactical_dt), and nothing here reads where it
+	# crosses a band. Cutting for it was also futile in combat. A step cut before the combat clock's end is charged
+	# 1/60 of the world rate the boundary was computed with, so the cut step covers 1/60 (1/120 with half the possible
+	# runners running) of the way, and the next window is cut again: hundreds of windows for one boundary. When the
+	# runner then stops inside that approach, the pool stays a hair under 30 and every later window is cut at the same
+	# 1e-4 game second boundary for ever. A cold crowd owner needed 70 000 pieces for one 8 game second interval and
+	# failed REGION_CROWD_REPLAY_STALLED after 4096 (found 2026-11-24, 官方剿匪 at an unwatched lair: about one fight in
+	# four); a watched Site grinds through the same pieces inside its frames. So for a pool the native charges by itself:
+	# - in combat no band boundary cuts the window;
+	# - at peace (the native charges the world rate, the boundary is exact) the boundary of the people who run now still
+	#   cuts it, and a boundary only possible runners could reach cuts it when it lies NATIVE_RUN_BAND_FLOOR game seconds
+	#   ahead or more (nobody may run, and then a nearer boundary would cut every window at the same place).
+	var run_floor: float = NATIVE_RUN_BAND_FLOOR
+	if combat <= 0.0 and float(runner_split.band_limit) >= run_floor: limit = minf(limit, float(runner_split.band_limit))
 	pb = _combat_profile_stage("nbb_plan", pb)
+	var plan_index := 0
 	for planned: Dictionary in [lower, upper]:
+		var native_charged: Variant = null # Read on the first band boundary inside the window.
 		for group: Dictionary in planned.pools:
 			for segment: Dictionary in group.segments:
 				var end: float = float(segment.begin) + float(segment.seconds)
@@ -15551,8 +16069,19 @@ func _native_begin_bound(requests: Array, maximum: float, combat_begin: float, p
 				var band_end := INF
 				if rate > 0.0 and start < 30.0: band_end = (30.0 - start) / rate
 				elif rate > 0.0 and start < 100.0: band_end = (100.0 - start) / rate
-				if band_end > PersonFatigue.WORK_PLAN_EPS: limit = minf(limit, band_end)
+				if band_end > PersonFatigue.WORK_PLAN_EPS and band_end < limit:
+					if native_charged == null: native_charged = _native_begin_native_charged_pools(planned, interval_requests if plan_index == 0 else runner_split.kept, projection)
+					var own := false
+					for pool: Variant in native_charged:
+						if is_same(pool, group.original_pool): own = true; break
+					# The upper plan adds the possible runners' effort: its boundary is one only they could reach, and nearer than
+					# the run floor it is not a cut for any pool. A work pool's upper boundary 1e-4 game seconds ahead (29.99999 of 30,
+					# the plan's 0.085/s where the native charged 0.5 % of it) cut every window again at a shrinking distance:
+					# windows of 6e-7 game seconds, which the Site clock does not count and the supply ledgers do, so a town's save
+					# was refused (供養時鐘超前 Site) and the world stood still (found 2026-11-27, fast-forward walking).
+					if (plan_index == 0 or band_end >= run_floor) and (not own or combat <= 0.0): limit = band_end
 				break
+		plan_index += 1
 	# A successful pulse sets the original formation's charged_this_step flag;
 	# safe_fatigue_rest is therefore false for that pool in the actual next step.
 	# Other native pools keep their exact original no-pulse rest-limit query.
@@ -15597,10 +16126,10 @@ func _native_begin_ranged_window(phase: float, maximum: float, without_pulse: fl
 	# held WORK effort and the actual unpulsed clock, plus exact previewed pulses.
 	# Unknown future RUN/P5 upper bounds provide NO minimum-effort witness.
 	for value: float in [phase,maximum,without_pulse,with_pulse]:
-		if not is_finite(value) or value<0.0: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		if not is_finite(value) or value<0.0: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "phase %s maximum %s bounds %s %s" % [phase, maximum, without_pulse, with_pulse])
 	if maximum<=0.0 or maximum>EXCHANGE_ACTION_STEP+ACTION_TIME_EPSILON \
 		or without_pulse>maximum or with_pulse>maximum:
-		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "phase %s maximum %s bounds %s %s" % [phase, maximum, without_pulse, with_pulse])
 	var no_due: bool = (phase+without_pulse)+ACTION_TIME_EPSILON>=EXCHANGE_QUERY_STEP
 	var pulse_due: bool = (phase+with_pulse)+ACTION_TIME_EPSILON>=EXCHANGE_QUERY_STEP
 	if not no_due:
@@ -15661,7 +16190,8 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 	if crowd_site == null or not crowd_site.active or crowd_site.crowd == null: return SiteRuntime.fail("CLOCK_NOT_READY")
 	if _fire_committing or _fire_advancing or terrain == null or not physical_ranged_enabled \
 		or not exchange_enabled or not is_finite(action_seconds) or action_seconds <= 0.0 \
-		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
+		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON:
+		return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW", "site %s action %s fire %s/%s ranged %s exchange %s" % [str(terrain.site.get("id", "")) if terrain != null else "", action_seconds, _fire_committing, _fire_advancing, physical_ranged_enabled, exchange_enabled])
 	if query_override not in [-1, 0, 1] or register_candidate and query_override != -1: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
 	var rp: int = Time.get_ticks_usec() if combat_profile_enabled else 0 # Optional counters only; never a clock.
 	var people: Array[Dictionary] = _siege_people()
@@ -15795,6 +16325,10 @@ func _settle_native_checked_point_endpoint() -> Dictionary:
 	if endpoint.is_empty() or bool(endpoint.get("finished", false)): return SiteRuntime.ok()
 	# Original queue life effects have now committed. Current alive/scope/source
 	# authority decides products/receipts; it cannot erase paid positive prefix.
+	# The battle log (2026-11-24): CrowdSite.step ticks its battle tracker only outside a native work point, and every crowd
+	# step runs one, so no battle was ever opened (no log, no records, no plunder, no civilian harm). It is ticked here with
+	# the Site's own combat countdown, before the events of this step, so the step that starts a battle counts in it.
+	crowd_site._battle_tick(float(terrain.site.get("combat_left", 0.0)))
 	if not crowd_site.finish_work_fatigue_point_events(): return crowd_site.last_event_error
 	site_controller.person_actions.finish_native_fire_point(endpoint.fire)
 	_finish_original_shared_prefixes(endpoint.checked, false)

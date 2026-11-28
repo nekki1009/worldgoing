@@ -51,6 +51,9 @@ static func validate(value: Variant) -> Dictionary:
 		if mission is Dictionary and mission.has("fence"):
 			fields.append("fence")
 			if mission.fence != true: return _fail("caravan fence")
+		if mission is Dictionary and mission.has("spoils"): # 官方剿匪 (Nekki 2026-11-27 A): an expedition brings a lair's hoard home
+			fields.append("spoils")
+			if mission.spoils != true: return _fail("caravan spoils")
 		if not mission is Dictionary or not RegionFactionQuery.keys(mission, fields): return _fail("caravan fields")
 		if mission.has("sold"):
 			if not mission.sold is Dictionary or mission.sold.size() > 32: return _fail("caravan sale")

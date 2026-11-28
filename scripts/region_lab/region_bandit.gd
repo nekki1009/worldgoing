@@ -85,6 +85,8 @@ const HEAT_DECAY := 5
 const HEAT_DECAY_DAYS := 10
 const HEAT_MOVE := 70
 const HEAT_AFTER_MOVE := 30
+## Nekki 2026-11-22 B: a hot band moves only when an official faction attacked it in the last ATTACK_MEMORY_DAYS days.
+const ATTACK_MEMORY_DAYS := 10
 const RISE_PRESTIGE := 30
 const RISE_MEMBERS := 30
 const RISE_MAX_HEAT := 50
@@ -112,6 +114,22 @@ static func _with_table(registry: Dictionary, band: int, change: Callable, now: 
 	change.call(table)
 	entry.bandit = table
 	return _finish(candidate, now)
+
+## Nekki 2026-11-22 B: an official faction attacked the band on `day` (site_bandit_attacked.gd): heat +20 (HEAT_ATTACKED)
+## and the latest attack day is kept in the band's table (`attacked_day`).
+static func attacked(registry: Dictionary, band: int, day: int, now: float) -> Dictionary:
+	var heat := heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "attacked")
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		table["heat"] = heat
+		table["attacked_day"] = maxi(int(table.get("attacked_day", -1)), maxi(0, day)), now) # String keys: the validator refuses StringName keys
+
+## 官方剿匪 (Nekki 2026-11-22 B): `faction` sent an expedition from `home` (a Site id) against the band on `day` (its
+## 30-day cooldown and the way home read this).
+static func pursued(registry: Dictionary, band: int, faction: int, day: int, home: String, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		var rows: Dictionary = table.get("pursued", {}).duplicate(true) if table.get("pursued") is Dictionary else {}
+		rows[str(faction)] = {"day": maxi(0, day), "home": home}
+		table["pursued"] = rows, now)
 
 static func set_heat(registry: Dictionary, band: int, heat: int, now: float) -> Dictionary:
 	return _with_table(registry, band, func(table: Dictionary) -> void: table.heat = clampi(heat, 0, RegionFactionQuery.BANDIT_HEAT_MAX), now)
@@ -347,14 +365,63 @@ const RAID_STRENGTH := 1.2
 const FORM_MIN := 3
 const FORM_WAIT_DAYS := 7
 
+## A band goes out again RAID_REST_DAYS after its last raid, and to the same settlement after RAID_AGAIN_DAYS (the days of
+## a paid protection): else a hot-headed chief empties the same warehouse day after day (2026-11-25).
+const RAID_REST_DAYS := 10
+const RAID_AGAIN_DAYS := 30
+
+static func raid_rested(table: Dictionary, day: int) -> bool:
+	for row: Variant in table.get("raided", {}).values():
+		if day - int(row.day) < RAID_REST_DAYS: return false
+	return true
+
+static func raided_lately(table: Dictionary, site_id: String, day: int) -> bool:
+	var row: Variant = table.get("raided", {}).get(site_id)
+	return row is Dictionary and day - int(row.day) < RAID_AGAIN_DAYS
+
+## Writes a raid on `site_id` into the table: the day, and for a formula raid (`source` given) the loot that is still in
+## that Site file. Rows nothing depends on any more are dropped.
+static func note_raided(table: Dictionary, site_id: String, day: int, taken: Dictionary, source: String) -> void:
+	var rows: Dictionary = table.get("raided", {})
+	for id: Variant in rows.keys():
+		if rows[id].taken.is_empty() and day - int(rows[id].day) >= RAID_AGAIN_DAYS: rows.erase(id)
+	var owed: Dictionary = taken.duplicate()
+	var before: Variant = rows.get(site_id)
+	if before is Dictionary and (str(before.source) == source or source.is_empty()):
+		for item: String in before.taken: owed[item] = int(owed.get(item, 0)) + int(before.taken[item])
+		source = str(before.source) # a really fought raid keeps only its day: what is owed stays owed
+	rows[site_id] = {"day": maxi(0, day), "taken": owed, "source": source}
+	table["raided"] = rows
+
+## A formula raid (region_bandit_formula.gd): heat +10, the loot joins the hoard, the Site owes it; `lost` of the band's
+## people did not come back (they still stand in the lair's saved file until it is opened).
+static func raided(registry: Dictionary, band: int, site_id: String, day: int, taken: Dictionary, source: String, now: float, lost: int = 0) -> Dictionary:
+	var heat := heat_after(int(bandit_heat(registry, band)), "raid")
+	return _with_table(registry, band, func(table: Dictionary) -> void:
+		table["heat"] = heat
+		if lost > 0: table["fallen"] = int(table.get("fallen", 0)) + lost
+		if not taken.is_empty():
+			var hoard: Dictionary = table.get("hoard", {})
+			for item: String in taken: hoard[item] = mini(100000000, int(hoard.get(item, 0)) + int(taken[item]))
+			table["hoard"] = hoard
+		note_raided(table, site_id, day, taken, source), now)
+
+## The lair was opened and its lost people are dead there.
+static func fallen_settled(registry: Dictionary, band: int, now: float) -> Dictionary:
+	return _with_table(registry, band, func(table: Dictionary) -> void: table.erase("fallen"), now)
+
+static func bandit_heat(registry: Dictionary, band: int) -> int:
+	return int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0))
+
 ## May the band raid this target: within REACH_SITES of the lair, at least 1.2 times as strong, not protected by a paid
-## fee (a settlement) or a paid pass (a party).
+## fee (a settlement) or a paid pass (a party), rested since its last raid and not at the same settlement again at once.
 static func may_raid(registry: Dictionary, band: int, target: Dictionary, band_strength: float, day: int) -> bool:
 	var table: Dictionary = RegionFactionQuery.bandit_of(registry, band)
 	if table.is_empty() or not table.lair is Dictionary or not bool(table.raid_ai): return false
 	if site_distance(str(table.lair.site_id), str(target.get("site_id", ""))) > REACH_SITES: return false
 	if float(target.get("strength", 0.0)) <= 0.0 or band_strength < float(target.strength) * RAID_STRENGTH: return false
 	if str(target.get("kind", "")) == "settlement" and protected(registry, band, str(target.site_id), day): return false
+	if not raid_rested(table, day) or str(target.get("kind", "")) == "settlement" and raided_lately(table, str(target.site_id), day): return false
 	if str(target.get("kind", "")) == "party" and int(table.get("passes", {}).get(str(target.get("token", "")), -1)) >= day: return false
 	return true
 
@@ -378,9 +445,14 @@ static func pick_raid(registry: Dictionary, band: int, targets: Array, band_stre
 ##  targets ([target]), strength (float)}. Returns {action, ...}.
 static func daily_decision(registry: Dictionary, band: int, facts: Dictionary) -> Dictionary:
 	var day := int(facts.get("day", 0))
-	if int(facts.get("heat", 0)) >= HEAT_MOVE: return {"action": "move_lair"}
+	# Nekki 2026-11-22 B: a hot band moves only after an official attack in the last ATTACK_MEMORY_DAYS days (facts
+	# attacked_day); a hot band nobody attacked lies low (no protection demand, no raid) until its heat cools.
+	var hot := int(facts.get("heat", 0)) >= HEAT_MOVE
+	var attacked_day := int(facts.get("attacked_day", -1))
+	if hot and attacked_day >= 0 and day - attacked_day <= ATTACK_MEMORY_DAYS: return {"action": "move_lair"}
 	if bool(facts.get("can_rise", false)): return {"action": "rise"}
 	if float(facts.get("amnesty_score", -1.0)) >= 0.0 and float(facts.amnesty_score) >= float(facts.get("amnesty_gate", 55.0)): return {"action": "accept_amnesty"}
+	if hot: return {"action": "lie_low"}
 	var due: Array = facts.get("protection_due", [])
 	if not due.is_empty():
 		var sites: Array = due.duplicate()

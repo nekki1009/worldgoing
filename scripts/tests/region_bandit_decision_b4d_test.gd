@@ -39,7 +39,19 @@ func _run() -> void:
 	if not _ok(raids == [true, false, false, false, true, false, true], "reach, strength, fee and pass gate a raid", raids): return
 	var picked := Bandit.pick_raid(registry, 2, [far, weak_two, near, strong, paid_village], 12.0, 5)
 	if not _ok(picked.get("id") == "a", "the nearest qualifying target wins", picked): return
-	var facts := {"day": 5, "heat": 80, "can_rise": true, "amnesty_score": 70.0, "protection_due": ["atlas:12:10", "atlas:11:11"], "targets": [near], "strength": 12.0}
+	# Nekki 2026-11-22 B: hot and attacked in the last ATTACK_MEMORY_DAYS days -> move; hot and not attacked -> lie low
+	# (after rise and amnesty, before protection and raids).
+	var quiet := {"day": 30, "heat": 80, "can_rise": false, "amnesty_score": -1.0, "protection_due": ["atlas:12:10"], "targets": [near], "strength": 12.0}
+	var hot_quiet := [Bandit.daily_decision(registry, 2, quiet).action]
+	quiet["attacked_day"] = 30 - Bandit.ATTACK_MEMORY_DAYS - 1
+	hot_quiet.append(Bandit.daily_decision(registry, 2, quiet).action)
+	quiet["attacked_day"] = 30 - Bandit.ATTACK_MEMORY_DAYS
+	hot_quiet.append(Bandit.daily_decision(registry, 2, quiet).action)
+	quiet.erase("attacked_day")
+	quiet.amnesty_score = 70.0
+	hot_quiet.append(Bandit.daily_decision(registry, 2, quiet).action)
+	if not _ok(hot_quiet == ["lie_low", "lie_low", "move_lair", "accept_amnesty"], "a hot band moves only after a recent official attack, else lies low (amnesty still accepted)", hot_quiet): return
+	var facts := {"day": 5, "heat": 80, "attacked_day": 5, "can_rise": true, "amnesty_score": 70.0, "protection_due": ["atlas:12:10", "atlas:11:11"], "targets": [near], "strength": 12.0}
 	var order: Array = []
 	order.append(Bandit.daily_decision(registry, 2, facts).action)
 	facts.heat = 10

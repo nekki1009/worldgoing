@@ -13,6 +13,7 @@ const SLOT := "main"
 const MAX_WORLD_NAME := 32
 const TechnologyPolicy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
 const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
+const ScenarioPeople = preload("res://scripts/main_menu/scenario_people.gd") # 選現成人物 v1 (Nekki 2026-11-27)
 
 ## Main-scene request: {manifest, world_id, slot_id, site, create_new[, character, world_name]}.
 static var pending: Dictionary = {}
@@ -44,7 +45,11 @@ static func bandit_start_allowed(initial_scenario_id: String) -> bool:
 
 ## `family` is the template's family blueprint {surname, name} (開局流程規劃 §2) and `start_record` what world.json keeps
 ## about the start ({free_points, template}).
-static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}, family: Dictionary = {}, start_record: Dictionary = {}) -> bool:
+## `cadres` (隊伍範本, TeamTemplates.cards_of): one card per start cadre, {} = generated as before; [] = all generated.
+## `existing` (選現成人物 v1, Nekki 2026-11-27): {name} of a person of the scenario package `manifest_path` the player takes
+## over (ScenarioPeople.people); the world is born on his Site, with no created player and no cadres, and `character`
+## carries only his new name and look. `site` must be his Site.
+static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST, start_faction: Dictionary = {}, family: Dictionary = {}, start_record: Dictionary = {}, cadres: Array = [], existing: Dictionary = {}) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
 		return false
@@ -55,11 +60,18 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 	if mode == "bandit" and not bandit_start_allowed(initial_scenario_id):
 		menu_message = "這個起始情境不允許落草開局；未建立世界"
 		return false
+	var person: Dictionary = {}
+	if not existing.is_empty():
+		person = ScenarioPeople.find(manifest_path, str(existing.get("name", "")))
+		if person.is_empty() or person.site != site or mode != "neutral" or not initial_scenario_id.is_empty() or not cadres.is_empty():
+			menu_message = "劇本裡找不到所選人物，或開局設定不符；未建立世界"
+			return false
 	var accepted := false
-	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path
+	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path and person.is_empty()
 	if not accepted:
 		var author: RegionData = RegionData.new()
 		var loaded: Dictionary = author.load_author_package(manifest_path)
+		if not person.is_empty(): author.author_start_override = {"mode": "scenario_person", "site": [site.x, site.y], "cell": [person.cell.x, person.cell.y], "name": str(person.name)}
 		var context: Dictionary = author.author_initial_context()
 		accepted = loaded.ok and not context.is_empty() and initial_scenario_id.is_empty() and Vector2i(int(context.starting_site[0]), int(context.starting_site[1])) == site
 	if not accepted:
@@ -70,7 +82,10 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id, "start_faction": start_faction.duplicate(true),
 		"family": {"surname": str(family.get("surname", "")).strip_edges(), "name": str(family.get("name", "")).strip_edges()},
 		"start_record": {"free_points": bool(start_record.get("free_points", false)), "template": str(start_record.get("template", "")),
-			"scenario": scenario_record(initial_scenario_id)}}
+			"scenario": start_record.scenario.duplicate(true) if start_record.get("scenario") is Dictionary else scenario_record(initial_scenario_id)}, "cadres": cadres.duplicate(true)}
+	if not person.is_empty():
+		pending["existing"] = {"name": str(person.name), "role": str(person.role), "title": str(person.title), "site": [site.x, site.y], "cell": [person.cell.x, person.cell.y]}
+		pending.start_record["existing"] = {"name": str(person.name), "role": str(person.role), "title": str(person.title), "site": [site.x, site.y]}
 	return true
 
 
@@ -115,6 +130,7 @@ static func record_world(world_id: String, slot_id: String, manifest_path: Strin
 	if not start.is_empty() and not meta.has("start"):
 		meta["start"] = {"free_points": bool(start.get("free_points", false)), "template": str(start.get("template", "")),
 			"scenario": start.get("scenario", scenario_record("")) if start.get("scenario") is Dictionary else scenario_record("")}
+		if start.get("existing") is Dictionary: meta.start["existing"] = start.existing.duplicate(true) # 選現成人物 v1
 	meta["slot_id"] = slot_id
 	meta["manifest"] = manifest_path
 	meta["saved_unix"] = now
@@ -146,6 +162,27 @@ static func _remove_tree(path: String) -> bool:
 
 ## 開局流程規劃 §3: the scenario a world started from, as world.json keeps it. The empty scenario (the menu's only one
 ## today: the player and his cadres) is {id: "empty", version: 1}; a test-only artisan scenario keeps its own id.
+## 示範劇本: the packaged scenarios, each an author package <root>/<id>/<id>.json carrying a scenario file. Only the
+## manifest is read here (name, description, start, scenario id and revision); the package is verified when a world is
+## requested from it (request_new_world loads it). [{id, name, description, path, start: Vector2i, record}], by id.
+const SCENARIO_ROOT := "res://assets/scenarios"
+static func scenario_packages(root: String = SCENARIO_ROOT) -> Array:
+	var result: Array = []
+	var directory := DirAccess.open(root)
+	if directory == null: return result
+	var folders: Array = directory.get_directories()
+	folders.sort()
+	for folder: String in folders:
+		var path := root.path_join(folder).path_join(folder + ".json")
+		var manifest: Variant = _read_json(path)
+		if not manifest is Dictionary or manifest.get("source_kind") != "fixed_tw_author" or not manifest.get("start") is Dictionary or not manifest.start.get("site") is Array: continue
+		var has_scenario := false
+		for entry: Variant in manifest.get("files", []): has_scenario = has_scenario or entry is Dictionary and entry.get("kind") == "scenario"
+		if not has_scenario: continue
+		result.append({"id": folder, "name": str(manifest.get("name", folder)), "description": str(manifest.get("description", "")), "path": path,
+			"start": Vector2i(int(manifest.start.site[0]), int(manifest.start.site[1])), "record": {"id": str(manifest.get("scenario_id", folder)), "version": int(manifest.get("revision", 1))}})
+	return result
+
 static func scenario_record(initial_scenario_id: String) -> Dictionary:
 	return {"id": "empty" if initial_scenario_id.is_empty() else initial_scenario_id, "version": 1}
 

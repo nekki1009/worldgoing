@@ -133,7 +133,7 @@ static func form(controller: Variant, chief: int, members: Array) -> Dictionary:
 	if not prepared.ok: return prepared
 	var band := int(prepared.faction_id)
 	# The band is saved first (the native hostility table reads it), then its people move and the Site saves again.
-	var founded: Dictionary = controller._commit_diplomacy(prepared, "")
+	var founded: Dictionary = controller.commit_registry(prepared)
 	if not founded.ok: return founded
 	for team_id: int in whole:
 		var moved: Dictionary = lab.relabel_team_faction(team_id, band)
@@ -148,7 +148,7 @@ static func form(controller: Variant, chief: int, members: Array) -> Dictionary:
 		if int(person) == chief or int(team.get("team_id", -1)) == chief_team or team.get("person_ids", []).size() != 1: continue
 		var joined: Dictionary = lab.crowd_site.join_team(int(person), chief_team)
 		if not joined.ok: return joined
-	var committed: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
+	var committed: Dictionary = controller.commit_registry({"ok": true, "registry": slot.control.faction_registry})
 	if not committed.ok: return committed
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("潰兵 %d 人落草成伙：%s" % [members.size(), named.left(32)])
 	return Runtime.ok("", {"band": band})

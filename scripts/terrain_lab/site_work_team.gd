@@ -35,6 +35,8 @@ var _consuming_work_plan: Dictionary = {} # Only the synchronous original advanc
 
 func discard_prepared_interval() -> void:
 	discard_checked_work_prefix()
+	var due := _cancel_due.duplicate()
+	_cancel_due.clear()
 	# Original interval closures may capture this RefCounted owner. Drop them
 	# after endpoint settlement, failed preflight and Lab teardown, retaining
 	# real assignment/tasks/routes/retry balances owned across intervals.
@@ -46,6 +48,18 @@ func discard_prepared_interval() -> void:
 	_work_consumed = true
 	_ladders_consumed = true
 	_consuming_work_plan.clear()
+	for identity: int in due:
+		if is_assigned(identity): cancel(identity)
+
+## A cancel asked inside a step whose work requests are captured (the resident schedule's checks run there) waits for the
+## step's end, discard_prepared_interval: a captured task must not change under the step (STALE_SHARED_WORK, found
+## 2026-11-26 once a field's batch outlasted a working shift and the worker went home for lunch mid-step).
+var _cancel_due: Array[int] = []
+func cancel_after_step(identity: int) -> void:
+	if _prepared_seconds < 0.0:
+		cancel(identity)
+	elif not _cancel_due.has(identity):
+		_cancel_due.append(identity)
 
 func init(context: Variant) -> void:
 	discard_checked_work_prefix()
@@ -112,10 +126,20 @@ func _vehicle_task_ended(task: Dictionary) -> bool:
 	var field := "build" if str(task.get("action", "")) == "construct" else "repair"
 	return vehicle.is_empty() or float(vehicle.get("hp", 0.0)) <= 0.0 or vehicle.get(field, {}).is_empty()
 
+## A native worker's own row (the row _person returns for him), read without building his person view; {} for anyone
+## else. The refreshes below skip a worker whose row shows nothing to refresh: _person would give that same row or none,
+## and either way nothing changes (2026-11-27, town frame time).
+func _native_work_row(identity: int) -> Dictionary:
+	if not _native_active() or not lab.crowd_site.contains_person(identity): return {}
+	var owner_ref: Variant = lab.crowd_site.person_owner(identity)
+	return owner_ref.records.get(int(lab.crowd_site._index_by_id.get(identity, -1)), {}) if owner_ref != null else {}
+
 func refresh_vehicle_tasks() -> void:
 	# Workers share the original job. Completion in this slice clears every
 	# participant's reference before a same-frame save can see a finished job.
 	for identity: int in active_ids():
+		var row := _native_work_row(identity)
+		if not row.is_empty() and not _vehicle_task_ended(row.get("work_task", {})): continue
 		var person := _person(identity)
 		if person.is_empty(): continue
 		var task: Dictionary = person.row.get("work_task", {})
@@ -132,6 +156,8 @@ func refresh_vehicle_tasks() -> void:
 
 func refresh_ship_tasks() -> void:
 	for identity: int in active_ids():
+		var row := _native_work_row(identity)
+		if not row.is_empty() and (str(row.get("work_task", {}).get("action", "")) != "operate" or not str(row.get("work_task", {}).get("target", "")).begins_with("feature:")): continue
 		var person := _person(identity)
 		if person.is_empty(): continue
 		var task: Dictionary = person.row.get("work_task", {})
@@ -522,6 +548,11 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 ## This stage never pays materials, advances work, or charges fatigue.
 func prepare_work_requests(seconds: float, action_seconds: float = 0.0, shared_requests: Array = []) -> Array[Dictionary]:
 	discard_checked_work_prefix()
+	# A cancel that waited for a step's end is done before the next step's requests are captured.
+	var due := _cancel_due.duplicate()
+	_cancel_due.clear()
+	for identity: int in due:
+		if is_assigned(identity): cancel(identity)
 	var requests: Array[Dictionary] = []
 	_prepared_work.clear()
 	_prepared_ladders.clear()
@@ -543,6 +574,8 @@ func prepare_work_requests(seconds: float, action_seconds: float = 0.0, shared_r
 		if not checked.ok:
 			entry["blocked"] = str(checked.get("message", "原作業尚未具備施作條件"))
 			continue
+		entry["selection_preflight"] = checked
+		entry["selection_water"] = _water_stamp()
 		var remaining := float(checked.get("remaining", NAN))
 		var productivity := float(checked.get("productivity", 1.0))
 		if not is_finite(remaining) or remaining < 0.0 or not is_finite(productivity) or productivity <= 0.0:
@@ -686,7 +719,7 @@ func _same_work_interval(left: float, right: float) -> bool:
 
 func _work_retry_ready(identity: int, person: Dictionary, seconds: float, prepare_only: bool) -> bool:
 	if not prepare_only:
-		_retry_left[identity] = maxf(0.0, float(_retry_left.get(identity, 0.0)) - seconds)
+		_retry_left[identity] = _wait_left(identity, seconds)
 		return float(_retry_left[identity]) <= 0.0
 	# Observe the interval start; a later retry cannot select work or move now.
 	_prepared_retry[identity] = {"row": person.row, "task": person.row.work_task}
@@ -716,7 +749,14 @@ func _consume_prepared_retry(seconds: float) -> void:
 		var original: Dictionary = _prepared_retry[identity]
 		var person := _person(identity)
 		if person.is_empty() or not is_same(person.row, original.row) or not is_same(person.row.get("work_task", {}), original.task): continue
-		if _retry_left.has(identity): _retry_left[identity] = maxf(0.0, float(_retry_left[identity]) - seconds)
+		if _retry_left.has(identity): _retry_left[identity] = _wait_left(identity, seconds)
+
+## A wait that ends within the person-work tolerance is over: what rounding left of it (1e-12 game seconds) cut the next
+## window to zero action time, and the Site clock stood still (REGION_EVENT_PENDING for ever; found 2026-11-25, residents
+## waiting for a place in their field).
+func _wait_left(identity: int, seconds: float) -> float:
+	var left := maxf(0.0, float(_retry_left.get(identity, 0.0)) - seconds)
+	return left if left > PersonFatigue.WORK_PLAN_EPS else 0.0
 
 func retime_prepared_interval(game_seconds: float, action_seconds: float = 0.0) -> Dictionary:
 	if not is_finite(game_seconds) or game_seconds <= 0.0 or not is_finite(action_seconds) or action_seconds < 0.0 or _prepared_seconds <= 0.0 or _work_consumed or _ladders_consumed:
@@ -841,7 +881,7 @@ func apply_shared_preflight(requests: Array) -> Array[Dictionary]:
 			var updates: Array[Dictionary] = []
 			var remaining := -1.0
 			for entry: Dictionary in entries:
-				var checked := _prepared_context(entry, threats)
+				var checked := _prepared_context(entry, threats, iteration == 0)
 				if not checked.ok or str(checked.get("required_skill", "")) != str(entry.get("required_skill", "")) or bool(checked.get("eligible_master", false)) != bool(entry.get("eligible_master", false)) or not _same_work_skill_facts(entry, checked):
 					_pause_shared_preflight(request, entries, str(checked.get("code", "STALE_SOURCE")) if not checked.ok else "STALE_SOURCE", str(checked.get("message", "原施作資格已變更")))
 					removed = true
@@ -867,7 +907,22 @@ func apply_shared_preflight(requests: Array) -> Array[Dictionary]:
 		if not removed: break
 	return out
 
-func _prepared_context(entry: Dictionary, threats: Dictionary) -> Dictionary:
+## The water a work preflight reads: the environment revision, the operating water revision and the operating slots
+## (SiteRuntime.set_operating_slots replaces that dictionary whenever it changes them or reallocates water).
+func _water_stamp() -> Array:
+	return [lab.terrain.environment_revision, int(lab.terrain.get_meta(&"site_operating_water_revision", -1)), lab.terrain.get_meta(&"site_operating_slots", {})]
+
+func _same_water(stamp: Variant) -> bool:
+	var now := _water_stamp()
+	return stamp is Array and stamp.size() == 3 and int(stamp[0]) == int(now[0]) and int(stamp[1]) == int(now[1]) and is_same(stamp[2], now[2])
+
+## `selection_water` (Nekki 2026-11-28 「C」, town frame): the shared preflight's first pass re-asks every work group
+## after the final operating slots are set. When setting them changed nothing (same slots, no water reallocated, no
+## environment change since the group was selected) and nothing was removed yet, SiteRuntime.work_preflight reads the
+## same site, task, cargo and water as at selection in this same collection, so its selection answer is taken; the
+## person, order, threat, zone and depot checks above it still run. A later pass (after a removal released water), and
+## every other caller, asks again.
+func _prepared_context(entry: Dictionary, threats: Dictionary, selection_water: bool = false) -> Dictionary:
 	var person := _person(int(entry.identity))
 	if person.is_empty() or not is_same(person.row, entry.row) or person.owner != entry.team or not is_same(person.row.get("work_task", {}), entry.task) or not is_same(person.row.get("cargo", {}), entry.cargo) or not is_same(person.row.get("item_state", {}), entry.item_state): return SiteRuntime.fail("STALE_SOURCE")
 	var task: Dictionary = entry.task
@@ -887,6 +942,7 @@ func _prepared_context(entry: Dictionary, threats: Dictionary) -> Dictionary:
 	if str(task.target) == "depot":
 		var depot: Vector2i = lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell))
 		if person.cell != depot and not lab.terrain.can_step(person.cell, depot): return SiteRuntime.fail("UNREACHABLE")
+	if selection_water and entry.get("selection_preflight") is Dictionary and _same_water(entry.get("selection_water")): return entry.selection_preflight
 	return SiteRuntime.work_preflight(lab.terrain, task, person.row.cargo, int(entry.carry_limit), int(team.faction_id), int(entry.identity), entry.occupied)
 
 func _record_planned_work(entry: Dictionary, interval: Dictionary, handled: Dictionary) -> void:
@@ -1629,6 +1685,26 @@ func valid_shared_vehicle_work_request_facts(request: Dictionary, facts: Diction
 	for entry: Dictionary in facts.entries:
 		if not is_same(_checked_work_target(entry), facts.target_ref) or not is_same(_checked_work_unit(entry), facts.work_unit) or not is_same(entry.row.get("work_task"), entry.task) or str(entry.action) != str(facts.action): return false
 	return true
+
+## Which part of valid_shared_vehicle_work_request_facts no longer holds ("" when all do): for the refusal's message.
+func shared_vehicle_request_facts_change(request: Dictionary, facts: Dictionary) -> String:
+	if facts.get("owner") != self: return "owner"
+	if not is_same(facts.get("request"), request): return "request"
+	if not is_same(facts.get("site"), lab.terrain.site): return "site"
+	if not is_same(facts.get("participants"), request.get("participants")): return "participants"
+	if request != facts.get("values"):
+		var changed: Array = []
+		for field: Variant in request:
+			if not facts.get("values", {}).has(field) or request[field] != facts.values[field]: changed.append(str(field))
+		return "request values " + ",".join(changed)
+	if _shared_vehicle_participant_values(request) != facts.get("participant_values"): return "participant values"
+	if not is_same(_shared_vehicle_request_facts.get(str(request.key)), facts): return "facts replaced"
+	for entry: Dictionary in facts.entries:
+		if not is_same(_checked_work_target(entry), facts.target_ref): return "target of %d" % int(entry.identity)
+		if not is_same(_checked_work_unit(entry), facts.work_unit): return "work unit of %d" % int(entry.identity)
+		if not is_same(entry.row.get("work_task"), entry.task): return "task of %d (%s)" % [int(entry.identity), JSON.stringify(entry.row.get("work_task", {})).left(160)]
+		if str(entry.action) != str(facts.action): return "action of %d" % int(entry.identity)
+	return ""
 
 func validate_gd_contact_work_segment(segment: Dictionary) -> Dictionary:
 	if not is_same(segment, _gd_contact_work_segment) or bool(segment.get("published", true)) or not segment.get("runtime", []).is_empty() or not is_same(segment.get("plan"), lab.gd_mesh_work_segment_plan()) or not is_same(segment.get("priors"), lab.gd_mesh_work_segment_priors()): return SiteRuntime.fail("STALE_WORK_PREFIX")

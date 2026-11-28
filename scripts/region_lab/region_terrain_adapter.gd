@@ -6,16 +6,30 @@ const SIDE := 100
 const HALO_SIDE := SIDE + 2
 const RAMP_RULE_REVISION := "sparse_platform_passes_v1"
 
-static func build(source: RefCounted, site: Vector2i, apply_author: bool = true) -> Dictionary:
+## `natural_samples`: the natural (apply_author false) samples of this Site, already taken (an authored build passes its
+## own to the natural build it needs for the resource base; 開局速度 2026-11-27).
+static func build(source: RefCounted, site: Vector2i, apply_author: bool = true, natural_samples: Array[Dictionary] = []) -> Dictionary:
 	var samples: Array[Dictionary] = []
 	var centre_cache: Dictionary = {} # One build only; typically 12x12 source cells.
 	var ramp_visual_halo: Dictionary = {}
+	# An authored Site with resources also builds its natural self for the resource base (below). Its authored samples
+	# are the natural ones with the static layer applied (_sample_site_meters is _author_sample of _sample_meters), so
+	# each position is sampled once and the natural build reuses them (about 120 ms of 560 a build).
+	var natural_taken: Array[Dictionary] = []
+	var share_natural: bool = apply_author and natural_samples.is_empty() and source.has_method("author_static_for") 		and source.has_method("_author_sample") and source.has_method("site_resource_cover") and not source.author_static_for(site).is_empty()
 	# A global two-metre halo supplies every edge, including all four corners.
 	for y: int in range(-1, SIDE + 1):
 		for x: int in range(-1, SIDE + 1):
 			var sample: Dictionary
-			if apply_author: sample = source._sample_site_meters(site.x * 200.0 + x * 2.0 + 1.0, site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0, centre_cache)
-			else: sample = source._sample_natural_site_meters(site.x * 200.0 + x * 2.0 + 1.0, site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0, centre_cache)
+			var easting := site.x * 200.0 + x * 2.0 + 1.0
+			var northing := site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0
+			if not natural_samples.is_empty(): sample = natural_samples[samples.size()]
+			elif share_natural:
+				var natural_sample: Dictionary = source._sample_natural_site_meters(easting, northing, centre_cache)
+				natural_taken.append(natural_sample)
+				sample = source._author_sample(natural_sample, easting, northing)
+			elif apply_author: sample = source._sample_site_meters(easting, northing, centre_cache)
+			else: sample = source._sample_natural_site_meters(easting, northing, centre_cache)
 			if not sample.ok:
 				return sample
 			samples.append(sample)
@@ -118,7 +132,7 @@ static func build(source: RefCounted, site: Vector2i, apply_author: bool = true)
 			resource_cover = resources.cover
 			if apply_author and source.has_method("author_static_for") and not source.author_static_for(site).is_empty():
 				# Reuse this owner with natural samples; never regenerate away an original footprint.
-				var natural: Dictionary = build(source, site, false)
+				var natural: Dictionary = build(source, site, false, natural_taken)
 				if not bool(natural.get("ok", false)): return natural
 				data.resource_base = natural.data.resource_base.duplicate(true)
 				SiteEnvironment.rebuild_indexes(data)
@@ -229,6 +243,10 @@ static func author_pair_valid(value: Variant, low: int, high: int) -> bool:
 static func author_start_valid(value: Variant) -> bool:
 	if not value is Dictionary or not author_pair_valid(value.get("site"), -10000000, 10000000) or not author_pair_valid(value.get("cell"), 0, SIDE - 1): return false
 	if value.get("mode") == "created_player": return value.size() == 3
+	# 選現成人物 v1 (Nekki 2026-11-27): a scenario's own person, found by his unique scenario name at birth; never in a
+	# package file, only RegionData.author_start_override (the menu's pick). `cell` is a walkable team cell of his Site.
+	if value.get("mode") == "scenario_person":
+		return value.size() == 4 and value.get("name") is String and not str(value.name).strip_edges().is_empty() and str(value.name).length() <= 32
 	return value.get("mode") == "existing_person" and value.size() == 4 and author_integer(value.get("person_id"), 1, 2147483647) and int(value.person_id) != 1000000000
 
 static func boundary_cell(direction: int, offset: int) -> Vector2i:

@@ -104,7 +104,8 @@ func _run() -> void:
 	RegionEntry.draft = {"step": "character", "map": "taiwan", "site": START}
 	_menu().call("show_page", str(_menu().call("_character_entry_page")))
 	var pick := _find("PickTemplateList") as ItemList
-	if not _ok(_visible("pick_character") and pick.item_count == 1 and (_find("PickExisting") as Button).disabled, "選人物 lists the usable template; 選現成人物 is not open yet"): return
+	# 選現成人物 v1 (Nekki 2026-11-27): open whenever a scenario package ships (demo A does).
+	if not _ok(_visible("pick_character") and pick.item_count == 1 and (_find("PickExisting") as Button).disabled == RegionEntry.scenario_packages().is_empty(), "選人物 lists the usable template; 選現成人物 is open with a scenario package"): return
 	pick.select(0)
 	_press("PickTemplateUse")
 	if not _ok(_visible("character") and (_find("CharacterName") as LineEdit).text == "張範本" and int((_find("Ability_combat_ability") as HSlider).value) == 80 and (_find("CharacterSurname") as LineEdit).text == "張" and (_find("CharacterNext") as Button).visible,

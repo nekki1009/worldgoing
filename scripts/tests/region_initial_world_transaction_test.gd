@@ -9,6 +9,9 @@ const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const Artisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const Policy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
+## Tech-tree v2 D10 (cdd3be7): a world created after the four threshold nodes shipped (all delivered 2026-11-07, catalog
+## implemented and tuning confirmed) freezes them in its pin; before that this test expected the empty policy.
+const SHIPPED_CATEGORIES := ["F04", "F06", "F11", "F12"]
 const SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const SLOT := "main"
 const START := Vector2i.ZERO
@@ -192,25 +195,36 @@ func _verify_born(data: TerrainData, scenario: String, world_id: String) -> bool
 		_check(not state.has("family") and not state.has("technology_artisans"), "Exactly the original finite empty-policy population; no family or skill receipt")
 		_check(int(state.next_person_id) == 2 + TerrainLab.INITIAL_CADRES and int(state.army_next_team) == int(own.team_id) + 1, "True birth advances original person/team allocation exactly once")
 		var fresh_policy: Dictionary = Policy.candidate(state.world_pin)
-		_check(fresh_policy.ok and fresh_policy.policy.categories.is_empty() and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the empty release policy")
+		_check(fresh_policy.ok and fresh_policy.policy.categories == SHIPPED_CATEGORIES and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the shipped threshold categories (D10)", fresh_policy)
 		_check(not state.has("initial_scenario"), "Only the explicit original scenario has its matching one-time persisted selection")
 		_check(Store._validate_actors(data, state).ok and Store._validate_armies(data, state, true).ok and Store._validate_items(data, state).ok and Store._validate_person_allocator(state).ok, "Original body/item/allocator validators admit the full first-generation cold population")
 		return true
 	if not _check(state.get("actors", {}).size() == 1 and int(state.get("controlled_person_id", -1)) == 1, "One true fresh original starter controls the new namespace"): return false
 	var actor: Dictionary = state.actors.player
 	_check(int(actor.person_id) == 1 and float(actor.hp) == 100.0 and int(actor.faction_id) == 0 and float(actor.combat_ability) == 50.0 and actor.get("technology", {}).is_empty(), "Old hp/faction/ability/F07 do not leak into the genuinely fresh original starter")
-	_check(state.get("armies", []).size() == count and not state.has("family") and not state.has("technology_artisans"), "Exactly the original finite empty-policy population; no family or skill receipt")
+	# With the shipped categories in the pin the scenario seeds its artisans (SiteTechnologyArtisans.scenario_config: unit 1..4
+	# of each source team learns F04/F06/F11/F12) and persists the receipt; unit 0 and everything else stay unlearned.
+	_check(state.get("armies", []).size() == count and not state.has("family") and Artisans.validate_receipt(state.get("technology_artisans"), state), "Exactly the original finite population; no family; the artisan receipt grants the shipped categories", state.get("technology_artisans"))
+	var granted := {}
+	var born_policy: Dictionary = Policy.candidate(state.world_pin)
+	for assignment: Dictionary in Artisans.scenario_config(scenario).get("assignments", []):
+		if born_policy.ok and born_policy.policy.categories.has(assignment.skills[0]):
+			granted["%d:%d" % [int(assignment.faction_id), int(assignment.unit_index)]] = assignment.skills
 	var identities := {1: true}
 	for team: Dictionary in state.get("armies", []):
 		_check(team.units.size() == 5 and int(team.combat_order) == TerrainArmy.CombatOrder.HOLD, "Each selected original team has five idle real born people")
-		for row: Dictionary in team.units:
-			_check(not identities.has(int(row.person_id)) and int(row.person_id) >= 2 and row.get("technology", {}).is_empty(), "Every bounded NPC retains one distinct unlearned original body")
+		for index: int in team.units.size():
+			var row: Dictionary = team.units[index]
+			var skills: Array = granted.get("%d:%d" % [int(team.faction_id), index], [])
+			var technology: Dictionary = row.get("technology", {}) if row.get("technology") is Dictionary else {}
+			var learned_as_seeded: bool = technology.is_empty() if skills.is_empty() else (technology.get("learned", []) == skills and technology.get("analysis", []).is_empty())
+			_check(not identities.has(int(row.person_id)) and int(row.person_id) >= 2 and learned_as_seeded, "Every bounded NPC is one distinct original body; only the scenario's artisans learned their one category", [index, skills, technology])
 			identities[int(row.person_id)] = true
 			# A cold-reopened row carries JSON numbers; the person id is a whole number.
 			_check(row.get("item_state", {}).get("holder") == "person:" + str(int(row.person_id)), "Born NPC item holder is the original actual person")
 	_check(int(state.next_person_id) == count * 5 + 2 and int(state.army_next_team) == count + 1, "True birth advances original person/team allocation exactly once")
 	var policy: Dictionary = Policy.candidate(state.world_pin)
-	_check(policy.ok and policy.policy.categories.is_empty() and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the empty release policy")
+	_check(policy.ok and policy.policy.categories == SHIPPED_CATEGORIES and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the shipped threshold categories (D10)", policy)
 	# Compare in the saved JSON numeric domain, as _facts does for cold reopen.
 	var selection: Variant = state.get("initial_scenario")
 	_check(not state.has("initial_scenario") if scenario.is_empty() else (selection is Dictionary and selection.size() == 3 and (selection.get("version") is int or selection.get("version") is float) and float(selection.version) == 1.0

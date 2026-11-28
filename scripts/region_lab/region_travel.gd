@@ -1347,7 +1347,7 @@ static func _detach_row(origin: Dictionary, person_id: int) -> Dictionary:
 		solo.formal_commander = 0 # Current stays -1 while it travels (not present); arrival seats it again.
 		solo.needs_attack_order = true # No present commander yet: the team holds until its captain is seated.
 		solo.combat_attacking = false
-		solo.offices = SiteOffices.default_offices("team", person_id, false)
+		solo.offices = SiteOffices.default_offices("team", -1, false) # Its head is the formal commander (index 0), never stored.
 	solo.erase("team_fatigue")
 	if solo.has("tactical_ai"): solo.tactical_ai.enabled = false
 	_settle_team(solo, Vector2i(int(row.cell[0]), int(row.cell[1])))
@@ -1861,6 +1861,14 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		if content.get("family", {}).get("offices") is Dictionary:
 			var local := Family.member_ids(content.family, "travel:" + token)
 			SiteOffices.vacate_unless(content.family.offices, func(holder: int) -> bool: return local.has(holder))
+	# A paid batch whose payer leaves stays with the Site: whoever works the place next finishes it (found 2026-11-26: an
+	# emigrating farmer left his field's paid batch naming him, and every Site state left behind was refused on save as
+	# CORRUPT_TECHNOLOGY). A named trial keeps its person; its worker is not let go (person_actions.is_busy).
+	for holder: String in ["features", "vehicles"]:
+		for key: Variant in origin.get(holder, {}):
+			var target: Variant = origin[holder][key]
+			if not target is Dictionary or not target.get("tech_batch") is Dictionary or not target.get("tech_trial", {}).is_empty(): continue
+			if movers.has(int(target.tech_batch.get("operator_id", 0))): target.tech_batch["operator_id"] = 0
 	var people: Array = movers.keys()
 	people.sort()
 	var vehicles: Array = moving_vehicles.keys()
@@ -2218,7 +2226,8 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			var person_troop := 1 if (packed & 255) == 7 else 2 if (packed & 255) == 8 else 0
 			if first_troop < 0: first_troop = person_troop
 			var is_officer := index == formal or index == acting or index == current or officers.has(index)
-			row["military_role"] = "officer" if is_officer else "soldier"
+			# A civilian who travels arrives a civilian (2026-11-25: a household that left one settlement stood armed in the next).
+			if str(row.get("military_role", "")) != "civilian": row["military_role"] = "officer" if is_officer else "soldier"
 			row["cell"] = [cell.x, cell.y]
 			row["slot"] = [cell.x, cell.y]
 			row["destination"] = [-1, -1]
@@ -2282,7 +2291,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			var cell: Vector2i = row_cells[offset]
 			var index := int(indices[offset])
 			var identity := int(row_ids[offset])
-			if not bool(native.call("set_military_role", index, 1 if row.military_role == "officer" else 0)) \
+			if not bool(native.call("set_military_role", index, CrowdSiteScript.military_role_code(str(row.military_role)))) \
 					or not bool(native.call("set_post_holder", index, int(holders.has(identity)))):
 				return fail("INVALID_ROLE", "原人物軍官資格匯入失敗")
 			var values: PackedFloat64Array = native.call("get_soldier_state", index)
@@ -2382,6 +2391,20 @@ static func _crowd_packed_equip(appearance: Dictionary) -> int:
 
 ## Merge the party into a destination state at `entry` (a local edge cell).
 ## `nav` is the destination TerrainData (with its buildings) used for placement.
+## A plain roster is commanded by officers only (TerrainArmy.valid_combat_state); a crowd team may stand under a civilian (a
+## household that leaves walks under one of its own). Arriving where no crowd is, such a team keeps its people and has no
+## commander (2026-11-25: refused CORRUPT_SAVE, and the world stopped).
+static func _without_civilian_command(army: Dictionary) -> void:
+	var units: Array = army.get("units", [])
+	var civilian := func(index: int) -> bool: return index >= 0 and index < units.size() and str(units[index].get("military_role", "")) == "civilian"
+	for field: String in ["officers", "officer_service"]:
+		if army.get(field) is Array: army[field] = army[field].filter(func(index: Variant) -> bool: return not civilian.call(int(index)))
+	if not ["formal_commander", "acting_commander", "current_commander"].any(func(field: String) -> bool: return civilian.call(int(army.get(field, -1)))): return
+	for field: String in ["formal_commander", "acting_commander", "current_commander"]: army[field] = -1
+	army["needs_attack_order"] = true
+	army["combat_attacking"] = false
+	army["combat_order"] = TerrainArmy.CombatOrder.HOLD
+
 static func insert(destination_state: Dictionary, party: Dictionary, nav: TerrainData, entry: Vector2i,
 		destination_path: String, departure_seconds: float, arrival_seconds: float, options: Dictionary = {}) -> Dictionary:
 	var boarding_guard_0: Dictionary = boarding_travel_guard(party.get("content", {}))
@@ -2419,6 +2442,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 	# (live or cold owner) convert every grid team to a native crowd team; the bind clears it only on success.
 	if not destination.has("crowd") and not content.get("armies", []).is_empty():
 		destination["crowd_convert_pending"] = true
+		for army: Dictionary in content.armies: _without_civilian_command(army)
 	destination.actor_presence_version = 1
 	Runtime.initialize_item_storage(destination)
 	for field: String in CONTENT_DICTS + ["captivity", "escort_orders"]:

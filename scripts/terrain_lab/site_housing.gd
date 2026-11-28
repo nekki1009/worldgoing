@@ -97,12 +97,22 @@ static func context(lab: Variant, identity: int, house_id: String, requester_id:
 	var fleeing := flee and scheduled
 	if not fleeing and float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須先脫戰")
 	if not bool(person.moving) and not actions._ready(person): return Runtime.fail("BUSY")
-	if not allow_moving and not actions._prison_stopped(person): return Runtime.fail("BUSY")
+	if not allow_moving and not actions._prison_stopped(person) and not (scheduled and drifting(person)): return Runtime.fail("BUSY")
 	if person.body.get("site_exited") == true or person.body.get("departed") == true: return Runtime.fail("BUSY")
 	if actions.is_guarding(identity) or lab.site_controller.vehicles.is_operator(identity) or lab.site_controller.vehicles.is_siege_crew(identity) or not lab.site_controller.vehicles.ship_for_person(identity).is_empty() or lab.site_controller._is_delivering_person(identity): return Runtime.fail("BUSY", "原人物仍有其他職務")
 	if person.owner is TerrainArmy and not person.body.get("work_task", {}).is_empty(): return Runtime.fail("BUSY")
 	if not fleeing and bool(actions._threat(person, {})): return Runtime.fail("THREAT")
 	return Runtime.ok("", {"person": person, "layout": layout})
+
+## A crowd body that only drifts to its place in its formation (no step of its own under way): the timetable may send it
+## on at once. Waiting for it to stand kept residents who came off work in the field for hours: a drift decays and never
+## quite ends, and at 16x it takes that many more game minutes (found 2026-11-26: nobody who had worked came home to eat).
+static func drifting(person: Dictionary) -> bool:
+	if person.is_empty() or not person.owner is CrowdPersonOwner or not bool(person.get("moving", false)): return false
+	if not person.owner.crowd_site.crowd.has_method("controlled_step_state"): return false
+	var step: PackedInt64Array = person.owner.crowd_site.crowd.controlled_step_state(int(person.unit))
+	var siege: PackedInt64Array = person.owner.native_siege_state(int(person.unit))
+	return step.size() == 2 and int(step[0]) == 0 and siege.size() == 8 and int(siege[2]) < 0 and int(siege[3]) <= 0
 
 static func assign(lab: Variant, identity: int, house_id: String, requester_id: int, selected_cell: int = -1) -> Dictionary:
 	var checked := context(lab, identity, house_id, requester_id)
@@ -138,12 +148,20 @@ static func leave(lab: Variant, identity: int, requester_id: int) -> Dictionary:
 	Households.reconcile(lab.terrain.site)
 	return Runtime.ok("已離住；原人物、位置、物品與供養保留")
 
-static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}) -> bool:
+## `layouts` (optional) memoizes house layouts by house id for one read pass that changes no feature or terrain (a town's
+## residents share houses; 2026-11-27, town frame time).
+static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}, layouts: Variant = null, known_person: Dictionary = {}) -> bool:
 	var actions: RefCounted = lab.site_controller.person_actions
-	var person: Dictionary = actions._person(identity, false)
+	# `known_person`: the caller's own actions._person(identity, false) from this same pass (nothing written since).
+	var person: Dictionary = known_person if not known_person.is_empty() else actions._person(identity, false)
 	var registered := relation(lab, identity)
-	if person.is_empty() or registered.is_empty() or float(person.hp) <= 0.0: return false
-	var layout: Dictionary = Runtime.house_layout(lab.terrain, str(registered.house_id))
+	# The body's cell is read before the house layout (a 37-person town spent 3 ms a frame building layouts for residents
+	# away in their fields; 2026-11-27). Every check here only refuses, so the order changes no answer.
+	if person.is_empty() or registered.is_empty() or float(person.hp) <= 0.0 or lab.terrain.index(person.cell) != int(registered.cell): return false
+	var layout: Dictionary = layouts.get(str(registered.house_id), {}) if layouts is Dictionary else {}
+	if layout.is_empty():
+		layout = Runtime.house_layout(lab.terrain, str(registered.house_id))
+		if layouts is Dictionary: layouts[str(registered.house_id)] = layout
 	var feature: Dictionary = lab.terrain.site.features.get(str(registered.house_id), {})
 	if not layout.ok or not bool(layout.complete) or not Runtime.feature_usable(feature, "lodging") or not layout.slots.has(int(registered.cell)) or int(feature.get("owner_faction", -1)) != int(person.faction) or lab.terrain.index(person.cell) != int(registered.cell): return false
 	var formation := _formation(lab, person)
@@ -157,15 +175,17 @@ static func _attends(lab: Variant, identity: int, ignored_job: Dictionary = {}) 
 
 static func attendance_input(lab: Variant) -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
+	var layouts := {}
 	for identity: String in lab.terrain.site.get("housing", {}):
-		if not _attends(lab, int(identity)): continue
+		# Only a crowd body gives a row, so nobody else is checked (2026-11-27, town frame time).
 		var person: Dictionary = lab.site_controller.person_actions._person(int(identity), false)
-		if person.owner is CrowdOwner:
-			# 平民 C1c: a resident inside his house (natively absent "at home", or any other absence) is off the field. The
-			# native refuses an attendance row for him (can_act), and that refusal stopped every crowd step of the Site, its
-			# clock included, from the moment the first resident went in (found 2026-11-21, CA-05 household test).
-			if int(person.owner.crowd_site._absent_kind(int(person.unit))) != 0: continue
-			rows.append({"unit": int(person.unit), "cell": int(relation(lab, int(identity)).cell)})
+		if person.is_empty() or not person.owner is CrowdOwner: continue
+		# 平民 C1c: a resident inside his house (natively absent "at home", or any other absence) is off the field. The
+		# native refuses an attendance row for him (can_act), and that refusal stopped every crowd step of the Site, its
+		# clock included, from the moment the first resident went in (found 2026-11-21, CA-05 household test).
+		if int(person.owner.crowd_site._absent_kind(int(person.unit))) != 0: continue
+		if not _attends(lab, int(identity), {}, layouts, person): continue
+		rows.append({"unit": int(person.unit), "cell": int(relation(lab, int(identity)).cell)})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.unit) < int(b.unit))
 	return rows
 
@@ -173,6 +193,7 @@ static func recovery_multiplier(lab: Variant, rows: Array) -> float:
 	if lab == null or lab.terrain == null or lab.site_controller == null or lab.terrain.site.get("housing", {}).is_empty(): return 1.0
 	var living := 0
 	var seen := {}
+	var layouts := {}
 	for body: Variant in rows:
 		var identity := int(body.get("person_id"))
 		if seen.has(identity): return 1.0
@@ -181,7 +202,7 @@ static func recovery_multiplier(lab: Variant, rows: Array) -> float:
 		if person.is_empty(): return 1.0
 		if float(person.hp) <= 0.0: continue
 		living += 1
-		if not _attends(lab, identity): return 1.0
+		if not _attends(lab, identity, {}, layouts, person): return 1.0
 	return MULTIPLIER if living > 0 else 1.0
 
 static func shared_multiplier(lab: Variant, team: TerrainArmy) -> float:

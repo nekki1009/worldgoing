@@ -145,8 +145,17 @@ func boarding_save_guard() -> Dictionary:
 			return Runtime.fail("BUSY", "Original boarding job has not settled")
 	return Runtime.ok()
 
-func save_guard() -> Dictionary:
-	return Runtime.ok() if _jobs.is_empty() else Runtime.fail("BUSY", "人物作業未完成；完成或取消後再保存")
+## `walks_saved` false: nobody may be under way at all (the crowd is taken down or set up).
+func save_guard(walks_saved: bool = true) -> Dictionary:
+	for job: Dictionary in _jobs.values():
+		if not walks_saved or not _timetable_walk(job): return Runtime.fail("BUSY", "人物作業未完成；完成或取消後再保存")
+	return Runtime.ok()
+
+## A resident the timetable sends home (or to the centre for shelter): the walk is not saved, he stands where he is, and
+## the timetable sends him on after a load (the native saves a step under way the same way). It keeps nobody from saving:
+## a Region event waits with the clock standing for a save of its Site, and the walker could not arrive (2026-11-26).
+func _timetable_walk(job: Dictionary) -> bool:
+	return str(job.get("kind", "")) in ["housing_return", "cart_walk"] and int(job.get("requester_id", 0)) == Housing.SCHEDULE_REQUESTER
 
 func job_for(identity: int) -> Dictionary:
 	return _jobs.get(_job_key_for(identity), {}).duplicate(true)
@@ -2751,6 +2760,7 @@ func export_fire_jobs(action_cursor: float) -> Dictionary:
 	ids.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
 	for id: String in ids:
 		var job: Dictionary = _jobs[id]
+		if _timetable_walk(job): continue
 		if str(job.kind) != "fire_suppress" or not job.pending.is_empty() or not is_instance_valid(job.executor_owner): return Runtime.fail("BUSY", "原人物作業未到保存邊界")
 		if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_FIRE_JOB")
 		if not bool(job.cancelled):
@@ -2770,7 +2780,7 @@ func export_fire_jobs(action_cursor: float) -> Dictionary:
 
 func fire_jobs_save_guard(action_cursor: float) -> Dictionary:
 	for job: Dictionary in _jobs.values():
-		if str(job.get("kind", "")) != "fire_suppress": return Runtime.fail("BUSY", "其他人物作業尚未完成；完成或取消後再保存")
+		if str(job.get("kind", "")) != "fire_suppress" and not _timetable_walk(job): return Runtime.fail("BUSY", "其他人物作業尚未完成；完成或取消後再保存")
 	var captured := export_fire_jobs(action_cursor)
 	return Runtime.ok() if captured.ok else captured
 
@@ -4194,6 +4204,7 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 		if int(candidate.version) == 2:
 			original_fields.append("technology")
 			if candidate.has("technology_operations"): original_fields.append("technology_operations")
+		if candidate.has("meals"): original_fields.append("meals") # 居民吃飯: an optional field of a fed settlement (SiteSettlement.validate)
 		if candidate.has("technology_operations") and not SiteSettlement.valid_technology_operations(lab.terrain, candidate.technology_operations): return Runtime.fail("CORRUPT_STATE")
 		if not Technology.keys(candidate, original_fields): return Runtime.fail("CORRUPT_STATE", "原聚落欄位不符")
 	candidate["technology"] = prepared.state
@@ -4202,6 +4213,7 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 		var fields: Array = SiteSettlement.FIELDS.duplicate()
 		fields.append("technology")
 		if candidate.has("technology_operations"): fields.append("technology_operations")
+		if candidate.has("meals"): fields.append("meals")
 		if not Technology.keys(candidate, fields) or not Technology.valid_scope_record(candidate.technology, "settlement"):
 			return Runtime.fail("CORRUPT_STATE", "原聚落科技候選欄位不符")
 	if scope == "family":

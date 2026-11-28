@@ -18,6 +18,7 @@ const WINTER_DAYS := 90
 const FOOD_ITEMS := ["grain", "wild_food", "fish", "meat"]
 const FOOD_KINDS := ["farm"]
 const DUTY := "settlement.registry"
+const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd") # 產出三成歸戶
 const PersonSkills = preload("res://scripts/terrain_lab/person_skills.gd") # 技能 K1d: the most skilled households first.
 
 ## Features of `faction` with an active operate zone, food producers first, then by id.
@@ -137,6 +138,10 @@ const WORK_HOURS := 10.0
 static func daily_production(state: Dictionary, minutes: Dictionary, data: TerrainData = null, factor: Callable = Callable(), skill: Callable = Callable()) -> int:
 	var made := 0
 	var stock: Dictionary = state.get("inventory", {})
+	# 居民吃飯 L1: where a settlement feeds its people a field gives work to as many as it has places (as on the live step).
+	# Without its map (the projection of a Site nobody opened, RegionBanditFormula) a place is a FARM_WORK_SIDE square.
+	var meals: bool = state.get("settlement") is Dictionary and int(state.settlement.get("meals", 0)) == 1
+	var places := {}
 	var houses: Array = state.get("households", {}).keys()
 	houses.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
 	for house_id: String in houses:
@@ -153,6 +158,10 @@ static func daily_production(state: Dictionary, minutes: Dictionary, data: Terra
 			var speed := float(factor.call(int(identity))) if factor.is_valid() else 1.0
 			if not line.is_empty(): speed *= float(skill.call(int(identity), line, WORK_HOURS * 3600.0))
 			workers += speed
+		if meals:
+			if not places.has(feature_key): places[feature_key] = float(Runtime.feature_work_slots(data, feature).size()) if data != null else maxf(1.0, ceilf(float(feature.get("cells", []).size()) / float(Runtime.FARM_WORK_SIDE * Runtime.FARM_WORK_SIDE)))
+			workers = minf(workers, float(places[feature_key]))
+			places[feature_key] = float(places[feature_key]) - workers
 		var season := Season.farm_factor_of_state(state) if str(feature.get("kind", "")) in Runtime.FARM_KINDS else 1.0 # TC8
 		minutes[house_id] = float(minutes.get(house_id, 0.0)) + workers * WORK_HOURS * 60.0 * season
 		while float(minutes[house_id]) >= float(recipe.cycle):
@@ -163,8 +172,9 @@ static func daily_production(state: Dictionary, minutes: Dictionary, data: Terra
 			if room < size: break
 			for item: String in recipe.get("input", {}): stock[item] = int(stock.get(item, 0)) - int(recipe.input[item])
 			# 軍餉與稅收 P5: the batch pays the settlement's production tax as a published batch would.
-			var kept: Dictionary = recipe.output
-			if data != null and state.has("finance"): kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, feature_key, feature, recipe.output)
+			# 產出三成歸戶: the household keeps its share of the food first (SiteResidentLife.share_house); the rest is taxed.
+			var kept: Dictionary = ResidentLife.share_house(state, house_id, recipe.output) if meals else recipe.output
+			if data != null and state.has("finance"): kept = (load("res://scripts/terrain_lab/site_produce_tax.gd") as Script).call("levy", data, feature_key, feature, kept)
 			for item: String in kept: stock[item] = int(stock.get(item, 0)) + int(kept[item])
 			minutes[house_id] = float(minutes[house_id]) - float(recipe.cycle)
 			made += 1

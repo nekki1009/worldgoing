@@ -95,7 +95,8 @@ inline Kind attack_kind(uint8_t family) {
 	}
 }
 inline double impact_of(Kind k) { return k == K_SLASH ? 12.0 : (k == K_STAB ? 8.0 : 35.0); }
-inline double exchange_stun(const Equip &e) { return impact_of(attack_kind(e.family)); }
+constexpr double UNARMED_IMPACT = 14.0; // SiteCombatRules.UNARMED_IMPACT: bare hands stun less than a hammer (2026-11-25)
+inline double exchange_stun(const Equip &e) { return e.family == F_NONE ? UNARMED_IMPACT : impact_of(attack_kind(e.family)); }
 inline int weapon_level(const Equip &e) { return e.family == F_NONE ? 0 : (int)e.material; }
 inline int armor_level(const Equip &e) {
 	switch (e.armor) {

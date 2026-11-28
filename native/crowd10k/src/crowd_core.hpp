@@ -536,6 +536,11 @@ public:
 	// from the combat_left the step started with (SiteRuntime.tactical_seconds). Runtime only: set by every step entry.
 	double step_combat_start = 0;
 	double tactical_dt(float dt, double gdt) const;
+	// Nekki 2026-11-27 (A, fast-forward walking): how many motion passes a step makes. A step that starts out of combat
+	// with more game time than one action second's 60 (the Site at x2..x16) moves its people that many passes of the
+	// action dt, so walking keeps pace with the clock; combat and x1 or slower steps keep one pass. Runtime only.
+	int motion_passes(float dt, double gdt) const;
+	static constexpr int MAX_MOTION_PASSES = 16;
 	Stats stats;
 	PhaseTimes last;
 
@@ -1007,6 +1012,7 @@ private:
 	void build_field(FlowField &f);
 	void build_hash();
 	void formation_stage(float dt);
+	void accumulate_slot_lag(); // slot followers' distance to their slots after a motion pass (formation lag input)
 	void contact_stage(int ch);
 	void soldier_stage(float dt, int ch);
 	void plan_captive_follow(float dt);

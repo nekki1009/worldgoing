@@ -100,7 +100,7 @@ static func gather(controller: Variant, chief: int, members: Array) -> Dictionar
 		"bandit": {"origin": "refugee", "lair": {"site_id": str(lab.terrain.site.get("id", "")), "cell": [cell.x, cell.y]}}})
 	if not prepared.ok: return prepared
 	var band := int(prepared.faction_id)
-	var founded: Dictionary = controller._commit_diplomacy(prepared, "")
+	var founded: Dictionary = controller.commit_registry(prepared)
 	if not founded.ok: return founded
 	var second := int(members[1])
 	var chief_team := int(BanditRout._team_of(lab, chief).get("team_id", -1))
@@ -117,7 +117,7 @@ static func gather(controller: Variant, chief: int, members: Array) -> Dictionar
 	for person: Variant in members.slice(2):
 		var joined: Dictionary = lab.crowd_site.join_team(int(person), band_team, true)
 		if not joined.ok: return joined
-	var committed: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
+	var committed: Dictionary = controller.commit_registry({"ok": true, "registry": slot.control.faction_registry})
 	if not committed.ok: return committed
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("無所屬者 %d 人落草成伙：%s" % [members.size(), named.left(32)])
 	return Runtime.ok("", {"band": band})

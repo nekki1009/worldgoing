@@ -1,7 +1,313 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-22 08:30（台北）
-CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00 起接手）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20），再前任「指揮中心：預定功能接續」（cmsg_019ZbHjQVQy2cHmPmpt2suCG4rnoahY36kCET7y6gphsCW）。
+更新：2026-11-28 20:25（台北）
+CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+
+## 2026-11-28 17:30–20:25（台北）換 Site 長跑：一人隊職位紀錄（本機 8a1cc10，未推送）
+- 探針加 `--index=N`（選該身分第 N 個人，換 Site）。第 8 位隊長 10 天過；第 4 位首長第 1 天、第 6 位村長第 1–5 天都撞到腳本錯誤 site_duty_ai.gd:470（`team_offices(true).duty_ai` 讀到 {}），遊戲停在暫停；村長那次隨後 CLOCK_CONTRACT。
+- 原因：離隊自成一人隊（CrowdSite.detach_to_new_team）、拆隊出發（split_army_snapshot）、旅途幹部單飛（RegionTravel._detach_row）建立的隊伍職位把首長本人存進「首長」職位；隊伍規則是首長由正式隊長推出、不存（validate team stored_head_holder false），紀錄被判無效。
+- 8a1cc10：三處改成不存首長；職責 AI 與戰鬥位階讀到無效紀錄就跳過。新探針 scenario_team_offices_probe（40 遊戲小時 0 無效，修前第 26 小時 1 筆）。相關 9 測試過；FULL_FX 295 項全部並行通過（含第 4 位首長 10 天、第 5 位寨主 15 天每日存檔）。
+- 接著：新版重跑第 6 位村長 15 天，另跑第 9 位寨主、第 11 位村長。
+
+## 2026-11-28 12:50–17:10（台北）長跑再抓到兩個（本機 d086f8d、0a3f112，未推送）
+- 長跑：寨主 20 天、隊長 8 天過；首長（溪前鎮）6–10 天三種問題，都是早上 190d3fd 的後續：
+  1. 存檔被拒 UNSTABLE_REGION_SNAPSHOT_JSON：Site 分鐘相位剩 1.59e-9 這種小尾數，Godot 的 JSON 對部分小於 1e-7 的數字寫讀永遠不穩（1e-12～1e-8 取樣 1–8%）。0a3f112：快照寫入在最後兩次讀回於 12 位有效數字（_hash_canonical，重讀檢查本來的精度）相同時接受，其他差異照拒，拒絕訊息指出位置。新測試 site_region_snapshot_tiny_float_test。
+  2. 世界停住（INVALID_INTERVAL 每幀被拒）：分鐘在離結束 1e-8 分內就提早收尾（Site 時鐘偷跑），原本被「丟掉極短視窗」抵銷；190d3fd 後沒有抵銷，Site 跑到 Region 格線前 9.9e-7 秒，對齊格線的步就超過共同 point 的 6e-7 秒容許。d086f8d：分鐘只在真正走到結束（1e-12）或超過存檔上限 0.999999999 時收尾；容許值改成和 _region_owner_action_limit 一樣（16 倍 9.6e-6 秒）。
+- 探針：scenario_existing_person_longrun_probe 加 `--save-daily`、自動存檔被拒就停、世界停 300 幀印出在等什麼。
+- FULL_FV 296 項全部並行通過（含首長 10 天每日存檔×3、隊長 124 小時漂移每小時 0）。
+- 待推送 15 個本機 commit（082e95d..本次看板），等 Nekki 說。
+
+## 2026-11-28 10:20–12:45（台北）鎮上加速 C 與預覽重用（本機 1f93193、a24efbc，未推送）
+- Nekki 10:21「C」（B 先不做）：共同工作預檢第一輪，工位／用水／環境自選工作後沒變、也還沒移除工作時，沿用選工作時的 work_preflight 答案（人、命令、威脅、工作區、倉庫可達檢查照做）。暫時比對碼：村長、首長、隊長各 1 遊戲日，84,398 次沿用、0 次不同（已移除）。
+- 1f93193：Region 聯合區間在預覽群眾 Site 原生開步之前，先按分鐘、佔領、隊伍停靠這些已知上限切好區間（沒有 GD original 時），步裡就能沿用預覽。隊長溪前鎮 16 倍無畫面：每遊戲日 223 → 186 秒（步裡重算 46 → 26 秒）。
+- FULL_FR 291 項：291 並行全過（含剿匪全程 3 種）。
+- 有畫面首長溪前鎮穩定狀態（STEADY）：21.8 fps，p50 43.7 ms，Lab 36.8 ms（前次 37.9），工作預檢 1.1 ms。
+- 待推送本機 commit，等 Nekki 說。
+
+## 2026-11-28 05:30–10:20（台北）長跑抓到存檔被拒（本機 190d3fd、369840a，未推送）
+- 新探針 scenario_existing_person_longrun_probe（`--role=head|chief|captain|leader --days=N [--profile]`）：選現成人物開局、16 倍放著跑、每遊戲日一行、最後存檔。村長、寨主 5 天過；**隊長（溪前鎮）第 5 天存檔被拒「供養時鐘超前 Site」**（隊伍 1 快 4.6e-5 秒），自動存檔約第 2 天起每 30 秒都被拒。
+- 原因（scenario_supply_clock_drift_probe 逐幀比對 + 暫時印出原生開步每個上限）：`SiteRuntime.advance` 的分鐘迴圈遇到不到 1e-8 分（6e-7 遊戲秒）的視窗就不計，供養帳照算；到交換查詢邊界剩 2.4e-10 動作秒（16 倍＝2.3e-7 遊戲秒）的視窗被丟掉後，分鐘相位落到格線下，下一步的上限都短一點、殘量再被切成極短視窗——約 40 幀 Site 時鐘完全不動，帳越跑越前。11/24、11/27 兩次同一族（記在 memory run-band-window-stall）。
+- 修正：分鐘迴圈改成還有時間就計；每幀結束（沒有待處理的點時）供養帳和 Site 時鐘差 1e-6 秒內就讀 Site 時鐘，不跨餐點（meal_until 仍在之後、在下一餐內、同一餐段）。存檔檢查不放寬。新單元測試 site_clock_short_window_test（14 項）。
+- 驗證：隊長 5 天存檔過；5 天漂移每小時 0（只修第一項時 5 天累到 1.5e-7）；時鐘相關 7 項過；FULL_FP 291 項：286 並行過，剿匪全程 2 項單獨過，3 項要全新輸出資料夾的測試名稱和凌晨撞到，換 fq 重跑過。
+- 剿匪全程時好時壞（凌晨 FULL_FN 修正前就有）：Site 自己每小時的巡查（suppress_home_wait）先把官兵送回營，測試再手動問就沒有隊伍（NONE）。遊戲行為對，測試改成接受 suppress_home_ 隊伍並照查到家；另戰報成長檢查放寬 1 毫秒（每日結算捨掉 1 微秒）。3 個並行全過。
+- 下一步：隊長在鎮上無畫面時每遊戲日 3–6 分鐘（村長 1.5 分），分段計時中。
+
+## 2026-11-27 16:00（台北）快轉走路、選現成人物、土匪不搬種子、剿匪回程（Nekki 18:25「Push 然後繼續做」：到 050cce3 已推送 PR #3）
+### 快轉走路（A）
+- 原生 `World::step_body`：不在戰鬥中、遊戲時間快於 1 倍（×2–×16）的一步，移動做 N 次（N＝倍數，最多 16），每次就是 1 倍的移動；計時器、救援、流血只做一次。1 倍和戰鬥中完全不變。新原生測試：×16 一步走得和 ×1 十六步一樣遠。
+- DLL 12e807f1…（build 2a643cb6…）；舊 0a38a4d5… 備份在 output/project_command_center/evidence/FASTWALK_native。舊 DLL 存的檔會被拒絕（Nekki 沒有存檔）。
+- 實測：×16 睡 6 小時 13.3 → 13.5 秒（同時段對照，不變慢）；鎮上開著跑一天，上午收成 0 批 → 2 批（穀 75 → 111）。
+- 路上修掉兩個舊問題：
+  1. 睡到時間醒來那一步改速度，原生工作窗對不上 → CLOCK_NOT_READY、世界停住。改成那一步走完（finish_tick）才醒。
+  2. `_native_begin_bound`：「可能跑步的人」那份上界計畫的疲勞邊界，在 30 前 0.0001 秒反覆切步（原生實際只累積 0.5%），步越切越小（6e-7 遊戲秒）；Site 時鐘略過這麼小的步、供餐帳照算 → 存檔被拒（供養時鐘超前 Site）→ 午夜停住。上界計畫的邊界改成和跑者規則一樣，近於 NATIVE_RUN_BAND_FLOOR（0.25 遊戲秒）不切。
+### 選現成人物 v1（規劃文件 https://claude.ai/artifact/AchZNwLwaXLgyQ6c9TuxFK，Nekki 第六節「1.開放 2.依建議 3.清單加地圖」）
+- 新遊戲地圖頁「選現成人物（劇本）」：清單（勢力首領 15、村長 15、寨主 15、隊長與軍官 33）加地圖；可改名字和外觀，能力與關係照劇本。
+- 開局在他的 Site，不另生玩家與幹部；村長分出成一人隊（保留房子、職位、首領身分）；寨主與隊長接手原隊。他當首領的勢力不再由電腦外交、剿匪派兵（`SiteController.player_led_faction`，也補上自建勢力被電腦代為外交的漏洞）。
+- 測試：scenario_existing_person_test（四種身分）、main_menu_existing_test、截圖 main_menu_existing_capture（output/main_menu_existing_1127）。做法見 memory existing-person-start-v1。
+### 其他
+- 劇本 A 出貨包 16 倍 15 遊戲日觀察（scenario_raid_30day_observe `--package=`）：905 秒、0 錯誤、存檔成功；第 1、11 天兩波公式劫掠 11 次（10 勝）。
+### 土匪與剿匪（5ce1cda）
+- Nekki 13:37「土匪搬種子依建議」：搶劫（公式與現場）不搬種子和農具；只剩這兩樣的村不算值得搶。
+- Nekki 13:39「剿匪把寨打下附近沒看到敵人就搬物資回程」＋14:00「A」：寨未打下（這次遠征後土匪還沒被官方打過）照舊追打整個 Site；打下後只打 25 格內看得到的，每遊戲小時重新找目標；看不到就回家。從土匪「現在的」寨，官兵把存糧背在身上（每人 20，先糧食），用商隊任務（spoils、phase back）到家卸進自家聚落倉庫；路上被打散就算商隊覆沒、東西留在原地。
+- 起因：快轉走路後剿匪全程測試失敗（全 Site 最後一名土匪不倒，遠征隊永遠不回家）。
+- 三個「舊失敗測試」（initial_world_transaction、person_allocator_lab、r7f2_contest_departure）bfab6c9 之後都已通過。
+- 回歸：FULL_FW（290 項：11/27 全套＋選單測試＋新測試，3 個並行）287 過；另 3 項（剿匪全程、共同步進重播釘住的標頭雜湊、範本選單測試的「尚未開放」）已在上面三個 commit 修好並重跑通過；土匪、商隊、剿匪、選單相關 FIX_SUP2 38／39 並行過（第 39 項單獨過），剿匪 5 項 SUP3 並行全過。
+- 推送等 Nekki 說。
+### 待辦
+- 有畫面開局已確認（scenario_existing_person_capture，output/scenario_existing_capture_1127：寨主、首領）。
+### 鎮上畫面（3e13ee5，Nekki 16:06「A」）
+- 溪前鎮（37 人）有畫面每幀 93 ms：原生開步窗口每幀準備兩次（聯合區間預覽 24 ms＋真的 20 ms）。改成真的開步沿用預覽（_native_begin_preview_ticket），對不上照舊重算：每幀 93 → 71 ms（10.6 → 13.9 fps），Lab 63 → 43 ms。完整回歸 FULL_FW2 290 項：288 並行過，剿匪全程 --repeat=3 與冷山寨劫掠兩項單獨過（負載）。
+- 收集共同工作（40ed312，本機未推送）：每幀 13.0 → 9.0 ms，整幀 Lab 42.7 → 36.7 ms（14.1 → 15.5 fps）。答案都不變，只是少讀：四周沒有別勢力的人就直接答「無威脅」（原本每個工人逐格查 145 格）；住宅出席先看人在不在家門格、不給列的人（非群眾、在屋裡）先跳過、同一輪同一間房的佈局只算一次；房屋佈局只掃一次其他建築的門（原本每個門格都掃全部建築）；Site 沒有船就直接答沒上船。
+- 回歸 33 項（住宅、居民、工作隊、船、攻城、選現成人物、共同步進重播）：29 過；site_work_team_clock（已退役格子模擬）、site_fatigue_threat_fast（舊非交換路徑）、site_housing_crowd（要求房屋步進中原生存檔要拒絕，11/26 已改成可存）三項在沒有這次改動的版本上一樣失敗；site_housing_crowd 要 `--grid --crowd-test <新 id> --crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime`、visual。
+- 聚落佔領取樣（405c2a9）：群眾 Site 上若沒有任何「別勢力、敵對、不是土匪」的隊伍，直接答沒有攻方（原本每幀讀每個人和佔領圈）：1.4 → 0.1 ms。佔領／攻城／土匪／居民 23 項全過。
+- 唯讀補給上限（6196a31）：`_native_sustain_limit_rows` 只讀狀態和需要的人的血量，不再整份深複製補給來源：1.2 → 0.3 ms。補給／用餐／俘虜／群眾補給時鐘 15 項全過。
+- 畫面每幀整張重建（5b2af05）：每次發布工作前綴都把 environment_revision 加一，資源畫面看到就把每一列的節點全部拆掉重建（每次 6.7 ms，繪圖另計）。只動進度／產量計數（沒付款、沒修理、沒改階段）的那種另外記在 `environment_quiet_revision`，畫面只看到這種就不重建；其他讀 environment_revision 的快取照舊。Site tick 6.1 → 0.3 ms，每幀 p50 62 → 48.8 ms，15.3 → 19.1 fps（今天起點 10.6 fps）。
+- 畫面相關舊測試（不在完整回歸裡）site_resource_visual、site_natural_resource_art、site_ecology_contract、site_building_economy_ui、site_audio_contract、site_building_close_visual 在沒有這些改動的版本上一樣失敗，是舊問題。
+- 完整回歸 FULL_FQ（290 項，3 個並行，20:15–22:05）：287 過；剿匪全程 --repeat=3 單獨過（跟上一輪一樣只在並行時失敗）；居民外觀圖集測試只是輸出資料夾名沒換，換名後過；冷 Site 土匪測試 region_cold_band 單獨也失敗（STALE_SUPPLY_OWNER）。
+- region_cold_band 的原因（d34daa7）：沒人看的村，居民 19 人全移進駐軍隊（土匪在旁），居民隊空了但還留著「各戶存糧」（version 3）補給紀錄；原本只在隊伍有人時才找得到它的隊伍資料，每次建補給列都整步拒絕，冷 Site 和世界時鐘停住。改成沒人可放的隊伍用自己的群眾隊伍讀（空的）存糧位置。今天 7 次失敗 4 次（先前兩輪完整回歸都剛好過；每幀時間決定那一步會不會碰上空隊）→ 修後 6／6 過（3 並行），民兵、居民警報、圖集測試也過。
+- Nekki 22:43「好了就push」：050cce3..20aa9e2 已推送 PR #3（說明已補）。推送後重量同一場景：19.6 fps，p50 47.4 ms，Lab 31.2 ms；最大的剩收集共同工作 10 ms（工作隊 4.3、跑者與恢復 2.6）、原生開步界限 2.7、補給 nb_sustain 2.0＋收集裡的補給 1.3、戰鬥前後生命結算各 2.4。
+### 鎮上畫面第二輪量測（d87c5f8 量測工具，本機）
+- 量久一點才看得到真相：鎮開起來後，背景一直在烘「俘虜卸裝」外觀圖集（每種居民外觀預先準備被俘時的樣子，存 user://equipment_atlas）。測試用隔離的空 user 資料夾，所以每次都重烘：超過 5 分鐘、每幀約多 15 ms，烘完釋放約 2,600 個節點時卡 5–6 秒。真玩家只有第一次或出現新外觀時會碰到。
+- 烘完之後鎮上的穩定幀：47.6 ms（約 21 fps），其中 Lab 模擬 40 ms（收集共同工作 13.3、生命結算兩段各約 4、共同窗口 3.6、原生開步界限 3.2、前綴擷取 3.0、工作預檢 2.9）。
+- 自動存檔每 30 秒（真實時間）一次，卡 0.6–1.0 秒，幾乎全是寫 Site 檔（530–750 ms）。
+- 圖集：Nekki 00:11「圖集不能在開遊戲前就處理嗎？」→ 00:13「好」。2817bb1：劇本 A 全部 46 Site、545 人，去掉武器盾牌只有 4 種被俘外觀，2 種要烘（男、女輕皮甲）。打包時用 `bake_captivity_appearances.gd --seed-out` 烘好存成種子（assets/characters/terrain_lab_army/captive_seed/v1，19 MB；GitHub LFS 額度已用完，Nekki 01:28 選 C：種子不進 git，只留在這台機器，資料夾內 .gitignore 擋住；重新 clone 的機器第一次會暫停烘一次），TerrainLab 開啟時 `CaptiveAtlasSeed.seed()` 原樣複製進 user:// 快取；圖集讀取程式（女弓手指紋）沒動。鎮上 900 幀：不再背景烘、不再卡 5–6 秒，15.4 → 21.9 fps，p95 78 → 52.5 ms。人物美術或圖集程式改了，種子自動不算數、遊戲退回現場烘；要重做種子：先跑 `scenario_captive_looks_probe.gd` 列外觀，再有畫面跑烘焙工具 `--appearances res://output/captive_looks/demo_a.json --seed-out`。
+- 遊戲中換裝出現新組合時仍要現場烘那一種：Nekki 00:41「那就讓他卡好了，發生時遊戲暫停寫圖集烘焙中，烘好再繼續遊戲」→ 本機 commit（TerrainLab `_atlas_bake_pause`）：有圖集在烘就按遊戲自己的暫停、中央顯示「圖集烘焙中…新外觀第一次出現，烘好後自動繼續遊戲」，烘完自動繼續（玩家自己按的暫停不解）。實測不放種子：烘 85 秒、Site 時鐘不動、烘完自動繼續；有畫面相關 17 項全過。量測工具 `--no-seed --pause-check`。crowd_c2_atlas_visual_test 在沒有種子掛勾時一樣失敗（凍結的發佈 namespace 已和現在的來源不同，舊問題）。
+- 426dacc（本機）：工作隊兩個「重新檢查載具／船廠工作」先讀本人那一列、沒事就不建人物資料；住宅出席不重複查同一人。Lab 31.2 → 29.6 ms，p50 47.4 → 45.8 ms（同時段前 300 幀）。工作隊／住宅／居民／船／攻城／共同步進重播 27 項全過。
+- 11/28 02:00–02:40（本機）：082e95d 戰報成長驗收（Nekki「還是要記戰報啊，不然成長怎麼算」：戰報 11/24 已接上；有人看的一場 5 名參戰軍官、沒人看的山寨 5 名遠征軍官打完都長了 70 小時武器路線＋武力；士兵照 Q5 A 不記）。e1c3b68 工作預檢同一次檢查不再找兩次操作者：Lab 39.9 → 39.2 ms（科技／生產／農作 40 項全過）。工作預檢內部量測（每幀）：批次資格 2.5、找操作者 2.1、用水 0.85、工位切分 0.77、科技政策 0.48 ms。
+- 11/28 02:50–05:05（本機）：852e342 工作預檢按田的格子記住工位切分（Lab 39.2 → 38.1 ms）、31cb373 用水需求只在缺值時才算（→ 37.9 ms）。夜間完整回歸 FULL_FN（290 項，3 個並行，03:05–05:03）：289 過，剿匪全程 --repeat=2 只在並行時失敗、單獨重跑過。鎮的穩定期（第 690 幀後）每幀 p50 約 44.7 ms（21–22 fps），模擬 37.9 ms。
+- 等 Nekki：提案 B（同一幀沒變就不做第二次檢查，預估省 3–4 ms）；自動存檔卡頓（區域檢查點那條路，未拆細）。
+- 平穩期剩下的大頭（工作預檢 2.9、前綴擷取 3.0、生命結算約 4、開步窗口 3.6）多半是刻意的「先純檢查、再實際做」雙重檢查；再大幅變快要改設計（例如同一幀內沒變就不檢第二次），要先給 Nekki 提案。自動存檔約 0.5 秒多半是寫完整份讀回驗證，保留。
+- 還能做的：每幀補給結算 settle_native_supply_begin_endpoint 1.2 ms 與 nb_sustain 2.0 ms（兩次整份建補給列）、工作隊選人 3.3 ms（不可用檢查、威脅、路徑）、住宅出席 1.8 ms（_ready 0.9 ms）、其他讀 environment_revision 的快取（聲音、作業用水）也被進度加一弄失效。
+- 快轉時船隻（GD 船身）、作業計時器仍是 1 倍；目前沒看到問題，沒動。
+
+## 2026-11-27 10:05（台北）交接：開局速度、玩家聚落供餐、舊測試清理（全部已推送 PR #3，至 3dbb792）
+
+### 目前狀態
+- PR #3（草稿，claude/project-thread-r6d8n4）已推到 3dbb792，說明已更新。本機 master 與它相同；工作區只有不屬於指揮中心的修改（.gitignore、幾份規格與計畫，照舊不要提交）。
+- 完整回歸 FULL_1127（276 項，在 c0d7a55 上）：273 並行過，3 個要新輸出資料夾的換名字重跑也過（RERUN_1127.json 的 id 已用掉，下次要再換）。之後的改動跑了相關家族：FAM_MEALS 62／62、FAM_TILES 16／16、收稅 6 種、商隊、開局交易、爭位邀請、和平建聚落 3 種、聚落科技 4 個。
+- 開局速度（Nekki 11/22「B」）：劇本 A 按「新世界」到進世界，無畫面 239 → 39 秒，真畫面 約 48 秒（選單檢查 5.2＋出生 42.8）。commit：3aac5b2、0436f92、87f55f3、c0d7a55、1cb0a6e、1a53d31、3dbb792。做法與數字見 memory birth-speed-b-progress。
+- 玩家聚落供餐（Nekki 11/26 20:13「玩家聚落當然也要開，缺水若太複雜就不要算了」）：0b7ebe8。玩家新建聚落帶 meals:1；之前建好的不變；補算不看水。路上修掉：旅途隊伍的模擬場照出發地聚落配糧（INVALID_SUSTAIN）、聚落科技專案不認 meals 欄位。計畫 V0.6：reports/scenario-village-livelihood-plan.md。
+- 舊失敗測試：bfab6c9（群眾模式找不到爭位支持者的隊伍＝遊戲錯；開局交易測試跟上技術樹 D10）、edcbdb6（兩個只跑格子戰鬥的測試退役，Nekki 11/14 A 規則）、f1a3134（生態治理存讀往返要 --grid）、f3d3ea5（r4 樣本畫面測試改讀正式 r4 地圖）。
+- 量測：db01a6d（×16 睡覺探針：無畫面 6 遊戲小時 12.8 秒，模擬不是瓶頸；有畫面時沒量）。
+
+### 待辦（新指揮中心可接）
+- 剩下的開局花費（快檔）：真畫面 captivity_capture→first_frame 約 7 秒、群眾身體 4.6 秒、居民外觀 3.7 秒、起點隊伍接觸外觀（無畫面 12.8 秒，真畫面被選單預熱藏住）——都在外觀圖集相關檔，碰之前要問 Nekki。46 個 Site 存檔＋讀回約 6.5 秒：只能靠並行存檔，路徑上有共用靜態快取，判斷風險高，沒做。
+- 有畫面時的 ×16 睡覺還沒量（scripts/tests/scenario_sleep_cost_probe.gd 改 visual 跑）。
+- 16 倍快轉時走路不隨之變快（村民通勤要好幾個遊戲小時）：Nekki 還沒決定。
+
+### 已知問題
+- region_cold_original_matrix_test（不在 FULL）：改動前就失敗，四個原生欄位差 1e-14 級浮點尾數；要過只能讓路徑位元相同或放寬成容許誤差。指揮中心建議先不動，協調者同意。
+- 機器快慢檔：同一份程式同一測試可差 2.2 倍（memory machine-speed-modes-timing）。比快慢只看同一次跑內的比例或同一時段前後對照；等價性用摘要探針（fixed_base_digest_probe、projection_digest_probe）。
+- 舊測試的正確跑法與狀態：memory old-failing-tests-outside-full。
+
+### 新工具
+- scripts/tests：fixed_base_digest_probe（`-- --parallel`）、projection_digest_probe、prebuild_scaling_probe、shared_tile_probe、author_package_cost_probe、build_stage_cost_probe、sample_cost_probe、projection_stage_cost_probe、manifest_cost_probe、scenario_sleep_cost_probe。
+- scenario_demo_trial_test 會清地形記憶、模擬選單人物預熱，並印出選單檢查秒數；`--perf-trace` 的段落用 scratchpad 的 perf_sum.py 加總（每次跑在 .godot-temp/godot_verify/<run>/appdata/…/perf/new_game_*.json）。
+
+## 2026-11-26 05:55（台北）居民吃飯＋劇本村種田（Nekki 11/25 22:22「依建議」；11/26 02:47「沒問題就push，後面要繼續」）
+- 程式完成，完整回歸 FULL_LV2（274 項）05:31 起跑；全過就提交並推送 PR #3。計畫與結果：reports/scenario-village-livelihood-plan.md V0.3。
+- 只在聚落紀錄有 `meals: 1` 生效（新劇本世界）；出貨的劇本包已重建（30 聚落都有田、有供餐）。
+- 原生模組換新：DLL 0a38a4d5…（build 3590009a…；舊 c6480a73… 備份在 evidence/WALK_SAVE_native）。`World::save()` 把走到一半的返家步存成「站在那裡」。舊 DLL 存的檔會被拒絕；Nekki 的電腦上沒有遊戲存檔。
+- 新工具：village_stock_probe（`--days --only --raids --bind --every --checkpoint --keep/--cache`）、village_projection_probe（幾秒快轉 420 天）、`--replay-trace`（印每次補算的開始、結束、拒絕原因；沉默重試就靠它抓）。
+- 改掉的東西見計畫「路上修掉的時鐘與存檔問題」九條。
+- 已寫給 Nekki 另一個專案的 Codex 派工說明：reports/codex-dispatch-howto.md。
+
+## 2026-11-25 17:30（台北）NPC 隊伍抵達會讓世界停住、沒人看的 Site 成伙、綁定快 10 倍
+- 起因：銷贓隊回寨測試並行時失敗、單獨過。並行 9 次重現 7 次，現場一致：世界停在抵達那一刻，不是測試老毛病。五個原因，已推送的 458b40b 都有：
+  1. 抵達沒人去過、沒有存檔的野地 Site：`UNSELECTED_REGION_SOURCE` → 步進鎖錯。改成先聯合存檔（prepare_npc_region_arrival）。搬寨、出走都會走到。
+  2. 同一隊兩名幹部抵達沒有群眾的 Site：舊存檔遷移檢查誤擋，留成已退役的格子隊（d5_prepare_existing，剛抵達的隊伍不查）。
+  3. 步進被切短後重新預報抵達，時間差最後一位：`REGION_EVENT_CONFLICT` 每幀重試。改成還沒發生的預報以最新為準（_queue_region_forecast、_drop_region_forecasts）。
+  4. 隊伍時鐘與世界時鐘差 4.5e-13：走進玩家所在 Site 時 `STALE_REGION_PARTY_BODY`。容許 1e-8（PARTY_CLOCK_EPSILON）。
+  5. 同樣的差：存登記簿時 `CORRUPT_SAVE faction source receipt`。收據時間夾到現在。
+  - 新測試 region_npc_wild_arrival_test（土匪搬寨走去新山寨再走回來）18／18；銷贓隊測試並行 9 次不再停住。
+- 沒人看的 Site 上成伙落草（逃兵、潰兵、居民落草、銷贓）：登記簿只有活動 Site 的控制器能存。`SiteController.commit_registry`；`prepare_faction_creation` 也收已綁定的冷 Site；外交只由活動 Site 結算。新測試 region_cold_band_test。
+- 綁定變快：逐段量，99% 花在登記外觀圖集與準備要畫的人物（看不見的 Site 也做）。`CrowdSite._undrawn()`：restore_only 的 Lab 不登記、不準備；變成看得到時第一幀才做。讀檔時也不重查外觀來源（SiteStore.recheck_assets，背景綁定才關）。12 人的村 23.6 → 2.2 秒（最長一次 11.4 → 1.1 秒）；山寨 9.2 → 1.6 秒。探針 bind_cost_probe（在自己的程序裡加量測點，不動磁碟上的程式）。
+- 30 日觀察：6 聚落、3 伙、1 市鎮，玩家不動，30 日 33 分鐘、沒有錯誤；公式遠征 3 次都贏。沒人打開過的村存糧不會變多，所以每村最多被搶一次（待 Nekki 決定要不要估算生產）。
+- 回歸：關聯 25／25；完整回歸 FULL_1129 272 項：269 項並行過、3 項單獨過（2 項是驗證器清舊資料夾互撞、1 項交易畫面測試等交貨），0 失敗。
+- 21:05 補：居民一戶出走走到野地會停住（平民當隊長，格子名冊只收軍官，`CORRUPT_SAVE`）、平民隨隊抵達變士兵、聚落首長被叫去出走後存不了檔，三個都改（region_travel._without_civilian_command、site_resident_exodus）。新測試 region_emigrant_arrival_test；旅行與居民回歸 FAM_1130 107／107。交易畫面測試改挑最近的人（6c379f9）。
+- 推送等 Nekki 說（未推送：361a98f、c864df6、79db33d、b383591、0ab819a、6c379f9 與 21:05 這一包）。待 Nekki 決定：沒打開的村要不要估算生產。
+
+## 2026-11-25 12:00（台北）遠征劫掠、存檔與久未打開的 Site
+- Nekki 02:52「遠征劫掠要有，做到可用」；07:10「都依建議」：沒人打開的山寨與村落之間用公式劫掠（11/01 原生決定的例外）；已綁定的冷 Site 閒置先釋放；寨主自動知道 2 個 Site 內的聚落與概略人數。沒有准推送。
+- 已提交（本機，未推送）361a98f（火場日誌與聚落檢查改增量）、c864df6（遠征真的打、搬走倉庫）；完整回歸 FULL_1126 267／267。
+- 存檔缺陷（已推送的 458b40b 就有）：沒人打開的 Site 會把火場日誌的列全留著，提交紀錄超過 1 MB 就讀不回來（SAVE_IO），劇本世界玩一兩個遊戲日後存不了檔。改成上限 64 MB，兩日前安靜的列合併（不跨任何 Site 的水位）。5 個遊戲日每日存檔都讀得回來，紀錄停在約 2.86 MB（region_journal_saves_test 25 項）。
+- 久未打開的 Site：11/16 A 的粗略補算從來沒套用到群眾 Site（名冊被當成格子軍隊、沒打開過的 Site 沒有模式、有氣候的世界一律算有火、逐列切步、1e-12 的時鐘檢查、每片都重讀檔案）。都改了。打開一個沒人看過的村：1.6 日 約 1000 秒 → 72 秒；5 日 31.7 秒；10 日 38.3 秒（首次 13 秒，其餘每片 0.27 秒，共 45 片）。只有非戰鬥、非火場的時段走粗略，最後 2 小時仍精確。
+- 山寨出門：第一次綁定沒發布、整隊離開後 Site 的後端不符、回程相位 −1e-14，三個都修；來回 3 小時驗過。
+- 強度：空手擊昏從 35（等於戰鎚）改 14（原生 DLL 同步），居民約 0.5 個兵。公式照實測：有效兵力 A、防守 D＝兵＋0.5 居民，A 至少 1.2 D 才去，勝率 A^8／(A^8＋D^8)。居民 0.5 是指揮中心依規格 10A.3 選的，可再調。
+- 打到一半就收手（防守剩一半：搬了就走；自己剩一半：撤），不再因昏迷流血規則（9/29）打到一方死光。
+- 實測兩場（即時、原生）：7 人贏（村民 0 死、土匪死 1）、9 人贏（雙方 0 死），搬走全部 75 糧＋20 木，整隊走回山寨。
+- 登記簿只有活動 Site 的控制器能存：新增 SiteController.registry_saver()。冷控制器上的潰散、流民、銷贓仍用自己的提交（會被拒），未改。
+- 閒置釋放：已綁定的冷 Site 連續 6 遊戲小時沒人需要就關閉（該幀 1–2 秒，活動 Site 戰鬥中不做）。
+- 新測試：region_idle_release_test（33）、region_bandit_formula_test（102）、region_journal_saves_test（25）；探針 bandit_raid_calibration、raid_dispatch_trace、raid_kit、cold_bind_days。
+- 原生 DLL：c6480a73ced5660c…（前一版 2b8d345659572e67b6bd…，備份在 evidence/UNARMED_native）。
+- 相關回歸 FAM_1127 40／40；完整回歸 FULL_1127 270 項：269 項並行過、1 項（銷贓隊回寨）並行失敗、單獨重跑過，原因另查。
+- 尚未：30 日觀察；推送等 Nekki 說。
+
+## 2026-11-24 20:20（台北）戰鬥計時（R0）、戰報（R1）、收場結算（O2）、全滅土匪（O3）
+- Nekki 10:35Z 問「我何時說要加快節奏的」：沒說過。M2 A、M3 A 定的是慢速；我先前把它寫成 A／B 要 Nekki 選，是錯的，已收回。
+- R0：`terrain_lab.gd` 的 `_native_combat_left()`。群眾 Site 在區域步進裡傳給原生的戰鬥時鐘改用這個 Site 自己的倒數（`site.combat_left`＋攻城 10、火場寬限下限）；區間的共用戰鬥秒數只留在時鐘日誌。實測跑步疲勞：區域世界 0.1 → 0.001667，和單站一致。擊倒：倒地後 660 遊戲秒昏迷只少 72 秒（慢速＋戰後正常）。回歸 R0_REG 45 項 44 過；剩下 1 項是既有漏洞（下一條）。
+- 既有漏洞（R0 讓它浮現）：`TerrainArmy.pending_cadre()` 把隨隊同行的陣亡軍官（Nekki 11/10 5A）算成「待分職幹部」，整隊到下一站被 `MIGRATION_REQUIRED` 拒絕轉群眾。已改成不算 `member_gone`。測試：region_siege_cancellable_departure_test。
+- R1：`CrowdSite._battle_tick` 只在 `step()` 沒有原生工作點的分支裡被呼叫，實際步進從不走那條，所以戰報從 11/06（36f3892）起沒有生效。改在 `terrain_lab.gd` 的 `_settle_native_checked_point_endpoint` 呼叫（不動 crowd_site.gd 指紋檔）。
+- 收場時被擊倒、被俘的人不再算「還能打」，否則一方全被擊倒時沒有勝方（`close_battle`）。
+- O2：戰鬥在自己的區域點裡收場，登記簿存不了。改成 `battle_effects_due` 排隊，靜止時由活動 Site 的控制器存檔（冷 Site 不能單檔發布登記簿，`checkpoint_region_site` 會拒絕）：劫掠、商隊與稅隊覆沒、全滅土匪。
+- O3：新檔 `site_bandit_ended.gd`。土匪在自己的山寨最後一人死亡或被俘（擊倒會醒的不算），且沒有旅途中的隊伍、沒有近兩日的劫掠在外、其他已綁定 Site 也沒有站著的成員，就標成 extinct、清山寨，官方最大隊的指揮者威望 +3。
+- 新測試：site_battle_log_live_test（預設一般敵國 19 項、`-- --band` 全滅土匪 22 項）、site_battle_tracker_probe_test（探針）。剿匪全程測試延長到戰鬥收場（26 項）。
+- 回歸：R1_REG 25/25；264 項全回歸 FULL_1124B：262 項並行過、2 項單獨過、0 失敗。提交 b138126（未推送）。
+- O3 補強（22:10）：收場時只是被擊倒的土匪，之後死亡或被俘也會讓這伙結束（`SiteBanditEnded.check`，每遊戲分鐘在靜止時看一次，只看近兩日被官方攻打過、且山寨在本 Site 的土匪；威望給當時站在這裡的官方最大隊隊長）。測試 `-- --band --late`；O3B_REG 16/16。
+- O2 驗收（22:32）：剿匪全程測試加驗 7 項，跑 2 輪都過：沒人看的 Site 自己存登記簿被拒、存貨不動；由活動 Site 的控制器存才成功，倉庫少 60、山寨庫多 60，公布的檔案也是低的。用替身聚落，真正遠征打下沒人看的聚落還沒測。
+- 計時逐項量（區域世界，戰鬥中每遊戲秒）：昏迷 −0.01667、流血 −0.000116、疲勞不恢復；平時 1.0、0.006944、30 秒後開始恢復，正好 60 倍。
+- 尚未：推送（等 Nekki 說）；俘虜與逃脫、士氣與潰散的計時逐項量；已綁定但沒有隊伍在的冷 Site 上的土匪成員（未綁定的別站）看不到。
+
+## 2026-11-24 16:10（台北）冷 Site 步進卡死：根因與修正
+- 現象：剿匪全程測試約四場一場 `REGION_CROWD_REPLAY_STALLED`（官兵在沒人看的山寨開打時）。
+- 根因（診斷列出每條限制後確認）：沒人工作的隊伍，疲勞由原生自己累計；`_native_begin_bound` 卻在「可能跑步的人把疲勞帶過 30」的預測點切步。戰鬥中被切短的步，原生只用 1/60 的速度累計，於是一步只走 1/60～1/120 又被切；跑的人一停，疲勞停在 29.9999955，之後每步都切在同一個 0.0001 遊戲秒的位置。一個 8 秒區間要 7 萬段，上限 4096。
+- 第一版修正（休息計時的查詢）是讀程式猜的，診斷顯示那條分支從沒走到，已撤回。
+- 第二版修正：原生自己累計的隊伍（該計畫中沒有人有工作秒數的原生編隊），戰鬥中不為疲勞跨線切步；平時現在在跑的人照切（原生平時用世界速率，預測是準的），只有「可能跑」造成、且近於 `NATIVE_RUN_BAND_FLOOR`（0.25 遊戲秒）的切點不切。有人工作的隊伍完全照舊。
+- 確認：帶診斷的全程測試 9 輪全過，其中 7 輪印出「新規則略過切點」，沒有任何區間超過 8 段。修正前約四場卡一場（較早 12 輪卡 3 輪；加了限制診斷的 6 輪卡 1 輪）。
+- 專測：scripts/tests/site_crowd_run_band_window_test.gd（把隊伍疲勞推到 30 − 0.00001，量「每遊戲秒的原生步數」，戰鬥中站著、平時站著、戰鬥中跑步三種都要和平常一樣）。
+- 現場紀錄：output/project_command_center/CONTINUOUS_SWITCH/evidence_stall_20261124。
+- 臨時診斷碼（--stall-diag、STALLBOUND）已全部移除。
+- 另一個發現（未處理，要報 Nekki）：區域世界裡，戰鬥中的原生機制用的是世界速率，不是 TCM 定案的戰術速率（戰鬥中 1 行動秒＝1 遊戲秒）。
+  - 量測（專測，區域世界的即時 Site、戰鬥中）：一人跑 3 步（6 遊戲秒），6 人的隊伍疲勞 +0.1，正是 0.1×6÷6 的世界速率；戰術速率應該只有 +0.0017。
+  - 原因：原生 `step_clock*` 把主機傳入的戰鬥時鐘同時當「步進開始時的值」（`step_combat_start = combat_now`），主機傳的卻是步進結束時的值。區域世界每個區間的戰鬥時鐘就是區間自己的寬度，沒被切的步進傳進去是 0，原生就認定整步都不在戰鬥中。單站測試的戰鬥時鐘很長，所以是戰術速率；在單站做的測試看不到這個差異（TCM 當時各項驗收用的是哪一種場景，尚未回頭查）。
+  - 影響（依程式推定，除跑步疲勞外尚未逐項量測）：跑步疲勞、疲勞恢復、擊倒與甦醒計時、流血、俘虜進度、士氣觀察，在正式遊戲的戰鬥中比設計快 60 倍；戰鬥中也被當成可以休息。
+  - 這是 11/15 TCM 上線後就有的差異，和今天的卡死修正無關。修正要動原生或主機傳入的時鐘，Nekki 10:35Z 問「我何時說要加快節奏」：M2 A、M3 A 定的是慢速，這是實作錯誤，直接修，不需要選。同日 19:00 逐步實測：戰鬥中跑步疲勞每遊戲秒，區域世界 0.1、單站 0.001667，正好 60 倍。
+  - 17:15 寫的「戰報不開也是同一個 0」是錯的，19:00 更正：探針實測戰報追蹤器在真正的步進裡一次都沒被呼叫（區域 12 步、單站 90 步都是 0 次）。`_battle_tick` 只在 `step()` 沒有原生工作點的分支裡，從 11/06 加入（36f3892）就是如此，所以戰報與 `close_battle` 的結果不分畫面內外都沒發生過。兩個獨立的錯誤，計畫 V0.4：R0（戰鬥計時）與 R1（追蹤器接上步進）。
+- 回歸：步進核心快檢 SMOKE_FIX2 19/19；全回歸 FULL_1124 258 項，252 項並行通過，3 項單獨重跑通過，3 項要全新輸出資料夾（換編號後 RERUN_1124 3/3 通過）。
+  - 單獨重跑通過的三項：市集暗盤測試（並行老毛病）、剿匪純資料測試（驗證器清理舊資料夾時互撞）、工匠開局測試。
+  - 工匠開局測試是 11/22 把劇本加進新遊戲選單（aa8e4d0）後漏改的預期：清單不再只有一項，而且選項變更會刷新確認頁摘要，測試沒有先寫入人物草稿。已改測試。
+  - 兩支攻城器械畫面測試與平民圖集准入測試每次都要全新輸出資料夾，清單裡的編號要逐次換（這次用 full1124cg／full1124cn／cc198_new_1124）。
+- 已提交並推送（Nekki 11/23：全部沒問題就可以推送）。
+
+## 2026-11-24 10:20（台北）額度用完暫停：NPC 進冷 Site 四層已修，剿匪全程測試差最後一段
+- Nekki 02:05Z「要補，先排程」：畫面外戰報。計畫 reports/offscreen-battle-log-plan.md（O0–O4，已提交），待決 OQ1–OQ3。
+- 未提交、已在工作目錄（全部未跑回歸）：
+  - region_save_slot.gd prepare_npc_region_arrival：(1) 冷補算 PENDING 原樣上傳；(3) 剛補算完的冷 owner（選定檔落後或是開局的純存檔）先聯合存檔；(4) 聯合存檔前先收尾活動 Site 的區域點與冷點。
+  - terrain_lab.gd：(2) 補算用 Lab 綁定後帶上世界氣候開關（不碰來源）；冷 child bind 失敗帶出 cause／crowd_cause；**臨時診斷碼 `--cold-bind-diag`（COLD_BIND_DIAG）要在提交前移除**（補算完成區、_region_bootstrap_bind_child、_region_original_cold_pending）。
+  - site_region_checkpoint.gd：臨時診斷 push_error（`--cold-bind-diag`），提交前移除。
+  - site_bandit_suppression.gd：新隊伍進 Site 立刻再檢查攻擊令、被拒絕會重試；site_bandit_attacked.gd：watch（每遊戲分鐘看現場減員）＋每伙每日每 Site 一次；劫掠記號改放 slot。
+  - scripts/tests/site_bandit_suppression_e2e_test.gd（新）。
+- 全程測試現況：出兵 → 行軍 → 抵達山寨（已通過，土匪 9、官兵 5 在線）→ 下攻擊令 → 開打（官兵全滅土匪）都確認；「被官方攻打 → 熱度 +20 → 隔天搬寨」用 watch 的版本排在 E2E22，尚未看到結果（output/project_command_center/CONTINUOUS_SWITCH/E2E22.log）。
+- 已知：冷 Site 戰報追蹤器不開（共用戰鬥時鐘）；全滅的土匪仍 active。
+- 下一步：看 E2E22 → 移除臨時診斷碼 → 回歸（BANDIT_B3.json＋e2e＋NPC 抵達相關：region_two_npc_sea、region_food_reinforcement、region_siege_center_original、region_npc_static_siege_entry、region_carried_intel、site_ecology_longrun_owner）→ 提交推送（Nekki：全部沒問題就可以推）→ 畫面外戰報 O1。
+
+## 2026-11-24 04:25（台北）額度用完暫停：剿匪全程測試卡在冷 Site 接上線
+- 已推送到 PR #3：到 1c9cd69（市鎮官兵、劇本包、剿匪第三階段、活世界測試；回歸 BANDIT_B3 30/30）。
+- 本次提交（未推送）：土匪熱度每 10 日 −5 改成全世界一天一次（原本每個步進中的 Site 各降一次；slot meta bandit_cooled_day）；活世界測試的開局等待改看時間。COOL1 2/2、LIVE9 通過。
+- 未提交：
+  - scripts/region_lab/region_save_slot.gd prepare_npc_region_arrival：目的地冷補算回 PENDING（含 cold_replay）時原樣上傳，不再變成 COMMITTED_UNBOUND 步進錯誤。已確認不再鎖錯；尚未跑 NPC 抵達回歸。
+  - scripts/tests/site_bandit_suppression_e2e_test.gd（新，診斷用，尚未通過）。
+- 全程測試的發現（遊戲本身的問題，劇本裡任何 NPC 走進開局後沒人去過的 Site 都會中）：
+  1. 補算 PENDING 被當失敗（上面已修）。
+  2. 補算做完後，冷 owner 接上線失敗：terrain_lab.gd:10512 REGION_CHILD_BIND_FAILED「群眾原生內容未在冷補算中啟用」（crowd_saved 但 child.crowd_site 未 active）。這個失敗在步進前的 consume_region_point 路徑（terrain_lab.gd:1804）不鎖錯、只默默重試，所以每個畫面從頭補算（約 10 秒一輪），官兵永遠進不去。
+- 下一步：讀 terrain_lab.gd 10480–10515（冷 child bind 的 crowd 啟用條件；開局伴隨 Site 是 crowd_convert_pending，補算時轉成 crowd 並寫了 crowd 區段，重新 bind 時 crowd 未啟用），修好後重跑 E2E（output/project_command_center/CONTINUOUS_SWITCH/E2E_DIAG.json），再跑 NPC 抵達回歸與土匪群回歸，通過才提交推送。
+
+## 2026-11-22 18:30（台北）暫停交接（Nekki 10:25Z「額度用完了暫停吧」）
+- 已推送到 PR #3 分支：到 e542834（Nekki 09:16Z「好 push」）。之後本機未推送：市鎮官兵＋重建劇本包（本條提交）。
+- Nekki 09:15Z「A」：3 座市鎮各一隊 12 人官兵（產生器 GARRISON）。劇本包重建：46 Site、土匪 121 人；46 Site 開局 392 秒、12 項全過；小規模試生、30 日測試通過。
+- 未提交（驗證中）：
+  - scripts/terrain_lab/site_bandit_suppression.gd：出兵拆成 send()（先讀隊長與起點，再存出兵紀錄、再出發）。
+  - scripts/tests/site_bandit_suppression_live_test.gd（新）：活世界出兵＋回家測試。
+- 活世界測試的歷程：
+  - NO_COMMANDER：新編隊伍要等原生下一步才坐上隊長 → 等畫面。
+  - NOT_READY「隊員不在可出發狀態」：原生狀態 S_FIGHT。官方勢力隊伍貼著中立小隊就開打 → 測試先把玩家小隊 relabel 成勢力 1，第二隊也用勢力 1（回家地點用勢力 1 第二座聚落）。
+  - 最後一輪 LIVE8 在暫停時仍在跑（無法由我停止，最長 25 分鐘自己結束）；結果見 output/project_command_center/CONTINUOUS_SWITCH/LIVE8.log。
+- 恢復後的下一步：
+  1. 看 LIVE8；過了就跑土匪群回歸（BANDIT_B2.json＋live 測試）後提交 send() 與 live 測試。
+  2. 第三階段：NPC 隊伍抵達無人 Site 會以 cold_exact 載入（prepare_npc_region_arrival），可能已會開打；做端到端測試（出兵→行軍→抵達→close_battle→熱度 +20→隔天搬寨）。
+  3. 推送等 Nekki 本人。
+
+## 2026-11-22 17:05（台北）土匪：被打才搬寨（BQ7）、官方剿匪第一、二階段（BQ8）
+- 推送：Nekki 07:14Z「Push」→ claude/project-thread-r6d8n4 快轉到 94297da，草稿 PR #3（https://github.com/nekki1009/worldgoing/pull/3）。之後的 2f5515e、f64cb43 未推送。
+- Nekki 07:36Z「B」：熱度 ≥ 70 只在 10 日內被官方攻打過才搬寨，否則蟄伏。site_bandit_attacked.gd：活動 Site 的仗結束時，和正式勢力（非土匪、非叛軍、非中立）打過且不是自己去搶的那場，熱度 +20、記 `attacked_day`，靜止時存檔。
+- Nekki 08:17Z「B」：官方剿匪熱度驅動。site_bandit_suppression.gd：聚落的正式擁有者每日一次，對熱度 ≥ 50、山寨 2 Site 內的土匪派最大戰鬥隊（≥ 1.5 倍）出征，30 日冷卻（`pursued` {勢力: {day, home}}），captain:suppress；剿完回家。玩家勢力不由 AI 出兵。
+- 回歸：BANDIT_B2 29/29（銷贓隊測試並行偶發，單獨通過）、SUPPRESS2 11/11、SUPPRESS3 1/1。30 日測試：被打的那夥搬寨 1 次、另一夥蟄伏 19 天。
+- 30 日測試原本跳時鐘：跳過 Site 消化區域「評估」事件的步進點（evaluation 事件 at 3600），之後登記簿提交一律 REGION_EFFECTS_PENDING。改成不跳時鐘的 30 次土匪日結算。
+- 缺口：剿匪的實際出兵與回家沒有活世界測試（只有純資料測試）；第三階段畫面外戰鬥未做，官兵到沒人在的山寨不會開打。
+
+## 2026-11-22 15:50（台北）示範劇本 A：正式劇本包、46 Site 開局、30 日測試、選單截圖
+- 正式劇本包 res://assets/scenarios/demo_a/demo_a.json（4887f6b）：30 座聚落（3 座市鎮）、15 夥土匪、46 Site（含起點）、316 名居民、125 名土匪；包 488 KB。建包腳本 scripts/scenarios/build_demo_a.gd，約 14 分鐘。
+- 開局上限：RegionSaveSlot.AUTHOR_INITIAL_SITE_LIMIT 16 → 64（第一次全規模實測因此被拒，INVALID_AUTHOR_CONTEXT）。
+- 46 Site 開局時間（--perf-trace）：1039 秒（第一次正式包）→ 419–426 秒（約 7 分鐘）。12 項檢查全過。剩餘大項：
+  - 寫入 46 個 Site 約 100–136 秒（每個約 2–3 秒，待查是寫檔本身還是外部檔案卡頓）；
+  - 開局前投影每個 Site 約 90 秒（每個 Site 重建中心地形）；
+  - 每次讀回重建底圖（RegionRoute.fresh_fixed_base 的深複製）約 1.4 秒 × 55 次。
+  - 建議先停在約 7 分鐘；要壓到 5 分鐘內需動存檔層，風險較高。Nekki 未決定。
+- 三輪加速的回歸：BIRTH_REG3 14/14（提交 4887f6b）。首長查詢不讀別家聚落（有「owner」記號）；勢力掃描重用寫檔讀回；開世界少建一次導航。
+- 30 遊戲日整合測試 scenario_demo_30day_test（c20c422）：6 座聚落、3 夥土匪、1 市鎮；每天把區域時鐘推一天，走 settle_person_deaths 真正的日結算。69 項全過：每天的土匪日只跑一次、無步進錯誤、勢力登記簿 30 天後仍合法、每夥土匪保有巢穴與頭目。
+  - 限制：這 30 日總共只花 0.1 秒，日結算的實際行動（襲擊、移動）未計數；可能很少發生。
+  - 限制：時鐘直接推進不經完成步進的發佈者（RegionSaveSlot.record_completed_active_step），所以存檔被正確拒絕（UNSETTLED_SITE）。30 日後「已結算的存檔」尚未覆蓋。
+- 選單截圖（26c547f）scripts/tests/scenario_demo_menu_capture.gd，GPU：確認頁選到「劇本：開墾之地」，摘要顯示「劇本：開墾之地」與起點 (1170, 13252)。截圖：.visual_captures/scenario_menu/01_confirm_scenario.png。
+- 尚未做：起點 Site 的 GPU 截圖、已結算存檔後的 30 日測試、推送（等 Nekki 指示）。
+- 提交備註：aa8e4d0、4887f6b、9d96701、c20c422、26c547f、7e4249f 的提交訊息帶有模型名稱的 Co-Authored-By 行，與系統規則「提交中不放模型識別」衝突；尚未推送，可在推送前改寫這幾個提交的訊息。
+
+## 2026-11-22 15:10（台北）示範劇本 A：開局加速（Nekki B）與選單劇本入口
+- Nekki 12:35「B」：改存檔核心，讓 46 個 Site 在合理時間內開局。
+- 10 個 Site 開局：279 → 166 → 140 秒（最早 350 秒）。這一輪：
+  - 同一次開局裡，伴隨 Site 的檔案檢查通過一次就記下（路徑、sha256、火災時鐘不變就不重驗）；_check_initial_record 每次開局要跑 4–5 次。
+  - 寫檔後讀回的內容直接拿來做第一次檢查，不再從磁碟重讀一次。
+  - 寫檔後的總檢查 32 → 6 秒。
+  - 兩個暫存在開局收尾時清掉。
+- 選單劇本入口：RegionEntry.scenario_packages 列出 res://assets/scenarios/<id>/<id>.json；確認頁的劇本選單會列出它，選了就用劇本的起點 Site 和開局包。
+- 回歸 BIRTH_REG 11/11、BIRTH_REG2 6/6、SCEN6 4/4。
+- 全規模實測（30 座聚落、15 夥土匪，共 46 個 Site）進行中。
+
+## 2026-11-22 13:10（台北）示範劇本 A：產生器、小規模試生、出生速度
+- 上限放寬：
+  - 開局包檔案 64 → 128（AUTHOR_MAX_FILES）。
+  - 劇本勢力 16 → 32、隊伍 16 → 64、職位 64。
+- 產生器 scripts/scenarios/：
+  - scenario_builder.gd 照地圖編輯器自己的準備步驟逐個 Site 蓋房，但不經過它的預覽 Site 限制。
+  - demo_a_generator.gd 在台灣地圖上選起點、聚落、山寨，蓋聚落中心、房屋、倉庫、水井，並放居民（依每間實際床位）、村官、存貨、鄉勇、土匪。
+  - 依自然來源附帶資源層依賴。
+- 試生 scenario_demo_trial_test（6 座聚落、3 夥土匪）通過：69 名居民、24 名土匪、勢力、頭目、村官、存貨都正確。
+- 出生速度（10 個 Site）：350 → 279 秒。做了三件事：
+  - 作者鄰居地形在一次載入內只建一次。
+  - 開世界檢查不再整個投影每個 Site。
+  - 頭目和首長在出生時記下，不重讀存檔。
+- 剩下的時間在寫第一代存檔、讀回驗證、收尾，每個 Site 要好幾秒；照這樣算，46 個 Site 約 12–15 分鐘。
+- 已請 Nekki 選做法：A 起點附近先生（建議）、B 改存檔核心、C 縮小規模。
+- 回歸 SCEN4_REGb 6/6。
+
+## 2026-11-22 11:20（台北）示範劇本 A：缺口 3（村官、倉庫存貨）與規劃重寫
+- 劇本檔多兩欄：
+  - offices：聚落首長和各職位，依居民名字就任；首長就是該勢力的領袖。
+  - stock：倉庫的開局存貨。
+  - 出生時由 TerrainLab.prepare_initial_scenario_settlement 在居民、隊伍之後套用。
+- 開局日期不補：改日期要動全世界的曆法，風險高。改成元年一月（冬）開局。
+- 驗收 scenario_factions_test 34 項；回歸 SCEN3_REG 16/16。
+- 規劃重寫（Nekki 10:44、10:53、10:59）：
+  - 規模：30 座聚落（3 座市鎮、27 座村）、15 夥土匪，放在現有台灣地圖、開局起點附近約 10×10 個 Site 的範圍。
+  - 勢力：15 個勢力各管兩座聚落。
+  - 下一步：放寬開局包檔案上限（64 → 128）和劇本檔上限，先試生 6 座村、3 夥土匪，量世界出生時間。
+
+## 2026-11-22 10:50（台北）示範劇本 A：補缺口 1、2（勢力表、隊伍）
+- Nekki 10:08「先做A」。規劃文件：示範劇本 A：開墾之地（Claude Doc）。Nekki 10:44：缺口補完後重寫規劃，村莊 30 座、土匪 15 夥，其餘照建議。
+- 作者開局包可以多帶一個劇本檔（kind scenario，scenario.json），格式由 RegionData.author_scenario_valid 檢查：
+  - factions：編號、名稱、種類 npc 或 bandit。bandit 另帶山寨（Site、格）、熱度、劫掠 AI、存貨。
+  - teams：所在 Site、勢力、站的格、成員名字與職別；第一位是軍官，也就是隊長。土匪的第一隊隊長就是頭目，每夥土匪至少要有一隊。
+- 世界出生時：
+  - TerrainLab.prepare_initial_author_teams 讓劇本隊伍在起點和同伴 Site 出生，帶標準裝備和名字。只有隊伍的同伴 Site 也會生出來。
+  - SiteController.apply_scenario_factions 把勢力改名、改種類，土匪補上頭目，一次存檔。
+- 修正：隊長（第 0 位）不能列在 officer_order，否則隊伍快照非法。
+- 驗收 scenario_factions_test 30 項；回歸 SCEN12_REG 16/16。
+
+## 2026-11-22 10:10（台北）隊伍範本（幹部卡）
+- Nekki 09:26「好」照建議做。推送：09:20 Nekki「Push」，已推到 11b7ea0。
+- 隊伍範本：
+  - 一個名稱加 5 個幹部位置，第 5 位是文武兼備；空位照舊自動產生，至少要放一張卡。
+  - 幹部卡取自人物範本，只帶名字、外觀、武力、戰術、統御、教練、性格。熟練和學業不帶，所以不用玩家的 200 點；四項能力各 0–100，和自動產生的範圍一樣。
+  - 存在 user://team_templates/，格式 scripts/main_menu/team_templates.gd。
+- 主選單：
+  - 角色編輯器頁下方多了「隊伍範本」清單（新建、編輯、刪除要按兩次），編輯頁每個位置選「自動產生」或一個人物範本。
+  - 新遊戲確認頁多了「開局幹部」選單，摘要會列出隊伍和各位置的名字。
+- 世界誕生：RegionEntry.request_new_world 多一個 cadres 參數；SiteController.apply_created_cadres 依出生順序（人物編號）寫入幹部，先全部檢查，最後存一次。
+- 修正：存檔讀回的幹部體型是 0.0（小數），卡片寫入 0（整數）。群眾圖集描述外觀時連型別一起比對，所以認不出這個外觀，回報 MISSING_ASSET。現在照原紀錄的型別寫入。
+- 驗收 team_templates_test 25 項通過（無頭與 GPU 各一次）；回歸 TEAMT_REG 13/13。
+
+## 2026-11-22 09:25（台北）待辦核對（取代下方舊的「剩下的項目都有前置」）
+- 已完成，不再是待辦：市集正式美術（market_v1 四向）、平民圖集與 C1c（ff8aadf，CA-06 結案）、貿易 T6、TC8 365 日長跑、稅隊車輛駕駛（SiteCartDriver）。
+- 真正未做：開局流程規劃的「選現成人物」（要先有帶人物的劇本）；隊伍範本已於 10:10 完成。
 
 ## 2026-11-22 08:30（台北）里程碑全套回歸 229/229
 - 土匪 B5（含銷贓）做完，跑全套回歸 FULL_20261122：11/14 全套，加上 11/17 新測試和兩支銷贓驗收，共 229 項，2 個並行。

@@ -23,6 +23,7 @@ const FenceTeam = preload("res://scripts/terrain_lab/site_bandit_fence_team.gd")
 
 const COOL_EVERY_DAYS := 10
 ## The four neighbours of a lair Site, in the order a move tries them.
+const Attacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B
 const NEIGHBOURS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 
 ## Runs the day once per controller; returns {day, actions: [{band, action, ...}]} or {} when already run today.
@@ -49,6 +50,10 @@ static func run(controller: Variant, today: int) -> Dictionary:
 	bands.sort()
 	var player_ref: Dictionary = JoinFaction._world_ref(controller, int(controller.lab.controlled_person_id()))
 	var now := float(slot.control.logical_game_seconds)
+	# Heat cools once a day for the whole world: every bound Site's owner (the live Site and each cold original Lab) runs
+	# this pass once a day, and each run used to cool every band again (found 2026-11-24). The day is kept on the slot.
+	var cooling: bool = today > 0 and today % COOL_EVERY_DAYS == 0 and int(slot.get_meta(&"bandit_cooled_day", -1)) != today
+	if cooling: slot.set_meta(&"bandit_cooled_day", today)
 	for band: int in bands:
 		registry = slot.control.faction_registry
 		var entry: Dictionary = registry.entries[str(band)]
@@ -58,14 +63,14 @@ static func run(controller: Variant, today: int) -> Dictionary:
 		# is not its leader: checked above) the band runs on its own, and the switch is saved so it stays on.
 		if not bool(table.get("raid_ai", true)):
 			var switched := Bandit._with_table(registry, band, func(row: Dictionary) -> void: row.raid_ai = true, now)
-			if not switched.ok or not controller._commit_diplomacy(switched, "").ok: continue
+			if not switched.ok or not controller.registry_saver()._commit_diplomacy(switched, "").ok: continue
 			registry = slot.control.faction_registry
 			table = RegionFactionQuery.bandit_of(registry, band)
 			result.actions.append({"band": band, "action": "npc_takes_over", "ok": true, "code": ""})
 		var heat := int(table.get("heat", 0))
-		if heat > 0 and today > 0 and today % COOL_EVERY_DAYS == 0:
+		if cooling and heat > 0:
 			var cooled := Bandit.set_heat(registry, band, Bandit.heat_after(heat, "quiet", COOL_EVERY_DAYS), now)
-			if cooled.ok and controller._commit_diplomacy(cooled, "").ok:
+			if cooled.ok and controller.registry_saver()._commit_diplomacy(cooled, "").ok:
 				registry = slot.control.faction_registry
 				heat = int(RegionFactionQuery.bandit_of(registry, band).heat)
 		# B5b-2: a fence team back at the lair unloads into the hoard (one commit per trip).
@@ -89,15 +94,20 @@ static func run(controller: Variant, today: int) -> Dictionary:
 			can_rise = Bandit.may_rise(registry, band, prestige, BanditAmnesty._members(controller.lab, band).size(), int(mind.get("ambition", 50))).ok
 		var seen := raid_facts(controller, band) if here else {"targets": [], "strength": 0.0}
 		if here: seen.targets.append_array(FarRaid.targets(controller, band, chief))
-		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "can_rise": can_rise,
+		var decision := Bandit.daily_decision(registry, band, {"day": today, "heat": heat, "attacked_day": int(RegionFactionQuery.bandit_of(registry, band).get("attacked_day", -1)), "can_rise": can_rise,
 			"amnesty_score": -1.0, "protection_due": [], "targets": seen.targets, "strength": float(seen.strength)})
 		var done := {}
 		match str(decision.action):
 			"move_lair": done = move_lair(controller, band)
 			"rise":
-				done = controller._commit_diplomacy(Bandit.rise(registry, band, now), "")
+				done = controller.registry_saver()._commit_diplomacy(Bandit.rise(registry, band, now), "")
 				if done.ok: controller.adjust_reputation(chief, float(Reputation.FOUND_KING), 0.0)
-			"raid": done = FarRaid.raid(controller, band, decision.target) if bool(decision.target.get("far", false)) else raid(controller, band, decision.target)
+			"raid":
+				var far := bool(decision.target.get("far", false))
+				done = FarRaid.raid(controller, band, decision.target) if far else raid(controller, band, decision.target)
+				# The battle this raid starts there is the band's own, not an official attack on it (site_bandit_attacked.gd).
+				if bool(done.get("ok", false)): Attacked.note_raid(controller, band, str(decision.target.get("site_id", "")) if far else str(controller.lab.terrain.site.get("id", "")), today)
+			"lie_low": done = {"ok": true} # Nekki 2026-11-22 B: hot, nobody attacked it: no raid, no fence today
 			_:
 				# B5b-2: with nothing else to do today, a chief whose hoard holds goods and too little food sends them to a fence.
 				var fence_target: Dictionary = FenceTeam.want(controller, band, chief) if here else {}
@@ -128,7 +138,7 @@ static func move_lair(controller: Variant, band: int) -> Dictionary:
 		var site_id := "%s:%d:%d" % [atlas, next.x, next.y]
 		var moved := Bandit.move_lair(registry, band, site_id, Vector2i(int(lair.cell[0]), int(lair.cell[1])), float(slot.control.logical_game_seconds))
 		if not moved.ok: return moved
-		return controller._commit_diplomacy(moved, "")
+		return controller.registry_saver()._commit_diplomacy(moved, "")
 	return {"ok": false, "code": "NO_LAND_NEIGHBOUR"}
 
 # --- B4d-3a: a raid on the settlement of the band's own Site (bandit spec §5.1, §11, §12) ------------------------------
@@ -173,6 +183,6 @@ static func raid(controller: Variant, band: int, target: Dictionary) -> Dictiona
 	var slot: Variant = controller.region_slot
 	var registry: Dictionary = slot.control.faction_registry
 	var hotter := Bandit.set_heat(registry, band, Bandit.heat_after(int(RegionFactionQuery.bandit_of(registry, band).get("heat", 0)), "raid"), float(slot.control.logical_game_seconds))
-	var saved: Dictionary = controller._commit_diplomacy(hotter, "") if hotter.ok else hotter
+	var saved: Dictionary = controller.registry_saver()._commit_diplomacy(hotter, "") if hotter.ok else hotter
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("%s 劫掠本地聚落" % str(RegionFactionQuery.display(registry, band).name))
 	return {"ok": true, "orders": orders, "heat_saved": bool(saved.get("ok", false))}

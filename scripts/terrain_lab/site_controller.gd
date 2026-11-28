@@ -38,6 +38,11 @@ const ResidentExodus = preload("res://scripts/terrain_lab/site_resident_exodus.g
 const FallenResidents = preload("res://scripts/terrain_lab/site_fallen_residents.gd") # 平民 C5: after a fall.
 const Migrants = preload("res://scripts/terrain_lab/site_resident_migrants.gd")
 const Typhoon = preload("res://scripts/terrain_lab/site_typhoon.gd") # 時間與氣候 TC11
+const BanditEnded = preload("res://scripts/terrain_lab/site_bandit_ended.gd") # Nekki 2026-11-24 OQ2
+const BanditFormula = preload("res://scripts/region_lab/region_bandit_formula.gd") # raids nobody sees (Nekki 2026-11-25 B)
+const BanditRaidField = preload("res://scripts/terrain_lab/site_bandit_raid_field.gd")
+const BanditAttacked = preload("res://scripts/terrain_lab/site_bandit_attacked.gd") # Nekki 2026-11-22 B: official attacks raise heat.
+const BanditSuppression = preload("res://scripts/terrain_lab/site_bandit_suppression.gd") # 官方剿匪 (Nekki 2026-11-22 B)
 const BanditAftermath = preload("res://scripts/terrain_lab/site_bandit_aftermath.gd") # B4d-3b: plunder and the way home. # 平民 C4c: a migrant household moves in.
 const ResidentLife = preload("res://scripts/terrain_lab/site_resident_life.gd")
 const ResidentSchedule = preload("res://scripts/terrain_lab/site_resident_schedule.gd")
@@ -2779,7 +2784,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 	else:
 		_combat_ui_elapsed = 0.0
 	if not bool(data.site.paused) and not get_tree().paused:
-		advance_sleep() # TC2
+		_note_sleep_wake() # TC2: applied in finish_tick, after the step
 		vital_year_tick() # TC7
 		_civil_level_prestige() # W5
 		vehicles.settle_operators()
@@ -2825,6 +2830,7 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 
 func finish_tick() -> void:
 	if lab.restore_only: return
+	_finish_sleep_wake()
 	var fault: Dictionary = original_step_fault_guard()
 	if not fault.ok: return
 	if region_operation_pending():
@@ -5217,9 +5223,23 @@ func _person_died(identity: int) -> void:
 ## Set while the day's hooks wait for the Site's Region point to close (never saved: a reload runs them at once).
 var daily_hooks_due := false
 
+## 居民吃飯 F1: a settlement that feeds its people does so once a game day (SiteResidentLife.ration_day); a team that was on
+## the move is asked again at the next game hour.
+var last_rations: Dictionary = {}
+func resident_rations_day() -> void:
+	if lab == null or lab.terrain == null or not ResidentLife.meals_on(lab.terrain.site): return
+	var hour := int(lab.terrain.site.get("minute", 0)) / 60
+	var day := int(lab.terrain.site.get("minute", 0)) / 1440
+	if int(get_meta(&"ration_done_day", -1)) == day or int(get_meta(&"ration_hour", -1)) == hour: return
+	set_meta(&"ration_hour", hour)
+	last_rations = ResidentLife.ration_day(self)
+	if last_rations.refused.is_empty(): set_meta(&"ration_done_day", day)
+
 func run_daily_hooks() -> void:
 	daily_hooks_due = false
+	resident_rations_day()
 	BanditDay.day(self)
+	BanditSuppression.day(self) # 官方剿匪: the settlement's official owner may send an expedition against a hot band
 	resident_exodus_day()
 	skills_day()
 	civilian_dress_day()
@@ -5232,12 +5252,14 @@ func settle_person_deaths(real_seconds: float) -> void:
 	# The daily hooks that may send a team onto the Region map (a band's raid or way home, emigrants, a caravan) need the
 	# Site at rest: inside the Site's own Region point every transfer snapshot is refused. While a point is open they are
 	# only marked due; TerrainLab runs them between two steps (run_daily_hooks), the state the hooks were written for.
-	if lab != null and region_slot != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching):
+	if region_slot != null and _in_region_point():
 		daily_hooks_due = true
 	else:
 		run_daily_hooks()
+		if region_slot == null: run_rest_hooks()
 	for traded: Dictionary in _trade().advance(): show_result(traded)
 	if has_meta(&"fence_heat_due"): TradeSession.Fence.flush(self) # 土匪 B5b: a fence sale's heat, saved at rest
+	if region_slot != null and region_slot.has_meta(&"bandit_attacked_due"): BanditAttacked.flush(self) # Nekki 2026-11-22 B: an official attack's heat, saved at rest by the active Site
 	advance_person_death_timers(real_seconds)
 	for identity: int in _pending_deaths.keys():
 		if _crowd_active() and lab.crowd_site.has_pending_capture(identity): continue
@@ -5595,9 +5617,10 @@ func _supply_location_valid(team: Variant, key: String) -> bool:
 		var index := int(key.trim_prefix("shore:"))
 		return index >= 0 and index < lab.terrain.size.x * lab.terrain.size.y and lab.terrain.is_walkable(lab.terrain.cell_from_index(index))
 	if key.begins_with("house:"):
-		# 平民 C1b: a pantry is a completed house of the team's own faction.
+		# 平民 C1b: a pantry is a house (open_pantries opens those the team's members live in). One that burned down or fell to
+		# another side feeds nobody (nobody is registered there); it must not stop the whole team's meals until it is cleared.
 		var house: Dictionary = lab.terrain.site.get("features", {}).get(key.trim_prefix("house:"), {})
-		return str(house.get("kind", "")) == "house" and int(house.get("owner_faction", -1)) == int(team.faction_id)
+		return house.is_empty() or str(house.get("kind", "")) == "house"
 	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(key.trim_prefix("vehicle:"), {})
 	return SiteVehicleTransport.is_ship(vehicle) and int(vehicle.get("team_id", -1)) == team.team_id
 
@@ -5617,8 +5640,18 @@ func ship_food_locations(team: Variant, members: Dictionary, candidate_locations
 	var locations: Dictionary = entry.get("locations", {}) if candidate_locations.is_empty() else candidate_locations
 	var keys := locations.keys()
 	keys.sort()
+	# 居民吃飯 F1: a team that eats from its pantries alone (no ship, no shore) is asked every step: at most where each member
+	# stands is read, not the whole person.
+	var pantries: bool = _crowd_active() and not keys.is_empty() and keys.all(func(key: String) -> bool: return key.begins_with("house:"))
+	var anywhere: bool = pantries and ResidentLife.meals_anywhere(lab.terrain.site)
 	for id: int in members:
 		result[id] = ""
+		if pantries and lab.crowd_site.contains_person(id):
+			var registered: Dictionary = ResidentLife.Housing.relation(lab, id)
+			var pantry := ResidentLife.Households.food_key(str(registered.get("house_id", "")))
+			if registered.is_empty() or not locations.has(pantry): continue
+			if anywhere or lab.terrain.index(lab.crowd_site.combat_target(id).cell) == int(registered.cell): result[id] = pantry
+			continue
 		var person := _supply_person(id)
 		if person.is_empty():
 			continue
@@ -10358,6 +10391,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	var loaded: Dictionary = source.load_manifest(manifest_path)
 	PerfTrace.mark("manifest_done")
 	if not loaded.ok: return loaded
+	# 選現成人物 v1 (Nekki 2026-11-27): a new game that takes over a scenario person is born on his Site.
+	var existing: Variant = _boot_request.get("existing", {}) if create_new else {}
+	if existing is Dictionary and not existing.is_empty():
+		source.author_start_override = {"mode": "scenario_person", "site": [int(existing.site[0]), int(existing.site[1])],
+			"cell": [int(existing.cell[0]), int(existing.cell[1])], "name": str(existing.name)}
 	var request := _initial_world_request(manifest_path, world_id, slot_id, starting_site, create_new, initial_scenario_id)
 	var location := "user://region_lab/worlds/%s/slots/%s" % [world_id, slot_id]
 	var candidate: RegionSaveSlot
@@ -10502,10 +10540,27 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["climate_enabled"] = true
 	# 技能 K1c: a world created from the menu seeds its people's starting proficiency by age (old saves stay at 50).
 	if result.ok and bool(request.get("create_new", false)) and lab.terrain != null: lab.terrain.site["skills_start"] = true
+	var existing: Dictionary = request.existing if request.get("existing") is Dictionary else {}
 	if result.ok and not request.get("character", {}).is_empty():
 		var appearance: Dictionary = _initial_creation_appearance(request.character)
-		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
+		var applied := Runtime.fail("INVALID_INITIAL_SCENARIO")
+		if bool(request.get("create_new", false)): applied = apply_existing_look(request.character) if not existing.is_empty() else apply_created_character(appearance)
 		if not applied.ok: result = applied
+	# 示範劇本 step 1: a scenario package names and types its factions (before any start faction is founded).
+	if result.ok and bool(request.get("create_new", false)) and region_slot != null and region_slot.source != null and region_slot.source.has_method("author_scenario"):
+		var scenario: Dictionary = region_slot.source.author_scenario()
+		if not scenario.is_empty():
+			var named := apply_scenario_factions(scenario.get("factions", []), scenario.get("teams", []), scenario.get("offices", []))
+			if not named.ok: result = named
+	# 選現成人物 v1 (Nekki 11/27 第六節 2「依建議」): a settlement head leaves the residents' work team and captains his own
+	# one-person team of his faction (the 11/11 leave rule), keeping his house, his post and his faction headship.
+	if result.ok and not existing.is_empty() and str(existing.get("role", "")) in ["leader", "head"]:
+		var own: Dictionary = take_existing_person_team()
+		if not own.ok: result = own
+	# 隊伍範本: the cadre cards (each card checked as its cadre is written; nothing else changes on a refusal).
+	if result.ok and bool(request.get("create_new", false)) and request.get("cadres") is Array and not request.cadres.is_empty():
+		var cadres_applied := apply_created_cadres(request.cadres)
+		if not cadres_applied.ok: result = cadres_applied
 	# 開局流程規劃 §2 家族 (v1): the template's family blueprint, the player alone as head under the family name.
 	if result.ok and bool(request.get("create_new", false)):
 		var blueprint: Dictionary = request.get("family", {}) if request.get("family") is Dictionary else {}
@@ -10518,7 +10573,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 	if result.ok and str(start_faction.get("mode", "neutral")) in ["found", "bandit"]:
 		var founded: Dictionary = found_start_faction(str(start_faction.get("name", "")), str(start_faction.mode) == "bandit")
 		if not founded.ok: result = founded
-	if result.ok and bool(request.get("create_new", false)): _start_finance(str(start_faction.get("mode", "neutral")))
+	if result.ok and bool(request.get("create_new", false)): _start_finance("existing" if not existing.is_empty() else str(start_faction.get("mode", "neutral")))
 	if result.ok and bool(request.get("create_new", false)): _start_climate()
 	if result.ok:
 		lab._audio_boot_complete()
@@ -10694,7 +10749,12 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 		var able := 0
 		for person: Variant in team.get("person_ids", []):
 			var target: Dictionary = lab._original_person_target(int(person))
-			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: able += 1
+			if target.is_empty() or float(target.get("hp", 0.0)) <= 0.0: continue
+			# A knocked out or captive person has hp but is out of this fight (M2 A: 被擊倒的人這場仗就退出). Counted as able,
+			# a side with only knocked out people left was never beaten and no battle had a winner (found 2026-11-24).
+			var state: Dictionary = host.soldier_state(int(host._index_by_id[int(person)])) if host._index_by_id.has(int(person)) else {}
+			if float(state.get("ko", 0.0)) > 0.0 or float(state.get("captive", 0.0)) > 0.0: continue
+			able += 1
 		standing[faction] = int(standing.get(faction, 0)) + able
 		if team.get("person_ids", []).size() > int(largest.get(faction, {}).get("size", -1)):
 			largest[faction] = {"size": team.get("person_ids", []).size(), "team_id": int(team.team_id)}
@@ -10705,9 +10765,12 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 	var closed: Dictionary = tracker.close(now, standing, commanders)
 	BanditRout.remember(self, tracker.routed_teams.duplicate())
 	if closed.is_empty(): return {}
-	closed["plunder"] = BanditAftermath.after_battle(self, standing) # B4d-3b: a band that won a raid takes the stock.
-	closed["caravans_lost"] = (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab) # 土匪 B5: TR-55
-	closed["tax_teams_lost"] = (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab) # 軍餉與稅收 P3b: PT-17
+	closed["bandits_attacked"] = BanditAttacked.note_battle(self, closed) # Nekki 2026-11-22 B: queued, saved at rest
+	# What the registry or the Region ledger keeps waits for the Site at rest: a battle closes inside the Site's own
+	# Region point, where the registry cannot be saved (2026-11-24).
+	if region_slot != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching):
+		battle_effects_due.append({"standing": standing.duplicate(), "battle": closed.battle.duplicate(true), "commanders": commanders.duplicate(true)})
+	else: closed.merge(_battle_effects({"standing": standing, "battle": closed.battle, "commanders": commanders}, self))
 	for person: Variant in closed.deltas:
 		var found: Dictionary = person_actions._person(int(person), false)
 		if not found.is_empty(): PersonSocialPacket.add_combat_record(found.body, closed.deltas[person])
@@ -10725,6 +10788,27 @@ func close_battle(tracker: Variant, now: float) -> Dictionary:
 			PersonSkills.credit(found.body, "tactics", PersonSkills.TACTICS_PER_BATTLE * float(commanded))
 	if region_slot != null: region_slot.pending_battles.append(closed.battle)
 	return closed
+
+## One entry for each battle closed inside the Site's Region point: {standing (faction -> people still able to fight),
+## battle, commanders}.
+var battle_effects_due: Array = []
+
+## `saver` = the active Site's controller, the only one that may save the registry.
+func _battle_effects(due: Dictionary, saver: Variant) -> Dictionary:
+	for side: Variant in due.battle.get("sides", {}): BanditAttacked.raid_done(self, int(due.battle.sides[side].get("faction", -1)))
+	return {"plunder": BanditAftermath.after_battle(self, due.standing, saver), # B4d-3b: a band that won a raid takes the stock.
+		"bands_ended": BanditEnded.after_battle(self, due.battle, due.commanders, saver), # O3
+		"caravans_lost": (load("res://scripts/terrain_lab/site_caravan.gd") as Script).call("sweep_lost", region_slot, lab), # 土匪 B5: TR-55
+		"tax_teams_lost": (load("res://scripts/terrain_lab/site_tax_envoy.gd") as Script).call("sweep_lost", region_slot, lab)} # 軍餉與稅收 P3b: PT-17
+
+## Between two steps: what the battles closed since the last rest leave to the registry and the ledger. Each once.
+func flush_battle_effects(saver: Variant = null) -> Array:
+	var done: Array = []
+	if battle_effects_due.is_empty(): return done
+	var due: Array = battle_effects_due
+	battle_effects_due = []
+	for entry: Dictionary in due: done.append(_battle_effects(entry, saver if saver != null else self))
+	return done
 
 func team_captain_of_team(team_id: int) -> int:
 	var roster: Dictionary = lab.crowd_site.native_roster(team_id)
@@ -10765,6 +10849,14 @@ func diplomacy_distance_m(a: int, b: int) -> float:
 func _commit_diplomacy(candidate: Dictionary, message: String) -> Dictionary:
 	var done := _commit_peerage(candidate, message)
 	if done.ok and _crowd_active(): lab.crowd_site._apply_slot_alliances()
+	return done
+
+## A registry candidate saved from any bound Site: a cold Site's through the active Site's controller (registry_saver), both
+## crowds then read the new hostility.
+func commit_registry(candidate: Dictionary) -> Dictionary:
+	var saver := registry_saver()
+	var done := saver._commit_diplomacy(candidate, "")
+	if done.ok and saver != self and _crowd_active(): lab.crowd_site._apply_slot_alliances()
 	return done
 
 ## §11.5: the head declares war at once; against a peace or truce it is a breach (credit -20).
@@ -10855,7 +10947,7 @@ func diplomacy_status() -> Dictionary:
 
 ## Lazy endpoints: letters and truces move on when the Region clock passes their next time (checked once per frame, cheap).
 func settle_diplomacy() -> Dictionary:
-	if region_slot == null: return {}
+	if region_slot == null or registry_saver() != self: return {} # the active Site settles the world's diplomacy
 	var registry: Dictionary = region_slot.control.get("faction_registry", {})
 	if not registry.get("diplomacy") is Dictionary: return {}
 	var now := float(region_slot.control.logical_game_seconds)
@@ -11091,7 +11183,7 @@ func _head_mind(registry: Dictionary, faction: int) -> Dictionary:
 ## peace when a truce is about to end). Controlled heads and the neutral side never act here. Reclaim war is not wired
 ## yet: the game keeps no provable list of fallen settlements per faction.
 func npc_diplomacy_day() -> Dictionary:
-	if region_slot == null: return {}
+	if region_slot == null or registry_saver() != self: return {} # once a day by the active Site, not by every bound one
 	var now := float(region_slot.control.logical_game_seconds)
 	var day := int(now / RegionDiplomacyAI.DAY)
 	if day == _npc_diplomacy_day: return {}
@@ -11101,13 +11193,14 @@ func npc_diplomacy_day() -> Dictionary:
 	var settled: Dictionary = RegionDiplomacy.settle(registry, now)
 	if settled.ok: registry = settled.registry
 	var player_faction := diplomacy_head_faction()
+	var player_led := player_led_faction() # 選現成人物 / 自建勢力: the faction the player leads acts on his word only
 	var strength := visible_strength()
 	var factions: Array[int] = []
 	for key: Variant in registry.get("entries", {}):
 		var entry: Dictionary = registry.entries[key]
 		var id := int(entry.faction_id)
 		# Bandit bands have no diplomacy (bandit spec §3.2); their daily choice is a separate rule set (B4).
-		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and not RegionFactionQuery.is_bandit(registry, id) and RegionPeerage.head_of(registry, id).ok: factions.append(id)
+		if entry.status == "active" and id != RegionFactionQuery.NEUTRAL_FACTION_ID and id != player_faction and id != player_led and not RegionFactionQuery.is_bandit(registry, id) and RegionPeerage.head_of(registry, id).ok: factions.append(id)
 	factions.sort()
 	var changed := false
 	var ids: Array = RegionDiplomacy.table(registry).proposals.keys()
@@ -11326,6 +11419,16 @@ func _peerage_people(person_id: int, granter_id: int = -1) -> Dictionary:
 	if person_id > 0 and (person_ref == null or lab._original_person_target(person_id).is_empty()): return Runtime.fail("NO_TARGET", "須當面選中此地的人物")
 	return Runtime.ok("", {"granter_ref": granter_ref, "person_ref": person_ref, "registry": region_slot.control.get("faction_registry", {}), "now": float(region_slot.control.logical_game_seconds)})
 
+## The controller that may save the registry: the active Site's own (checkpoint_region_site refuses every other). A bound
+## cold Site's decisions are saved through it, in the one publication that collects the bound cold Sites (2026-11-25: a
+## cold lair's raid heat and its daily cooling were refused and silently lost).
+func registry_saver() -> SiteController:
+	if region_slot == null or lab == null or lab.terrain == null or str(lab.terrain.site.get("id", "")) == str(region_slot.control.active_site_id): return self
+	var host: Object = region_slot.region_original_endpoint_checkpoint.get_object() if region_slot.region_original_endpoint_checkpoint.is_valid() else null
+	if not host is TerrainLab: return self
+	var selected: Dictionary = (host as TerrainLab)._region_gameplay_active_player_lab()
+	return selected.lab.site_controller if selected.get("ok", false) else self
+
 func _commit_peerage(candidate: Dictionary, message: String) -> Dictionary:
 	if not candidate.get("ok", false): return candidate
 	var captured: Dictionary = capture_region_checkpoint("region_checkpoint", true)
@@ -11541,12 +11644,20 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 ## Neutral part 2: main-menu character creation written onto the controlled crowd roster person (its CrowdPersonOwner record:
 ## name, combat_ability, command_abilities, personality, appearance) and native (abilities, equip/kit). Every check runs first.
 func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
+	var written := _write_created_crowd_person(identity, data)
+	return save_to(save_path) if written.ok else written
+
+## The checks and the writes of _apply_created_crowd_person, without the save (隊伍範本: five cadres, one save).
+func _write_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	var crowd: Variant = lab.crowd_site
 	var record: Dictionary = crowd._records[identity]
 	var index := int(crowd._index_by_id.get(identity, -1))
 	if index < 0 or not record.get("appearance") is Dictionary or not record.get("item_state") is Dictionary: return Runtime.fail("NO_TARGET", "新世界沒有玩家人物")
 	var appearance: Dictionary = record.appearance.duplicate(true)
-	appearance["body"] = int(data.get("body", appearance.body))
+	# The body keeps the stored number's type: a record read from a save holds 0.0, and the crowd atlas describes a look by
+	# its values with their types, so an int body would be a look it has never seen (隊伍範本, 2026-11-22).
+	var body_value := int(data.get("body", appearance.body))
+	appearance["body"] = float(body_value) if appearance.get("body") is float else body_value
 	appearance.parts.face = str(data.get("face", appearance.parts.face))
 	appearance.parts.hair = str(data.get("hair", appearance.parts.hair))
 	appearance["hair_dye"] = str(data.get("hair_dye", appearance.get("hair_dye", "")))
@@ -11590,6 +11701,31 @@ func _apply_created_crowd_person(identity: int, data: Dictionary) -> Dictionary:
 	if packet.is_empty(): record.erase("personality")
 	else: record["personality"] = packet.duplicate(true)
 	crowd.equipment_changed(identity)
+	return Runtime.ok()
+
+## 隊伍範本（幹部卡, 開局流程規劃 §2, Nekki 2026-11-22）: the start cadres take the request's cards, in birth order (the
+## player's team without the player, by person id; the last one is the 文武兼備 cadre). A card writes name, look,
+## 武力, the command abilities and personality as a created person does; it carries no skills, so the cadre keeps the
+## start seeding. An empty card leaves its cadre as generated. Every card is checked before anything is written; one save.
+func apply_created_cadres(cards: Array) -> Dictionary:
+	if cards.is_empty() or cards.all(func(card: Variant) -> bool: return card is Dictionary and card.is_empty()): return Runtime.ok()
+	if lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "隊伍範本須在群眾開局套用")
+	var player := int(lab.controlled_person_id())
+	var team: Dictionary = {}
+	for candidate: Dictionary in lab.crowd_site.teams:
+		if not bool(candidate.get("departed", false)) and candidate.get("person_ids", []).has(player): team = candidate
+	var cadres: Array[int] = []
+	for person: Variant in team.get("person_ids", []):
+		if int(person) != player: cadres.append(int(person))
+	cadres.sort()
+	if cards.size() > cadres.size(): return Runtime.fail("INVALID", "隊伍範本的幹部卡多於開局幹部")
+	for at: int in range(cards.size()):
+		var card: Variant = cards[at]
+		if not card is Dictionary: return Runtime.fail("INVALID", "幹部卡格式不合法")
+		if card.is_empty(): continue
+		if card.has("skills") or card.has("learning"): return Runtime.fail("INVALID", "幹部卡不帶熟練或學業")
+		var written := _write_created_crowd_person(cadres[at], card)
+		if not written.ok: return written
 	return save_to(save_path)
 
 ## 技能 K5 (reports/skill-system-plan.md §5.5): the created person's start template. {ok, apply, packet, learning}: apply
@@ -11608,6 +11744,126 @@ func _created_skills(data: Dictionary, ability: float, abilities: Dictionary) ->
 	stored["start"] = 1
 	return {"ok": true, "apply": true, "packet": PersonSkills.saved(stored), "learning": int(learning)}
 
+## 示範劇本 step 2: the scenario teams standing on `site` (the slot's author source), in scenario order.
+func _scenario_teams_of(candidate: RegionSaveSlot, site: Vector2i) -> Array:
+	return _scenario_rows_of(candidate, "teams", site)
+
+## 示範劇本: the rows of scenario list `field` (teams, offices, stock) whose site is `site`, in scenario order.
+func _scenario_rows_of(candidate: RegionSaveSlot, field: String, site: Vector2i) -> Array:
+	if candidate == null or candidate.source == null or not candidate.source.has_method("author_scenario"): return []
+	var result: Array = []
+	for row: Dictionary in candidate.source.author_scenario().get(field, []):
+		if int(row.site[0]) == site.x and int(row.site[1]) == site.y: result.append(row)
+	return result
+
+## 示範劇本 birth speed: who leads what on each Site the birth populated, noted from the born data (no Site is read back
+## later): "<x>:<y>:captain:<faction>" = the formal commander of that faction's first combat team there,
+## "<x>:<y>:head:<faction>" = the head of that Site's settlement owned by that faction, "<x>:<y>:owner" = that settlement's
+## owner faction (a head lookup for another faction skips the Site instead of reading it back: with 30 settlements the
+## read-backs took 8 minutes). Kept for the boot settle only.
+var _scenario_birth_leaders: Dictionary = {}
+
+func _note_scenario_leaders(site: Vector2i, data: TerrainData) -> void:
+	for army: Variant in data.site.get("armies", []):
+		if not army is Dictionary or str(army.get("role", "")) != "combat": continue
+		var key := "%d:%d:captain:%d" % [site.x, site.y, int(army.get("faction_id", -1))]
+		var commander := int(army.get("formal_commander", -1))
+		var units: Array = army.get("units", [])
+		if not _scenario_birth_leaders.has(key) and commander >= 0 and commander < units.size(): _scenario_birth_leaders[key] = int(units[commander].get("person_id", -1))
+	var settlement: Variant = data.site.get("settlement", {})
+	if settlement is Dictionary and not settlement.is_empty():
+		var holder := int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", -1))
+		if holder > 0: _scenario_birth_leaders["%d:%d:head:%d" % [site.x, site.y, int(settlement.get("owner_faction", -1))]] = holder
+		_scenario_birth_leaders["%d:%d:owner" % [site.x, site.y]] = int(settlement.get("owner_faction", -1))
+
+## 示範劇本 step 2: a band's chief, the captain of its first scenario team: the formal commander of that faction's first
+## combat team on the team's Site (noted at birth; else the active Site or its saved first generation). -1 when not found.
+func _scenario_chief(faction_id: int, teams: Array) -> int:
+	for team: Dictionary in teams:
+		if int(team.faction_id) != faction_id: continue
+		var site := Vector2i(int(team.site[0]), int(team.site[1]))
+		var noted := int(_scenario_birth_leaders.get("%d:%d:captain:%d" % [site.x, site.y, faction_id], -1))
+		if noted > 0: return noted
+		var state: Dictionary = {}
+		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
+		else:
+			var loaded: Dictionary = region_slot._load_checked(region_slot.site_path(site), site)
+			if not loaded.get("ok", false): return -1
+			state = loaded.data.site
+		if lab.crowd_site != null and lab.crowd_site.active and state == lab.terrain.site:
+			for crowd_team: Dictionary in lab.crowd_site.teams:
+				if bool(crowd_team.get("departed", false)) or int(crowd_team.get("faction", -1)) != faction_id: continue
+				var captain := int(team_captain_of_team(int(crowd_team.team_id)))
+				if captain > 0: return captain
+		for army: Dictionary in state.get("armies", []):
+			if str(army.get("role", "")) != "combat" or int(army.get("faction_id", -1)) != faction_id: continue
+			var commander := int(army.get("formal_commander", -1))
+			var units: Array = army.get("units", [])
+			if commander >= 0 and commander < units.size(): return int(units[commander].get("person_id", -1))
+		return -1
+	return -1
+
+## 示範劇本 step 1 (RegionData.author_scenario_valid): each scenario faction's registry entry takes its name and kind; a
+## bandit gets its band table (origin scenario, lair as a Site id and cell, heat, raid AI, hoard) and the band colour. An id
+## no Site uses yet gets a fresh entry. One validated registry commit; nothing changes on a refusal.
+## 示範劇本 step 3: the head of `faction_id`'s settlement on a scenario offices Site (the active Site or its saved first
+## generation), or -1.
+func _scenario_head(faction_id: int, offices: Array) -> int:
+	for row: Dictionary in offices:
+		var site := Vector2i(int(row.site[0]), int(row.site[1]))
+		var noted := int(_scenario_birth_leaders.get("%d:%d:head:%d" % [site.x, site.y, faction_id], -1))
+		if noted > 0: return noted
+		var owner_key := "%d:%d:owner" % [site.x, site.y]
+		if _scenario_birth_leaders.has(owner_key) and int(_scenario_birth_leaders[owner_key]) != faction_id: continue # born for another faction
+		var state: Dictionary = {}
+		if region_slot._coordinate(lab.terrain).get("site") == site: state = lab.terrain.site
+		else:
+			var loaded: Dictionary = region_slot._load_checked(region_slot.site_path(site), site)
+			if not loaded.get("ok", false): continue
+			state = loaded.data.site
+		var settlement: Dictionary = state.get("settlement", {}) if state.get("settlement") is Dictionary else {}
+		if int(settlement.get("owner_faction", -1)) != faction_id: continue
+		return int(SiteOffices.head_position(settlement.get("offices", {})).get("holder", -1))
+	return -1
+
+func apply_scenario_factions(factions: Array, teams: Array = [], offices: Array = []) -> Dictionary:
+	if factions.is_empty(): return Runtime.ok()
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "劇本勢力須在台灣地圖世界中建立")
+	var now := float(region_slot.control.logical_game_seconds)
+	var candidate: Dictionary = region_slot.control.get("faction_registry", {}).duplicate(true)
+	if candidate.get("version") != RegionFactionQuery.VERSION or not candidate.get("entries") is Dictionary: return Runtime.fail("CORRUPT_SAVE", "勢力登記")
+	for faction: Variant in factions:
+		if not faction is Dictionary: return Runtime.fail("INVALID", "劇本勢力格式不合法")
+		var id := int(faction.get("id", 0))
+		if not candidate.entries.has(str(id)):
+			candidate.entries[str(id)] = RegionFactionQuery.legacy_entry(id)
+			if int(candidate.get("next_faction_id", 1)) <= id: candidate["next_faction_id"] = id + 1
+		var entry: Dictionary = candidate.entries[str(id)]
+		entry["name"] = str(faction.get("name", ""))
+		entry["kind"] = str(faction.get("kind", "npc"))
+		if entry.kind == "bandit":
+			var band: Dictionary = faction.get("bandit", {})
+			var lair_site: Array = band.get("lair", {}).get("site", [0, 0])
+			var lair_cell: Array = band.get("lair", {}).get("cell", [0, 0])
+			entry["color"] = RegionFactionQuery.BANDIT_COLOR
+			entry["duty_ai"] = false
+			var table := {"origin": "scenario", "raid_ai": bool(band.get("raid_ai", true)), "heat": int(band.get("heat", 0)),
+				"lair": {"site_id": RegionGrid.site_id(str(region_slot.pin.atlas_id), Vector2i(int(lair_site[0]), int(lair_site[1]))), "cell": [int(lair_cell[0]), int(lair_cell[1])]}}
+			if not band.get("hoard", {}).is_empty(): table["hoard"] = band.hoard.duplicate(true)
+			entry["bandit"] = RegionFactionQuery.canonical_bandit(table)
+			# Step 2: its chief is the captain of its first scenario team.
+			var chief := _scenario_chief(id, teams)
+			if chief <= 0: return Runtime.fail("NO_TARGET", "劇本土匪找不到頭目")
+			entry["leader_ref"] = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), chief)
+		else:
+			# Step 3: a faction whose scenario settlement has a head is led by him.
+			var head := _scenario_head(id, offices)
+			if head > 0: entry["leader_ref"] = RegionPeerage.world_person_ref(str(region_slot.pin.world_instance_id), head)
+	candidate["revision"] = int(candidate.get("revision", 0)) + 1
+	var checked: Dictionary = RegionFactionQuery.validate(candidate, now)
+	if not checked.ok: return checked
+	return _commit_diplomacy({"ok": true, "registry": candidate}, "")
+
 ## 開局流程規劃 §2 家族 (v1): registers the player's family with himself as its only member (not marked complete, so no
 ## Game Over is read from it), makes him its head and gives it `family_name`. Each step is the family owner's own.
 func apply_family_blueprint(family_name: String) -> Dictionary:
@@ -11618,6 +11874,55 @@ func apply_family_blueprint(family_name: String) -> Dictionary:
 	var head: Dictionary = family_continuity.appoint_head(player, player)
 	if not head.ok: return head
 	return family_continuity.establish_identity(player, family_name.strip_edges())
+
+## 選現成人物 v1 (Nekki 11/27: 他的勢力不再由電腦決定): the active faction whose registry head is the world's controlled
+## person (the active Site's), -1 when he leads none. A bound cold Site asks the active Site's controller.
+func player_led_faction() -> int:
+	if region_slot == null: return -1
+	var active: SiteController = registry_saver()
+	var player := int(active.lab.controlled_person_id()) if active != null and active.lab != null else -1
+	if player <= 0: return -1
+	var ref: Dictionary = JoinFaction._world_ref(active, player)
+	if ref.is_empty(): return -1
+	var registry: Dictionary = region_slot.control.get("faction_registry", {})
+	for key: Variant in registry.get("entries", {}):
+		var entry: Dictionary = registry.entries[key]
+		if str(entry.get("status", "")) == "active" and RegionPeerage.same_ref(entry.get("leader_ref"), ref): return int(entry.faction_id)
+	return -1
+
+## 選現成人物 v1: the person a scenario birth named (its names are unique): the first body of that name on the Site.
+func _scenario_person_named(state: Dictionary, person_name: String) -> int:
+	for army: Variant in state.get("armies", []):
+		if not army is Dictionary: continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and str(unit.get("name", "")) == person_name: return int(unit.get("person_id", -1))
+	for actor: Variant in state.get("actors", {}).values():
+		if actor is Dictionary and str(actor.get("name", "")) == person_name: return int(actor.get("person_id", -1))
+	return -1
+
+## 選現成人物 v1 (Nekki 11/27: 能力與關係照劇本，可改名字與外觀): only the name and the look of the menu's character are
+## written onto the scenario person; his abilities, skills and personality stay the scenario's.
+func apply_existing_look(data: Dictionary) -> Dictionary:
+	var identity := int(lab.controlled_person_id())
+	if lab.crowd_site == null or not lab.crowd_site.active or not lab.crowd_site._records.has(identity) or lab.crowd_site._actors.has(identity):
+		return Runtime.fail("NO_TARGET", "新世界找不到所選人物")
+	var look := {}
+	for key: String in ["name", "body", "face", "hair", "hair_dye", "hair_dyed"]:
+		if data.has(key): look[key] = data[key]
+	if str(look.get("name", "")).strip_edges().is_empty(): look.erase("name") # keeps his scenario name
+	if look.is_empty(): return Runtime.ok()
+	var written: Dictionary = _write_created_crowd_person(identity, look)
+	if not written.ok: return written
+	return save_to(save_path)
+
+## 選現成人物 v1: a settlement head taken over leaves the residents' work team for his own one-person team of his faction
+## (CrowdSite.leave_to_own_team, the 11/11 rule); he keeps his house, his settlement post and his faction headship.
+func take_existing_person_team() -> Dictionary:
+	var identity := int(lab.controlled_person_id())
+	if lab.crowd_site == null or not lab.crowd_site.active: return Runtime.fail("UNSUPPORTED", "群眾未啟用")
+	var left: Dictionary = lab.crowd_site.leave_to_own_team(identity)
+	if not left.ok and str(left.get("code", "")) != "WHOLE_TEAM": return left
+	return save_to(save_path)
 
 ## Neutral part 2: the shown name of a controlled person: an actor's display_name, or a crowd/roster row's saved name.
 func _controlled_display_name(controlled: Dictionary) -> String:
@@ -12429,12 +12734,35 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			if not RegionTravel._able(person) or not RegionSaveSlot._initial_site_same(person.get("cell"), author.start.cell): return Runtime.fail("NO_BIRTH_GROUND")
 			opened.data.site["controlled_person_id"] = int(author.start.person_id)
 			birth = Runtime.ok("", {"data": opened.data})
+		elif not author.is_empty() and author.start.mode == "scenario_person":
+			# 選現成人物 v1: the start Site's scenario people are born as a companion's are (no created player, no cadres);
+			# control goes to the one named.
+			var person_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
+			birth = lab.prepare_initial_resident_roster(opened.data) if not opened.data.site.get("residents", []).is_empty() else Runtime.ok("", {"data": opened.data})
+			PerfTrace.mark("init_residents")
+			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, person_site))
+			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", person_site), _scenario_rows_of(candidate, "stock", person_site), _scenario_rows_of(candidate, "livelihood", person_site))
+			if birth.ok:
+				var chosen := _scenario_person_named(birth.data.site, str(author.start.name))
+				if chosen <= 0: birth = Runtime.fail("NO_TARGET", "劇本裡找不到所選人物：%s" % str(author.start.name))
+				else:
+					birth.data.site["controlled_person_id"] = chosen
+					# As the created start (prepare_fresh_initial_population): every person is a roster row, and the
+					# Lab's template actor is explicitly absent (without this it bound as a second person #1).
+					birth.data.site["actors"] = {}
+					birth.data.site["actor_presence_version"] = 1
+			if birth.ok: _note_scenario_leaders(person_site, birth.data)
 		elif initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
 			PerfTrace.mark("init_population")
 			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
 			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)
 			PerfTrace.mark("init_residents")
+			# 示範劇本 steps 2-3: the scenario's armed teams, offices and stock of the start Site.
+			var start_site := Vector2i(int(candidate._initialization.starting_site[0]), int(candidate._initialization.starting_site[1]))
+			if birth.ok: birth = lab.prepare_initial_author_teams(birth.data, _scenario_teams_of(candidate, start_site))
+			if birth.ok: birth = lab.prepare_initial_scenario_settlement(birth.data, _scenario_rows_of(candidate, "offices", start_site), _scenario_rows_of(candidate, "stock", start_site), _scenario_rows_of(candidate, "livelihood", start_site))
+			if birth.ok: _note_scenario_leaders(start_site, birth.data)
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
@@ -12452,6 +12780,7 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 	for companion_site: Vector2i in _initial_companion_births:
 		var supplied: Dictionary = candidate.set_companion_birth(companion_site, _initial_companion_births[companion_site])
 		if not supplied.ok: return supplied
+	PerfTrace.mark("init_companions_set")
 	var prepared_site: Dictionary = candidate.prepare_initial_site(_initial_world_birth_data)
 	PerfTrace.mark("init_site_prepared")
 	return prepared_site
@@ -12462,14 +12791,26 @@ func _author_companion_population(candidate: RegionSaveSlot, start_data: Terrain
 	var births: Dictionary = {}
 	for companion: Vector2i in candidate.initial_companion_sites():
 		var projected: Dictionary = candidate.source.project_terrain(companion, "author_initial")
+		PerfTrace.mark("companion_projected") # 開局速度: the parts of one companion (--perf-trace)
 		if not projected.ok: return projected
 		var data: TerrainData = projected.data
 		var rows: Array = data.site.get("residents", [])
-		if data.site.is_empty() or rows.is_empty(): continue
+		var teams: Array = _scenario_teams_of(candidate, companion) # 示範劇本 step 2
+		var offices: Array = _scenario_rows_of(candidate, "offices", companion) # step 3
+		var stock: Array = _scenario_rows_of(candidate, "stock", companion)
+		if data.site.is_empty() or rows.is_empty() and teams.is_empty() and stock.is_empty(): continue
 		candidate.attach_person_allocator(data)
-		var populated: Dictionary = lab.prepare_initial_resident_roster(data)
+		var populated: Dictionary = lab.prepare_initial_resident_roster(data) if not rows.is_empty() else Runtime.ok("", {"data": data})
+		PerfTrace.mark("companion_residents")
+		if not populated.ok: return populated
+		if not teams.is_empty(): populated = lab.prepare_initial_author_teams(populated.data, teams)
+		PerfTrace.mark("companion_teams")
+		if not populated.ok: return populated
+		populated = lab.prepare_initial_scenario_settlement(populated.data, offices, stock, _scenario_rows_of(candidate, "livelihood", companion))
 		if not populated.ok: return populated
 		births[companion] = populated.data
+		_note_scenario_leaders(companion, populated.data)
+		PerfTrace.mark("init_companion_site") # 示範劇本: one populated companion (the loading screen keeps its stage)
 	var next_id: int = int(candidate.person_allocator_view().get("next_person_id", start_data.site.get("next_person_id", 1)))
 	start_data.site["next_person_id"] = next_id
 	for companion: Vector2i in births: births[companion].site["next_person_id"] = next_id
@@ -13140,7 +13481,11 @@ func prepare_shared_runtime_work_prefix(requests: Array, seconds: float) -> Dict
 	# Runtime.advance closes a minute once its phase is within 1e-8 minute of the end (phase >= 0.99999999) and drops a
 	# remainder below 1e-8 minute, so the Site clock and the shared step clock may sit up to that snap apart (found
 	# 2026-11-14: a crowd P4 cold owner's next window ran 6.4e-8 s past the snapped minute end). The same snap admits it.
-	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS + 0.00000001 * 60.0: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
+	# TerrainLab._region_owner_action_limit lets a step cross its own minute end when that end lies within
+	# PHASE_BOUNDARY_TOLERANCE action seconds of the step's end: 6e-7 game s at x1, 9.6e-6 at x16. The same crossing is
+	# admitted here at the Site's own speed (a fixed 6e-7 s refused it at x16 on every frame, 2026-11-28).
+	var crossing: float = maxf(0.00000001 * 60.0, Runtime.game_seconds(TerrainLab.PHASE_BOUNDARY_TOLERANCE) * float(lab.simulation_speed))
+	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS + crossing: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
 	bind_checked_runtime_work_prefix()
 	var clock := {"owner": self, "site": lab.terrain.site, "seconds": seconds, "minute": int(lab.terrain.site.minute),
 		"phase": float(lab.terrain.site.phase), "combat_left": float(lab.terrain.site.combat_left),
@@ -14492,12 +14837,12 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 	# Counterfactual BEGIN bounds call this READ-ONLY method. The original zero
 	# meal publisher runs once in shared_supply_event_limit before snapshot.
 	if not is_finite(maximum) or maximum <= 0.0: return Runtime.fail("INVALID_TIME")
-	var rows: Dictionary = _native_sustain_original_rows(0.0)
+	var rows: Dictionary = _native_sustain_limit_rows()
 	if not rows.ok: return rows
 	var limit: float = maximum
 	for row: Dictionary in rows.rows:
-		for cohort: Dictionary in row.held.state_values.cohorts:
-			var until: float = float(cohort.meal_until) - float(row.held.state_values.at)
+		for cohort: Dictionary in row.state.cohorts:
+			var until: float = float(cohort.meal_until) - float(row.state.at)
 			if not is_finite(until) or until <= 0.0: return Runtime.fail("SUPPLY_ENDPOINT_NOT_SETTLED")
 			limit = minf(limit, until)
 			var deficit: float = 1.0 - float(cohort.coverage)
@@ -14505,7 +14850,7 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 			var hunger: float = float(cohort.hunger)
 			if hunger < 48.0: limit = minf(limit, (48.0 - hunger) / deficit * Sustain.HOUR)
 			for identity: int in cohort.ids:
-				var hp: float = float(row.held.life.get(identity, {}).get("hp", 0.0))
+				var hp: float = _native_sustain_member_hp(row.members, identity)
 				if hp > 0.0: limit = minf(limit, (maxf(0.0, 48.0 - hunger) + hp) / deficit * Sustain.HOUR)
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled or _native_sustain_original_team(team): continue
@@ -14516,6 +14861,46 @@ func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
 		limit = minf(limit, _shared_supply_state_limit(lab.terrain.site.person_supply[key], captivity_supply.personal_members_id(int(key)), maximum))
 	if not is_finite(limit) or limit <= 0.0: return Runtime.fail("INVALID_TIME")
 	return Runtime.ok("Original current supply boundary; no state/cost/time writes", {"game_seconds": limit})
+
+## The read-only supply boundary needs only each native sustain row's state and its members' hp. These are the rows of
+## _native_sustain_original_rows(0.0), in the same order and refused the same way, without the deep copies of states and
+## stocks, the ship food locations or a body read for every member (2026-11-27: a town spent 1.2 ms a frame on them).
+## `state` is the live record: nothing here writes it.
+func _native_sustain_limit_rows() -> Dictionary:
+	if not _crowd_active(): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var feeding: Dictionary = captivity_supply.feeding_index()
+	for owner: RefCounted in lab.crowd_site.person_owners():
+		var entry: Dictionary = _supply_entry(owner)
+		if entry.is_empty(): continue
+		var originals: Dictionary = {}
+		for index: int in owner.records: originals[owner.combat_identity(index)] = owner.records[index]
+		for index: int in owner.actors: originals[owner.combat_identity(index)] = _actor_supply_adapter(owner.actors[index])
+		var members: Dictionary = captivity_supply.team_members(owner, originals, feeding, lab.crowd_site._records)
+		if int(entry.get("version", 0)) == 3:
+			var original: Variant = null
+			for plan: Dictionary in lab.crowd_site._original_team_plans:
+				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
+			if original == null and owner is CrowdPersonOwner and (owner.has_army() or members.is_empty()): original = owner # as _native_sustain_original_rows
+			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
+		rows.append({"state": entry.sustain, "members": members})
+	for owner_id: String in lab.terrain.site.get("person_supply", {}):
+		var state: Dictionary = lab.terrain.site.person_supply[owner_id]
+		if state.is_empty(): continue
+		var person: Dictionary = _supply_person(int(owner_id))
+		if person.is_empty(): continue
+		var members: Dictionary = captivity_supply.personal_members_id(int(owner_id))
+		var includes_native: bool = lab.crowd_site.contains_person(int(person.person_id))
+		for identity: int in members: includes_native = includes_native or lab.crowd_site.contains_person(identity)
+		if not includes_native: continue
+		rows.append({"state": state, "members": members})
+	return Runtime.ok("", {"rows": rows})
+
+## A member's hp as _native_sustain_original_rows records it in `life` (0 for someone who is not a member).
+func _native_sustain_member_hp(members: Dictionary, identity: int) -> float:
+	if not members.has(identity): return 0.0
+	if lab.crowd_site.contains_person(identity): return float(lab.crowd_site.soldier_state(int(lab.crowd_site._index_by_id[identity])).hp)
+	return float(members[identity].hp)
 
 func _native_sustain_original_rows(seconds: float) -> Dictionary:
 	if not _crowd_active() or not is_finite(seconds) or seconds < 0.0: return Runtime.fail("CLOCK_NOT_READY")
@@ -14550,7 +14935,10 @@ func _native_sustain_original_rows(seconds: float) -> Dictionary:
 			var original: Variant = null
 			for plan: Dictionary in lab.crowd_site._original_team_plans:
 				if int(plan.get("crowd_formation", -1)) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
-			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
+			# A team left with nobody to feed (2026-11-27: an unwatched village's residents all called up into its garrison
+			# team, their own team empty and its pantry record kept) has no member to place: its own crowd owner reads the
+			# (empty) locations. It refused the whole step (STALE_SUPPLY_OWNER) and the world stood still.
+			if original == null and owner is CrowdPersonOwner and (owner.has_army() or members.is_empty()): original = owner
 			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
 			held["food_locations"] = ship_food_locations(original, members)
 		rows.append({"held": held})
@@ -14995,6 +15383,12 @@ func _native_sustain_due_candidate(held: Dictionary, payments: Array) -> Diction
 				var opened: float = float(debit.get("open_rations", 0.0))
 				if opened < 0.0 or float(stock[source.key].open_rations) < opened: return Runtime.fail("MATERIALS")
 				stock[source.key].open_rations = float(stock[source.key].open_rations) - opened
+	# A ledger a residue short of its meal is at it. advance_crowd_sustain moves no ledger over a window of 1e-9 game seconds
+	# or less, so a meal 1.2e-10 ahead cut every later window to that and was never reached: the Site clock stood still
+	# (REGION_CROWD_REPLAY_STALLED; found 2026-11-26, the noon meal of a settlement settled off-screen).
+	for cohort: Dictionary in state.cohorts:
+		var short := float(cohort.meal_until) - float(state.at)
+		if short > 0.0 and short <= Sustain.EPS: state["at"] = float(cohort.meal_until)
 	var before: Dictionary = stock.duplicate(true)
 	var reader: Callable = func(identity: int, field: StringName) -> Variant:
 		return held.life[identity][String(field)] if held.life.has(identity) and held.life[identity].has(String(field)) else held.members.get(identity, {}).get(String(field))
@@ -15232,6 +15626,21 @@ var coarse_offline := false
 
 ## 平民 C3c (option A): an NPC 營務 decider drafts the residents when an alarm finds no fight yet, and releases them once
 ## the alarm is over. A controlled decider decides himself (SiteMilitia.draft / release).
+## What moves people between teams needs the Site at rest: a step has its food window prepared, and a ledger that changes
+## inside it faults the step (STALE_SOURCE; found 2026-11-26, the militia of a settlement that feeds its people was
+## released in the middle of one). Inside a point it waits for TerrainLab._region_run_due_daily_hooks (a replay's own
+## controller, without a slot, runs it where it runs its daily hooks).
+var militia_due := -1 # 1 a draft under alarm, 0 a release, -1 nothing
+func _in_region_point() -> bool:
+	return lab != null and (not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching)
+
+func run_rest_hooks() -> void:
+	if militia_due >= 0:
+		var alarm := militia_due == 1
+		militia_due = -1
+		_militia_auto(alarm)
+	if has_meta(ResidentExodus.PENDING): ResidentExodus.dispatch_pending(self)
+
 func _militia_auto(alarm: bool) -> void:
 	if Settlement.record(lab.terrain).is_empty(): return
 	var allowed: Dictionary = Militia.authority(lab, -1)
@@ -15246,7 +15655,8 @@ var _resident_fighting := false
 ## 平民 C1a: runs the resident schedule once per ten game minutes (SiteResidentSchedule.CHECK_MINUTES).
 func resident_schedule_tick() -> void:
 	if lab == null or lab.terrain == null or bool(lab.terrain.site.get("paused", false)) or coarse_offline: return
-	if has_meta(ResidentExodus.PENDING): ResidentExodus.dispatch_pending(self) # 平民 C4b: gathered emigrants leave once seated.
+	var inside := _in_region_point()
+	if has_meta(ResidentExodus.PENDING) and not inside: ResidentExodus.dispatch_pending(self) # 平民 C4b: gathered emigrants leave once seated.
 	if lab.terrain.site.get("housing", {}).is_empty(): return
 	var minute := float(lab.terrain.site.get("minute", 0))
 	var check := ResidentSchedule.check_index(minute)
@@ -15258,7 +15668,8 @@ func resident_schedule_tick() -> void:
 	if check != _resident_check and ResidentSchedule.minute_of_day(minute) < ResidentSchedule.CHECK_MINUTES: _registry_ai_day()
 	_resident_check = check
 	if ResidentSchedule.danger(lab): resident_alarm_until = minute + ResidentSchedule.ALARM_HOLD_MINUTES
-	_militia_auto(minute < resident_alarm_until)
+	if inside: militia_due = int(minute < resident_alarm_until)
+	else: _militia_auto(minute < resident_alarm_until)
 	last_resident_schedule = ResidentSchedule.drive(self, minute, minute < resident_alarm_until)
 	last_resident_schedule["alarm"] = minute < resident_alarm_until
 
@@ -15333,7 +15744,7 @@ func _start_climate() -> void:
 
 ## 軍餉與稅收 P4 (§7): a new game starts with the scenario's coin in the camp (a neutral one-person team 10, a founded
 ## faction or band 30) and the player's team gets its finance record (paydays start once a pay source is bound).
-const START_COIN := {"neutral": 10, "found": 30, "bandit": 30}
+const START_COIN := {"neutral": 10, "found": 30, "bandit": 30, "existing": 0} # 選現成人物: his own stock is the scenario's
 func _start_finance(mode: String) -> void:
 	if lab.terrain == null: return
 	var coin := int(START_COIN.get(mode, 10))
@@ -15363,13 +15774,32 @@ func wake_up(reason: String = "醒來") -> void:
 	lab.simulation_speed = float(sleep_record.prior_speed)
 	sleep_record = {}
 	_sleep_minute = -1
+	_sleep_wake_pending = ""
 	if lab.terrain != null and lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append(reason)
 	update_ui()
 
 ## Checked every frame: the target time, combat, a hit or knockout end the sleep; an enemy near is checked once per
 ## game minute.
 func advance_sleep() -> void:
-	if sleep_record.is_empty() or lab.terrain == null: return
+	var reason := sleep_wake_reason()
+	if not reason.is_empty(): wake_up(reason)
+
+## The step's tick (2026-11-27): a wake found inside a step waits for finish_tick. Restoring the speed there, not in
+## the middle of the step, keeps the step's game seconds equal to the ones its native work window was prepared with
+## (waking at the target time mid-step faulted CLOCK_NOT_READY, and the world stood still).
+var _sleep_wake_pending := ""
+func _note_sleep_wake() -> void:
+	if _sleep_wake_pending.is_empty(): _sleep_wake_pending = sleep_wake_reason()
+
+func _finish_sleep_wake() -> void:
+	if _sleep_wake_pending.is_empty(): return
+	var reason := _sleep_wake_pending
+	_sleep_wake_pending = ""
+	wake_up(reason)
+
+## Why the sleeper wakes now ("" = he sleeps on).
+func sleep_wake_reason() -> String:
+	if sleep_record.is_empty() or lab.terrain == null: return ""
 	var person: Dictionary = person_actions._person(int(lab.controlled_person_id()), false)
 	var minute := int(lab.terrain.site.get("minute", 0))
 	var reason := ""
@@ -15380,7 +15810,7 @@ func advance_sleep() -> void:
 	elif minute != _sleep_minute:
 		_sleep_minute = minute
 		reason = Sleep.wake_reason(lab, sleep_record, person)
-	if not reason.is_empty(): wake_up(reason)
+	return reason
 
 
 ## 時間與氣候 TC7: once per calendar year, every person on this Site ages; health (max HP) follows SiteVital, HP above it

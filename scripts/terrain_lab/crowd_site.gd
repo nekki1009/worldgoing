@@ -98,6 +98,7 @@ var _prepared_live_contact_actor_ids: Dictionary = {} # Candidate preparation on
 var _live_contact_actor_ids: Dictionary = {} # Adopted original live resources; retain after original dismount.
 var _draw_actors: Array[Node] = []
 var _kit_ids := PackedInt32Array() # Atlas truth per soldier; bodied people keep their atlas kit here as the fallback.
+var _kits_skipped := false # Nobody looks at this Lab: no kit is registered (see _undrawn).
 var _kit_ids_dirty := false
 # Bodied roster members (S1, design bodied_roster_members_design_20261103): presenter-only live bodies for cadre,
 # officers, commanders and the controlled roster member. Display only: never truth, never saved, never in _actors.
@@ -1280,7 +1281,34 @@ func _sample_prepared_actor_contact(actor: TerrainTestCharacter, appearance: Dic
 	return {"actor": actor, "shift": origin - actor.player_sprite.global_position, "slot": slot, "clip": clip, "time": time, "direction": direction}
 
 
+## A Lab nobody looks at (TerrainLab.restore_only: a bound cold owner, a replay, the child a bind is prepared in) draws
+## nothing. Registering its people's looks and building their bodies was 99% of the seconds of binding a Site nobody had
+## opened (2026-11-25: 12 villagers, 7 of 7.1 s; the bodies, items, orders and the native state took 0.1 s). Their kits stay
+## -1 and `view` null, which every per-person update already respects; a Lab that becomes visible registers them at its
+## first frame (render).
+func _undrawn() -> bool:
+	return is_instance_valid(lab) and lab.get("restore_only") == true
+
+func _register_undrawn() -> bool:
+	_kits_skipped = true
+	_no_atlas.clear()
+	var count := int(crowd.soldier_count())
+	_kit_appearances = []
+	_kit_appearances.resize(count)
+	_kit_ids = PackedInt32Array()
+	_kit_ids.resize(count)
+	_kit_ids.fill(-1)
+	var mounts := PackedByteArray()
+	mounts.resize(count)
+	_audio_mount_install(mounts)
+	var installed := bool(crowd.render_set_kits(_kit_ids))
+	_kit_ids_dirty = not installed
+	_body_kits_dirty = false
+	return installed
+
 func _refresh_kits() -> bool:
+	if _undrawn(): return _register_undrawn()
+	_kits_skipped = false
 	var appearances: Array = []
 	var audio_mounts := PackedByteArray()
 	_no_atlas.clear()
@@ -1308,7 +1336,7 @@ func clear(reserved_empty: TerrainArmy = null, validate_candidate: Callable = Ca
 	if not guard.ok: return guard
 	if not crowd.peek_events().is_empty():
 		return SiteRuntime.fail("BUSY", "收兵須等原生人物事件交接完成")
-	var actions: Dictionary = lab.site_controller.person_actions.save_guard()
+	var actions: Dictionary = lab.site_controller.person_actions.save_guard(false)
 	if not actions.ok: return actions
 	var prepared := ClearHandoff.prepare(self)
 	if not prepared.ok: return prepared
@@ -1421,9 +1449,11 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	var housing_input_supported := crowd.has_method("set_housing_recovery_input") and crowd.has_method("set_housing_attendance_input")
 	if housing_input_supported:
 		for attendance: Dictionary in Site.Housing.attendance_input(lab):
-			if not bool(crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))):
-				last_event_error = SiteRuntime.fail("INVALID_HOUSING", "原住戶本步資格已變更；未套用住宅出席")
-				return false
+			# Whom the native does not hold at his door this step (a step of his own still held, a body still creeping at
+			# 0.004 cells/s: it asks for less than 0.001) simply does not attend it; it clears the row itself. Refusing the
+			# whole step stopped the Site's clock, and an unopened settlement could not be opened any more: its catch-up met
+			# the same refusal every time, frame after frame (INVALID_HOUSING; found 2026-11-26).
+			crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))
 		for roster: Dictionary in rosters:
 			var housing_multiplier: float = Site.Housing.recovery_multiplier(lab, roster.units)
 			if not bool(crowd.set_housing_recovery_input(int(roster.crowd_formation), housing_multiplier)):
@@ -1540,6 +1570,9 @@ func render(frame_dt: float) -> void:
 	if not active:
 		return
 	if not sync_terrain(): return
+	if _kits_skipped and not _undrawn(): # it was bound while nobody looked at it
+		if not _refresh_kits(): return
+		_refresh_bodies()
 	var p0 := Time.get_ticks_usec()
 	# Native acting/current commander changes, new teams and rider changes have no hook; the cheap signature finds them.
 	if _body_pending or _body_signature() != _body_sig: _refresh_bodies()
@@ -3693,7 +3726,7 @@ func detach_to_new_team(identity: int, faction: int, remember_origin: bool = fal
 		SiteOffices.vacate_unless(roster.offices, func(holder: int) -> bool: return holder != identity)
 	for row: Dictionary in destination.units: row["member"] = true
 	destination["formal_commander"] = 0
-	destination["offices"] = SiteOffices.default_offices("team", identity, false)
+	destination["offices"] = SiteOffices.default_offices("team", -1, false) # A team head's holder is its formal commander, never stored (SiteOffices.validate team, stored_head_holder false): a stored one made team_offices(true) {} and the duty review failed on it (2026-11-28).
 	if remember_origin: destination["left_from_team_id"] = int(roster.team_id) # The team a rejoin returns to (Nekki 11/11 A).
 	if not set_formation_fields(formation, {"formal_person": identity}):
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定隊長；此人已移入新隊")
@@ -4050,7 +4083,7 @@ static func split_roster(roster: Dictionary, group: Array, team_id: int) -> Dict
 	departing["vacancies"] = []
 	departing["rescues"] = []
 	departing["player_member"] = {}
-	departing["offices"] = SiteOffices.default_offices("team", leader, false)
+	departing["offices"] = SiteOffices.default_offices("team", -1, false) # Its head is the formal commander (index 0), never stored.
 	departing["combat_order"] = 0
 	departing["goal"] = [-1, -1]
 	departing["reference"] = [float(leader_cell[0]) + 0.5, float(leader_cell[1]) + 0.5]
@@ -4116,8 +4149,9 @@ func capture_save(region_checkpoint: bool = false) -> Dictionary:
 	var synced := sync_to_site()
 	if not synced.ok: return synced
 	var bytes: PackedByteArray = crowd.save_state()
-	# KW21: the native World refuses a save only during an unfinished work point or a pending housing step (G10); it retries.
-	if bytes.is_empty(): return SiteRuntime.fail("BUSY", "原生身體步進尚未收束（住宅返家步或工作點）；下一步重試")
+	# KW21: the native World refuses a save only during an unfinished work point; it retries. A resident on his way home is
+	# saved as standing where he is (2026-11-26).
+	if bytes.is_empty(): return SiteRuntime.fail("BUSY", "原生身體步進尚未收束（工作點）；下一步重試")
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(bytes)
@@ -4198,6 +4232,7 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 		rosters.append(roster)
 		for row: Dictionary in roster.units: _records[int(row.person_id)] = row
 	var departed := _departed_people()
+	var undrawn := _undrawn()
 	for identity in crowd.person_ids():
 		if departed.has(int(identity)):
 			# G6.4b: a released soldier keeps its native slot but no kit, appearance or record.
@@ -4214,15 +4249,21 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null, bind_cont
 		else:
 			var appearance := _appearance(int(identity))
 			if not _prepare_contact_appearance(appearance, int(identity)): return SiteRuntime.fail("MISSING_ASSET", "存檔原士兵同 body 接觸資源未備妥")
-			if atlas_cannot_draw(appearance):
+			if undrawn:
+				appearances.append(null)
+			elif atlas_cannot_draw(appearance):
 				_no_atlas[int(identity)] = true # S2: the loaded created look is drawn by its body (activate_loaded).
 				appearances.append(null)
 			else:
 				appearances.append(appearance)
 			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
 	PerfTrace.mark("crowd_contacts_ready")
-	_headless_unadmitted_bodied(appearances, crowd.person_ids())
-	if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
+	if undrawn:
+		if not _register_undrawn(): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀索引未完整提交")
+		_audio_mount_install(audio_mounts)
+	else:
+		_headless_unadmitted_bodied(appearances, crowd.person_ids())
+		if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
 	PerfTrace.mark("crowd_kits_ready")
 	_host_fire_active = candidate_host_fire
 	return SiteRuntime.ok()
@@ -4540,7 +4581,7 @@ static func bodies_display() -> bool:
 ## kit (always kept current in _kit_ids) draws the person again. Beyond BODY_BUDGET, or when a presenter cannot be
 ## prepared, the person keeps the atlas. Riders keep the mounted atlas in S1. Never fails, never touches truth.
 func _refresh_bodies(controlled: int = 0) -> void:
-	if not active or crowd == null or not is_instance_valid(lab): return
+	if not active or crowd == null or not is_instance_valid(lab) or _undrawn(): return
 	if controlled <= 0: controlled = _body_controlled_id()
 	_body_sig = _body_signature()
 	_body_pending = false
@@ -4652,7 +4693,7 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 	var plans: Array[Dictionary] = []
 	var seen := {}
 	var team_ids := {}
-	var action_guard: Dictionary = scene_lab.site_controller.person_actions.save_guard()
+	var action_guard: Dictionary = scene_lab.site_controller.person_actions.save_guard(false)
 	if not action_guard.ok:
 		return action_guard
 	var controlled := int(scene_lab.controlled_person_id())
@@ -4666,7 +4707,9 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			continue
 		if not source.projectiles.is_empty() or not source._unit_rescues.is_empty():
 			return D5Runtime.fail("BUSY", "原隊伍的飛行彈體或救助尚未收束，未切換模擬")
-		if not source.pending_cadre().is_empty(): # v2 plan 3.5: unrepaired legacy cadre stay out of Crowd.
+		# v2 plan 3.5: unrepaired legacy cadre stay out of Crowd. A team that just arrived came out of one, where a cadre
+		# without a post stands as any member does (2026-11-25: such a team stayed a retired grid team where nobody had been).
+		if not bool(scene_lab.terrain.site.get("crowd_convert_pending", false)) and not source.pending_cadre().is_empty():
 			return D5Runtime.fail("MIGRATION_REQUIRED", "隊伍 #%d 仍有待分職幹部（舊存檔遷移）；請先在職位頁任命或解除，再切換群眾模擬" % source.team_id)
 		var snapshot: Dictionary = source.capture_combat_state()
 		var exact_handoff := ClearHandoff.decorate_existing(source, snapshot)
@@ -5298,7 +5341,7 @@ func prepare_work_fatigue_recovery_inputs() -> Dictionary:
 		var multiplier: float = Site.Garrison.recovery_multiplier(lab, str(roster.get("garrison_feature_id", "")), int(roster.faction_id), roster.units)
 		if not bool(crowd.set_recovery_input(int(roster.crowd_formation), multiplier)): return SiteRuntime.fail("INVALID_GARRISON")
 	for attendance: Dictionary in Site.Housing.attendance_input(lab):
-		if not bool(crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell))): return SiteRuntime.fail("INVALID_HOUSING")
+		crowd.set_housing_attendance_input(int(attendance.unit), int(attendance.cell)) # A refused row is no attendance (step).
 	for roster: Dictionary in rosters:
 		if not bool(crowd.set_housing_recovery_input(int(roster.crowd_formation), Site.Housing.recovery_multiplier(lab, roster.units))): return SiteRuntime.fail("INVALID_HOUSING")
 	# The original fatigue housing guard reads the actual host wish. Publish

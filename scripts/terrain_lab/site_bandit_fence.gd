@@ -114,7 +114,7 @@ static func flush(controller: Variant) -> Dictionary:
 		for _sale: int in range(int(due[band])): heat = Bandit.heat_after(heat, "fence")
 		candidate = Bandit.set_heat(candidate.registry, int(band), heat, now)
 		if not candidate.ok: return candidate
-	var committed: Dictionary = controller._commit_diplomacy(candidate, "")
+	var committed: Dictionary = controller.commit_registry(candidate)
 	if not committed.ok: return committed
 	controller.remove_meta(&"fence_heat_due")
 	return Runtime.ok("", {"flushed": due})

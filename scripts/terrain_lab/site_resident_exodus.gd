@@ -8,7 +8,7 @@ extends RefCounted
 ## head leaves the residents team into his own team, the others join it) and the head takes them onto the Region map
 ## toward the first land neighbour Site (RegionAI.prepare_captain_dispatch, reason emigrate). Going outlaw: the same team
 ## becomes a new band (origin refugee) led by the head, its lair at his cell; the band stays on this Site.
-## Members who are not free here (dead, captive, busy, controlled) stay behind and keep their registration.
+## Members who are not free here (dead, captive, busy, controlled, the settlement's head) stay behind and keep their registration.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Calendar = preload("res://scripts/terrain_lab/site_calendar.gd")
 const Households = preload("res://scripts/terrain_lab/site_households.gd")
@@ -67,12 +67,18 @@ static func depart(controller: Variant, people: Array, outlaw: bool) -> Dictiona
 	var crowd: Variant = lab.crowd_site
 	var player := int(lab.controlled_person_id())
 	var free: Array[int] = []
+	# The settlement's head stays (2026-11-25): without a head of its own faction the Site could not be saved any more.
+	var head_holder := int(SiteOffices.head_position(lab.terrain.site.get("settlement", {}).get("offices", {})).get("holder", 0))
 	for raw: Variant in people:
 		var identity := int(raw)
+		if identity == head_holder and head_holder > 0: continue
 		var person: Dictionary = controller.person_actions._person(identity, false)
 		if identity == player or person.is_empty() or float(person.get("hp", 0.0)) <= 0.0 or bool(person.get("captive", false)) or controller.person_actions.is_busy(identity): continue
 		free.append(identity)
 	if free.is_empty(): return Runtime.fail("NO_TARGET", "沒有可離開的成員")
+	# Who leaves stops his work for the settlement; the step he is in ends first (NOT_READY until then).
+	for identity: int in free:
+		if controller.work_team.is_assigned(identity): controller.work_team.cancel(identity)
 	var head := free[0]
 	# Gather: the head leaves into his own neutral team, the others join him.
 	# A head who already stands alone (his own one-person team) keeps it; otherwise he leaves into his own neutral team.
@@ -113,11 +119,11 @@ static func _outlaw(controller: Variant, head: int, team_id: int) -> Dictionary:
 		{"name": named.left(32), "kind": "bandit", "leader_ref": head_ref, "founded_at": float(slot.control.logical_game_seconds),
 		"bandit": {"origin": "refugee", "lair": {"site_id": str(lab.terrain.site.get("id", "")), "cell": [cell.x, cell.y]}}})
 	if not prepared.ok: return prepared
-	var founded: Dictionary = controller._commit_diplomacy(prepared, "")
+	var founded: Dictionary = controller.commit_registry(prepared)
 	if not founded.ok: return founded
 	var moved: Dictionary = lab.relabel_team_faction(team_id, int(prepared.faction_id))
 	if not moved.ok: return moved
-	var saved: Dictionary = controller._commit_diplomacy({"ok": true, "registry": slot.control.faction_registry}, "")
+	var saved: Dictionary = controller.commit_registry({"ok": true, "registry": slot.control.faction_registry})
 	if not saved.ok: return saved
 	if lab.terrain.site.get("notices") is Array: lab.terrain.site.notices.append("不滿的居民一戶落草：%s" % named.left(32))
 	return Runtime.ok("", {"team_id": team_id, "band": int(prepared.faction_id)})

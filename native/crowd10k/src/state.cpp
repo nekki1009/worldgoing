@@ -254,11 +254,20 @@ template <class Ar> void World::serialize(Ar &ar) {
 std::vector<uint8_t> World::save() const {
 	if (work_point_active_) return {}; // Same original unfinished point is unsaveable.
 	// KW21 (Nekki 2026-11-09 A): siege compounds and crew steps in progress are saved and resume after load, as the grid
-	// Site did. A housing step still saves only once held (G10, Nekki 2026-10-30 A: workers save at their station); its
-	// pending step (a goal set) stays unsaveable and the autosave retries on the next tick.
-	for (int i = 0; i < soldier_count(); ++i) if ((escort_mode[i] == 3 || escort_mode[i] == 4) && escort_goal[i] >= 0) return {};
+	// Site did. A held housing step saves as held (G10, Nekki 2026-10-30 A: workers save at their station). One under way
+	// (a resident walking home) saves as what it leaves, a body standing where it is without the step: the settlement's
+	// timetable sends him on after a load, as after any interruption (2026-11-26). Refusing it until the next tick stopped
+	// the world for good: a Region event waits with the clock standing for that very save, and the walker cannot arrive.
+	World &self = *const_cast<World *>(this);
+	struct Walking { int person; uint8_t mode; int32_t goal; };
+	std::vector<Walking> walking;
+	for (int i = 0; i < soldier_count(); ++i) if ((escort_mode[i] == 3 || escort_mode[i] == 4) && escort_goal[i] >= 0) {
+		walking.push_back({i, escort_mode[i], escort_goal[i]});
+		self.escort_mode[i] = 0; self.escort_goal[i] = -1;
+	}
 	Writer w;
-	const_cast<World *>(this)->serialize(w);
+	self.serialize(w);
+	for (const Walking &row : walking) { self.escort_mode[row.person] = row.mode; self.escort_goal[row.person] = row.goal; }
 	return std::move(w.out);
 }
 

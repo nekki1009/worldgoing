@@ -73,6 +73,9 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if int(settlement.version) >= 5 and settlement.has("succession"): expected_fields.append("succession")
 	if settlement.has("trade_sources"): expected_fields.append("trade_sources")
 	if settlement.has("market_listings"): expected_fields.append("market_listings") # 貿易 T3
+	if settlement.has("meals"): # 居民吃飯 F1: its people are fed from its stock (SiteResidentLife.ration_day)
+		expected_fields.append("meals")
+		if not _int(settlement.meals, 1, 1): return Runtime.fail("CORRUPT_SAVE", "聚落供餐")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
 	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
@@ -194,7 +197,7 @@ static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) 
 	if candidate_version == VERSION_LATEST and candidate.has("succession"): fields.append("succession")
 	# The optional trade sections (T2 trade_sources, T3 market_listings) stay as they are; the full Settlement.validate
 	# checks them at save. Before 2026-11-19 a bound trade source made the head unable to set the tax rate or the nation.
-	for optional: String in ["trade_sources", "market_listings"]:
+	for optional: String in ["trade_sources", "market_listings", "meals"]:
 		if candidate.has(optional): fields.append(optional)
 	if (candidate_version != VERSION_MAX and candidate_version != VERSION_LATEST) or not Technology.keys(candidate, fields): return false
 	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
@@ -270,6 +273,7 @@ static func normalize(state: Dictionary) -> void:
 				source.limits[resource].total = int(source.limits[resource].total)
 			for resource: String in source.used: source.used[resource] = int(source.used[resource])
 	if settlement.get("market_listings") is Dictionary: Market.normalize_listings(settlement.market_listings)
+	if settlement.get("meals") is float: settlement["meals"] = int(settlement.meals)
 
 # --- Trade plan T2: warehouses the head binds to settlement.trade (§4, "授權額度") ---
 ## trade_sources {warehouse key: {revision, limits {resource: {per_trade, total}}, used {resource: count}}}. A source
@@ -517,9 +521,12 @@ static func found(lab: Variant, founder_id: int, cells: Array[int], options: Dic
 	var built := Runtime.request_build(data, "settlement_center", cells, occupied, settings)
 	if not built.ok: return built
 	var key := str(built.feature)
+	# 居民吃飯 (Nekki 2026-11-26 「玩家聚落當然也要開」): a settlement the player founds feeds its people from its stock
+	# (SiteResidentLife.ration_day) and its own fields yield by the work done on them (SiteRuntime.farm_productivity), as
+	# the scenario settlements. Settlements founded before keep their record.
 	data.site["settlement"] = {"version": VERSION, "settlement_id": "settlement_%s_%s" % [str(data.site.get("id", "site")).left(64), key],
 		"center_id": key, "level": 0, "name": settlement_name, "owner_faction": int(founder.faction),
-		"offices": SiteOffices.default_offices("settlement", founder_id, not bool(founder.player)), "fall_record": empty_fall_record()}
+		"offices": SiteOffices.default_offices("settlement", founder_id, not bool(founder.player)), "fall_record": empty_fall_record(), "meals": 1}
 	return Runtime.ok("已預留材料並排入聚落中心施工；完工即成為 1 級聚落", {"feature": key})
 
 static func request_upgrade(lab: Variant, requester_id: int, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:
@@ -635,6 +642,27 @@ static func _bandit(lab: Variant, faction: int) -> bool:
 	if controller == null or controller.region_slot == null: return false
 	return RegionFactionQuery.is_bandit(controller.region_slot.control.get("faction_registry", {}), faction)
 
+## On a crowd Site every person read below carries his crowd owner's faction. When no owner of the Site's people is a
+## faction other than the settlement's owner that is hostile to it and not a band, nobody can count as an attacker in
+## capture_sample, and the sample has none (2026-11-27: a 37-person town spent 1.4 ms a frame reading every person and
+## the capture ring for that answer). A person read another way sends the sample down its full path.
+static func _no_possible_attacker(lab: Variant, owner: int) -> bool:
+	if not _crowd_active(lab): return false
+	var site: Variant = lab.crowd_site
+	var checked := {}
+	for owner_ref: RefCounted in site.person_owners():
+		for unit: int in owner_ref.combat_units:
+			var identity := int(owner_ref.combat_identity(unit))
+			if identity <= 0: continue
+			if not site.contains_person(identity): return false
+			var resolved: Variant = site.person_owner(identity)
+			if resolved == null: return false
+			var faction := int(resolved.faction_id)
+			if faction == owner or checked.has(faction): continue
+			checked[faction] = true
+			if _hostile_to_owner(lab, faction, owner) and not _bandit(lab, faction): return false
+	return true
+
 ## Eligibility is sampled before the interval. The original fall_record owns
 ## elapsed progress; handoff never resamples old time using a new roster.
 static func capture_sample(lab: Variant) -> Dictionary:
@@ -642,6 +670,7 @@ static func capture_sample(lab: Variant) -> Dictionary:
 	var settlement := record(data)
 	if settlement.is_empty() or int(settlement.level) <= 0: return {}
 	var owner := int(settlement.owner_faction)
+	if _no_possible_attacker(lab, owner): return {"owner": owner, "attacker": -1, "leader": -1}
 	var defended := false
 	var attackers := {}
 	var first_attacker := {}
