@@ -1,14 +1,22 @@
 # 專案指揮中心狀態看板
 
-更新：2026-11-28 12:45（台北）
+更新：2026-11-28 17:10（台北）
 CURRENT 指揮中心：cmsg_019ZbHjQVQy2cHmPmpt2suCGP8qKyKtzEnanCqxBu7uERd（11/27 10:00 起）。前任 cmsg_019ZbHjQVQy2cHmPmpt2suCG2UnWm8262XqHxM4sjFiZWJ（11/20 08:00–11/27 10:05）；再前任 cmsg_019ZbHjQVQy2cHmPmpt2suCGCmB9nUuknpt82jaj7trrXb（11/18–11/20）。
+
+## 2026-11-28 12:50–17:10（台北）長跑再抓到兩個（本機 d086f8d、0a3f112，未推送）
+- 長跑：寨主 20 天、隊長 8 天過；首長（溪前鎮）6–10 天三種問題，都是早上 190d3fd 的後續：
+  1. 存檔被拒 UNSTABLE_REGION_SNAPSHOT_JSON：Site 分鐘相位剩 1.59e-9 這種小尾數，Godot 的 JSON 對部分小於 1e-7 的數字寫讀永遠不穩（1e-12～1e-8 取樣 1–8%）。0a3f112：快照寫入在最後兩次讀回於 12 位有效數字（_hash_canonical，重讀檢查本來的精度）相同時接受，其他差異照拒，拒絕訊息指出位置。新測試 site_region_snapshot_tiny_float_test。
+  2. 世界停住（INVALID_INTERVAL 每幀被拒）：分鐘在離結束 1e-8 分內就提早收尾（Site 時鐘偷跑），原本被「丟掉極短視窗」抵銷；190d3fd 後沒有抵銷，Site 跑到 Region 格線前 9.9e-7 秒，對齊格線的步就超過共同 point 的 6e-7 秒容許。d086f8d：分鐘只在真正走到結束（1e-12）或超過存檔上限 0.999999999 時收尾；容許值改成和 _region_owner_action_limit 一樣（16 倍 9.6e-6 秒）。
+- 探針：scenario_existing_person_longrun_probe 加 `--save-daily`、自動存檔被拒就停、世界停 300 幀印出在等什麼。
+- FULL_FV 296 項全部並行通過（含首長 10 天每日存檔×3、隊長 124 小時漂移每小時 0）。
+- 待推送 15 個本機 commit（082e95d..本次看板），等 Nekki 說。
 
 ## 2026-11-28 10:20–12:45（台北）鎮上加速 C 與預覽重用（本機 1f93193、a24efbc，未推送）
 - Nekki 10:21「C」（B 先不做）：共同工作預檢第一輪，工位／用水／環境自選工作後沒變、也還沒移除工作時，沿用選工作時的 work_preflight 答案（人、命令、威脅、工作區、倉庫可達檢查照做）。暫時比對碼：村長、首長、隊長各 1 遊戲日，84,398 次沿用、0 次不同（已移除）。
 - 1f93193：Region 聯合區間在預覽群眾 Site 原生開步之前，先按分鐘、佔領、隊伍停靠這些已知上限切好區間（沒有 GD original 時），步裡就能沿用預覽。隊長溪前鎮 16 倍無畫面：每遊戲日 223 → 186 秒（步裡重算 46 → 26 秒）。
 - FULL_FR 291 項：291 並行全過（含剿匪全程 3 種）。
 - 有畫面首長溪前鎮穩定狀態（STEADY）：21.8 fps，p50 43.7 ms，Lab 36.8 ms（前次 37.9），工作預檢 1.1 ms。
-- 待推送 11 個本機 commit（082e95d..a24efbc），等 Nekki 說。
+- 待推送本機 commit，等 Nekki 說。
 
 ## 2026-11-28 05:30–10:20（台北）長跑抓到存檔被拒（本機 190d3fd、369840a，未推送）
 - 新探針 scenario_existing_person_longrun_probe（`--role=head|chief|captain|leader --days=N [--profile]`）：選現成人物開局、16 倍放著跑、每遊戲日一行、最後存檔。村長、寨主 5 天過；**隊長（溪前鎮）第 5 天存檔被拒「供養時鐘超前 Site」**（隊伍 1 快 4.6e-5 秒），自動存檔約第 2 天起每 30 秒都被拒。
