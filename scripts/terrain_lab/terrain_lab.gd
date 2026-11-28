@@ -10006,6 +10006,20 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if float(stop.at) < float(interval.game_end) - 0.0000001:
 			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
 	pmi = _combat_profile_stage("pmi_npc_preview", pmi)
+	# Perf (2026-11-28, a town at x16 headless): the live crowd Site's preview below keeps its prepared window for the step
+	# only when it did not narrow the interval. A minute boundary, a capture or a party stop had usually narrowed it
+	# already (most steps above x1), and the step prepared the same window again: 46 of 223 s a game day. With no GD
+	# original to prepare and retime, the interval is clipped to those limits first, so the preview is asked for the width
+	# the step asks for. The clipped interval is the one the late clip below makes from the same limit.
+	var gd_originals := false
+	for original: TerrainLab in originals: gd_originals = gd_originals or not (original.crowd_site != null and original.crowd_site.active)
+	if not gd_originals and limited < accepted_action - ACTION_TIME_EPSILON:
+		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
+		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
+		accepted_action = float(interval.action_end) - float(interval.action_begin)
+		accepted_game = SiteRuntime.game_seconds(accepted_action, float(interval.tactical_seconds)) * simulation_speed
+		limited = accepted_action
+	pmi = _combat_profile_stage("pmi_early_clip", pmi)
 	for original: TerrainLab in originals:
 		# A native crowd original prepares its own work inside its native begin window (as the live crowd does), never here.
 		# The live crowd Site's begin window still clips the joint interval (2026-11-08): it is previewed here and only
