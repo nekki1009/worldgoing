@@ -1681,6 +1681,8 @@ func _process(delta: float) -> void:
 		_combat_profile_stage("process_total", process_started)
 		return
 	var finish_started := Time.get_ticks_usec() if combat_profile_enabled else 0
+	# After every step of the frame (each path advances its ledgers and the Site clock by then); not while a point waits.
+	if site_controller != null and _region_point_pending.is_empty() and not site_controller.region_operation_pending(): _reanchor_supply_ledgers()
 	if site_controller != null:
 		site_controller.finish_tick()
 	_combat_profile_stage("finish_tick_outer", finish_started)
@@ -2768,6 +2770,36 @@ func resolve_structure_change(result: Dictionary) -> void:
 	if combat_movement_coordinator != null:
 		combat_movement_coordinator.request_occupancy_rebuild()
 	queue_redraw()
+
+const SustainLedger = preload("res://scripts/terrain_lab/site_sustain.gd")
+## The supply ledgers and the Site clock take the same accepted windows, but a ledger adds each to a large absolute time
+## (at + seconds: ~3e-11 s of rounding at 4e5 s, of one sign for long runs) and the minute clock closes a minute a step
+## ends within 1e-8 minutes of. Measured 2026-11-28 (溪前鎮 at x16, after the Site clock counted every window): the two
+## parted by ~1e-9 s an hour, 1.5e-7 s in five days; a year in one Site reaches the save's 1e-5 s (供養時鐘超前／落後
+## Site). So after a frame's steps a ledger within LEDGER_CLOCK_TOLERANCE of the Site clock reads it, as a Region
+## frame's ledgers read its frame clock (_region_advance_original_party_body). It never moves a ledger across a meal: the
+## new time keeps every cohort's meal_until at or after it and within its next meal (SiteSustain.validate), and stays in
+## the same meal period, else the ledger waits for the next frame.
+const LEDGER_CLOCK_TOLERANCE := 0.000001
+
+func _reanchor_supply_ledgers() -> void:
+	if terrain == null or terrain.site.is_empty(): return
+	var site_seconds := (float(terrain.site.get("minute", 0)) + float(terrain.site.get("phase", 0.0))) * 60.0
+	for supply: Variant in terrain.site.get("team_supply", {}).values():
+		if supply is Dictionary and supply.get("sustain") is Dictionary: _reanchor_supply_ledger(supply.sustain, site_seconds)
+	for personal: Variant in terrain.site.get("person_supply", {}).values():
+		if personal is Dictionary: _reanchor_supply_ledger(personal, site_seconds)
+
+static func _reanchor_supply_ledger(sustain: Dictionary, site_seconds: float) -> void:
+	var at: Variant = sustain.get("at")
+	if not (at is float or at is int) or float(at) == site_seconds or absf(float(at) - site_seconds) > LEDGER_CLOCK_TOLERANCE: return
+	if floorf(float(at) / SustainLedger.MEAL) != floorf(site_seconds / SustainLedger.MEAL): return
+	var next_meal: float = SustainLedger._next_meal(site_seconds)
+	for cohort: Variant in sustain.get("cohorts", []):
+		if not cohort is Dictionary: return
+		var until: Variant = cohort.get("meal_until")
+		if not (until is float or until is int) or float(until) < site_seconds or float(until) > next_meal + SustainLedger.EPS: return
+	sustain["at"] = site_seconds
 
 ## `seconds` is world game time (meals, supply, work, person actions); `tactical` the combat-mechanics clock for a
 ## present actor's own fatigue outside work (TCM M3). A negative `tactical` derives it from the Site's combat flag.

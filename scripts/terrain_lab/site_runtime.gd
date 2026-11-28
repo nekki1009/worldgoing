@@ -4210,7 +4210,14 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 	# Float residue below the clock epsilon is the same finished combat; left in place it reaches the native begin
 	# window as a sub-representable prefix that makes no progress (site_fire_native_admission_test, DIAG8).
 	if float(data.site.combat_left) <= 0.000000000001: data.site["combat_left"] = 0.0
-	while minutes > 0.00000001:
+	# Every accepted window is Site time, however short. The loop once stopped at 1e-8 minutes (6e-7 game s): a native
+	# begin window that short (the action residual to an exchange query boundary, 2.4e-10 action s at x16) moved the
+	# supply ledgers and not the minute phase. The phase then lay under its grid, the next boundaries it bounds came
+	# short, and their residues were cut as windows that short again: a town at x16 ground through frames where the Site
+	# clock stood still while its ledgers ran 4.6e-5 s ahead, and every later save was refused (供養時鐘超前 Site; found
+	# 2026-11-28, 選現成人物 captain in 溪前鎮, day 2). The loop ends: a slice either takes all that is left or closes
+	# the minute (1 - phase >= 1e-8 after the snap below).
+	while minutes > 0.0:
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
 		data.site["phase"] = float(data.site.phase) + slice
 		if checked_point:
