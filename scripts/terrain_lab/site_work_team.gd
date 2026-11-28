@@ -574,6 +574,8 @@ func prepare_work_requests(seconds: float, action_seconds: float = 0.0, shared_r
 		if not checked.ok:
 			entry["blocked"] = str(checked.get("message", "原作業尚未具備施作條件"))
 			continue
+		entry["selection_preflight"] = checked
+		entry["selection_water"] = _water_stamp()
 		var remaining := float(checked.get("remaining", NAN))
 		var productivity := float(checked.get("productivity", 1.0))
 		if not is_finite(remaining) or remaining < 0.0 or not is_finite(productivity) or productivity <= 0.0:
@@ -879,7 +881,7 @@ func apply_shared_preflight(requests: Array) -> Array[Dictionary]:
 			var updates: Array[Dictionary] = []
 			var remaining := -1.0
 			for entry: Dictionary in entries:
-				var checked := _prepared_context(entry, threats)
+				var checked := _prepared_context(entry, threats, iteration == 0)
 				if not checked.ok or str(checked.get("required_skill", "")) != str(entry.get("required_skill", "")) or bool(checked.get("eligible_master", false)) != bool(entry.get("eligible_master", false)) or not _same_work_skill_facts(entry, checked):
 					_pause_shared_preflight(request, entries, str(checked.get("code", "STALE_SOURCE")) if not checked.ok else "STALE_SOURCE", str(checked.get("message", "原施作資格已變更")))
 					removed = true
@@ -905,7 +907,22 @@ func apply_shared_preflight(requests: Array) -> Array[Dictionary]:
 		if not removed: break
 	return out
 
-func _prepared_context(entry: Dictionary, threats: Dictionary) -> Dictionary:
+## The water a work preflight reads: the environment revision, the operating water revision and the operating slots
+## (SiteRuntime.set_operating_slots replaces that dictionary whenever it changes them or reallocates water).
+func _water_stamp() -> Array:
+	return [lab.terrain.environment_revision, int(lab.terrain.get_meta(&"site_operating_water_revision", -1)), lab.terrain.get_meta(&"site_operating_slots", {})]
+
+func _same_water(stamp: Variant) -> bool:
+	var now := _water_stamp()
+	return stamp is Array and stamp.size() == 3 and int(stamp[0]) == int(now[0]) and int(stamp[1]) == int(now[1]) and is_same(stamp[2], now[2])
+
+## `selection_water` (Nekki 2026-11-28 「C」, town frame): the shared preflight's first pass re-asks every work group
+## after the final operating slots are set. When setting them changed nothing (same slots, no water reallocated, no
+## environment change since the group was selected) and nothing was removed yet, SiteRuntime.work_preflight reads the
+## same site, task, cargo and water as at selection in this same collection, so its selection answer is taken; the
+## person, order, threat, zone and depot checks above it still run. A later pass (after a removal released water), and
+## every other caller, asks again.
+func _prepared_context(entry: Dictionary, threats: Dictionary, selection_water: bool = false) -> Dictionary:
 	var person := _person(int(entry.identity))
 	if person.is_empty() or not is_same(person.row, entry.row) or person.owner != entry.team or not is_same(person.row.get("work_task", {}), entry.task) or not is_same(person.row.get("cargo", {}), entry.cargo) or not is_same(person.row.get("item_state", {}), entry.item_state): return SiteRuntime.fail("STALE_SOURCE")
 	var task: Dictionary = entry.task
@@ -925,6 +942,7 @@ func _prepared_context(entry: Dictionary, threats: Dictionary) -> Dictionary:
 	if str(task.target) == "depot":
 		var depot: Vector2i = lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell))
 		if person.cell != depot and not lab.terrain.can_step(person.cell, depot): return SiteRuntime.fail("UNREACHABLE")
+	if selection_water and entry.get("selection_preflight") is Dictionary and _same_water(entry.get("selection_water")): return entry.selection_preflight
 	return SiteRuntime.work_preflight(lab.terrain, task, person.row.cargo, int(entry.carry_limit), int(team.faction_id), int(entry.identity), entry.occupied)
 
 func _record_planned_work(entry: Dictionary, interval: Dictionary, handled: Dictionary) -> void:
