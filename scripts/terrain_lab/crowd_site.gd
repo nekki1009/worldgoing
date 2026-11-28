@@ -3726,7 +3726,7 @@ func detach_to_new_team(identity: int, faction: int, remember_origin: bool = fal
 		SiteOffices.vacate_unless(roster.offices, func(holder: int) -> bool: return holder != identity)
 	for row: Dictionary in destination.units: row["member"] = true
 	destination["formal_commander"] = 0
-	destination["offices"] = SiteOffices.default_offices("team", identity, false)
+	destination["offices"] = SiteOffices.default_offices("team", -1, false) # A team head's holder is its formal commander, never stored (SiteOffices.validate team, stored_head_holder false): a stored one made team_offices(true) {} and the duty review failed on it (2026-11-28).
 	if remember_origin: destination["left_from_team_id"] = int(roster.team_id) # The team a rejoin returns to (Nekki 11/11 A).
 	if not set_formation_fields(formation, {"formal_person": identity}):
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕指定隊長；此人已移入新隊")
@@ -4083,7 +4083,7 @@ static func split_roster(roster: Dictionary, group: Array, team_id: int) -> Dict
 	departing["vacancies"] = []
 	departing["rescues"] = []
 	departing["player_member"] = {}
-	departing["offices"] = SiteOffices.default_offices("team", leader, false)
+	departing["offices"] = SiteOffices.default_offices("team", -1, false) # Its head is the formal commander (index 0), never stored.
 	departing["combat_order"] = 0
 	departing["goal"] = [-1, -1]
 	departing["reference"] = [float(leader_cell[0]) + 0.5, float(leader_cell[1]) + 0.5]

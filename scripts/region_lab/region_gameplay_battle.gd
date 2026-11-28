@@ -203,7 +203,7 @@ static func _original_rank(owner: Variant, identity: int) -> int:
 	if not owner is TerrainArmy: return 0
 	var commander: int = int(owner.combat_identity(int(owner.current_commander)))
 	var officers: Array = []
-	for seat: Dictionary in owner.team_offices(true).positions:
+	for seat: Dictionary in owner.team_offices(true).get("positions", []): # {} for an invalid stored record
 		if not bool(seat.head) and int(seat.holder) > 0: officers.append(int(seat.holder))
 	return Policy.rank_for(identity, commander, officers)
 

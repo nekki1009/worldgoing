@@ -1,6 +1,6 @@
 extends SceneTree
 ## Probe (headless): a long idle run of the shipped demo A from a 選現成人物 start, to find step faults and a world that
-## stands still. Births the package taking over the first person of `-- --role=leader|head|chief|captain` (default
+## stands still. Births the package taking over the first person (or `--index=N`) of `-- --role=leader|head|chief|captain` (default
 ## leader), then runs at x16 for `--days=N` game days (default 5) with the player idle. Every game day it prints the day,
 ## the real seconds it took and the active Site; it fails on a step fault, or when the Region clock does not move for
 ## 3000 frames (a world standing still). Prints LONGRUN_PASS / LONGRUN_FAIL; quit(1) on failure or the deadline.
@@ -34,10 +34,14 @@ func _run() -> void:
 	var role := _arg("role", "leader")
 	var days := int(_arg("days", "5"))
 	var person: Dictionary = {}
+	var skip := int(_arg("index", "0")) # `--index=N`: the N-th person of the role (0 = the first), another Site
 	for row: Dictionary in ScenarioPeople.people(PACKAGE).get("people", []):
-		if str(row.role) == role:
-			person = row
-			break
+		if str(row.role) != role: continue
+		if skip > 0:
+			skip -= 1
+			continue
+		person = row
+		break
 	if person.is_empty() or not RegionEntry.request_new_world(person.site, {"name": str(person.name)}, "長跑", "", PACKAGE, {"mode": "neutral"}, {"surname": str(person.name).left(1)}, {"free_points": false, "template": "", "scenario": {"id": "demo_a_kaiken", "version": 1}}, [], {"name": str(person.name)}):
 		return _fail("refused", RegionEntry.menu_message)
 	change_scene_to_file(SITE)

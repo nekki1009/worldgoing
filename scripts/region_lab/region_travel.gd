@@ -1347,7 +1347,7 @@ static func _detach_row(origin: Dictionary, person_id: int) -> Dictionary:
 		solo.formal_commander = 0 # Current stays -1 while it travels (not present); arrival seats it again.
 		solo.needs_attack_order = true # No present commander yet: the team holds until its captain is seated.
 		solo.combat_attacking = false
-		solo.offices = SiteOffices.default_offices("team", person_id, false)
+		solo.offices = SiteOffices.default_offices("team", -1, false) # Its head is the formal commander (index 0), never stored.
 	solo.erase("team_fatigue")
 	if solo.has("tactical_ai"): solo.tactical_ai.enabled = false
 	_settle_team(solo, Vector2i(int(row.cell[0]), int(row.cell[1])))

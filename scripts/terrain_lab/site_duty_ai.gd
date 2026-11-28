@@ -467,7 +467,8 @@ static func review_crowd_personnel(lab: Variant, controlled: int) -> void:
 			_seat_pending_cadre(holder)
 			var seated: Dictionary = crowd.commit_team_personnel(team_id, holder, before_seat)
 			if not seated.ok: push_warning("P1f crowd cadre seating commit refused: %s" % str(seated.get("code", "")))
-		if not bool(holder.team_offices(true).duty_ai) or not holder.pending_cadre().is_empty(): continue
+		# An invalid stored record reads {} (team_offices): no duty AI for it, never a script error mid-step.
+		if not bool(holder.team_offices(true).get("duty_ai", false)) or not holder.pending_cadre().is_empty(): continue
 		var before: Dictionary = crowd.roster_post_holders(team_id)
 		review_team_personnel(holder, controlled, owner)
 		# Always committed: the holder's team_offices() may also have vacated an unqualified holder, as it does on the grid.
