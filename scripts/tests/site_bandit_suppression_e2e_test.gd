@@ -39,7 +39,9 @@ func _growth(body: Variant, line: String) -> Array:
 	return [int(packet.get("pending", {}).get(line, 0)), int(packet.get("toward", {}).get(line, 0)), int(packet.get("lines", {}).get(line, 0))]
 
 func _grew(before: Array, after: Array) -> bool:
-	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS)
+	# A daily settlement between the two reads re-floors pending time to whole micro-seconds (1 micro lost, 2026-11-28):
+	# 1 ms of slack still tells 70 battle hours from none.
+	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS) - 1000
 
 func _ok(condition: bool, message: String, detail: Variant = null) -> bool:
 	checks += 1
@@ -52,6 +54,24 @@ func _team_of(lab: TerrainLab, person: int) -> Dictionary:
 	for team: Dictionary in lab.crowd_site.teams:
 		if not bool(team.get("departed", false)) and team.get("person_ids", []).has(person): return team
 	return {}
+
+## Each team of a Site that is not a band's: faction, living people, solo, captain, the player in it, official, its
+## formation order, departed (the go-home rule reads these).
+func _teams_report(at_lair: Variant, slot: RegionSaveSlot, today: int) -> Array:
+	var rows: Array = []
+	var registry: Dictionary = slot.control.get("faction_registry", {})
+	for team: Dictionary in at_lair.crowd_site.teams:
+		var faction := int(team.get("faction", -1))
+		if RegionFactionQuery.is_bandit(registry, faction): continue
+		var living := 0
+		for person: Variant in team.get("person_ids", []):
+			var target: Dictionary = at_lair._original_person_target(int(person))
+			if not target.is_empty() and float(target.get("hp", 0.0)) > 0.0: living += 1
+		rows.append({"team": int(team.get("team_id", -1)), "faction": faction, "people": team.get("person_ids", []).size(), "living": living, "solo": bool(team.get("solo", false)),
+			"departed": bool(team.get("departed", false)), "captain": int(at_lair.site_controller.team_captain_of_team(int(team.get("team_id", -1)))),
+			"official": Suppression.Attacked.official(registry, faction), "home": Suppression.home_of(registry, faction, today),
+			"order": int(at_lair.crowd_site.formation_state(int(team.get("formation", -1))).get("order", -1)) if int(team.get("formation", -1)) >= 0 else -1})
+	return rows
 
 ## What the lair Site's owner holds now, for the log.
 func _lair_report(slot: RegionSaveSlot, lair: String, token: String, band: int) -> String:
@@ -353,9 +373,19 @@ func _run() -> void:
 		if at_lair != null and is_instance_valid(at_lair):
 			homeward = Suppression.go_home(at_lair.site_controller, next_day)
 			if homeward.has("sent"): break
+			# The Site's own later look the same day (Suppression.day, suppress_home_wait) may send it first: then no team
+			# is left here (NONE) and its party is on the way. go_home dispatches only to home_of(), under this prefix.
+			if str(homeward.get("reason", "")) == "NONE":
+				for party_token: Variant in slot.region_registry().get("parties", {}):
+					if str(party_token).begins_with("suppress_home_"): homeward = {"sent": {"home": home, "token": str(party_token), "by": "the Site's own look"}}
+				if homeward.has("sent"):
+					seen.append([attempt, "sent by the Site's own look"])
+					break
 			if last != homeward:
 				last = homeward
 				seen.append([attempt, snappedf((float(slot.control.logical_game_seconds) - moved_at) / 3600.0, 0.01), homeward])
+				# NONE: no official team here qualifies; name each non-band team's state (failure detail only).
+				if str(homeward.get("reason", "")) == "NONE": seen.append(_teams_report(at_lair, slot, next_day))
 				same = 0
 			same += 1
 			# Fail fast: a refusal that is not waiting for the band or for the hold to settle does not change by itself.

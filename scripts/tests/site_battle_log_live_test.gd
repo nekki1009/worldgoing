@@ -79,7 +79,9 @@ func _growth(person: int, line: String) -> Array:
 	return [int(packet.get("pending", {}).get(line, 0)), int(packet.get("toward", {}).get(line, 0)), int(packet.get("lines", {}).get(line, 0))]
 
 func _grew(before: Array, after: Array) -> bool:
-	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS)
+	# A daily settlement between the two reads re-floors pending time to whole micro-seconds (1 micro lost, 2026-11-28):
+	# 1 ms of slack still tells 70 battle hours from none.
+	return after[2] > before[2] or after[1] > before[1] or after[0] - before[0] >= roundi(PersonSkills.BATTLE_SECONDS * PersonSkills.MICROS) - 1000
 
 func _run() -> void:
 	if not _check(RegionEntry.request_new_world(START, {}, "戰報世界", "", RegionData.DEFAULT_MANIFEST, {"mode": "found", "name": "甲國"}), "a world is requested", RegionEntry.menu_message): return
