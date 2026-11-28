@@ -5,6 +5,7 @@ extends SceneTree
 ## the real seconds it took and the active Site; it fails on a step fault, or when the Region clock does not move for
 ## 3000 frames (a world standing still). Prints LONGRUN_PASS / LONGRUN_FAIL; quit(1) on failure or the deadline.
 ## `--profile`: TerrainLab's stage profile over the whole run, printed as the top 50 stages in seconds a game day.
+## `--save-daily`: also save at every day's turn and fail on the first refusal.
 const SITE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const ScenarioPeople = preload("res://scripts/main_menu/scenario_people.gd")
@@ -72,14 +73,24 @@ func _run() -> void:
 		controller.person_actions.settle_after_contacts()
 		if not controller._original_step_fault.is_empty():
 			return _fail("a step fault on day %d" % (last_day - first_day), controller._original_step_fault)
+		# An autosave refused for a broken state (not BUSY or a pending handoff) is shown on the Site only: fail on it.
+		var refused: Variant = lab.get_meta(&"last_refused_result") if lab.has_meta(&"last_refused_result") else null
+		if refused is Dictionary and str(refused.get("code", "")) in ["UNSTABLE_REGION_SNAPSHOT_JSON", "CORRUPT_SAVE", "SAVE_IO"]:
+			return _fail("a save was refused on day %d" % (last_day - first_day), refused)
 		var clock := float(slot.control.logical_game_seconds)
 		if clock > last_clock:
 			last_clock = clock
 			still = 0
 		else:
 			still += 1
-			if still >= 3000:
-				return _fail("the world stands still on day %d (clock %.3f)" % [last_day - first_day, clock], {"site": str(lab.terrain.site.get("id", "")), "pending": controller.region_operation_pending(), "paused": bool(lab.terrain.site.get("paused", false))})
+			if still == 300 or still >= 3000:
+				# What the world waits on: the last refusal, a pending point or Region event, the Site's own clocks.
+				var why := {"site": str(lab.terrain.site.get("id", "")), "pending": controller.region_operation_pending(), "paused": bool(lab.terrain.site.get("paused", false)),
+					"tree_paused": paused, "minute": lab.terrain.site.get("minute"), "phase": lab.terrain.site.get("phase"), "combat_left": lab.terrain.site.get("combat_left"),
+					"point_pending": lab._region_point_pending.keys(), "boot": controller._boot_request.keys(), "events": slot.pending_region_events().size(),
+					"refused": lab.get_meta(&"last_refused_result") if lab.has_meta(&"last_refused_result") else null, "message": str(controller.message.text) if controller.message != null else ""}
+				if still == 300: print("LONGRUN still for 300 frames on day %d (clock %.3f): %s" % [last_day - first_day, clock, JSON.stringify(why).left(3000)])
+				else: return _fail("the world stands still on day %d (clock %.3f)" % [last_day - first_day, clock], why)
 		var day := int(clock / Bandit.DAY)
 		if day == last_day: continue
 		last_day = day
@@ -87,6 +98,10 @@ func _run() -> void:
 		print("LONGRUN day %d in %.1f s (total %.0f s, %d frames), Site %s" % [day - first_day, float(now_ms - day_ms) / 1000.0, float(now_ms - started_ms) / 1000.0, frames, str(lab.terrain.site.get("id", ""))])
 		day_ms = now_ms
 		if day - first_day >= days: break
+		# `--save-daily`: the world saves at every day's turn too (an autosave refusal names its cause at once).
+		if "--save-daily" in OS.get_cmdline_user_args():
+			var daily: Dictionary = controller.save_to(controller.save_path)
+			if not daily.get("ok", false): return _fail("the world does not save on day %d" % (day - first_day), daily)
 	var saved: Dictionary = controller.save_to(controller.save_path)
 	if not saved.get("ok", false): return _fail("the world does not save", saved)
 	if lab.combat_profile_enabled:

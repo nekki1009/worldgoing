@@ -236,15 +236,37 @@ static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> 
 	return Runtime.ok("", {"state": normalized.state, "snapshot": {"version": 1, "context": checked.context, "owners": wire(settled_owners.state), "state_hash": state_hash(normalized.state)}})
 
 ## Preserve typed detached state while settling floats with Store.save's codec.
+## A number Godot's JSON parser never reads back as the double it wrote (some values under 1e-7, e.g. a Site phase of
+## 1.59e-9 a minute after a step crossed its minute by 1e-10 action seconds: the text changes on every round, found
+## 2026-11-28) still settles at the hash's 12 significant digits: when the last two reads hash the same (_hash_canonical,
+## as state_hash and every reload check do), the last read is the written state. Any other difference is refused.
 static func _json_write_state(state: Dictionary) -> Dictionary:
 	var encoded: String = JSON.stringify(wire(state), "", true, true)
+	var previous: Variant = null
 	for _round in range(8):
 		var decoded: Variant = JSON.parse_string(encoded)
-		if not decoded is Dictionary: return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON")
+		if not decoded is Dictionary: return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON", "the written state does not parse back: " + _json_suspect(encoded, -1))
 		var next: String = JSON.stringify(decoded, "", true, true)
 		if next == encoded: return Runtime.ok("", {"state": _write_state_shape(state, unwire(decoded))})
+		if _round == 7:
+			if previous is Dictionary and JSON.stringify(_hash_canonical(unwire(previous)), "", true, true) == JSON.stringify(_hash_canonical(unwire(decoded)), "", true, true):
+				return Runtime.ok("", {"state": _write_state_shape(state, unwire(decoded))})
+			var at := 0
+			while at < mini(next.length(), encoded.length()) and next[at] == encoded[at]: at += 1
+			return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON", "the written state changes on every read: " + _json_suspect(encoded, at))
+		previous = decoded
 		encoded = next
 	return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON")
+
+## Where a snapshot's JSON goes wrong, for the refusal message: the text before the first difference, or before the first
+## number JSON cannot hold (nan, inf).
+static func _json_suspect(text: String, at: int) -> String:
+	if at < 0:
+		for token: String in [":nan", ":inf", ":-inf", ",nan", ",inf", ",-inf", "[nan", "[inf", "[-inf"]:
+			var found := text.find(token)
+			if found >= 0: at = found + 1; break
+	if at < 0: return "no nan/inf found (%d characters)" % text.length()
+	return "…%s⟨here⟩%s…" % [text.substr(maxi(0, at - 240), mini(at, 240)), text.substr(at, 40)]
 
 
 ## wire/unwire preserves values; retain typed Array containers made by SiteStore too.
