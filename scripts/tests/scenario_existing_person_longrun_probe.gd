@@ -65,6 +65,7 @@ func _run() -> void:
 	var started_ms := Time.get_ticks_msec()
 	var day_ms := started_ms
 	var frames := 0
+	var save_due := -1 # the frame a daily save became due (`--save-daily`), -1 when none waits
 	if "--profile" in OS.get_cmdline_user_args():
 		lab.combat_profile_enabled = true
 		lab.combat_profile_usec = {}
@@ -81,6 +82,11 @@ func _run() -> void:
 		var refused: Variant = lab.get_meta(&"last_refused_result") if lab.has_meta(&"last_refused_result") else null
 		if refused is Dictionary and str(refused.get("code", "")) in ["UNSTABLE_REGION_SNAPSHOT_JSON", "CORRUPT_SAVE", "SAVE_IO"]:
 			return _fail("a save was refused on day %d" % (last_day - first_day), refused)
+		if save_due >= 0:
+			var daily: Dictionary = controller.save_to(controller.save_path)
+			if daily.get("ok", false): save_due = -1
+			elif str(daily.get("code", "")) != "BUSY": return _fail("the world does not save on day %d" % (last_day - first_day), daily)
+			elif frame - save_due >= 6000: return _fail("the world stays BUSY for a save for 6000 frames on day %d" % (last_day - first_day), daily)
 		var clock := float(slot.control.logical_game_seconds)
 		if clock > last_clock:
 			last_clock = clock
@@ -102,10 +108,9 @@ func _run() -> void:
 		print("LONGRUN day %d in %.1f s (total %.0f s, %d frames), Site %s" % [day - first_day, float(now_ms - day_ms) / 1000.0, float(now_ms - started_ms) / 1000.0, frames, str(lab.terrain.site.get("id", ""))])
 		day_ms = now_ms
 		if day - first_day >= days: break
-		# `--save-daily`: the world saves at every day's turn too (an autosave refusal names its cause at once).
-		if "--save-daily" in OS.get_cmdline_user_args():
-			var daily: Dictionary = controller.save_to(controller.save_path)
-			if not daily.get("ok", false): return _fail("the world does not save on day %d" % (day - first_day), daily)
+		# `--save-daily`: the world saves at every day's turn too (an autosave refusal names its cause at once). BUSY (a fall,
+		# a walk or a relic hand-over under way) is asked again every frame, as the autosave does, for up to 6000 frames.
+		if "--save-daily" in OS.get_cmdline_user_args(): save_due = frame
 	var saved: Dictionary = controller.save_to(controller.save_path)
 	if not saved.get("ok", false): return _fail("the world does not save", saved)
 	if lab.combat_profile_enabled:
