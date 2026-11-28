@@ -4228,7 +4228,14 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 				crew_work.call(slice * 60.0) # Same original legacy phase.
 			advance_ship_builds(data, occupied)
 		minutes -= slice
-		if float(data.site.phase) >= 0.99999999:
+		# The minute closes when a slice reached its end (a float residue under 1e-12 minutes) or when the phase would
+		# pass the saved range (0.999999999). It once closed within 1e-8 minutes of the end, so a step ending up to
+		# 6e-7 s before the minute moved the Site clock that much ahead; with every window counted (above) nothing took
+		# it back, the Site ran ahead of the Region grid and a grid-aligned step then overran the minute the shared
+		# point checks (prepare_shared_runtime_work_prefix, INVALID_INTERVAL on every frame: the world stood still, found
+		# 2026-11-28, leader start in 溪前鎮 at x16, day 5). A step ending earlier inside the minute's last 6e-7 s keeps its
+		# phase; the next step's minute limit cuts the rest (_region_owner_action_limit) and closes it exactly.
+		if float(data.site.phase) >= 1.0 - 0.000000000001 or float(data.site.phase) > 0.999999999:
 			data.site["phase"] = 0.0
 			data.site["minute"] = int(data.site.minute) + 1
 			if checked_point: checked_clock["minute_due"] = true

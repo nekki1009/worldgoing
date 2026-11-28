@@ -13481,7 +13481,11 @@ func prepare_shared_runtime_work_prefix(requests: Array, seconds: float) -> Dict
 	# Runtime.advance closes a minute once its phase is within 1e-8 minute of the end (phase >= 0.99999999) and drops a
 	# remainder below 1e-8 minute, so the Site clock and the shared step clock may sit up to that snap apart (found
 	# 2026-11-14: a crowd P4 cold owner's next window ran 6.4e-8 s past the snapped minute end). The same snap admits it.
-	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS + 0.00000001 * 60.0: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
+	# TerrainLab._region_owner_action_limit lets a step cross its own minute end when that end lies within
+	# PHASE_BOUNDARY_TOLERANCE action seconds of the step's end: 6e-7 game s at x1, 9.6e-6 at x16. The same crossing is
+	# admitted here at the Site's own speed (a fixed 6e-7 s refused it at x16 on every frame, 2026-11-28).
+	var crossing: float = maxf(0.00000001 * 60.0, Runtime.game_seconds(TerrainLab.PHASE_BOUNDARY_TOLERANCE) * float(lab.simulation_speed))
+	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS + crossing: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
 	bind_checked_runtime_work_prefix()
 	var clock := {"owner": self, "site": lab.terrain.site, "seconds": seconds, "minute": int(lab.terrain.site.minute),
 		"phase": float(lab.terrain.site.phase), "combat_left": float(lab.terrain.site.combat_left),

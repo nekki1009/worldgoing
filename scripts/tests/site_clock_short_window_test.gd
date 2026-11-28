@@ -36,9 +36,17 @@ func _initialize() -> void:
 	check(absf((float(data.site.phase) - before) * 60.0 - 0.00023012) < 0.0000000001, "A thousand short windows add up on the Site clock: %.12f" % ((float(data.site.phase) - before) * 60.0))
 	check(int(data.site.minute) == 4347, "No minute closed inside them")
 	# A short window that closes the minute closes it once.
-	data.site.phase = 1.0 - 0.000000005
+	data.site.phase = 1.0 - 0.000000003
 	clock = _advance(data, owner, 0.00000023012)
-	check(int(data.site.minute) == 4348 and float(data.site.phase) == 0.0 and bool(clock.get("minute_due", false)), "A short window reaching the minute's end closes the minute: minute %d phase %.15f" % [int(data.site.minute), float(data.site.phase)])
+	check(int(data.site.minute) == 4348 and absf(float(data.site.phase) - (0.00000023012 / 60.0 - 0.000000003)) < 0.000000000001 and bool(clock.get("minute_due", false)), "A short window crossing the minute's end closes it once and keeps the rest: minute %d phase %.15f" % [int(data.site.minute), float(data.site.phase)])
+	# A step ending inside the minute's last 6e-7 s (phase 0.999999995) keeps its phase: the minute is not closed early
+	# (that moved the Site clock ahead of the Region grid); the rest of the minute closes it exactly.
+	data.site.minute = 20
+	data.site.phase = 0.9
+	_advance(data, owner, 5.9999997)
+	check(int(data.site.minute) == 20 and float(data.site.phase) > 0.99999999 and float(data.site.phase) <= 0.999999999, "A step ending 3e-7 s before the minute keeps its phase: minute %d phase %.12f" % [int(data.site.minute), float(data.site.phase)])
+	clock = _advance(data, owner, (1.0 - float(data.site.phase)) * 60.0)
+	check(int(data.site.minute) == 21 and float(data.site.phase) < 0.000000000001 and bool(clock.get("minute_due", false)), "The rest of the minute closes it: minute %d phase %.15f" % [int(data.site.minute), float(data.site.phase)])
 	# Ordinary windows are unchanged: 6 s from a grid phase lands on the next grid point.
 	data.site.minute = 10
 	data.site.phase = 0.3
